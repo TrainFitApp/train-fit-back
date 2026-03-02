@@ -13,7 +13,7 @@ module.exports = {
     return exerciseDao.getSearchExercise(
       page,
       limit,
-      searchExercisesFilterGroup
+      searchExercisesFilterGroup,
     );
   },
 
@@ -30,5 +30,9 @@ module.exports = {
   },
   async archiveExercise(idExercise, idUser) {
     return exerciseDao.archiveExercise(idExercise, idUser);
+  },
+
+  async deleteExercise(id) {
+    return exerciseDao.deleteExercise(id);
   },
 };

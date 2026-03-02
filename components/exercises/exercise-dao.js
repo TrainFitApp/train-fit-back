@@ -39,6 +39,15 @@ module.exports = {
     );
   },
 
+  async getExercise(id) {
+    return new Promise((resolve, reject) =>
+      exerciseSchema.findById(id, (err, doc) => {
+        if (err) return reject(err);
+        return resolve(doc);
+      }),
+    );
+  },
+
   async getSearchExercise(page, limit, searchExercisesFilterGroup) {
     try {
       const agg = [];
@@ -218,6 +227,17 @@ module.exports = {
   },
 
   async arhiveExercise(id, exercise) {
+    const update = { $set: exercise };
+
+    return new Promise((resolve, reject) =>
+      exerciseSchema.updateOne({ _id: id }, update, {}, (err, docs) => {
+        if (err) return reject(err);
+        return resolve(docs);
+      }),
+    );
+  },
+
+  async updateExercise(id, exercise) {
     const update = { $set: exercise };
 
     return new Promise((resolve, reject) =>
