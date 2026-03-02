@@ -20,7 +20,7 @@ module.exports = {
     const exercises = await exerciseModel.getSearchExercise(
       page,
       limit,
-      req.body
+      req.body,
     );
     return res.send(exercises);
   },
@@ -46,19 +46,33 @@ module.exports = {
   },
 
   async addExerciseToFavorites(req, res) {
-    await exerciseModel.archiveExercise(req.body.idExercise, req.body.idUser);
-    return res.sendStatus(204);
+    const result = await exerciseModel.archiveExercise(
+      req.body.idExercise,
+      req.body.idUser,
+    );
+    return res.send({
+      isFavorite: !!result?.isFavorite,
+      message: result?.isFavorite
+        ? "Exercise added to favorites"
+        : "Exercise removed from favorites",
+    });
   },
 
   async deleteExercise(req, res) {
     const exercise = await exerciseModel.getExercise(req.params.id);
     if (!exercise) return res.sendStatus(404);
 
-    const isAdmin = req.userData && req.userData.roles && req.userData.roles.includes("admin");
-    const isOwner = exercise.userId && exercise.userId.toString() === req.user.id;
+    const isAdmin =
+      req.userData &&
+      req.userData.roles &&
+      req.userData.roles.includes("admin");
+    const isOwner =
+      exercise.userId && exercise.userId.toString() === req.user.id;
 
     if (!isAdmin && !isOwner) {
-      return res.status(403).send({ message: "No tienes permiso para borrar este ejercicio." });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para borrar este ejercicio." });
     }
 
     await exerciseModel.deleteExercise(req.params.id);

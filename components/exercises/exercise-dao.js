@@ -13,7 +13,7 @@ module.exports = {
         .exec((err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        })
+        }),
     );
   },
 
@@ -22,7 +22,7 @@ module.exports = {
       exerciseSchema.findOne({ code: barcode }, (err, doc) => {
         if (err) return reject(err);
         return resolve(doc);
-      })
+      }),
     );
   },
 
@@ -35,7 +35,7 @@ module.exports = {
         .exec((err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        })
+        }),
     );
   },
 
@@ -75,7 +75,7 @@ module.exports = {
         };
         console.log(
           "[EXERCISE-DAO] Adding own by userId match:",
-          JSON.stringify(matchStage)
+          JSON.stringify(matchStage),
         );
         agg.push(matchStage);
       }
@@ -167,7 +167,7 @@ module.exports = {
           }
 
           const regexTerms = searchTerms.map((term) =>
-            createAccentInsensitiveRegex(term)
+            createAccentInsensitiveRegex(term),
           );
 
           agg.push({
@@ -197,28 +197,21 @@ module.exports = {
       exerciseSchema.create(exercise, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 
   async archiveExercise(idExercise, idUser) {
-    let archiveExercise;
-
     const user = await userSchema.findById(idUser);
     const exerciseExist = !!user.archivedExercises.includes(idExercise);
 
-    if (exerciseExist) {
-      archiveExercise = {
-        $pull: { archivedExercises: idExercise },
-      };
-    } else {
-      archiveExercise = {
-        $push: { archivedExercises: idExercise },
-      };
-    }
+    const archiveExercise = exerciseExist
+      ? { $pull: { archivedExercises: idExercise } }
+      : { $push: { archivedExercises: idExercise } };
 
     try {
-      return await userSchema.findByIdAndUpdate(idUser, archiveExercise);
+      await userSchema.findByIdAndUpdate(idUser, archiveExercise);
+      return { isFavorite: !exerciseExist };
     } catch (err) {
       throw err;
     }
@@ -231,7 +224,7 @@ module.exports = {
       exerciseSchema.updateOne({ _id: id }, update, {}, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 
@@ -240,7 +233,7 @@ module.exports = {
       exerciseSchema.deleteOne({ _id: id }, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 };

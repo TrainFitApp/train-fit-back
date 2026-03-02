@@ -22,7 +22,7 @@ module.exports = {
   async getProductByCode(req, res) {
     const product = await productModel.getProductByCode(
       req.params.userId,
-      req.params.barcode
+      req.params.barcode,
     );
     return res.send(product);
   },
@@ -93,10 +93,15 @@ module.exports = {
     const updatedUser = await productModel.addFavouriteProduct(
       req.body.idUser,
       req.body.idProduct,
-      productExist
+      productExist,
     );
 
-    return res.send(productExist ? null : updatedUser);
+    return res.send({
+      isFavorite: !productExist,
+      message: !productExist
+        ? "Product added to favorites"
+        : "Product removed from favorites",
+    });
   },
 
   async deleteProduct(req, res) {

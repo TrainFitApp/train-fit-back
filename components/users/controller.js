@@ -370,7 +370,9 @@ module.exports = {
     try {
       const refreshToken = req.cookies?.refreshToken;
       if (!refreshToken) {
-        return res.status(401).send({ message: "No refresh token", requiresRelogin: true });
+        return res
+          .status(401)
+          .send({ message: "No refresh token", requiresRelogin: true });
       }
 
       // 1. Verificar JWT del Refresh Token
@@ -380,14 +382,18 @@ module.exports = {
         if (!decoded) throw new Error();
       } catch (err) {
         TokenService.clearRefreshTokenCookie(res);
-        return res.status(401).send({ message: "Invalid refresh token", requiresRelogin: true });
+        return res
+          .status(401)
+          .send({ message: "Invalid refresh token", requiresRelogin: true });
       }
 
       // 2. Buscar usuario
       const user = await userSchema.findOne({ email: decoded.email });
       if (!user) {
         TokenService.clearRefreshTokenCookie(res);
-        return res.status(401).send({ message: "User not found", requiresRelogin: true });
+        return res
+          .status(401)
+          .send({ message: "User not found", requiresRelogin: true });
       }
 
       const hashedToken = TokenService.hashToken(refreshToken);
@@ -397,34 +403,47 @@ module.exports = {
       // 3. Lógica de Rotación
       const isCurrent = user.refreshToken === hashedToken;
       const isPrevious = user.previousRefreshToken === hashedToken;
-      const withinGrace = user.tokenRotationTimestamp && (now - new Date(user.tokenRotationTimestamp).getTime() < gracePeriodMs);
+      const withinGrace =
+        user.tokenRotationTimestamp &&
+        now - new Date(user.tokenRotationTimestamp).getTime() < gracePeriodMs;
 
       if (isCurrent) {
         // Rotación normal
-        const newAT = TokenService.generateAccessToken({ email: user.email, roles: user.roles });
-        const newRT = TokenService.generateRefreshToken({ email: user.email, roles: user.roles });
+        const newAT = TokenService.generateAccessToken({
+          email: user.email,
+          roles: user.roles,
+        });
+        const newRT = TokenService.generateRefreshToken({
+          email: user.email,
+          roles: user.roles,
+        });
 
         await userSchema.findByIdAndUpdate(user._id, {
           refreshToken: TokenService.hashToken(newRT),
           previousRefreshToken: hashedToken,
-          tokenRotationTimestamp: new Date()
+          tokenRotationTimestamp: new Date(),
         });
 
         TokenService.setRefreshTokenCookie(res, newRT);
         return res.send({ access_token: newAT, theme: user.theme });
-
       } else if (isPrevious && withinGrace) {
         // Caso de carrera: se usó el token anterior dentro del margen de gracia
-        const newAT = TokenService.generateAccessToken({ email: user.email, roles: user.roles });
+        const newAT = TokenService.generateAccessToken({
+          email: user.email,
+          roles: user.roles,
+        });
         return res.send({ access_token: newAT, theme: user.theme });
-
       } else {
         // Token reutilizado fuera de gracia o inválido: SEURIDAD - invalidar todo
-        await userSchema.findByIdAndUpdate(user._id, { refreshToken: null, previousRefreshToken: null });
+        await userSchema.findByIdAndUpdate(user._id, {
+          refreshToken: null,
+          previousRefreshToken: null,
+        });
         TokenService.clearRefreshTokenCookie(res);
-        return res.status(401).send({ message: "Token reuse detected", requiresRelogin: true });
+        return res
+          .status(401)
+          .send({ message: "Token reuse detected", requiresRelogin: true });
       }
-
     } catch (error) {
       console.error("Error in refreshToken:", error);
       return res.status(500).send({ message: "Internal server error" });
@@ -446,7 +465,7 @@ module.exports = {
       if (email) {
         await userSchema.findOneAndUpdate(
           { email },
-          { refreshToken: null, previousRefreshToken: null }
+          { refreshToken: null, previousRefreshToken: null },
         );
       }
 
@@ -787,7 +806,12 @@ module.exports = {
       productExist,
     );
 
-    return res.send(newUser);
+    return res.send({
+      isFavorite: !productExist,
+      message: !productExist
+        ? "Product added to favorites"
+        : "Product removed from favorites",
+    });
   },
 
   async addFavoriteRecipe(req, res) {
@@ -814,7 +838,12 @@ module.exports = {
       recipeExist,
     );
 
-    return res.send(recipeExist ? null : user);
+    return res.send({
+      isFavorite: !recipeExist,
+      message: !recipeExist
+        ? "Recipe added to favorites"
+        : "Recipe removed from favorites",
+    });
   },
 
   // TODO: mejorar seguridad de contraseña viajando en el GET wtf
