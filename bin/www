@@ -1,0 +1,66 @@
+require("dotenv").config();
+const mongoose = require("mongoose");
+mongoose.set("strictQuery", true);
+const app = require("../app");
+
+// -------------------------------------------------------
+// 🧩 Normalización del puerto
+// -------------------------------------------------------
+function normalizePort(val) {
+  const port = parseInt(val, 10);
+
+  if (isNaN(port)) return val; // named pipe
+  if (port >= 0) return port; // port number
+  return false;
+}
+
+const port = normalizePort(process.env.SERVER_PORT || 3000);
+app.set("port", port);
+
+// -------------------------------------------------------
+// 🔧 Variables de entorno
+// -------------------------------------------------------
+const mongoDBUser = process.env.MONGODB_USER;
+const mongoDBPass = process.env.MONGODB_PASS;
+const mongoDBCluster = process.env.MONGODB_CLUSTER;
+const mongoDBDB = process.env.MONGODB_DB;
+const serverDomain = process.env.SERVER_DOMAIN;
+
+// -------------------------------------------------------
+// ⚙️ Construcción de la URI de conexión
+// -------------------------------------------------------
+let mongoURI;
+
+if (
+  mongoDBCluster.includes("localhost") ||
+  mongoDBCluster.includes("127.0.0.1")
+) {
+  // 🧩 Conexión local
+  mongoURI = `mongodb://${mongoDBCluster}/${mongoDBDB}`;
+} else {
+  // ☁️ Conexión Atlas (producción)
+  mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB}`;
+}
+
+// -------------------------------------------------------
+// 🚀 Conexión y arranque del servidor
+// -------------------------------------------------------
+mongoose.Promise = global.Promise;
+mongoose
+  .connect(mongoURI)
+  .then(() => {
+    console.log("✅ Conexión a la base de datos establecida con éxito");
+    console.log(`🔗 Mongo URI: ${mongoURI}`);
+
+    // Crear servidor Express
+    const serv = app.listen(port, () => {
+      console.log(`🌍 Server domain: ${serverDomain}`);
+      console.log(`🚀 Server running at port: ${port}`);
+    });
+
+    serv.timeout = 30000;
+  })
+  .catch((err) => {
+    console.error("❌ Error al conectar con MongoDB:");
+    console.error(err);
+  });

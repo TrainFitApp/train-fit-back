@@ -1,0 +1,88 @@
+const workoutDao = require("./workout-dao");
+
+module.exports = {
+  async getWorkouts(page, limit) {
+    return workoutDao.getWorkouts(page, limit);
+  },
+  async getWorkoutById(id) {
+    return workoutDao.getWorkoutById(id);
+  },
+
+  async getWorkoutByIdAndDate(id, date) {
+    return workoutDao.getWorkoutByIdAndDate(id, date);
+  },
+
+  async pasteWorkout(workoutClipboard, workoutToPaste) {
+    return workoutDao.pasteWorkout(workoutClipboard, workoutToPaste);
+  },
+
+  async createWorkout(workout) {
+    return workoutDao.createWorkout(workout);
+  },
+
+  async addWorkoutsToSplits(idTable, workout) {
+    return workoutDao.addWorkoutsToSplits(idTable, workout);
+  },
+
+  async addWorkoutExercise(idWorkout, idExercise) {
+    return workoutDao.addWorkoutExercise(idWorkout, idExercise);
+  },
+
+  async addWorkoutsExercises(idTable, idExercise, workoutOrder) {
+    return workoutDao.addWorkoutsExercises(idTable, idExercise, workoutOrder);
+  },
+
+  async modifyWorkout(workout) {
+    return workoutDao.modifyWorkout(workout);
+  },
+
+  async updateWorkout(workout, customExercise) {
+    return workoutDao.updateWorkout(workout, customExercise);
+  },
+
+  async addDataExerciseToWorkout(workoutId, dataExerciseData) {
+    return workoutDao.addDataExerciseToWorkout(workoutId, dataExerciseData);
+  },
+
+  async updateWorkoutsOrder(idWorkout, idTable, indexReorderedCustomExercises) {
+    return await workoutDao.updateWorkoutsOrder(
+      idWorkout,
+      idTable,
+      indexReorderedCustomExercises
+    );
+  },
+
+  async updateCustomExercises(
+    idTable,
+    idWorkout,
+    idCustomExercise,
+    idExercise
+  ) {
+    return await workoutDao.updateCustomExercises(
+      idTable,
+      idWorkout,
+      idCustomExercise,
+      idExercise
+    );
+  },
+
+  async updateWorkoutsName(idTable, idWorkout, workoutsName) {
+    return workoutDao.updateWorkoutsName(idTable, idWorkout, workoutsName);
+  },
+
+  async deleteWorkout(id) {
+    return workoutDao.deleteWorkout(id);
+  },
+
+  async deleteWorkouts(workouts) {
+    return workoutDao.deleteWorkouts(workouts);
+  },
+
+  async deleteWorkoutExercise(idWorkout, idExercise) {
+    return workoutDao.deleteWorkoutExercise(idWorkout, idExercise);
+  },
+
+  async deleteWorkoutCustomExercises(idWorkout) {
+    return workoutDao.deleteWorkoutCustomExercises(idWorkout);
+  },
+};

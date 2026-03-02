@@ -1,0 +1,5 @@
+node_modules
+.vscode
+file.log
+.env
+bash.exe.stackdump

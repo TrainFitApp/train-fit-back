@@ -1,0 +1,44 @@
+const express = require("express");
+const products = require("../components/products/product-routes");
+const users = require("../components/users/routes");
+const diets = require("../components/diets/diet-routes");
+const dietDays = require("../components/dietDays/diet-days-routes");
+const meals = require("../components/meals/meal-routes");
+const customProducts = require("../components/customProducts/custom-product-routes");
+const recipes = require("../components/recipes/recipe-routes");
+const customRecipes = require("../components/customRecipes/custom-recipe-routes");
+const customRecipeInstances = require("../components/customRecipes/custom-recipe-instance.controller");
+const dataRecipes = require("../components/dataRecipes/data-recipe-routes");
+const customExercises = require("../components/customExercises/custom-exercise-routes");
+const workouts = require("../components/workouts/workout-routes");
+const tables = require("../components/tables/table-routes");
+const owntables = require("../components/ownTables/table-routes");
+const splits = require("../components/splits/split-routes");
+const exercises = require("../components/exercises/exercise-routes");
+const sets = require("../components/sets/set-routes");
+const auth = require("../components/auth/auth-routes");
+const logs = require("../components/util/logs-routes");
+
+const router = express.Router();
+
+router.use("/auth", auth);
+router.use("/products", products);
+router.use("/users", users);
+router.use("/diets", diets);
+router.use("/dietdays", dietDays);
+router.use("/meals", meals);
+router.use("/customproducts", customProducts);
+router.use("/recipes", recipes);
+router.use("/customrecipes", customRecipes);
+router.use("/customrecipeinstances", customRecipeInstances);
+router.use("/datarecipes", dataRecipes);
+router.use("/customexercises", customExercises);
+router.use("/tables", tables);
+router.use("/owntables", owntables);
+router.use("/splits", splits);
+router.use("/workouts", workouts);
+router.use("/exercises", exercises);
+router.use("/sets", sets);
+router.use("/logs", logs);
+
+module.exports = router;
