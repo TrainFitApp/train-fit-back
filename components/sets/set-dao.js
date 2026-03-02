@@ -26,6 +26,16 @@ module.exports = {
       const doc = await setSchema.findById(set._id);
       if (!doc) return null;
 
+      // Runtime semantics: fail is execution state derived from rir.
+      // expectedFail belongs to objective configuration and is updated separately.
+      if (Object.prototype.hasOwnProperty.call(set, "rir")) {
+        if (set.rir === null || set.rir === undefined) {
+          set.fail = undefined;
+        } else {
+          set.fail = set.rir === -1;
+        }
+      }
+
       // Actualizar con los datos recibidos
       for (const key in set) {
         if (key === "_id") continue;
@@ -43,7 +53,7 @@ module.exports = {
       setSchema.deleteOne({ _id: id }, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 };
