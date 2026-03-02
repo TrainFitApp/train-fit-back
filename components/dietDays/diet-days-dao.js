@@ -221,8 +221,6 @@ module.exports = {
     idUser,
   ) {
     try {
-
-
       // Unified support: Si viene product inline (unificado)
       if (idUser && customProduct?.product && !customProduct.product._id) {
         const productDoc = await productSchema.create({
@@ -563,64 +561,99 @@ module.exports = {
   },
 
   async pasteDietDayByIdDiet(id, dietDayClipboard, dietDayToPaste) {
-    const customProductToDeleteIds = [];
-    const customRecipeToDeleteIds = [];
-    const mealToDeleteIds = [];
+    const dataRecipeSchema = require("../dataRecipes/data-recipe-schema");
+    const normalizeId = (value) => value?._id || value;
+    const toPlainObject = (value) =>
+      value?.toObject ? value.toObject() : { ...value };
 
-    if (dietDayToPaste._id) {
-      dietDayToPaste.meals.forEach((mealTemp) => {
-        mealTemp.customProducts.forEach((productTemp) => {
-          customProductToDeleteIds.push(productTemp._id);
-        });
-        mealTemp.customRecipes.forEach((recipeTemp) => {
-          customRecipeToDeleteIds.push(recipeTemp._id);
-        });
-        mealToDeleteIds.push(mealTemp._id);
-      });
-    }
     const mealsToCreate = [];
-    const customProductsToCreate = [];
-    const customRecipesToCreate = [];
 
-    dietDayClipboard.meals.forEach((mealTemp) => {
-      mealTemp._id = new mongoose.Types.ObjectId();
+    for (const mealRef of dietDayClipboard.meals || []) {
+      const mealObj = toPlainObject(mealRef);
 
-      mealTemp.customProducts.forEach((productTemp) => {
-        productTemp._id = new mongoose.Types.ObjectId();
-        customProductsToCreate.push(productTemp);
-      });
+      const customProductsToCreate = (mealObj.customProducts || []).map(
+        (customProductRef) => {
+          const customProduct = toPlainObject(customProductRef);
+          delete customProduct._id;
+          return customProduct;
+        },
+      );
 
-      mealTemp.customRecipes.forEach((recipeTemp) => {
-        recipeTemp._id = new mongoose.Types.ObjectId();
-        customRecipesToCreate.push(recipeTemp);
-      });
+      const createdCustomProducts = customProductsToCreate.length
+        ? await customProductSchema.insertMany(customProductsToCreate)
+        : [];
 
-      mealsToCreate.push(mealTemp);
-    });
+      const createdCustomRecipeInstances = [];
+      const sourceInstances =
+        mealObj.customRecipeInstances || mealObj.customRecipes || [];
 
-    try {
-      const promises = [
-        customProductSchema.insertMany(customProductsToCreate),
-        customRecipeSchema.insertMany(customRecipesToCreate),
-        mealSchema.insertMany(mealsToCreate),
-      ];
+      for (const instanceRef of sourceInstances) {
+        const instanceObj = toPlainObject(instanceRef);
 
-      if (dietDayToPaste._id) {
-        promises.push(dietDaySchema.deleteOne({ _id: dietDayToPaste._id }));
-        promises.push(mealSchema.deleteMany({ _id: { $in: mealToDeleteIds } }));
-        promises.push(
-          customProductSchema.deleteMany({
-            _id: { $in: customProductToDeleteIds },
-          }),
-        );
-        promises.push(
-          customRecipeSchema.deleteMany({
-            _id: { $in: customRecipeToDeleteIds },
-          }),
-        );
+        let dataRecipeObj = instanceObj.dataRecipe;
+        if (dataRecipeObj && !dataRecipeObj.recipe) {
+          dataRecipeObj = await dataRecipeSchema.findById(dataRecipeObj).lean();
+        }
+
+        if (!dataRecipeObj?.recipe) {
+          continue;
+        }
+
+        const recipeId = normalizeId(dataRecipeObj.recipe);
+        if (!recipeId) {
+          continue;
+        }
+
+        const newDataRecipe = await dataRecipeSchema.create({
+          recipe: recipeId,
+          quantity: dataRecipeObj.quantity,
+          quantityCooked: dataRecipeObj.quantityCooked,
+        });
+
+        const customProductsOverrides = (
+          instanceObj.customProductsOverrides || []
+        )
+          .map((override) => ({
+            customProductId: normalizeId(override.customProductId),
+            quantity:
+              override.quantity === undefined ? null : override.quantity,
+            removed: !!override.removed,
+          }))
+          .filter((override) => !!override.customProductId);
+
+        const additionalCustomProducts = (
+          instanceObj.additionalCustomProducts || []
+        )
+          .map((additional) => ({
+            quantity: additional.quantity,
+            product: normalizeId(additional.product),
+          }))
+          .filter((additional) => !!additional.product);
+
+        const newCustomRecipeInstance = await customRecipeSchema.create({
+          dataRecipe: newDataRecipe._id,
+          quantity: instanceObj.quantity || 0,
+          customProductsOverrides,
+          additionalCustomProducts,
+        });
+
+        createdCustomRecipeInstances.push(newCustomRecipeInstance._id);
       }
 
-      await Promise.all(promises);
+      const createdMeal = await mealSchema.create({
+        name: mealObj.name,
+        notes: mealObj.notes,
+        customProducts: createdCustomProducts.map((cp) => cp._id),
+        customRecipeInstances: createdCustomRecipeInstances,
+      });
+
+      mealsToCreate.push(createdMeal._id);
+    }
+
+    try {
+      if (dietDayToPaste._id) {
+        await dietDaySchema.deleteOne({ _id: dietDayToPaste._id });
+      }
 
       const newDietDay = { ...dietDayClipboard };
       delete newDietDay._id;

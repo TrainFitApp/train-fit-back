@@ -105,7 +105,12 @@ module.exports = {
             $addFields: {
               isSpanish: {
                 $cond: {
-                  if: { $regexMatch: { input: { $toString: { $ifNull: ["$code", ""] } }, regex: "^84" } },
+                  if: {
+                    $regexMatch: {
+                      input: { $toString: { $ifNull: ["$code", ""] } },
+                      regex: "^84",
+                    },
+                  },
                   then: 1,
                   else: 0,
                 },
@@ -132,7 +137,12 @@ module.exports = {
             $addFields: {
               isSpanish: {
                 $cond: {
-                  if: { $regexMatch: { input: { $toString: { $ifNull: ["$code", ""] } }, regex: "^84" } },
+                  if: {
+                    $regexMatch: {
+                      input: { $toString: { $ifNull: ["$code", ""] } },
+                      regex: "^84",
+                    },
+                  },
                   then: 1,
                   else: 0,
                 },
@@ -194,7 +204,12 @@ module.exports = {
             $addFields: {
               isSpanish: {
                 $cond: {
-                  if: { $regexMatch: { input: { $toString: { $ifNull: ["$code", ""] } }, regex: "^84" } },
+                  if: {
+                    $regexMatch: {
+                      input: { $toString: { $ifNull: ["$code", ""] } },
+                      regex: "^84",
+                    },
+                  },
                   then: 1,
                   else: 0,
                 },
@@ -219,7 +234,12 @@ module.exports = {
             $addFields: {
               isSpanish: {
                 $cond: {
-                  if: { $regexMatch: { input: { $toString: { $ifNull: ["$code", ""] } }, regex: "^84" } },
+                  if: {
+                    $regexMatch: {
+                      input: { $toString: { $ifNull: ["$code", ""] } },
+                      regex: "^84",
+                    },
+                  },
                   then: 1,
                   else: 0,
                 },
@@ -256,12 +276,13 @@ module.exports = {
       else if (!ownFilter && !recipeFilter && !shieldFilter && !favFilter) {
         // Exclude user's own products from the global results to avoid duplicates
         const baseMatch = userId
-          ? { ...createRegexQuery(), $or: [{ userId: null }, { userId: { $exists: false } }] }
+          ? {
+              ...createRegexQuery(),
+              $or: [{ userId: null }, { userId: { $exists: false } }],
+            }
           : createRegexQuery();
 
-        const pipeline = [
-          { $match: baseMatch },
-        ];
+        const pipeline = [{ $match: baseMatch }];
 
         if (userId) {
           const userObjectId = toObjectId(userId);
@@ -288,7 +309,12 @@ module.exports = {
               isOwn: { $ifNull: ["$isOwn", 0] },
               isSpanish: {
                 $cond: {
-                  if: { $regexMatch: { input: { $toString: { $ifNull: ["$code", ""] } }, regex: "^84" } },
+                  if: {
+                    $regexMatch: {
+                      input: { $toString: { $ifNull: ["$code", ""] } },
+                      regex: "^84",
+                    },
+                  },
                   then: 1,
                   else: 0,
                 },
@@ -298,7 +324,7 @@ module.exports = {
           { $sort: { isOwn: -1, isSpanish: -1, name: 1 } },
           { $skip: page * limit },
           { $limit: limit },
-          { $project: { isSpanish: 0 } }
+          { $project: { isSpanish: 0 } },
         );
 
         docs = await productSchema.aggregate(pipeline);
@@ -365,162 +391,134 @@ module.exports = {
     try {
       const dataRecipeSchema = require("../dataRecipes/data-recipe-schema");
       const normalizeId = (value) => value?._id || value;
+      const toPlainObject = (value) =>
+        value?.toObject ? value.toObject() : { ...value };
+
       const clipboardCustomProducts = mealClipboard.customProducts || [];
-      const clipboardCustomRecipes = mealClipboard.customRecipes || [];
-      const clipboardDataRecipes = mealClipboard.dataRecipes || [];
+      const clipboardCustomRecipeInstances =
+        mealClipboard.customRecipeInstances ||
+        mealClipboard.customRecipes ||
+        [];
+
       const targetCustomProducts = mealToPaste.customProducts || [];
-      const targetCustomRecipes = mealToPaste.customRecipes || [];
-      const targetDataRecipes = mealToPaste.dataRecipes || [];
+      const targetCustomRecipeInstances =
+        mealToPaste.customRecipeInstances || mealToPaste.customRecipes || [];
 
-      // Nuevos ids
-      clipboardCustomProducts.forEach(
-        (customProductTemp) =>
-          (customProductTemp._id = new mongoose.Types.ObjectId()),
-      );
+      const customProductsToCreate = clipboardCustomProducts.map((cp) => {
+        const cpObj = toPlainObject(cp);
+        delete cpObj._id;
+        return cpObj;
+      });
 
-      clipboardCustomRecipes
-        .flatMap((customRecipeTemp) => customRecipeTemp.customProducts || [])
-        .forEach(
-          (customProductTemp) =>
-            (customProductTemp._id = new mongoose.Types.ObjectId()),
-        );
+      const newCustomProducts = customProductsToCreate.length
+        ? await customProductSchema.insertMany(customProductsToCreate)
+        : [];
 
-      clipboardCustomRecipes.forEach(
-        (customRecipeTemp) =>
-          (customRecipeTemp._id = new mongoose.Types.ObjectId()),
-      );
+      const newCustomRecipeInstances = [];
 
-      // Copiar dataRecipes con nuevos IDs (recetas y customProducts)
-      const newDataRecipes = [];
-      if (clipboardDataRecipes.length > 0) {
-        for (const dataRecipe of clipboardDataRecipes) {
-          const originalRecipe = dataRecipe.recipe;
+      for (const instanceRef of clipboardCustomRecipeInstances) {
+        const instanceObj = toPlainObject(instanceRef);
 
-          // Copiar customProducts de la receta con nuevos IDs
-          const copiedCustomProducts = [];
-          if (
-            originalRecipe.customProducts &&
-            originalRecipe.customProducts.length > 0
-          ) {
-            for (const cp of originalRecipe.customProducts) {
-              const cpCopy = {
-                quantity: cp.quantity,
-                product: cp.product?._id || cp.product,
-                energyKcal100g: cp.energyKcal100g,
-                protein100g: cp.protein100g,
-                carbohydrates100g: cp.carbohydrates100g,
-                fat100g: cp.fat100g,
-                salt100g: cp.salt100g,
-                sugars100g: cp.sugars100g,
-              };
-              const newCP = await customProductSchema.create(cpCopy);
-              copiedCustomProducts.push(newCP._id);
-            }
-          }
-
-          // Crear copia de la receta con los nuevos customProducts
-          const recipeCopy = await recipeSchema.create({
-            name: originalRecipe.name,
-            description: originalRecipe.description,
-            customProducts: copiedCustomProducts,
-            verified: originalRecipe.verified,
-            userId: originalRecipe.userId,
-          });
-
-          // Crear nuevo dataRecipe con la receta copiada
-          const newDataRecipe = await dataRecipeSchema.create({
-            recipe: recipeCopy._id,
-            quantity: dataRecipe.quantity,
-            quantityCooked: dataRecipe.quantityCooked,
-          });
-
-          newDataRecipes.push(newDataRecipe._id);
+        let dataRecipeObj = instanceObj.dataRecipe;
+        if (dataRecipeObj && !dataRecipeObj.recipe) {
+          dataRecipeObj = await dataRecipeSchema.findById(dataRecipeObj).lean();
         }
+
+        if (!dataRecipeObj?.recipe) {
+          continue;
+        }
+
+        const recipeId = normalizeId(dataRecipeObj.recipe);
+        if (!recipeId) {
+          continue;
+        }
+
+        const dataRecipePayload = {
+          recipe: recipeId,
+          quantity: dataRecipeObj.quantity,
+          quantityCooked: dataRecipeObj.quantityCooked,
+        };
+
+        const newDataRecipe = await dataRecipeSchema.create(dataRecipePayload);
+
+        const customProductsOverrides = (
+          instanceObj.customProductsOverrides || []
+        )
+          .map((override) => ({
+            customProductId: normalizeId(override.customProductId),
+            quantity:
+              override.quantity === undefined ? null : override.quantity,
+            removed: !!override.removed,
+          }))
+          .filter((override) => !!override.customProductId);
+
+        const additionalCustomProducts = (
+          instanceObj.additionalCustomProducts || []
+        )
+          .map((additional) => ({
+            quantity: additional.quantity,
+            product: normalizeId(additional.product),
+          }))
+          .filter((additional) => !!additional.product);
+
+        const newInstance = await customRecipeSchema.create({
+          dataRecipe: newDataRecipe._id,
+          quantity: instanceObj.quantity || 0,
+          customProductsOverrides,
+          additionalCustomProducts,
+        });
+
+        newCustomRecipeInstances.push(newInstance);
       }
 
-      // Vaciamos la meal a la que se van a pegar customProducts, customRecipes y dataRecipes
       if (!merge) {
         await customProductSchema.deleteMany({
           _id: {
-            $in: targetCustomProducts.map((customProductTemp) =>
-              normalizeId(customProductTemp),
-            ),
+            $in: targetCustomProducts
+              .map((customProductTemp) => normalizeId(customProductTemp))
+              .filter(Boolean),
           },
         });
-        await customProductSchema.deleteMany({
-          _id: {
-            $in: targetCustomRecipes
-              .flatMap(
-                (customRecipeTemp) => customRecipeTemp.customProducts || [],
-              )
-              .map((customProductTemp) => normalizeId(customProductTemp)),
-          },
-        });
+
         await customRecipeSchema.deleteMany({
           _id: {
-            $in: targetCustomRecipes.map((customRecipeTemp) =>
-              normalizeId(customRecipeTemp),
-            ),
+            $in: targetCustomRecipeInstances
+              .map((instanceTemp) => normalizeId(instanceTemp))
+              .filter(Boolean),
           },
         });
-
-        // Eliminar dataRecipes existentes
-        if (targetDataRecipes.length > 0) {
-          for (const drRef of targetDataRecipes) {
-            const drId = normalizeId(drRef);
-            if (!drId) continue;
-            const dr = await dataRecipeSchema.findById(drId);
-            if (dr && dr.recipe) {
-              // Eliminar la receta y sus customProducts
-              const recipe = await recipeSchema.findById(dr.recipe);
-              if (recipe && recipe.customProducts) {
-                await customProductSchema.deleteMany({
-                  _id: { $in: recipe.customProducts },
-                });
-              }
-              await recipeSchema.findByIdAndDelete(dr.recipe);
-            }
-            await dataRecipeSchema.findByIdAndDelete(drId);
-          }
-        }
       }
 
-      const newCustomProducts = await customProductSchema.insertMany(
-        clipboardCustomProducts,
-      );
+      const targetCustomProductIds = merge
+        ? targetCustomProducts
+            .map((customProductTemp) => normalizeId(customProductTemp))
+            .filter(Boolean)
+        : [];
 
-      const newCustomRecipes = await customRecipeSchema.insertMany(
-        clipboardCustomRecipes,
-      );
+      const targetCustomRecipeInstanceIds = merge
+        ? targetCustomRecipeInstances
+            .map((instanceTemp) => normalizeId(instanceTemp))
+            .filter(Boolean)
+        : [];
 
-      if (merge) {
-        const targetDataRecipeIds = targetDataRecipes
-          .map((dataRecipeTemp) => normalizeId(dataRecipeTemp))
-          .filter(Boolean);
-        mealToPaste.customProducts =
-          targetCustomProducts.concat(newCustomProducts);
-        mealToPaste.customRecipes =
-          targetCustomRecipes.concat(newCustomRecipes);
-        mealToPaste.dataRecipes = targetDataRecipeIds.concat(newDataRecipes);
-      } else {
-        // Creación de nuevos customProducts, customRecipes y dataRecipes
-        mealToPaste.customProducts = newCustomProducts;
-        mealToPaste.customRecipes = newCustomRecipes;
-        mealToPaste.dataRecipes = newDataRecipes;
-      }
-
-      // Creación de nuevos customProducts en customRecipe
-      await customProductSchema.insertMany(
-        clipboardCustomRecipes.flatMap(
-          (customRecipeTemp) => customRecipeTemp.customProducts || [],
+      const updatePayload = {
+        customProducts: targetCustomProductIds.concat(
+          newCustomProducts.map((cp) => cp._id),
         ),
-      );
+        customRecipeInstances: targetCustomRecipeInstanceIds.concat(
+          newCustomRecipeInstances.map((instance) => instance._id),
+        ),
+      };
 
-      return await mealSchema.findByIdAndUpdate(mealToPaste._id, mealToPaste, {
-        new: true,
-      });
+      return await mealSchema.findByIdAndUpdate(
+        mealToPaste._id,
+        updatePayload,
+        {
+          new: true,
+        },
+      );
     } catch (err) {
-      return err;
+      throw err;
     }
 
     // try {
@@ -642,14 +640,11 @@ module.exports = {
         (err, mealDoc) => {
           if (err) return reject(err);
 
-          customProductSchema.deleteOne(
-            { _id: idProduct },
-            (err2, doc2) => {
-              if (err2) return reject(err2);
+          customProductSchema.deleteOne({ _id: idProduct }, (err2, doc2) => {
+            if (err2) return reject(err2);
 
-              return resolve(mealDoc);
-            },
-          );
+            return resolve(mealDoc);
+          });
         },
       ),
     );
@@ -699,7 +694,7 @@ module.exports = {
               (err3, finalDoc) => {
                 if (err3) return reject(err3);
                 return resolve(finalDoc);
-              }
+              },
             );
           },
         );
@@ -725,7 +720,7 @@ module.exports = {
               (err3, finalDoc) => {
                 if (err3) return reject(err3);
                 return resolve(finalDoc);
-              }
+              },
             );
           },
         );
