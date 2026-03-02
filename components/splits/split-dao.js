@@ -12,6 +12,27 @@ const { default: mongoose, set } = require("mongoose");
 const setSchema = require("../sets/set-schema");
 const tableSchema = require("../tables/table-schema");
 
+function normalizeSetForTemplateCopy(setTemp) {
+  delete setTemp.doned;
+  delete setTemp.fail;
+  delete setTemp.rir;
+  delete setTemp.reps;
+  delete setTemp.timeMin;
+  delete setTemp.timeSec;
+
+  setTemp.expectedRir = Array.isArray(setTemp.expectedRir)
+    ? [...setTemp.expectedRir]
+    : setTemp.expectedRir != null
+      ? [setTemp.expectedRir]
+      : [];
+
+  setTemp.expectedReps = Array.isArray(setTemp.expectedReps)
+    ? [...setTemp.expectedReps]
+    : setTemp.expectedReps != null
+      ? [setTemp.expectedReps]
+      : [];
+}
+
 module.exports = {
   async getSplits(page, limit) {
     return new Promise((resolve, reject) =>
@@ -22,7 +43,7 @@ module.exports = {
         .exec((err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        })
+        }),
     );
   },
 
@@ -31,7 +52,7 @@ module.exports = {
       splitSchema.findOne({ code: barcode }, (err, doc) => {
         if (err) return reject(err);
         return resolve(doc);
-      })
+      }),
     );
   },
 
@@ -40,7 +61,7 @@ module.exports = {
       splitSchema.estimatedDocumentCount({}).exec((err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 
@@ -53,7 +74,7 @@ module.exports = {
         .exec((err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        })
+        }),
     );
   },
 
@@ -66,7 +87,7 @@ module.exports = {
         .exec((err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        })
+        }),
     );
   },
 
@@ -75,7 +96,7 @@ module.exports = {
       splitSchema.create(split, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 
@@ -122,7 +143,7 @@ module.exports = {
                 });
               });
             });
-          }
+          },
         );
       });
     });
@@ -182,18 +203,7 @@ module.exports = {
           if (withSets)
             exerciseTemp.sets.forEach((setTemp) => {
               setTemp._id = new mongoose.Types.ObjectId();
-              delete setTemp.doned;
-              // delete setTemp.weight;
-              setTemp.expectedRir = Array.isArray(setTemp.expectedRir)
-                ? [...setTemp.expectedRir]
-                : setTemp.expectedRir != null
-                ? [setTemp.expectedRir]
-                : [];
-              setTemp.expectedReps = Array.isArray(setTemp.expectedReps)
-                ? [...setTemp.expectedReps]
-                : setTemp.expectedReps != null
-                ? [setTemp.expectedReps]
-                : [];
+              normalizeSetForTemplateCopy(setTemp);
               newSets.push(setTemp);
             });
           else exerciseTemp.sets = [];
@@ -282,7 +292,7 @@ module.exports = {
       splitSchema.findByIdAndUpdate(idSplit, addWorkout, {}, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 
@@ -293,7 +303,7 @@ module.exports = {
       splitSchema.updateOne({ _id: id }, update, {}, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 

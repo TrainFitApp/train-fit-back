@@ -7,6 +7,27 @@ const customExerciseSchema = require("../customExercises/custom-exercise-schema"
 const setSchema = require("../sets/set-schema");
 const { default: mongoose } = require("mongoose");
 
+function normalizeSetForTemplateCopy(setTemp) {
+  delete setTemp.doned;
+  delete setTemp.fail;
+  delete setTemp.rir;
+  delete setTemp.reps;
+  delete setTemp.timeMin;
+  delete setTemp.timeSec;
+
+  setTemp.expectedRir = Array.isArray(setTemp.expectedRir)
+    ? [...setTemp.expectedRir]
+    : setTemp.expectedRir != null
+      ? [setTemp.expectedRir]
+      : [];
+
+  setTemp.expectedReps = Array.isArray(setTemp.expectedReps)
+    ? [...setTemp.expectedReps]
+    : setTemp.expectedReps != null
+      ? [setTemp.expectedReps]
+      : [];
+}
+
 module.exports = {
   // async getTables(page, limit) {
   //   return new Promise((resolve, reject) =>
@@ -41,6 +62,7 @@ module.exports = {
             customExercises.push(customExerciseTemp);
             customExerciseTemp.sets.forEach((setTemp) => {
               setTemp._id = new mongoose.Types.ObjectId();
+              normalizeSetForTemplateCopy(setTemp);
               sets.push(setTemp);
             });
           });
@@ -79,6 +101,7 @@ module.exports = {
             customExercises.push(customExerciseTemp);
             customExerciseTemp.sets.forEach((setTemp) => {
               setTemp._id = new mongoose.Types.ObjectId();
+              normalizeSetForTemplateCopy(setTemp);
               sets.push(setTemp);
             });
           });

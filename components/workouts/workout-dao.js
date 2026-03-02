@@ -9,6 +9,27 @@ const { default: mongoose } = require("mongoose");
 const customExerciseDao = require("../customExercises/custom-exercise-dao");
 const tableSchema = require("../tables/table-schema");
 
+function normalizeSetForTemplateCopy(setTemp) {
+  delete setTemp.doned;
+  delete setTemp.fail;
+  delete setTemp.rir;
+  delete setTemp.reps;
+  delete setTemp.timeMin;
+  delete setTemp.timeSec;
+
+  setTemp.expectedRir = Array.isArray(setTemp.expectedRir)
+    ? [...setTemp.expectedRir]
+    : setTemp.expectedRir != null
+      ? [setTemp.expectedRir]
+      : [];
+
+  setTemp.expectedReps = Array.isArray(setTemp.expectedReps)
+    ? [...setTemp.expectedReps]
+    : setTemp.expectedReps != null
+      ? [setTemp.expectedReps]
+      : [];
+}
+
 module.exports = {
   async getWorkouts(page, limit) {
     return new Promise((resolve, reject) =>
@@ -19,7 +40,7 @@ module.exports = {
         .exec((err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        })
+        }),
     );
   },
 
@@ -141,10 +162,10 @@ module.exports = {
   async pasteWorkout(workoutClipboard, workoutToPaste) {
     try {
       const workoutIdsCustomExercises = workoutToPaste.exercises.map(
-        (exerciseTemp) => exerciseTemp._id
+        (exerciseTemp) => exerciseTemp._id,
       );
       const workoutSetsIdsExercises = workoutToPaste.exercises.flatMap(
-        (exerciseTemp) => exerciseTemp.sets.map((setTemp) => setTemp._id)
+        (exerciseTemp) => exerciseTemp.sets.map((setTemp) => setTemp._id),
       );
 
       await setSchema.deleteMany({ _id: { $in: workoutSetsIdsExercises } });
@@ -159,6 +180,7 @@ module.exports = {
         exerciseTemp._id = new mongoose.Types.ObjectId();
         exerciseTemp.sets.forEach((setTep) => {
           setTep._id = new mongoose.Types.ObjectId();
+          normalizeSetForTemplateCopy(setTep);
           setsToCreate.push(setTep);
         });
 
@@ -177,7 +199,7 @@ module.exports = {
       const updatedWorkout = await workoutSchema.findByIdAndUpdate(
         workoutToPaste._id,
         workoutToPaste,
-        { new: true }
+        { new: true },
       );
 
       return updatedWorkout;
@@ -208,10 +230,10 @@ module.exports = {
               if (err3) return reject(err3);
 
               return resolve(doc3);
-            }
+            },
           );
         });
-      })
+      }),
     );
   },
 
@@ -228,7 +250,7 @@ module.exports = {
 
       const promise = splitSchema.updateOne(
         { _id: tableDoc.splits[i]._id },
-        { $push: { workouts: newWorkout._id } }
+        { $push: { workouts: newWorkout._id } },
       );
 
       workoutsToAdd.push(newWorkout);
@@ -254,8 +276,8 @@ module.exports = {
         (err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        }
-      )
+        },
+      ),
     );
   },
 
@@ -289,7 +311,7 @@ module.exports = {
         //   if (err) return reject(err);
         //   return resolve(tableDoc);
         // });
-      })
+      }),
     );
   },
 
@@ -306,8 +328,8 @@ module.exports = {
         (err, docs) => {
           if (err) return reject(err);
           return resolve(docs);
-        }
-      )
+        },
+      ),
     );
   },
 
@@ -334,7 +356,7 @@ module.exports = {
         (err2, workoutDoc) => {
           if (err2) return reject(err2);
           return resolve(workoutDoc);
-        }
+        },
       );
     });
   },
@@ -355,9 +377,9 @@ module.exports = {
           (err2, workoutDoc) => {
             if (err2) return reject(err2);
             return resolve(workoutDoc);
-          }
+          },
         );
-      })
+      }),
     );
   },
 
@@ -383,7 +405,7 @@ module.exports = {
           if (iW === indexWorkout) {
             // Copiar el array de ejercicios y reorganizar según `newOrder`
             const newOrderedExercises = newOrder.map(
-              (index) => wTemp.exercises[index]
+              (index) => wTemp.exercises[index],
             );
 
             // Agregar operación a bulkWrite solo para actualizar el array `exercises`
@@ -406,7 +428,7 @@ module.exports = {
     idTable,
     idWorkout,
     idCustomExercise,
-    idExercise
+    idExercise,
   ) {
     const tableDoc = await ownTableSchema.findById(idTable);
     const exerciseDoc = await exerciseSchema.findById(idExercise);
@@ -466,16 +488,16 @@ module.exports = {
       });
 
       const indexWorkout = tableDoc.splits[indexS].workouts.findIndex(
-        (workoutTemp) => workoutTemp._id.toString() === idWorkout
+        (workoutTemp) => workoutTemp._id.toString() === idWorkout,
       );
 
       const workoutIdsToUpdate = tableDoc.splits.map((splitTemp) =>
-        splitTemp.workouts[indexWorkout]._id.toString()
+        splitTemp.workouts[indexWorkout]._id.toString(),
       );
 
       await workoutSchema.updateMany(
         { _id: { $in: workoutIdsToUpdate } },
-        { $set: { name: workoutsName } }
+        { $set: { name: workoutsName } },
       );
 
       return;
@@ -489,16 +511,16 @@ module.exports = {
       workoutSchema.findById(id, (err, doc) => {
         if (err) return reject(err);
         const customExerciseIds = doc.exercises.map(
-          (exerciseTemp) => exerciseTemp._id
+          (exerciseTemp) => exerciseTemp._id,
         );
         customExerciseSchema.deleteMany(
           { _id: { $in: customExerciseIds } },
           (err2, doc2) => {
             if (err2) return reject(err2);
             return resolve(doc2);
-          }
+          },
         );
-      })
+      }),
     );
   },
 
@@ -508,7 +530,7 @@ module.exports = {
       let exerciseId;
       if (dataExerciseData.exercise && !dataExerciseData.exercise._id) {
         const exerciseDoc = await exerciseSchema.create(
-          dataExerciseData.exercise
+          dataExerciseData.exercise,
         );
         exerciseId = exerciseDoc._id;
       } else {
@@ -539,15 +561,14 @@ module.exports = {
         notes: dataExerciseData.notes || null,
       };
 
-      const customExerciseDoc = await customExerciseSchema.create(
-        customExerciseData
-      );
+      const customExerciseDoc =
+        await customExerciseSchema.create(customExerciseData);
 
       // 4. Agregar el CustomExercise al Workout y devolver el workout autopoblado
       await workoutSchema.findByIdAndUpdate(
         workoutId,
         { $push: { exercises: customExerciseDoc._id } },
-        { new: true }
+        { new: true },
       );
 
       // Leer nuevamente para aplicar autopopulate
@@ -563,7 +584,7 @@ module.exports = {
       workoutSchema.deleteOne({ _id: id }, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 
@@ -575,7 +596,7 @@ module.exports = {
       workoutSchema.deleteMany(deleteWorkouts, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
-      })
+      }),
     );
   },
 };
