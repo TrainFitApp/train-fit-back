@@ -18,7 +18,6 @@ const SetSchema = Schema(
     timeMin: Number,
     timeSec: Number,
     velocity: Number,
-    expectedFail: Boolean,
   },
   { versionKey: false },
 );

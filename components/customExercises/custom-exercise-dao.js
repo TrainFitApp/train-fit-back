@@ -114,10 +114,6 @@ module.exports = {
             unsetOperation.expectedSec = "";
           else updateOperation.expectedSec = set.expectedSec;
 
-          if (set.expectedFail === null || set.expectedFail === undefined)
-            unsetOperation.expectedFail = "";
-          else updateOperation.expectedFail = set.expectedFail;
-
           // Asegúrate de que _id sea un ObjectId válido
           const objectId = mongoose.Types.ObjectId(set._id);
 
