@@ -13,7 +13,6 @@ const tableSchema = require("../tables/table-schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
-  delete setTemp.fail;
   delete setTemp.rir;
   delete setTemp.reps;
   delete setTemp.timeMin;

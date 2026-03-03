@@ -9,7 +9,6 @@ const { default: mongoose } = require("mongoose");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
-  delete setTemp.fail;
   delete setTemp.rir;
   delete setTemp.reps;
   delete setTemp.timeMin;

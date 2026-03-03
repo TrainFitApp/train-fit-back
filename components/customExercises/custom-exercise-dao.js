@@ -114,10 +114,6 @@ module.exports = {
             unsetOperation.expectedSec = "";
           else updateOperation.expectedSec = set.expectedSec;
 
-          if (set.fail === null || set.fail === undefined)
-            unsetOperation.fail = "";
-          else updateOperation.fail = set.fail;
-
           if (set.expectedFail === null || set.expectedFail === undefined)
             unsetOperation.expectedFail = "";
           else updateOperation.expectedFail = set.expectedFail;
