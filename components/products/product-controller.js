@@ -43,7 +43,13 @@ module.exports = {
    * Crear un producto. Si se envía userId en el body, será un producto del usuario.
    */
   async createProduct(req, res) {
-    const product = await productModel.createProduct(req.body);
+    const payload = { ...req.body };
+
+    if (Object.prototype.hasOwnProperty.call(payload, "userId") && req?.user?.id) {
+      payload.userId = req.user.id;
+    }
+
+    const product = await productModel.createProduct(payload);
     return res.send(product);
   },
 

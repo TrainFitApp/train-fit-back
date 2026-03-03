@@ -9,6 +9,20 @@ function toObjectId(id) {
   return new mongoose.Types.ObjectId(id);
 }
 
+function normalizeUserId(rawUserId) {
+  if (!rawUserId) return null;
+
+  if (
+    typeof rawUserId === "object" &&
+    rawUserId !== null &&
+    Object.prototype.hasOwnProperty.call(rawUserId, "_id")
+  ) {
+    return toObjectId(rawUserId._id);
+  }
+
+  return toObjectId(rawUserId);
+}
+
 module.exports = {
   async getProducts(page, limit) {
     try {
@@ -118,6 +132,14 @@ module.exports = {
   async createProduct(product) {
     // Usar utility centralizado para limpiar datos
     const cleanedProduct = cleanObject(product);
+    const normalizedUserId = normalizeUserId(cleanedProduct.userId);
+
+    if (normalizedUserId) {
+      cleanedProduct.userId = normalizedUserId;
+    } else {
+      delete cleanedProduct.userId;
+    }
+
     return await productSchema.create(cleanedProduct);
   },
 
@@ -126,6 +148,16 @@ module.exports = {
    */
   async updateProduct(product) {
     const { _id, ...productData } = product;
+
+    if (Object.prototype.hasOwnProperty.call(productData, "userId")) {
+      const normalizedUserId = normalizeUserId(productData.userId);
+      if (normalizedUserId) {
+        productData.userId = normalizedUserId;
+      } else {
+        delete productData.userId;
+      }
+    }
+
     const allProductFields = Object.keys(productSchema.schema.paths).filter(
       (field) => field !== "_id" && field !== "__v",
     );
