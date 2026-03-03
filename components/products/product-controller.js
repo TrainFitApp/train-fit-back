@@ -45,7 +45,10 @@ module.exports = {
   async createProduct(req, res) {
     const payload = { ...req.body };
 
-    if (Object.prototype.hasOwnProperty.call(payload, "userId") && req?.user?.id) {
+    if (
+      Object.prototype.hasOwnProperty.call(payload, "userId") &&
+      req?.user?.id
+    ) {
       payload.userId = req.user.id;
     }
 
