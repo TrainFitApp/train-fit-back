@@ -133,6 +133,14 @@ module.exports = {
         return res.status(400).send({ message: "Email requerido" });
       }
 
+      // Validar que el email existe (DNS/MX) ANTES de crear usuario
+      const emailExists = await mail.validateEmailExists(email);
+      if (!emailExists) {
+        return res.status(400).send({
+          message: "El correo no existe",
+        });
+      }
+
       const userExist = await userModel.getUserByEmail(email);
       if (userExist && userExist.name) {
         return res
