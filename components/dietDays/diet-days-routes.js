@@ -64,11 +64,6 @@ router.putAsync(
   auth(["admin", "user"]),
   controller.pasteDietDayByIdDiet,
 );
-router.putAsync(
-  "/archive/dietday/on/user",
-  auth(["admin", "user"]),
-  controller.archiveDietDay,
-);
 router.deleteAsync(
   "/:idDiet/:idDietDay",
   auth(["admin", "user"]),

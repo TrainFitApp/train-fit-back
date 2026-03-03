@@ -9,7 +9,7 @@ router.getAsync("/", auth(["admin", "user"]), controller.getSplits);
 router.getAsync(
   "/code/:barcode",
   auth(["admin", "user"]),
-  controller.getSplitByCode
+  controller.getSplitByCode,
 );
 router.getAsync("/count", auth(["admin", "user"]), controller.getSplitsCount);
 router.getAsync("/:search", auth(["admin", "user"]), controller.getSearchSplit);
@@ -17,29 +17,28 @@ router.postAsync("/", auth(["admin", "user"]), controller.createSplit);
 router.postAsync(
   "/:tableInUseId",
   auth(["admin", "user"]),
-  controller.createSplitAndAddToTable
+  controller.createSplitAndAddToTable,
 );
-router.putAsync("/archive", auth(["admin", "user"]), controller.arhiveSplit);
 router.putAsync(
   "/add/to/table",
   auth(["admin", "user"]),
-  controller.addSplitToTable
+  controller.addSplitToTable,
 );
 router.putAsync(
   "/split/:idTable/:idSplit",
   auth(["admin", "user"]),
-  controller.addTableSplit
+  controller.addTableSplit,
 );
 router.putAsync(
   "/:idSplit/:idWorkout",
   auth(["admin", "user"]),
-  controller.addWorkoutsSplit
+  controller.addWorkoutsSplit,
 );
 router.putAsync("/:id", auth(["admin", "user"]), controller.updateSplit);
 router.deleteAsync(
   "/:idTable/:idSplit",
   auth(["admin", "user"]),
-  controller.deleteSplit
+  controller.deleteSplit,
 );
 
 module.exports = router;

@@ -473,46 +473,6 @@ module.exports = {
     );
   },
 
-  async archiveDietDay(idUser, idDietDay) {
-    const archiveDietDay = {
-      $push: { archivedDietDays: idDietDay },
-    };
-
-    const unArchiveDietDay = {
-      $pull: { archivedDietDays: idDietDay },
-    };
-
-    try {
-      const user = await userSchema.findById(idUser);
-      const isArchived = !!user.archivedDietDays.find((dietDayTempId) =>
-        dietDayTempId.equals(idDietDay),
-      );
-
-      let userUpdated;
-      if (isArchived) {
-        userUpdated = await userSchema.findByIdAndUpdate(
-          idUser,
-          unArchiveDietDay,
-          {
-            new: true,
-          },
-        );
-      } else {
-        userUpdated = await userSchema.findByIdAndUpdate(
-          idUser,
-          archiveDietDay,
-          {
-            new: true,
-          },
-        );
-      }
-
-      return userUpdated;
-    } catch (err) {
-      throw new Error(err);
-    }
-  },
-
   async deleteDietDayMeal(idDietDay, idMeal) {
     const deleteMeal = {
       $pull: { meals: idMeal },

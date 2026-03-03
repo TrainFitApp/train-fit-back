@@ -1,6 +1,5 @@
 const dietDayDao = require("./diet-days-dao");
 const dietDayUtil = require("./diet-days-util");
-const { archiveDietDay } = require("./diet-days-dao");
 const aggregateService = require("../util/aggregate-service");
 
 module.exports = {
@@ -136,10 +135,6 @@ module.exports = {
 
   async addDietDayMeal(idDietDay, idMeal) {
     return dietDayDao.addDietDayMeal(idDietDay, idMeal);
-  },
-
-  async archiveDietDay(idUser, idDietDay) {
-    return dietDayDao.archiveDietDay(idUser, idDietDay);
   },
 
   async updateDietDay(id, { name, weight, date, meals, notes }) {

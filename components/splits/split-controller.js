@@ -25,7 +25,7 @@ module.exports = {
     const splits = await splitService.getSearchSplit(
       page,
       limit,
-      req.params.search
+      req.params.search,
     );
     return res.send(splits);
   },
@@ -37,18 +37,18 @@ module.exports = {
   },
   async createSplitAndAddToTable(req, res) {
     const split = await splitService.createSplitAndAddToTable(
-      req.params.tableInUseId
+      req.params.tableInUseId,
     );
     return res.send(split);
     // return res.send(splitDTO.single(split, req.body));
   },
-  async arhiveSplit(req, res) {
-    await splitService.arhiveSplit(req.body.idUser, req.body.idSplit);
-    return res.sendStatus(204);
-  },
 
   async addSplitToTable(req, res) {
-    const splitDoc = await splitService.addSplitToTable(req.body.idTable, req.body.idSplit, req.body.withSets);
+    const splitDoc = await splitService.addSplitToTable(
+      req.body.idTable,
+      req.body.idSplit,
+      req.body.withSets,
+    );
     return res.send(splitDoc);
     // return res.send(splitDTO.single(split, req.body));
   },
@@ -56,7 +56,7 @@ module.exports = {
   async addTableSplit(req, res) {
     const table = await splitService.addTableSplit(
       req.params.idTable,
-      req.params.idSplit
+      req.params.idSplit,
     );
 
     return res.send(table);
@@ -65,7 +65,7 @@ module.exports = {
   async addWorkoutsSplit(req, res) {
     const split = await splitService.addWorkoutsSplit(
       req.params.idSplit,
-      req.params.idWorkout
+      req.params.idWorkout,
     );
 
     return res.send(split);

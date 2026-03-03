@@ -10,7 +10,7 @@ router.use(validateAuth);
 router.get("/search", controller.searchRecipes);
 router.get("/user", controller.getUserRecipes);
 router.get("/verified", controller.getVerifiedRecipes);
-router.get("/favorites", controller.getFavoriteRecipes);
+router.get("/archived", controller.getArchivedRecipes);
 
 // CRUD operations
 router.get("/:id", controller.getRecipeById);
@@ -19,8 +19,8 @@ router.post("/compose", controller.composeRecipe);
 router.put("/:id", controller.updateRecipe);
 router.delete("/:id", controller.deleteRecipe);
 
-// Favorite toggle
-router.post("/:id/favorite", controller.toggleFavoriteRecipe);
+// Archive toggle (recipes archived by user)
+router.post("/:id/archive", controller.toggleArchivedRecipe);
 
 // CustomProduct management within Recipe
 router.post(

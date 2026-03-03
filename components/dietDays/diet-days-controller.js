@@ -136,14 +136,6 @@ const controller = {
     return res.send(dietDay);
   },
 
-  async archiveDietDay(req, res) {
-    const dietDay = await dietDayModel.archiveDietDay(
-      req.body.idUser,
-      req.body.idDietDay,
-    );
-    return res.send(dietDay);
-  },
-
   async pasteDietDayByIdDiet(req, res) {
     const dietDay = await dietDayModel.pasteDietDayByIdDiet(
       req.params.id,

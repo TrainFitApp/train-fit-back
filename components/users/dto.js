@@ -21,7 +21,7 @@ const single = async (resource, authUser) => ({
   ownTables: resource.ownTables,
   archivedProducts: resource.archivedProducts,
   archivedExercises: resource.archivedExercises,
-  favoriteRecipes: resource.favoriteRecipes,
+  archivedRecipes: resource.archivedRecipes,
   birth: resource.birth,
   hash: resource.hash,
   archivedTables: resource.archivedTables,

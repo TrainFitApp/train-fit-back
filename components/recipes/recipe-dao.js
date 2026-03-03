@@ -196,10 +196,10 @@ module.exports = {
       await dataRecipeSchema.deleteMany({ _id: { $in: dataRecipeIds } });
     }
 
-    // 4. Clean up user favorites AND archives
+    // 4. Clean up user archived recipes
     await userSchema.updateMany(
-      { $or: [{ favoriteRecipes: id }, { archivedRecipes: id }] },
-      { $pull: { favoriteRecipes: id, archivedRecipes: id } },
+      { archivedRecipes: id },
+      { $pull: { archivedRecipes: id } },
     );
 
     // 5. Finally delete the blueprint Recipe
@@ -370,18 +370,18 @@ module.exports = {
       .exec();
   },
 
-  async getFavoriteRecipes(userId, page, limit, search) {
-    const user = await userSchema.findById(userId).select("favoriteRecipes");
-    if (!user || !user.favoriteRecipes || user.favoriteRecipes.length === 0) {
+  async getArchivedRecipes(userId, page, limit, search) {
+    const user = await userSchema.findById(userId).select("archivedRecipes");
+    if (!user || !user.archivedRecipes || user.archivedRecipes.length === 0) {
       return [];
     }
 
     const query = search
       ? {
-          _id: { $in: user.favoriteRecipes },
+          _id: { $in: user.archivedRecipes },
           name: { $regex: search, $options: "i" },
         }
-      : { _id: { $in: user.favoriteRecipes } };
+      : { _id: { $in: user.archivedRecipes } };
 
     return recipeSchema
       .find(query)
@@ -390,19 +390,19 @@ module.exports = {
       .exec();
   },
 
-  async toggleFavoriteRecipe(userId, recipeId) {
-    const user = await userSchema.findById(userId).select("favoriteRecipes");
-    const isFavorite =
-      user.favoriteRecipes && user.favoriteRecipes.includes(recipeId);
+  async toggleArchivedRecipe(userId, recipeId) {
+    const user = await userSchema.findById(userId).select("archivedRecipes");
+    const isArchived =
+      user.archivedRecipes && user.archivedRecipes.includes(recipeId);
 
-    const query = isFavorite
-      ? { $pull: { favoriteRecipes: recipeId } }
-      : { $push: { favoriteRecipes: recipeId } };
+    const query = isArchived
+      ? { $pull: { archivedRecipes: recipeId } }
+      : { $push: { archivedRecipes: recipeId } };
 
     const updatedUser = await userSchema.findByIdAndUpdate(userId, query, {
       new: true,
     });
-    return { user: updatedUser, isFavorite: !isFavorite };
+    return { user: updatedUser, isArchived: !isArchived };
   },
 
   async addRecipeCustomProduct(idRecipe, idCustomProduct) {

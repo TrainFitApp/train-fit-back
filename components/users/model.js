@@ -69,13 +69,9 @@ module.exports = {
 
     user.ownTables = [];
     user.archivedDiets = [];
-    user.archivedDietDays = [];
-    user.archivedMeals = [];
     user.archivedProducts = [];
     user.archivedRecipes = [];
     user.archivedTables = [];
-    user.archivedSplits = [];
-    user.archivedWorkouts = [];
     user.archivedExercises = [];
 
     return await userDao.updateGoogleUser(user);
@@ -94,13 +90,9 @@ module.exports = {
 
     user.ownTables = [];
     user.archivedDiets = [];
-    user.archivedDietDays = [];
-    user.archivedMeals = [];
     user.archivedProducts = [];
     user.archivedRecipes = [];
     user.archivedTables = [];
-    user.archivedSplits = [];
-    user.archivedWorkouts = [];
     user.archivedExercises = [];
 
     return await userDao.updateAppleUser(user);

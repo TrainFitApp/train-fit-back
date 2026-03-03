@@ -29,12 +29,12 @@ module.exports = {
     return recipeDao.getVerifiedRecipes(page, limit, search);
   },
 
-  async getFavoriteRecipes(userId, page, limit, search) {
-    return recipeDao.getFavoriteRecipes(userId, page, limit, search);
+  async getArchivedRecipes(userId, page, limit, search) {
+    return recipeDao.getArchivedRecipes(userId, page, limit, search);
   },
 
-  async toggleFavoriteRecipe(userId, recipeId) {
-    return recipeDao.toggleFavoriteRecipe(userId, recipeId);
+  async toggleArchivedRecipe(userId, recipeId) {
+    return recipeDao.toggleArchivedRecipe(userId, recipeId);
   },
 
   async addRecipeCustomProduct(idRecipe, idCustomProduct) {

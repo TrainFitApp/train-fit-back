@@ -4,7 +4,7 @@ const workoutUtil = require("../workouts/workout-util");
 const tableService = require("../tables/table-service");
 const workoutService = require("../workouts/workout-service");
 const splitSchema = require("./split-schema");
-const ownownTableSchema = require("../ownTables/own-table-schema");
+const ownTableSchema = require("../ownTables/own-table-schema");
 
 module.exports = {
   async getSplits(page, limit) {
@@ -56,12 +56,8 @@ module.exports = {
     return await ownTableSchema.findByIdAndUpdate(
       tableInUse._id,
       addSplitToTable,
-      { new: true }
+      { new: true },
     );
-  },
-
-  async arhiveSplit(idUser, idSplit) {
-    return splitDao.arhiveSplit(idUser, idSplit);
   },
 
   async addSplitToTable(idTable, idSplit, withSets) {

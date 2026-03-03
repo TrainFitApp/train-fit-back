@@ -6,9 +6,8 @@ const exerciseSchema = require("../exercises/exercise-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const workoutSchema = require("../workouts/workout-schema");
 const workoutService = require("../workouts/workout-service");
-const userSchema = require("../users/schema");
 
-const { default: mongoose, set } = require("mongoose");
+const { default: mongoose } = require("mongoose");
 const setSchema = require("../sets/set-schema");
 const tableSchema = require("../tables/table-schema");
 
@@ -147,29 +146,6 @@ module.exports = {
         );
       });
     });
-  },
-
-  async arhiveSplit(idUser, idSplit) {
-    let archiveSplit;
-
-    const user = await userSchema.findById(idUser);
-    const splitExist = !!user.archivedSplits.includes(idSplit);
-
-    if (splitExist) {
-      archiveSplit = {
-        $pull: { archivedSplits: idSplit },
-      };
-    } else {
-      archiveSplit = {
-        $push: { archivedSplits: idSplit },
-      };
-    }
-
-    try {
-      return await userSchema.findByIdAndUpdate(idUser, archiveSplit);
-    } catch (err) {
-      throw err;
-    }
   },
 
   async addSplitToTable(idTable, idSplit, withSets) {

@@ -59,14 +59,14 @@ const controller = {
     }
   },
 
-  async getFavoriteRecipes(req, res, next) {
+  async getArchivedRecipes(req, res, next) {
     try {
       const page = parseInt((req.query.page || 0).toString(), 10);
       const limit = parseInt((req.query.limit || 20).toString(), 10);
       const search = req.query.search || "";
       const userId = req.user.id;
 
-      const recipes = await recipeModel.getFavoriteRecipes(
+      const recipes = await recipeModel.getArchivedRecipes(
         userId,
         page,
         limit,
@@ -149,17 +149,16 @@ const controller = {
     }
   },
 
-  async toggleFavoriteRecipe(req, res, next) {
+  async toggleArchivedRecipe(req, res, next) {
     try {
       const userId = req.user.id;
       const recipeId = req.params.id;
 
-      const result = await recipeModel.toggleFavoriteRecipe(userId, recipeId);
+      const result = await recipeModel.toggleArchivedRecipe(userId, recipeId);
       return res.json({
-        isFavorite: result.isFavorite,
-        message: result.isFavorite
-          ? "Recipe added to favorites"
-          : "Recipe removed from favorites",
+        isArchived: result.isArchived,
+        isFavorite: result.isArchived,
+        message: result.isArchived ? "Recipe archived" : "Recipe unarchived",
       });
     } catch (error) {
       next(error);
