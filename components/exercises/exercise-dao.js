@@ -2,6 +2,7 @@ const exerciseSchema = require("./exercise-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const userSchema = require("../users/schema");
 const { Types } = require("mongoose");
+const { cleanObject } = require("../util/clean-data");
 
 module.exports = {
   async getExercises(page, limit) {
@@ -202,8 +203,9 @@ module.exports = {
   },
 
   async createExercise(exercise) {
+    const cleanedExercise = cleanObject(exercise);
     return new Promise((resolve, reject) =>
-      exerciseSchema.create(exercise, (err, docs) => {
+      exerciseSchema.create(cleanedExercise, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
       }),
@@ -238,7 +240,20 @@ module.exports = {
   },
 
   async updateExercise(id, exercise) {
-    const update = { $set: exercise };
+    const cleanedExercise = cleanObject(exercise);
+    const update = {};
+
+    if (Object.keys(cleanedExercise).length > 0) {
+      update.$set = cleanedExercise;
+    }
+
+    if (exercise?.isCardio !== true) {
+      update.$unset = { isCardio: "" };
+    }
+
+    if (Object.keys(update).length === 0) {
+      return { matchedCount: 0, modifiedCount: 0 };
+    }
 
     return new Promise((resolve, reject) =>
       exerciseSchema.updateOne({ _id: id }, update, {}, (err, docs) => {
