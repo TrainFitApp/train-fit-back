@@ -525,6 +525,28 @@ module.exports = {
     const normalizeId = (value) => value?._id || value;
     const toPlainObject = (value) =>
       value?.toObject ? value.toObject() : { ...value };
+    const getDataRecipePayload = async (instanceObj) => {
+      let dataRecipeObj = instanceObj.dataRecipe;
+
+      if (dataRecipeObj && !dataRecipeObj.recipe) {
+        dataRecipeObj = await dataRecipeSchema.findById(dataRecipeObj).lean();
+      }
+
+      if (!dataRecipeObj) {
+        return null;
+      }
+
+      const recipeId = normalizeId(dataRecipeObj.recipe);
+      if (!recipeId) {
+        return null;
+      }
+
+      return {
+        recipe: recipeId,
+        quantity: dataRecipeObj.quantity,
+        quantityCooked: dataRecipeObj.quantityCooked,
+      };
+    };
 
     const mealsToCreate = [];
 
@@ -550,25 +572,12 @@ module.exports = {
       for (const instanceRef of sourceInstances) {
         const instanceObj = toPlainObject(instanceRef);
 
-        let dataRecipeObj = instanceObj.dataRecipe;
-        if (dataRecipeObj && !dataRecipeObj.recipe) {
-          dataRecipeObj = await dataRecipeSchema.findById(dataRecipeObj).lean();
-        }
-
-        if (!dataRecipeObj?.recipe) {
+        const dataRecipePayload = await getDataRecipePayload(instanceObj);
+        if (!dataRecipePayload) {
           continue;
         }
 
-        const recipeId = normalizeId(dataRecipeObj.recipe);
-        if (!recipeId) {
-          continue;
-        }
-
-        const newDataRecipe = await dataRecipeSchema.create({
-          recipe: recipeId,
-          quantity: dataRecipeObj.quantity,
-          quantityCooked: dataRecipeObj.quantityCooked,
-        });
+        const newDataRecipe = await dataRecipeSchema.create(dataRecipePayload);
 
         const customProductsOverrides = (
           instanceObj.customProductsOverrides || []
@@ -592,7 +601,7 @@ module.exports = {
 
         const newCustomRecipeInstance = await customRecipeSchema.create({
           dataRecipe: newDataRecipe._id,
-          quantity: instanceObj.quantity || 0,
+          quantity: instanceObj.quantity ?? 0,
           customProductsOverrides,
           additionalCustomProducts,
         });
