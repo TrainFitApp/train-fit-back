@@ -254,7 +254,6 @@ module.exports = {
     }
   },
 
-
   async updateGoogleUser(userUpdate) {
     try {
       const findUser = await userSchema.findOne({ email: userUpdate.email });
@@ -439,14 +438,26 @@ module.exports = {
 
   async sendMailCode(email, hash) {
     try {
+      // Validar que el email existe (formato + dominio con MX)
+      const emailExists = await mail.validateEmailExists(email);
+      if (!emailExists) {
+        throw new Error("Invalid or non-existent email address");
+      }
+
+      // Buscar usuario en BD
+      const user = await userSchema.findOne({ email: email }).select("email");
+      if (!user) {
+        throw new Error("User not found");
+      }
+
       const setUserHash = { $set: { hash: hash } };
       const html = mail.generateHashMail(
-        `Hola ${email}`,
+        `Hola ${user.email}`,
         "Este es tu código de verificación. Copia y pégalo en la app.",
         hash,
       );
-      await mail.sendMailSES(email, "Código de verificación", html);
-      return await userSchema.updateOne({ email: email }, setUserHash);
+      await mail.sendMailSES(user.email, "Código de verificación", html);
+      return await userSchema.updateOne({ email: user.email }, setUserHash);
     } catch (e) {
       throw e;
     }

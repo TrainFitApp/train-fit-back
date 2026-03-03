@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const dns = require("dns").promises;
 const suggestionsHost = process.env.SUGGESTIONS_MAIL_SENDER_HOST;
 const suggestionsPort = process.env.SUGGESTIONS_MAIL_SENDER_PORT;
 const suggestionsUser = process.env.SUGGESTIONS_MAIL_SENDER_USER;
@@ -38,11 +39,45 @@ Promise.allSettled([
     } else {
       console.warn(
         i === 0 ? "Suggestions SMTP verify failed:" : "SES SMTP verify failed:",
-        r.reason?.message || r.reason
+        r.reason?.message || r.reason,
       );
     }
   });
 });
+
+/**
+ * Valida que un email tenga formato correcto y dominio con registros MX válidos
+ * @param {string} email - Email a validar
+ * @returns {Promise<boolean>} - true si es válido y el dominio existe
+ */
+const validateEmailExists = async (email) => {
+  try {
+    // Validar formato básico
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return false;
+    }
+
+    // Extraer dominio
+    const domain = email.split("@")[1];
+    if (!domain) {
+      return false;
+    }
+
+    // Verificar registros MX del dominio
+    try {
+      const mxRecords = await dns.resolveMx(domain);
+      return mxRecords && mxRecords.length > 0;
+    } catch (dnsError) {
+      // Si falla DNS lookup, el dominio no existe o no tiene MX
+      console.warn(`DNS MX lookup failed for domain ${domain}:`, dnsError.code);
+      return false;
+    }
+  } catch (error) {
+    console.error("Error validating email:", error);
+    return false;
+  }
+};
 
 const sendMail = async (sender, to, subject, html) => {
   const mailOptions = { from: sender, to, subject, html };
@@ -58,19 +93,19 @@ const htmlToText = (html) => {
   let text = String(html);
 
   // Eliminar preheader span oculto ANTES de procesar (evita caracteres especiales en texto plano)
-  text = text.replace(/<span[^>]*display:\s*none[^>]*>[\s\S]*?<\/span>/gi, '');
+  text = text.replace(/<span[^>]*display:\s*none[^>]*>[\s\S]*?<\/span>/gi, "");
 
   // Saltos de línea y párrafos
   text = text.replace(/<br\s*\/>|<br\s*>/gi, "\n");
   text = text.replace(/<p\b[^>]*>/gi, "");
   text = text.replace(/<\/p>/gi, "\n\n");
-  text = text.replace(/<\/div>/gi, '\n');
-  text = text.replace(/<\/h[1-6]>/gi, '\n\n');
+  text = text.replace(/<\/div>/gi, "\n");
+  text = text.replace(/<\/h[1-6]>/gi, "\n\n");
 
   // Enlaces: texto (url)
   text = text.replace(
     /<a\b[^>]*href=\"([^\"]*)\"[^>]*>(.*?)<\/a>/gi,
-    "$2 ($1)"
+    "$2 ($1)",
   );
 
   // Elimina el resto de etiquetas HTML
@@ -78,15 +113,15 @@ const htmlToText = (html) => {
 
   // Decodifica entidades HTML
   text = text.replace(/&nbsp;/g, " ");
-  text = text.replace(/&zwnj;/g, '');
+  text = text.replace(/&zwnj;/g, "");
   text = text.replace(/&amp;/g, "&");
   text = text.replace(/&lt;/g, "<");
   text = text.replace(/&gt;/g, ">");
   text = text.replace(/&quot;/g, '"');
   text = text.replace(/&#39;/g, "'");
-  text = text.replace(/&#847;/g, '');
-  text = text.replace(/&#8199;/g, '');
-  text = text.replace(/&#65279;/g, '');
+  text = text.replace(/&#847;/g, "");
+  text = text.replace(/&#8199;/g, "");
+  text = text.replace(/&#65279;/g, "");
 
   // Limpieza de espacios y saltos
   text = text.replace(/[ \t]+\n/g, "\n");
@@ -123,8 +158,6 @@ const sendMailSES = async (to, subject, html) => {
   return sesTransporter.sendMail(mailOptions);
 };
 
-
-
 /**
 
  *
@@ -135,7 +168,9 @@ const sendMailSES = async (to, subject, html) => {
  */
 const generateMail = (header1, description, linkHref, linkContent) => {
   // Preheader text mejorado basado en el contenido
-  const preheader = description?.substring(0, 100) || "Activa tu cuenta de TrainFit para comenzar tu transformación física.";
+  const preheader =
+    description?.substring(0, 100) ||
+    "Activa tu cuenta de TrainFit para comenzar tu transformación física.";
 
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//ES" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html dir="ltr" lang="es">
@@ -157,9 +192,10 @@ const generateMail = (header1, description, linkHref, linkContent) => {
             </h1>
 
             <p style="font-size:16px;line-height:24px;color:#374151;margin:16px 0">
-              ${description ||
-    "Gracias por registrarte. Pulsa el botón de abajo para activar tu cuenta."
-    }
+              ${
+                description ||
+                "Gracias por registrarte. Pulsa el botón de abajo para activar tu cuenta."
+              }
             </p>
 
             <table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="text-align:center;margin-bottom:32px">
@@ -237,9 +273,10 @@ const generateHashMail = (header1, description, hash) => {
             </h1>
 
             <p style="font-size:16px;line-height:24px;color:#374151;margin:8px 0 20px 0;text-align:center">
-              ${description ||
-    "Introduce el siguiente código en la app para continuar."
-    }
+              ${
+                description ||
+                "Introduce el siguiente código en la app para continuar."
+              }
             </p>
 
             <div style="text-align:center;margin:20px 0 8px 0">
@@ -266,4 +303,10 @@ const generateHashMail = (header1, description, hash) => {
 </html>`;
 };
 
-module.exports = { sendMail, sendMailSES, generateMail, generateHashMail };
+module.exports = {
+  sendMail,
+  sendMailSES,
+  generateMail,
+  generateHashMail,
+  validateEmailExists,
+};
