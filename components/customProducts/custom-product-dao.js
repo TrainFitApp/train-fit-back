@@ -8,6 +8,7 @@ const dietSchema = require("../diets/diet-schema");
 const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
 const dietDayUtil = require("../dietDays/diet-days-util");
+const { cleanObject } = require("../util/clean-data");
 
 module.exports = {
   async findCustomProductById(id) {
@@ -15,7 +16,7 @@ module.exports = {
       customProductSchema.findById(id, (err, doc) => {
         if (err) return reject(err);
         return resolve(doc);
-      })
+      }),
     );
   },
 
@@ -58,27 +59,33 @@ module.exports = {
 
   async createCustomProductAndAddToMeal(idMeal, customProduct, idUser) {
     try {
-
+      // Limpiar datos del custom product
+      const cleanedCustomProduct = cleanObject(customProduct);
 
       // Si viene un producto inline unificado (product), lo guardamos en Product.
-      if (idUser && customProduct.product && !customProduct.product._id) {
+      if (
+        idUser &&
+        cleanedCustomProduct.product &&
+        !cleanedCustomProduct.product._id
+      ) {
         const productDoc = await productSchema.create({
-          ...customProduct.product,
+          ...cleanedCustomProduct.product,
           userId: idUser,
         });
-        customProduct.product = productDoc._id;
+        cleanedCustomProduct.product = productDoc._id;
       }
 
-      const customProductDoc = await customProductSchema.create(customProduct);
+      const customProductDoc =
+        await customProductSchema.create(cleanedCustomProduct);
 
       let setCustomProduct = { $set: { mealId: idMeal } };
-      if (customProduct.product && customProduct.product._id) {
-        setCustomProduct.$set.product = customProduct.product;
+      if (cleanedCustomProduct.product && cleanedCustomProduct.product._id) {
+        setCustomProduct.$set.product = cleanedCustomProduct.product;
       }
 
       await customProductSchema.findByIdAndUpdate(
         customProductDoc._id,
-        setCustomProduct
+        setCustomProduct,
       );
       await mealSchema.findByIdAndUpdate(idMeal, {
         $push: { customProducts: customProductDoc._id },
@@ -91,25 +98,27 @@ module.exports = {
   },
 
   async updateCustomProduct(customProduct) {
-    return new Promise((resolve, reject) =>
+    return new Promise((resolve, reject) => {
+      const { _id, ...data } = customProduct;
+      const cleanedData = cleanObject(data);
       customProductSchema.findByIdAndUpdate(
-        customProduct._id,
-        customProduct,
+        _id,
+        cleanedData,
         { new: true },
         (err, doc) => {
           if (err) return reject(err);
           return resolve(doc);
-        }
-      )
-    );
+        },
+      );
+    });
   },
 
   async delete(id) {
     return new Promise((resolve, reject) =>
-      customProductSchema.deleteOne({_id: id}, (err, docs) => {
+      customProductSchema.deleteOne({ _id: id }, (err, docs) => {
         if (err) return reject(err);
         return resolve();
-      })
+      }),
     );
   },
 };

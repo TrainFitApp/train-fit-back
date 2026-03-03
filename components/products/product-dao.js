@@ -2,6 +2,7 @@ const productSchema = require("./product-schema");
 const userSchema = require("../users/schema");
 const aggregateService = require("../util/aggregate-service");
 const mongoose = require("mongoose");
+const { cleanObject, prepareUpdateQuery } = require("../util/clean-data");
 
 function toObjectId(id) {
   if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
@@ -17,7 +18,12 @@ module.exports = {
           $addFields: {
             isSpanish: {
               $cond: {
-                if: { $regexMatch: { input: { $toString: { $ifNull: ["$code", ""] } }, regex: "^84" } },
+                if: {
+                  $regexMatch: {
+                    input: { $toString: { $ifNull: ["$code", ""] } },
+                    regex: "^84",
+                  },
+                },
                 then: 1,
                 else: 0,
               },
@@ -57,7 +63,10 @@ module.exports = {
       }
 
       // 2. Buscar en productos globales
-      const globalProduct = await productSchema.findOne({ code: barcode, userId: null });
+      const globalProduct = await productSchema.findOne({
+        code: barcode,
+        userId: null,
+      });
       return { product: globalProduct || null, isOwn: false };
     } catch (err) {
       throw err;
@@ -80,7 +89,12 @@ module.exports = {
           $addFields: {
             isSpanish: {
               $cond: {
-                if: { $regexMatch: { input: { $toString: { $ifNull: ["$code", ""] } }, regex: "^84" } },
+                if: {
+                  $regexMatch: {
+                    input: { $toString: { $ifNull: ["$code", ""] } },
+                    regex: "^84",
+                  },
+                },
                 then: 1,
                 else: 0,
               },
@@ -102,15 +116,8 @@ module.exports = {
    * Crear un producto. Si se pasa userId, será un producto del usuario.
    */
   async createProduct(product) {
-    // Filtrar campos null, 0 o vacíos
-    const cleanedProduct = {};
-    Object.keys(product).forEach((key) => {
-      const val = product[key];
-      if (val !== null && val !== undefined && val !== 0 && val !== "") {
-        cleanedProduct[key] = val;
-      }
-    });
-
+    // Usar utility centralizado para limpiar datos
+    const cleanedProduct = cleanObject(product);
     return await productSchema.create(cleanedProduct);
   },
 
@@ -119,43 +126,39 @@ module.exports = {
    */
   async updateProduct(product) {
     const { _id, ...productData } = product;
+    const allProductFields = Object.keys(productSchema.schema.paths).filter(
+      (field) => field !== "_id" && field !== "__v",
+    );
 
-    const criticalFields = ["name", "energyKcal100g", "protein100g", "carbohydrates100g", "fat100g"];
-    const booleanFields = ["vegan", "vegetarian", "lactoseFree", "glutenFree", "verified"];
+    const options = {
+      booleanFields: [
+        "vegan",
+        "vegetarian",
+        "lactoseFree",
+        "glutenFree",
+        "verified",
+      ],
+      criticalFields: [
+        "name",
+        "energyKcal100g",
+        "protein100g",
+        "carbohydrates100g",
+        "fat100g",
+      ],
+      unsetMissingFields: true,
+      allFields: allProductFields,
+      protectedUnsetFields: ["userId", "verified"],
+    };
 
-    const toSet = {};
-    const toUnset = {};
-
-    Object.keys(productData).forEach((key) => {
-      const val = productData[key];
-
-      if (booleanFields.includes(key)) {
-        if (val) toSet[key] = true;
-        else toUnset[key] = "";
-        return;
-      }
-
-      if (criticalFields.includes(key)) {
-        if (val !== null && val !== undefined && val !== "") toSet[key] = val;
-        return;
-      }
-
-      if (val === null || val === undefined || val === 0 || val === "") {
-        toUnset[key] = "";
-      } else {
-        toSet[key] = val;
-      }
-    });
-
-    const queryUpdate = {};
-    if (Object.keys(toSet).length > 0) queryUpdate.$set = toSet;
-    if (Object.keys(toUnset).length > 0) queryUpdate.$unset = toUnset;
+    const queryUpdate = prepareUpdateQuery(productData, options);
 
     if (Object.keys(queryUpdate).length === 0) {
       return await productSchema.findById(_id);
     }
 
-    return await productSchema.findByIdAndUpdate(_id, queryUpdate, { new: true });
+    return await productSchema.findByIdAndUpdate(_id, queryUpdate, {
+      new: true,
+    });
   },
 
   /**
@@ -167,7 +170,7 @@ module.exports = {
       return await productSchema.findByIdAndUpdate(
         id,
         { $unset: { userId: "" }, $set: { verified: true } },
-        { new: true }
+        { new: true },
       );
     } catch (err) {
       throw err;
