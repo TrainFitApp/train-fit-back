@@ -7,7 +7,7 @@ module.exports = {
     const workouts = await workoutModel.getWorkouts(
       page,
       limit,
-      req.params.search
+      req.params.search,
     );
     return res.send(workouts);
   },
@@ -20,7 +20,7 @@ module.exports = {
   async pasteWorkout(req, res) {
     const workout = await workoutModel.pasteWorkout(
       req.body.workoutClipboard,
-      req.body.workoutToPaste
+      req.body.workoutToPaste,
     );
     return res.send(workout);
   },
@@ -46,7 +46,7 @@ module.exports = {
   async getWorkoutByIdAndDate(req, res) {
     const workout = await workoutModel.getWorkoutByIdAndDate(
       req.params.id,
-      req.body.date
+      req.body.date,
     );
     return res.send(workout);
   },
@@ -63,7 +63,7 @@ module.exports = {
   async addWorkoutExercise(req, res) {
     const workout = await workoutModel.addWorkoutExercise(
       req.params.idWorkout,
-      req.params.idExercise
+      req.params.idExercise,
     );
     return res.send(workout);
   },
@@ -72,7 +72,7 @@ module.exports = {
     const table = await workoutModel.addWorkoutsExercises(
       req.params.idTable,
       req.params.idExercise,
-      req.params.workoutOrder
+      req.params.workoutOrder,
     );
     return res.send(table);
   },
@@ -82,10 +82,22 @@ module.exports = {
     return res.send(workout);
   },
 
+  async finishWorkout(req, res) {
+    const result = await workoutModel.finishWorkout(
+      req.body.workoutId,
+      req.user?.id,
+      req.body.date,
+    );
+    if (!result?.workout) {
+      return res.status(404).send({ message: "Workout not found" });
+    }
+    return res.send(result);
+  },
+
   async updateWorkout(req, res) {
     const workout = await workoutModel.updateWorkout(
       req.body.workout,
-      req.body.customExercise
+      req.body.customExercise,
     );
     return res.send(workout);
   },
@@ -93,7 +105,7 @@ module.exports = {
   async addDataExerciseToWorkout(req, res) {
     const workout = await workoutModel.addDataExerciseToWorkout(
       req.params.idWorkout,
-      req.body
+      req.body,
     );
     return res.send(workout);
   },
@@ -102,7 +114,7 @@ module.exports = {
     const workout = await workoutModel.updateWorkoutsOrder(
       req.params.idWorkout,
       req.params.idTable,
-      req.body
+      req.body,
     );
     return res.send(workout);
   },
@@ -112,7 +124,7 @@ module.exports = {
       req.params.idTable,
       req.params.idWorkout,
       req.params.idCustomExercise,
-      req.params.idExercise
+      req.params.idExercise,
     );
     return res.send(table);
   },
@@ -121,7 +133,7 @@ module.exports = {
     await workoutModel.updateWorkoutsName(
       req.params.idTable,
       req.params.idWorkout,
-      req.body.workoutsName
+      req.body.workoutsName,
     );
     return res.sendStatus(204);
   },
@@ -139,7 +151,7 @@ module.exports = {
   async deleteWorkoutExercise(req, res) {
     const workout = await workoutModel.deleteWorkoutExercise(
       req.params.idWorkout,
-      req.params.idExercise
+      req.params.idExercise,
     );
     return res.send(workout);
   },

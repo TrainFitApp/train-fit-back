@@ -8,6 +8,7 @@ const Workout = require("./workout-class");
 const { default: mongoose } = require("mongoose");
 const customExerciseDao = require("../customExercises/custom-exercise-dao");
 const tableSchema = require("../tables/table-schema");
+const userSchema = require("../users/schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -334,18 +335,55 @@ module.exports = {
 
   async modifyWorkout(workout) {
     return new Promise((resolve, reject) => {
-      const update = { $set: workout };
+      const update = { $set: {} };
+      const unset = {};
 
-      if (!workout.date) {
-        update.$unset = { ...update.$unset, date: 1 };
+      // Set all provided fields
+      for (const key in workout) {
+        if (key !== "_id") {
+          // Parse date if it comes as ISO string
+          if (key === "date" && typeof workout[key] === "string") {
+            update.$set[key] = new Date(workout[key]);
+          } else {
+            update.$set[key] = workout[key];
+          }
+        }
       }
 
-      if (!workout.paused) {
-        update.$unset = { ...update.$unset, paused: 1 };
+      const hasDate = Object.prototype.hasOwnProperty.call(workout, "date");
+      const hasPaused = Object.prototype.hasOwnProperty.call(workout, "paused");
+      const hasNotes = Object.prototype.hasOwnProperty.call(workout, "notes");
+
+      // Only unset date when it is explicitly sent as null
+      if (hasDate && workout.date === null) {
+        delete update.$set.date;
+        unset.date = 1;
       }
 
-      if (!workout.notes || workout.notes?.trim() === "") {
-        update.$unset = { ...update.$unset, notes: 1 };
+      // Only unset paused when it is explicitly sent as null/undefined/false
+      if (
+        hasPaused &&
+        (workout.paused === null ||
+          workout.paused === undefined ||
+          workout.paused === false)
+      ) {
+        delete update.$set.paused;
+        unset.paused = 1;
+      }
+
+      // Only unset notes when it is explicitly sent as null/undefined/empty
+      if (
+        hasNotes &&
+        (workout.notes === null ||
+          workout.notes === undefined ||
+          workout.notes?.trim() === "")
+      ) {
+        delete update.$set.notes;
+        unset.notes = 1;
+      }
+
+      if (Object.keys(unset).length > 0) {
+        update.$unset = unset;
       }
 
       workoutSchema.findByIdAndUpdate(
@@ -358,6 +396,28 @@ module.exports = {
         },
       );
     });
+  },
+
+  async finishWorkout(workoutId, userId, date) {
+    const finishDate = date ? new Date(date) : new Date();
+
+    const [workoutDoc, userDoc] = await Promise.all([
+      workoutSchema.findByIdAndUpdate(
+        workoutId,
+        { $set: { date: finishDate }, $unset: { paused: 1 } },
+        { new: true },
+      ),
+      userSchema.findByIdAndUpdate(
+        userId,
+        { $unset: { workoutInUse: 1 } },
+        { new: true },
+      ),
+    ]);
+
+    return {
+      workout: workoutDoc,
+      userUpdated: !!userDoc,
+    };
   },
 
   async updateWorkout(workout, customExercise) {

@@ -11,43 +11,44 @@ router.postAsync("/", auth(["admin", "user"]), controller.createWorkout);
 router.postAsync(
   "/add-data-exercise/:idWorkout",
   auth(["admin", "user"]),
-  controller.addDataExerciseToWorkout
+  controller.addDataExerciseToWorkout,
 );
 router.postAsync(
   "/multiple/:idTable",
   auth(["admin", "user"]),
-  controller.addWorkoutsToSplits
+  controller.addWorkoutsToSplits,
 );
 router.postAsync(
   "/date/:id",
   auth(["admin", "user"]),
-  controller.getWorkoutByIdAndDate
+  controller.getWorkoutByIdAndDate,
 );
 router.putAsync(
   "/names/:idTable/:idWorkout",
   auth(["admin", "user"]),
-  controller.updateWorkoutsName
+  controller.updateWorkoutsName,
 );
 router.putAsync(
   "/:idTable/:idExercise/:workoutOrder",
   auth(["admin", "user"]),
-  controller.addWorkoutsExercises
+  controller.addWorkoutsExercises,
 );
 router.putAsync(
   "/modify/one/simple/save",
   auth(["admin", "user"]),
-  controller.modifyWorkout
+  controller.modifyWorkout,
 );
+router.putAsync("/finish", auth(["admin", "user"]), controller.finishWorkout);
 router.putAsync("/", auth(["admin", "user"]), controller.updateWorkout);
 router.putAsync(
   "/:idTable/:idWorkout/:idCustomExercise/:idExercise",
   auth(["admin", "user"]),
-  controller.updateCustomExercises
+  controller.updateCustomExercises,
 );
 router.putAsync(
   "/:idWorkout/:idTable",
   auth(["admin", "user"]),
-  controller.updateWorkoutsOrder
+  controller.updateWorkoutsOrder,
 );
 router.putAsync("/deletes", auth(["admin", "user"]), controller.deleteWorkouts);
 router.putAsync("/paste", auth(["admin", "user"]), controller.pasteWorkout);
@@ -55,12 +56,12 @@ router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteWorkout);
 router.deleteAsync(
   "/:idWorkout/:idExercise",
   auth(["admin", "user"]),
-  controller.deleteWorkoutExercise
+  controller.deleteWorkoutExercise,
 );
 router.deleteAsync(
   "/all/deletes/:id",
   auth(["admin", "user"]),
-  controller.deleteWorkoutCustomExercises
+  controller.deleteWorkoutCustomExercises,
 );
 
 module.exports = router;

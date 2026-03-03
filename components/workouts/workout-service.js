@@ -36,6 +36,10 @@ module.exports = {
     return workoutDao.modifyWorkout(workout);
   },
 
+  async finishWorkout(workoutId, userId, date) {
+    return workoutDao.finishWorkout(workoutId, userId, date);
+  },
+
   async updateWorkout(workout, customExercise) {
     return workoutDao.updateWorkout(workout, customExercise);
   },
@@ -48,7 +52,7 @@ module.exports = {
     return await workoutDao.updateWorkoutsOrder(
       idWorkout,
       idTable,
-      indexReorderedCustomExercises
+      indexReorderedCustomExercises,
     );
   },
 
@@ -56,13 +60,13 @@ module.exports = {
     idTable,
     idWorkout,
     idCustomExercise,
-    idExercise
+    idExercise,
   ) {
     return await workoutDao.updateCustomExercises(
       idTable,
       idWorkout,
       idCustomExercise,
-      idExercise
+      idExercise,
     );
   },
 
