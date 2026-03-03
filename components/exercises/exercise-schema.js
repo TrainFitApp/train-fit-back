@@ -8,7 +8,7 @@ const ExerciseSchema = Schema({
   description: String,
   muscleGroups1: [String],
   muscleGroups2: [String],
-  category: String,
+  category: [String],
   equipment: [String],
   keywords: [String],
   isCardio: Boolean,
@@ -31,16 +31,21 @@ ExerciseSchema.pre("deleteOne", async function (next) {
       const UserModel = mongoose.model("User");
       await UserModel.updateMany(
         { archivedExercises: exercise._id },
-        { $pull: { archivedExercises: exercise._id } }
+        { $pull: { archivedExercises: exercise._id } },
       );
     } catch (e) {
-      console.warn("UserModel not initialized or error updating user archivedExercises", e);
+      console.warn(
+        "UserModel not initialized or error updating user archivedExercises",
+        e,
+      );
     }
 
     // 2. Buscar customExercises enlazados a este exercise
-    const customExercises = await customExerciseSchema.find({
-      exercise: exercise._id,
-    }).lean();
+    const customExercises = await customExerciseSchema
+      .find({
+        exercise: exercise._id,
+      })
+      .lean();
 
     if (customExercises.length > 0) {
       const customExerciseIds = customExercises.map((ce) => ce._id);
@@ -50,14 +55,19 @@ ExerciseSchema.pre("deleteOne", async function (next) {
         const WorkoutModel = mongoose.model("Workout");
         await WorkoutModel.updateMany(
           { exercises: { $in: customExerciseIds } },
-          { $pull: { exercises: { $in: customExerciseIds } } }
+          { $pull: { exercises: { $in: customExerciseIds } } },
         );
       } catch (e) {
-        console.warn("WorkoutModel not initialized or error updating workouts", e);
+        console.warn(
+          "WorkoutModel not initialized or error updating workouts",
+          e,
+        );
       }
 
       // 4. Borrar los customExercises de la DB
-      await customExerciseSchema.deleteMany({ _id: { $in: customExerciseIds } });
+      await customExerciseSchema.deleteMany({
+        _id: { $in: customExerciseIds },
+      });
     }
 
     next();
