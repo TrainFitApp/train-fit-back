@@ -40,7 +40,7 @@ class TokenService {
    * @param {string|number} [expiresIn="15m"] - Tiempo de expiración opcional
    * @returns {string} JWT firmado
    */
-  static generateAccessToken(payload, expiresIn = "15m") {
+  static generateAccessToken(payload, expiresIn = "180d") {
     return jwt.sign(payload, requireKey(privateKey, "PRIVATE_KEY"), {
       algorithm: "RS256",
       expiresIn,
