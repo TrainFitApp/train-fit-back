@@ -21,16 +21,22 @@ module.exports = {
   },
 
   async searchAllWithFilters(req, res) {
-    const page = req.body.page || 0;
+    const toBoolean = (value) => {
+      if (typeof value === "boolean") return value;
+      if (typeof value === "string") return value.toLowerCase() === "true";
+      return !!value;
+    };
+
+    const page = parseInt((req.body.page || 0).toString(), 10);
     const limit = 7;
     const list = await mealService.searchAllWithFilters(
       page,
       limit,
       req.body.search,
-      req.body.ownFilter,
-      req.body.recipeFilter,
-      req.body.shieldFilter,
-      req.body.favFilter,
+      toBoolean(req.body.ownFilter),
+      toBoolean(req.body.recipeFilter),
+      toBoolean(req.body.shieldFilter),
+      toBoolean(req.body.favFilter),
       req.body.userId,
     );
     return res.send(list);
