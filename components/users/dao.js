@@ -465,8 +465,13 @@ module.exports = {
 
   async checkRestoreCode(email, password, hash) {
     try {
+      // Primero verificar si el usuario existe
+      const userExists = await userSchema.findOne({ email: email });
+      if (!userExists) throw new Error("Usuario no encontrado");
+
+      // Luego comprobar si el hash coincide
       const user = await userSchema.findOne({ email: email, hash: hash });
-      if (!user) throw new Error("User not found");
+      if (!user) throw new Error("Código incorrecto");
 
       user.hash = undefined;
       user.password = password;
