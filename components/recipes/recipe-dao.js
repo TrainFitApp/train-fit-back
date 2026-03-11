@@ -207,8 +207,13 @@ module.exports = {
   },
 
   async searchRecipes(page, limit, search, userId) {
-    // Search ALL recipes (verified, user's own, and others)
+    // All recipes view: current user's recipes + global recipes.
+    const visibilityFilter = userId
+      ? { $or: [{ userId }, { userId: { $exists: false } }] }
+      : { userId: { $exists: false } };
+
     const query = {
+      ...visibilityFilter,
       name: { $regex: search, $options: "i" },
     };
 

@@ -299,6 +299,9 @@ module.exports = {
 
       const filtersKey = `${Number(!!ownFilter)}${Number(!!recipeFilter)}${Number(!!shieldFilter)}${Number(!!favFilter)}`;
       let docs = [];
+      const recipeUserVisibilityFilter = {
+        $or: [{ userId: userObjectId }, { userId: { $exists: false } }],
+      };
 
       switch (filtersKey) {
         // ========================================================================
@@ -330,22 +333,34 @@ module.exports = {
 
         // CASE 0100: All Recipes (No Filters)
         case "0100": {
-          const query = buildRegexQuery();
+          if (!userObjectId) return [];
+          const query = buildRegexQuery(recipeUserVisibilityFilter);
           docs = await executeRecipeQuery(query);
           break;
         }
 
         // CASE 0110: Recipes + Verified Status Filter
         case "0110": {
-          const query = buildRegexQuery({ verified: shieldFilter });
+          if (!userObjectId) return [];
+          const query = buildRegexQuery({
+            verified: shieldFilter,
+            ...recipeUserVisibilityFilter,
+          });
           docs = await executeRecipeQuery(query);
           break;
         }
 
         // CASE 0101: Recipes + Favorited
         case "0101": {
+          if (!userObjectId) return [];
+          if (!archivedRecipes.length) {
+            docs = [];
+            break;
+          }
+
           const query = buildRegexQuery({
             _id: { $in: archivedRecipes },
+            ...recipeUserVisibilityFilter,
           });
           docs = await executeRecipeQuery(query);
           break;
@@ -353,9 +368,16 @@ module.exports = {
 
         // CASE 0111: Recipes + Verified + Favorited
         case "0111": {
+          if (!userObjectId) return [];
+          if (!archivedRecipes.length) {
+            docs = [];
+            break;
+          }
+
           const query = buildRegexQuery({
             _id: { $in: archivedRecipes },
             verified: shieldFilter,
+            ...recipeUserVisibilityFilter,
           });
           docs = await executeRecipeQuery(query);
           break;
