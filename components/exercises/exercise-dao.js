@@ -155,6 +155,14 @@ module.exports = {
         });
       }
 
+      if (searchExercisesFilterGroup.isCardio === true) {
+        agg.push({
+          $match: {
+            isCardio: true,
+          },
+        });
+      }
+
       // Añade una etapa $match para la búsqueda de texto si existe en 'searchExercisesFilterGroup'.
       if (searchExercisesFilterGroup.search) {
         const searchText = searchExercisesFilterGroup.search.trim();
