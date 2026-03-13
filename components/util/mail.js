@@ -69,9 +69,13 @@ const validateEmailExists = async (email) => {
       const mxRecords = await dns.resolveMx(domain);
       return mxRecords && mxRecords.length > 0;
     } catch (dnsError) {
-      // Si falla DNS lookup, el dominio no existe o no tiene MX
       console.warn(`DNS MX lookup failed for domain ${domain}:`, dnsError.code);
-      return false;
+      // Si el error es ETIMEOUT, SERVFAIL, etc., asumimos que puede ser válido para no bloquear
+      // Solo rechazamos explícitamente si el dominio no existe (ENOTFOUND) o no tiene MX (ENODATA)
+      if (dnsError.code === 'ENOTFOUND' || dnsError.code === 'ENODATA') {
+        return false;
+      }
+      return true; // Ante la duda por fallos de red, permitimos el registro
     }
   } catch (error) {
     console.error("Error validating email:", error);
