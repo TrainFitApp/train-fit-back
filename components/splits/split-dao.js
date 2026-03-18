@@ -12,11 +12,10 @@ const setSchema = require("../sets/set-schema");
 const tableSchema = require("../tables/table-schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
+  // Solo borramos el estado de completado para que el nuevo microciclo
+  // empiece de cero, pero mantenemos los valores de rendimiento (peso, reps, rir, etc.)
+  // como punto de partida para el usuario.
   delete setTemp.doned;
-  delete setTemp.rir;
-  delete setTemp.reps;
-  delete setTemp.timeMin;
-  delete setTemp.timeSec;
 
   setTemp.expectedRir = Array.isArray(setTemp.expectedRir)
     ? [...setTemp.expectedRir]
