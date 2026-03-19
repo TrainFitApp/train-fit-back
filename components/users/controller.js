@@ -907,8 +907,16 @@ module.exports = {
   },
 
   async sendSuggestions(req, res) {
-    await userModel.sendSuggestions(req.body.email, req.body.suggestions);
-    return res.sendStatus(204);
+    try {
+      await userModel.sendSuggestions(req.body.email, req.body.suggestions);
+      return res.sendStatus(204);
+    } catch (error) {
+      console.error("Error al enviar sugerencia por email:", error);
+      return res.status(503).send({
+        message: "No se pudo enviar el correo de sugerencia. Verifica la configuración SMTP.",
+        error: error.message,
+      });
+    }
   },
 
   async deleteUser(req, res) {
