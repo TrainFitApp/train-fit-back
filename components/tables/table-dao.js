@@ -78,65 +78,76 @@ module.exports = {
 
   async getSearchTables(page, limit, search, isOwn, idUser) {
     try {
-      const searchTerms = search.split(" ");
+      const normalizedSearch = (search || "").trim();
+      const searchTerms = normalizedSearch
+        .split(" ")
+        .map((term) => term.trim())
+        .filter(Boolean);
+
+      const baseMatch = {};
+
+      if (searchTerms.length > 0) {
+        baseMatch.$and = searchTerms.map((term) => ({
+          name: { $regex: term, $options: "i" },
+        }));
+      }
+
+      const buildLightSearchPipeline = (extraMatch = {}) => [
+        { $match: { ...baseMatch, ...extraMatch } },
+        // Solo traer lo esencial para listado
+        { $project: { _id: 1, name: 1, urlImage: 1, splits: 1 } },
+        {
+          $lookup: {
+            from: "splits",
+            let: { splitIds: "$splits" },
+            pipeline: [
+              { $match: { $expr: { $in: ["$_id", "$$splitIds"] } } },
+              { $project: { _id: 1, workoutsCount: { $size: "$workouts" } } },
+            ],
+            as: "splitStats",
+          },
+        },
+        {
+          $addFields: {
+            microcyclesCount: { $size: "$splits" },
+            workoutsCount: {
+              $ifNull: [{ $arrayElemAt: ["$splitStats.workoutsCount", 0] }, 0],
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 1,
+            name: 1,
+            urlImage: 1,
+            microcyclesCount: 1,
+            workoutsCount: 1,
+          },
+        },
+        { $skip: page * limit },
+        { $limit: limit },
+      ];
 
       if (isOwn) {
         const userId = mongoose.Types.ObjectId(idUser);
+        const user = await userSchema.findById(userId).select("ownTables").lean();
 
-        const user = await userSchema.findById(userId);
-
-        if (!user) {
-          // Manejo de usuario no encontrado
+        if (!user?.ownTables?.length) {
           return [];
         }
 
-        // Luego, obtén los IDs de las tablas del usuario
-        const tableIds = user.ownTables.map((tableTemp) => tableTemp._id); // Asume que este es el campo que contiene los IDs de las tablas
+        const tableIds = user.ownTables.map((tableId) =>
+          typeof tableId === "object" && tableId?._id ? tableId._id : tableId
+        );
 
-        // Define un arreglo para almacenar las condiciones de búsqueda
-        const searchConditions = [];
-
-        // Agrega las condiciones de búsqueda para cada término en `searchTerms`
-        searchTerms.forEach((term) => {
-          searchConditions.push({
-            name: { $regex: term, $options: "i" },
-          });
-        });
-
-        // Combina todas las condiciones con $and
-        searchConditions.unshift({ _id: { $in: tableIds } });
-
-        // Utiliza las condiciones de búsqueda para buscar las tablas
-        return await ownTableSchema
-          .find({ $and: searchConditions })
-          .skip(page * limit)
-          .limit(limit);
-      } else {
-        const aggregate = [
-          {
-            $match: {
-              name: { $regex: search, $options: "i" },
-            },
-          },
-          {
-            $lookup: {
-              from: "splits",
-              localField: "splits",
-              foreignField: "_id",
-              as: "splits",
-            },
-          },
-          {
-            $skip: page * limit,
-          },
-          {
-            $limit: limit,
-          },
-        ];
-        return await tableSchema.aggregate(aggregate);
+        return await ownTableSchema.aggregate(
+          buildLightSearchPipeline({ _id: { $in: tableIds } })
+        );
       }
+
+      return await tableSchema.aggregate(buildLightSearchPipeline());
     } catch (e) {
-      throw err;
+      throw e;
     }
   },
 

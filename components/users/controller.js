@@ -378,6 +378,11 @@ module.exports = {
     try {
       const refreshToken = req.cookies?.refreshToken;
       if (!refreshToken) {
+        console.warn("[AUTH] refresh-token without cookie", {
+          origin: req.headers?.origin,
+          userAgent: req.headers?.["user-agent"],
+          ip: req.ip,
+        });
         return res
           .status(401)
           .send({ message: "No refresh token", requiresRelogin: true });

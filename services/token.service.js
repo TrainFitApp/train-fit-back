@@ -34,6 +34,30 @@ function requireKey(key, name) {
  * Token Service - Centraliza generación y verificación de JWT
  */
 class TokenService {
+  static getRefreshCookieOptions(maxAge = 30 * 24 * 60 * 60 * 1000) {
+    const envSecure = process.env.COOKIE_SECURE;
+    const secure =
+      envSecure !== undefined
+        ? String(envSecure).toLowerCase() === "true"
+        : process.env.NODE_ENV === "production";
+
+    let sameSite = process.env.COOKIE_SAMESITE || (secure ? "none" : "lax");
+    sameSite = String(sameSite).toLowerCase();
+
+    // Browsers reject SameSite=None without Secure. Fallback safely in local http.
+    if (!secure && sameSite === "none") {
+      sameSite = "lax";
+    }
+
+    return {
+      httpOnly: true,
+      secure,
+      sameSite,
+      maxAge,
+      path: "/api",
+    };
+  }
+
   /**
    * Genera un Access Token (JWT) con duración por defecto de 15 minutos
    * @param {Object} payload - Datos a incluir en el token (email, roles)
@@ -109,13 +133,11 @@ class TokenService {
    * @param {string} refreshToken - Token a almacenar en cookie
    */
   static setRefreshTokenCookie(res, refreshToken) {
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: true, // Localhost is treated as secure context naturally, so this is safe and required for 'none'
-      sameSite: "none", // Obligatorio para peticiones cruzadas (ej: :8100 y :3000) debido a port-bound cookies
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 días (sesión deslizante)
-      path: "/api",
-    });
+    res.cookie(
+      "refreshToken",
+      refreshToken,
+      TokenService.getRefreshCookieOptions()
+    );
   }
 
   /**
@@ -123,15 +145,9 @@ class TokenService {
    * @param {Object} res - Response object de Express
    */
   static clearRefreshTokenCookie(res) {
-    // Flags DEBEN ser idénticos a los de setRefreshTokenCookie
-    // Si no coinciden, el browser no identifica la cookie a borrar
-    res.cookie("refreshToken", "", {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      maxAge: 0,
-      path: "/api",
-    });
+    // Flags DEBEN ser idénticos a los de setRefreshTokenCookie.
+    // Si no coinciden, el browser no identifica la cookie a borrar.
+    res.cookie("refreshToken", "", TokenService.getRefreshCookieOptions(0));
   }
 }
 
