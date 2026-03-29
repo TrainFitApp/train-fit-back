@@ -406,7 +406,7 @@ module.exports = {
 
       const hashedToken = TokenService.hashToken(refreshToken);
       const now = Date.now();
-      const gracePeriodMs = 15000; // 15 segundos
+      const gracePeriodMs = 120000; // 2 minutos para tolerar carreras/red lenta en móvil
 
       // 3. Lógica de Rotación
       const isCurrent = user.refreshToken === hashedToken;
@@ -441,8 +441,18 @@ module.exports = {
           roles: user.roles,
         });
         return res.send({ access_token: newAT, theme: user.theme });
+      } else if (isPrevious) {
+        // Token previo fuera de la ventana de gracia.
+        // No invalidamos toda la sesión activa para evitar falsos positivos por
+        // peticiones retrasadas (background/resume en móviles), pero forzamos
+        // re-login del cliente que presenta este token obsoleto.
+        TokenService.clearRefreshTokenCookie(res);
+        return res
+          .status(401)
+          .send({ message: "Stale refresh token", requiresRelogin: true });
       } else {
-        // Token reutilizado fuera de gracia o inválido: SEURIDAD - invalidar todo
+        // Token no reconocido (ni actual ni previo): posible reutilización real.
+        // Invalidamos toda la cadena para contener una posible exfiltración.
         await userSchema.findByIdAndUpdate(user._id, {
           refreshToken: null,
           previousRefreshToken: null,
