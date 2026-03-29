@@ -8,7 +8,39 @@ const dietSchema = require("../diets/diet-schema");
 const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
 const dietDayUtil = require("../dietDays/diet-days-util");
-const { cleanObject } = require("../util/clean-data");
+const isUnsettable = (value) =>
+  value === null ||
+  value === undefined ||
+  (typeof value === "string" && value.trim() === "");
+
+const cleanForCreate = (payload = {}) => {
+  const cleaned = {};
+  Object.keys(payload).forEach((key) => {
+    const value = payload[key];
+    if (isUnsettable(value)) return;
+    cleaned[key] = value;
+  });
+  return cleaned;
+};
+
+const toSetUnsetUpdate = (payload = {}) => {
+  const $set = {};
+  const $unset = {};
+
+  Object.keys(payload).forEach((key) => {
+    const value = payload[key];
+    if (isUnsettable(value)) {
+      $unset[key] = "";
+      return;
+    }
+    $set[key] = value;
+  });
+
+  const updateQuery = {};
+  if (Object.keys($set).length) updateQuery.$set = $set;
+  if (Object.keys($unset).length) updateQuery.$unset = $unset;
+  return updateQuery;
+};
 
 module.exports = {
   async findCustomProductById(id) {
@@ -60,7 +92,7 @@ module.exports = {
   async createCustomProductAndAddToMeal(idMeal, customProduct, idUser) {
     try {
       // Limpiar datos del custom product
-      const cleanedCustomProduct = cleanObject(customProduct);
+      const cleanedCustomProduct = cleanForCreate(customProduct);
 
       // Si viene un producto inline unificado (product), lo guardamos en Product.
       if (
@@ -100,10 +132,21 @@ module.exports = {
   async updateCustomProduct(customProduct) {
     return new Promise((resolve, reject) => {
       const { _id, ...data } = customProduct;
-      const cleanedData = cleanObject(data);
+      const updateQuery = toSetUnsetUpdate(data);
+
+      if (
+        !updateQuery ||
+        (!updateQuery.$set && !updateQuery.$unset)
+      ) {
+        return customProductSchema.findById(_id, (findErr, currentDoc) => {
+          if (findErr) return reject(findErr);
+          return resolve(currentDoc);
+        });
+      }
+
       customProductSchema.findByIdAndUpdate(
         _id,
-        cleanedData,
+        updateQuery,
         { new: true },
         (err, doc) => {
           if (err) return reject(err);

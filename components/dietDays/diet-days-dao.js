@@ -10,6 +10,21 @@ const dietModel = require("../diets/diet-model");
 const userSchema = require("../users/schema");
 const dietDaysUtil = require("./diet-days-util");
 
+const isUnsettable = (value) =>
+  value === null ||
+  value === undefined ||
+  (typeof value === "string" && value.trim() === "");
+
+const cleanForCreate = (payload = {}) => {
+  const cleaned = {};
+  Object.keys(payload).forEach((key) => {
+    const value = payload[key];
+    if (isUnsettable(value)) return;
+    cleaned[key] = value;
+  });
+  return cleaned;
+};
+
 module.exports = {
   async findAll(page, limit) {
     return new Promise((resolve, reject) =>
@@ -221,17 +236,25 @@ module.exports = {
     idUser,
   ) {
     try {
+      const cleanedCustomProduct = cleanForCreate(customProduct);
+
       // Unified support: Si viene product inline (unificado)
-      if (idUser && customProduct?.product && !customProduct.product._id) {
+      if (
+        idUser &&
+        cleanedCustomProduct?.product &&
+        !cleanedCustomProduct.product._id
+      ) {
         const productDoc = await productSchema.create({
-          ...customProduct.product,
+          ...cleanedCustomProduct.product,
           userId: idUser,
         });
-        customProduct.product = productDoc._id;
+        cleanedCustomProduct.product = productDoc._id;
       }
 
       // Creación customProduct
-      const customProductDoc = await customProductSchema.create(customProduct);
+      const customProductDoc = await customProductSchema.create(
+        cleanedCustomProduct,
+      );
       // Creación dietDay
       let dietDayDoc = await this.createDietDay(dietDay);
       const dietDayId = dietDayDoc._id.toString();
