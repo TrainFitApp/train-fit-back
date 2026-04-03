@@ -81,7 +81,7 @@ module.exports = {
       // ============================================================================
 
       /**
-       * Build regex-based query with accent-insensitive matching
+       * Build regex-based query with accent-insensitive matching (usado solo para recetas)
        * Returns only additionalFilters if no search term provided
        */
       const buildRegexQuery = (additionalFilters = {}) => {
@@ -90,6 +90,36 @@ module.exports = {
           $and: accentInsensitiveRegexTerms.map((term) => ({
             name: { $regex: term, $options: "i" },
           })),
+          ...additionalFilters,
+        };
+      };
+
+      /**
+       * Build $text-based query for products (usa el índice de texto en name+brand).
+       * - 1 palabra  → $text con el token completo (stemming español + acentos)
+       * - N palabras → $text para las N-1 palabras completas + $regex para la última
+       *               (la última puede estar incompleta mientras el usuario escribe)
+       */
+      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      const buildTextQuery = (additionalFilters = {}) => {
+        if (!hasSearch) return additionalFilters;
+
+        const words = normalizedSearch.split(/\s+/).filter(Boolean);
+
+        if (words.length === 1) {
+          return { $text: { $search: words[0] }, ...additionalFilters };
+        }
+
+        const completeWords = words.slice(0, -1);
+        const partialWord = words[words.length - 1];
+        const partialRegex = { $regex: escapeRegex(partialWord), $options: "i" };
+
+        // $and permite añadir el filtro parcial sin conflicto con posibles $or
+        // de additionalFilters (ej: visibilidad userId en caso 0000)
+        return {
+          $text: { $search: completeWords.map((w) => `"${w}"`).join(" ") },
+          $and: [{ $or: [{ name: partialRegex }, { brand: partialRegex }] }],
           ...additionalFilters,
         };
       };
@@ -213,12 +243,14 @@ module.exports = {
         };
 
         if (hasSearch) {
+          // Sin skip ni slice aquí: la paginación se hace en memoria después
+          // del sort por relevancia para garantizar que el resultado exacto
+          // (ej: "Zanahorias") no quede enterrado tras resultados alfabéticos.
+          // Cap de 300 para proteger contra búsquedas muy amplias.
           results = await productSchema
             .find(match)
-            .sort({ name: 1, _id: 1 })
-            .skip(skipValue)
             .lean()
-            .limit(fetchLimit)
+            .limit(300)
             .exec();
         } else {
           if (hasSpecificUserScope) {
@@ -238,8 +270,7 @@ module.exports = {
         // ================================================================
         results = applySorting(results, ownPriorityUserId);
 
-        // Return paginated results (slice to exact limit)
-        return hasSearch ? results.slice(0, limit) : results;
+        return results;
       };
 
       /**
@@ -311,7 +342,7 @@ module.exports = {
         // CASE 1000: Own Products Only
         case "1000": {
           if (!userObjectId) return [];
-          const query = buildRegexQuery({ userId: userObjectId });
+          const query = buildTextQuery({ userId: userObjectId });
           docs = await executeProductQuery({ match: query });
           break;
         }
@@ -319,7 +350,7 @@ module.exports = {
         // CASE 1001: Own Products + Favorited
         case "1001": {
           if (!userObjectId) return [];
-          const query = buildRegexQuery({
+          const query = buildTextQuery({
             userId: userObjectId,
             _id: { $in: archivedProducts },
           });
@@ -389,7 +420,7 @@ module.exports = {
 
         // CASE 0010: Verified Global Products
         case "0010": {
-          const query = buildRegexQuery({
+          const query = buildTextQuery({
             verified: shieldFilter,
             userId: { $exists: false },
           });
@@ -399,7 +430,7 @@ module.exports = {
 
         // CASE 0011: Verified Global Products + Favorited
         case "0011": {
-          const query = buildRegexQuery({
+          const query = buildTextQuery({
             _id: { $in: archivedProducts },
             verified: shieldFilter,
           });
@@ -409,7 +440,7 @@ module.exports = {
 
         // CASE 0001: Favorited Global Products
         case "0001": {
-          const query = buildRegexQuery({
+          const query = buildTextQuery({
             _id: { $in: archivedProducts },
           });
           docs = await executeProductQuery({ match: query });
@@ -418,7 +449,7 @@ module.exports = {
 
         // CASE 0000: All Products (User's Own + Global)
         case "0000": {
-          const baseQuery = buildRegexQuery();
+          const baseQuery = buildTextQuery();
 
           if (!userObjectId) {
             // No user: only global products
@@ -451,7 +482,9 @@ module.exports = {
         const normalizedSearchTerms = searchTerms.map((term) =>
           ns.normalizeSearchTerm(term),
         );
-        return orderByTermsMatched(docs, normalizedSearchTerms);
+        // Ordenar por relevancia sobre todos los candidatos y paginar en memoria
+        const sorted = orderByTermsMatched(docs, normalizedSearchTerms);
+        return sorted.slice(skipValue, skipValue + limit);
       }
 
       return docs;
@@ -847,23 +880,20 @@ module.exports = {
 
 function orderByTermsMatched(docs, searchTerms) {
   return docs.sort((a, b) => {
-    // Primero por prioridad española (código 84)
+    // Prioridad 1: calidad de coincidencia (exacto > empieza por > contiene)
+    const scoreA = calculateMatchScore(a.name, searchTerms);
+    const scoreB = calculateMatchScore(b.name, searchTerms);
+
+    if (scoreA !== scoreB) {
+      return scoreB - scoreA;
+    }
+
+    // Prioridad 2 (desempate): productos españoles primero
     const isSpanishA = a.code && a.code.startsWith("84") ? 1 : 0;
     const isSpanishB = b.code && b.code.startsWith("84") ? 1 : 0;
 
     if (isSpanishA !== isSpanishB) {
       return isSpanishB - isSpanishA;
-    }
-
-    if (!searchTerms || searchTerms.length === 0) {
-      return (a.name || "").localeCompare(b.name || "");
-    }
-
-    const scoreA = calculateMatchScore(a.name, searchTerms);
-    const scoreB = calculateMatchScore(b.name, searchTerms);
-
-    if (scoreA !== scoreB) {
-      return scoreB - scoreA; // Orden descendente por puntuación de relevancia
     }
 
     return (a.name || "").localeCompare(b.name || "");
