@@ -9,6 +9,12 @@ const ns = require("../util/normalize-search");
 const {
   createAccentInsensitiveRegexArray,
 } = require("../util/accent-insensitive-regex");
+const {
+  normalizeSearchText,
+  splitSearchTokens,
+  hasEditDistanceOneOrLess,
+  buildSearchFields,
+} = require("../util/search-index");
 const { default: mongoose } = require("mongoose");
 
 function toObjectId(id) {
@@ -68,10 +74,11 @@ module.exports = {
       const pageValue = Math.max(0, parseInt((page || 0).toString(), 10));
       const skipValue = pageValue * limit;
 
-      // Parse search terms for accent-insensitive matching
-      const searchTerms = hasSearch
-        ? normalizedSearch.split(" ").filter((term) => term.trim().length > 0)
-        : [];
+      // Parse search terms
+      const searchTerms = hasSearch ? splitSearchTokens(normalizedSearch) : [];
+      const normalizedSearchQuery = hasSearch
+        ? normalizeSearchText(normalizedSearch)
+        : "";
       const accentInsensitiveRegexTerms = hasSearch
         ? createAccentInsensitiveRegexArray(searchTerms)
         : [];
@@ -94,74 +101,81 @@ module.exports = {
         };
       };
 
-      /**
-       * Build $text-based query for products (usa el índice de texto en name+brand).
-       * - 1 palabra  → $text con el token completo (stemming español + acentos)
-       * - N palabras → $text para las N-1 palabras completas + $regex para la última
-       *               (la última puede estar incompleta mientras el usuario escribe)
-       */
-      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const buildProductBaseQuery = (additionalFilters = {}) => ({
+        ...additionalFilters,
+      });
 
-      const buildTextQuery = (additionalFilters = {}) => {
-        if (!hasSearch) return additionalFilters;
+      const toComparableId = (value) => {
+        if (!value) return "";
+        if (typeof value === "string") return value;
+        if (typeof value === "object" && value.toString) return value.toString();
+        return String(value);
+      };
 
-        const words = normalizedSearch.split(/\s+/).filter(Boolean);
+      const isOwnedByUser = (doc, ownPriorityUserId = null) => {
+        if (!ownPriorityUserId) return false;
+        return toComparableId(doc?.userId) === toComparableId(ownPriorityUserId);
+      };
 
-        if (words.length === 1) {
-          return { $text: { $search: words[0] }, ...additionalFilters };
-        }
-
-        const completeWords = words.slice(0, -1);
-        const partialWord = words[words.length - 1];
-        const partialRegex = { $regex: escapeRegex(partialWord), $options: "i" };
-
-        // $and permite añadir el filtro parcial sin conflicto con posibles $or
-        // de additionalFilters (ej: visibilidad userId en caso 0000)
+      const getProductTieBreakKey = (
+        doc,
+        ownPriorityUserId = null,
+        favoriteIdSet = null,
+      ) => {
+        const id = toComparableId(doc?._id);
         return {
-          $text: { $search: completeWords.map((w) => `"${w}"`).join(" ") },
-          $and: [{ $or: [{ name: partialRegex }, { brand: partialRegex }] }],
-          ...additionalFilters,
+          isSpanish: doc?.code?.startsWith("84") ? 1 : 0,
+          isVerified: doc?.verified ? 1 : 0,
+          isOwn: isOwnedByUser(doc, ownPriorityUserId) ? 1 : 0,
+          isFavorite:
+            favoriteIdSet && id ? (favoriteIdSet.has(id) ? 1 : 0) : 0,
+          name: doc?.name || "",
+          id,
         };
       };
 
-      /**
-       * Apply Spanish product priority & ownership priority sorting
-       * Used to ensure Spanish products (code 84) are always prioritized
-       * MUST be called on all result sets before returning
-       */
-      const applySorting = (results, ownPriorityUserId = null) => {
-        if (results.length === 0) return results;
+      const compareProductByTieBreak = (a, b) => {
+        if (a.isSpanish !== b.isSpanish) return b.isSpanish - a.isSpanish;
+        if (a.isVerified !== b.isVerified) return b.isVerified - a.isVerified;
+        if (a.isOwn !== b.isOwn) return b.isOwn - a.isOwn;
+        if (a.isFavorite !== b.isFavorite) return b.isFavorite - a.isFavorite;
+        const nameOrder = a.name.localeCompare(b.name);
+        if (nameOrder !== 0) return nameOrder;
+        return a.id.localeCompare(b.id);
+      };
 
-        results.sort((a, b) => {
-          // Priority 1: Spanish products (code starts with 84) - ALWAYS FIRST
-          const aSpanish = a.code?.startsWith("84") ? 1 : 0;
-          const bSpanish = b.code?.startsWith("84") ? 1 : 0;
-          if (aSpanish !== bSpanish) return bSpanish - aSpanish;
+      const getMatchPriority = (doc) => {
+        const normalizedName = normalizeSearchText(
+          doc?.nameNormalized || doc?.name,
+        );
+        const normalizedBrand = normalizeSearchText(
+          doc?.brandNormalized || doc?.brand,
+        );
 
-          // Priority 2: User's own products (if applicable)
-          if (ownPriorityUserId) {
-            const aOwn = a.userId?.equals
-              ? a.userId.equals(ownPriorityUserId)
-                ? 1
-                : 0
-              : a.userId === ownPriorityUserId
-                ? 1
-                : 0;
-            const bOwn = b.userId?.equals
-              ? b.userId.equals(ownPriorityUserId)
-                ? 1
-                : 0
-              : b.userId === ownPriorityUserId
-                ? 1
-                : 0;
-            if (aOwn !== bOwn) return bOwn - aOwn;
-          }
+        const nameTokens = splitSearchTokens(normalizedName);
+        const brandTokens = splitSearchTokens(normalizedBrand);
 
-          // Priority 3: Alphabetical by name
-          return (a.name || "").localeCompare(b.name || "");
-        });
+        if (normalizedName === normalizedSearchQuery) return 900;
+        if (normalizedName.startsWith(`${normalizedSearchQuery} `)) return 850;
+        if (normalizedName.startsWith(normalizedSearchQuery)) return 820;
+        if (nameTokens.includes(normalizedSearchQuery)) return 780;
+        if (nameTokens.some((token) => token.startsWith(normalizedSearchQuery))) {
+          return 740;
+        }
+        if (normalizedName.includes(normalizedSearchQuery)) return 700;
 
-        return results;
+        if (normalizedBrand === normalizedSearchQuery) return 620;
+        if (normalizedBrand.startsWith(`${normalizedSearchQuery} `)) return 600;
+        if (normalizedBrand.startsWith(normalizedSearchQuery)) return 580;
+        if (brandTokens.includes(normalizedSearchQuery)) return 560;
+        if (
+          brandTokens.some((token) => token.startsWith(normalizedSearchQuery))
+        ) {
+          return 540;
+        }
+        if (normalizedBrand.includes(normalizedSearchQuery)) return 520;
+
+        return 0;
       };
 
       // ============================================================================
@@ -181,17 +195,29 @@ module.exports = {
       const executeProductQuery = async ({
         match,
         ownPriorityUserId = null,
+        favoriteIdSet = null,
       }) => {
-        const fetchMultiplier = 3; // Fetch extra for in-app filtering
-        const fetchLimit = limit * fetchMultiplier;
-        const hasSpecificUserScope =
-          !!match?.userId && typeof match.userId !== "object";
+        const fetchMultiplier = 3;
+        const fetchLimit = skipValue + limit * fetchMultiplier;
+        const hasSpecificUserScope = (() => {
+          if (!match || !Object.prototype.hasOwnProperty.call(match, "userId")) {
+            return false;
+          }
 
-        let results = [];
+          const rawUserId = match.userId;
+          if (!rawUserId) return false;
 
-        // Fast-path: "Añadidos por mí" sin búsqueda de texto
-        // Usa índice { userId: 1, name: 1 } con sort + skip + limit en DB
-        // para evitar cargar y ordenar en app innecesariamente.
+          // Concrete scopes: ObjectId/string/null direct values.
+          // Non-concrete scopes: operator objects like {$exists:false}.
+          const isOperatorObject =
+            typeof rawUserId === "object" &&
+            rawUserId !== null &&
+            Object.keys(rawUserId).some((key) => key.startsWith("$"));
+
+          return !isOperatorObject;
+        })();
+
+        // Fast-path: sin búsqueda para scope de usuario concreto
         if (!hasSearch && hasSpecificUserScope) {
           return productSchema
             .find(match)
@@ -202,75 +228,231 @@ module.exports = {
             .exec();
         }
 
-        const getSpanishFirstResults = async (baseMatch) => {
-          const spanishMatch = {
-            $and: [baseMatch, { code: { $regex: /^84/ } }],
-          };
-
-          const nonSpanishMatch = {
-            $and: [
-              baseMatch,
-              {
-                $or: [{ code: { $exists: false } }, { code: { $not: /^84/ } }],
-              },
-            ],
-          };
-
-          const spanishResults = await productSchema
-            .find(spanishMatch)
-            .sort({ name: 1, _id: 1 })
-            .skip(skipValue)
-            .lean()
-            .limit(limit)
-            .exec();
-
-          if (spanishResults.length >= limit) {
-            return spanishResults;
-          }
-
-          const spanishTotal = await productSchema.countDocuments(spanishMatch);
-          const nonSpanishSkip = Math.max(0, skipValue - spanishTotal);
-          const remaining = limit - spanishResults.length;
-          const nonSpanishResults = await productSchema
-            .find(nonSpanishMatch)
-            .sort({ name: 1, _id: 1 })
-            .skip(nonSpanishSkip)
-            .lean()
-            .limit(remaining)
-            .exec();
-
-          return [...spanishResults, ...nonSpanishResults];
-        };
-
-        if (hasSearch) {
-          // Sin skip ni slice aquí: la paginación se hace en memoria después
-          // del sort por relevancia para garantizar que el resultado exacto
-          // (ej: "Zanahorias") no quede enterrado tras resultados alfabéticos.
-          // Cap de 300 para proteger contra búsquedas muy amplias.
-          results = await productSchema
+        if (!hasSearch) {
+          const results = await productSchema
             .find(match)
             .lean()
-            .limit(300)
+            .limit(fetchLimit)
             .exec();
-        } else {
-          if (hasSpecificUserScope) {
-            results = await productSchema
-              .find(match)
+
+          results.sort((left, right) => {
+            const a = getProductTieBreakKey(
+              left,
+              ownPriorityUserId,
+              favoriteIdSet,
+            );
+            const b = getProductTieBreakKey(
+              right,
+              ownPriorityUserId,
+              favoriteIdSet,
+            );
+            return compareProductByTieBreak(a, b);
+          });
+
+          return results.slice(skipValue, skipValue + limit);
+        }
+
+        const candidateLimitPerStage = 220;
+        const typoEnabled = normalizedSearchQuery.length > 2;
+        const candidatesById = new Map();
+        const queryUpperBound = `${normalizedSearchQuery}\uffff`;
+
+        const upsertCandidate = (doc, score, stagePriority) => {
+          if (!doc?._id) return;
+          const key = toComparableId(doc._id);
+          const existing = candidatesById.get(key);
+          const payload = {
+            doc,
+            score,
+            stagePriority,
+            tieBreak: getProductTieBreakKey(doc, ownPriorityUserId, favoriteIdSet),
+          };
+
+          if (!existing) {
+            candidatesById.set(key, payload);
+            return;
+          }
+
+          if (
+            score > existing.score ||
+            (score === existing.score && stagePriority > existing.stagePriority)
+          ) {
+            candidatesById.set(key, payload);
+          }
+        };
+
+        const [
+          exactNameDocs,
+          startsWithNameDocs,
+          exactBrandDocs,
+          startsWithBrandDocs,
+          prefixNameDocs,
+          prefixBrandDocs,
+          textDocs,
+        ] =
+          await Promise.all([
+            productSchema
+              .find({ ...match, nameNormalized: normalizedSearchQuery })
+              .limit(candidateLimitPerStage)
               .lean()
-              .limit(fetchLimit)
-              .exec();
-          } else {
-            results = await getSpanishFirstResults(match);
+              .exec(),
+            productSchema
+              .find({
+                ...match,
+                nameNormalized: {
+                  $gte: normalizedSearchQuery,
+                  $lte: queryUpperBound,
+                },
+              })
+              .sort({ nameNormalized: 1, _id: 1 })
+              .limit(candidateLimitPerStage)
+              .lean()
+              .exec(),
+            productSchema
+              .find({ ...match, brandNormalized: normalizedSearchQuery })
+              .limit(candidateLimitPerStage)
+              .lean()
+              .exec(),
+            productSchema
+              .find({
+                ...match,
+                brandNormalized: {
+                  $gte: normalizedSearchQuery,
+                  $lte: queryUpperBound,
+                },
+              })
+              .sort({ brandNormalized: 1, _id: 1 })
+              .limit(candidateLimitPerStage)
+              .lean()
+              .exec(),
+            productSchema
+              .find({ ...match, namePrefixes: normalizedSearchQuery })
+              .limit(candidateLimitPerStage)
+              .lean()
+              .exec(),
+            productSchema
+              .find({ ...match, brandPrefixes: normalizedSearchQuery })
+              .limit(candidateLimitPerStage)
+              .lean()
+              .exec(),
+            productSchema
+              .find(
+                { ...match, $text: { $search: normalizedSearch } },
+                { score: { $meta: "textScore" } },
+              )
+              .sort({ score: { $meta: "textScore" } })
+              .limit(candidateLimitPerStage)
+              .lean()
+              .exec(),
+          ]);
+
+        for (const doc of exactNameDocs) upsertCandidate(doc, 100000, 5);
+        for (const doc of startsWithNameDocs) upsertCandidate(doc, 85000, 4);
+        for (const doc of exactBrandDocs) upsertCandidate(doc, 90000, 4);
+        for (const doc of startsWithBrandDocs) upsertCandidate(doc, 76000, 3);
+        for (const doc of prefixNameDocs) upsertCandidate(doc, 70000, 2);
+        for (const doc of prefixBrandDocs) upsertCandidate(doc, 60000, 1);
+        for (const doc of textDocs) {
+          const textScore = Number(doc.score || 0);
+          upsertCandidate(doc, 40000 + textScore * 1200, 0);
+        }
+
+        // Fallback for legacy own products missing derived search fields.
+        // Keep this lightweight to avoid UI lag.
+        if (hasSpecificUserScope) {
+          const missingDerivedDocs = await productSchema
+            .find(
+              {
+                ...match,
+                $or: [
+                  { nameNormalized: { $exists: false } },
+                  { brandNormalized: { $exists: false } },
+                  { namePrefixes: { $exists: false } },
+                  { brandPrefixes: { $exists: false } },
+                ],
+              },
+              {
+                name: 1,
+                brand: 1,
+                code: 1,
+                verified: 1,
+                userId: 1,
+                nameNormalized: 1,
+                brandNormalized: 1,
+                namePrefixes: 1,
+                brandPrefixes: 1,
+              },
+            )
+            .limit(500)
+            .lean()
+            .exec();
+
+          for (const doc of missingDerivedDocs) {
+            const derived = buildSearchFields(doc);
+            const enrichedDoc = { ...doc, ...derived };
+            const fallbackPriority = getMatchPriority(enrichedDoc);
+            if (fallbackPriority <= 0) continue;
+            upsertCandidate(enrichedDoc, 30000 + fallbackPriority * 30, 0);
           }
         }
 
-        // ================================================================
-        // APPLY SORTING: Spanish priority + ownership priority + name
-        // Ensures products with code 84 are ALWAYS prioritized
-        // ================================================================
-        results = applySorting(results, ownPriorityUserId);
+        const scoredCandidates = Array.from(candidatesById.values()).map(
+          (candidate) => {
+            const { doc } = candidate;
+            let score = candidate.score;
+            const matchPriority = getMatchPriority(doc);
+            const nameTokens = splitSearchTokens(doc.nameNormalized || doc.name);
+            const brandTokens = splitSearchTokens(
+              doc.brandNormalized || doc.brand,
+            );
 
-        return results;
+            for (const term of searchTerms) {
+              if (nameTokens.includes(term)) score += 1800;
+              else if (nameTokens.some((token) => token.startsWith(term))) {
+                score += 650;
+              }
+
+              if (brandTokens.includes(term)) score += 900;
+              else if (brandTokens.some((token) => token.startsWith(term))) {
+                score += 300;
+              }
+
+              if (typoEnabled) {
+                if (
+                  nameTokens.some((token) => hasEditDistanceOneOrLess(token, term))
+                ) {
+                  score += 450;
+                }
+                if (
+                  brandTokens.some((token) => hasEditDistanceOneOrLess(token, term))
+                ) {
+                  score += 200;
+                }
+              }
+            }
+
+            return {
+              ...candidate,
+              matchPriority,
+              score,
+            };
+          },
+        );
+
+        scoredCandidates.sort((left, right) => {
+          if (left.matchPriority !== right.matchPriority) {
+            return right.matchPriority - left.matchPriority;
+          }
+          if (left.score !== right.score) return right.score - left.score;
+          if (left.stagePriority !== right.stagePriority) {
+            return right.stagePriority - left.stagePriority;
+          }
+          return compareProductByTieBreak(left.tieBreak, right.tieBreak);
+        });
+
+        return scoredCandidates
+          .slice(skipValue, skipValue + limit)
+          .map((candidate) => candidate.doc);
       };
 
       /**
@@ -322,6 +504,19 @@ module.exports = {
         }
       }
 
+      const shouldLoadFavoriteTieBreak = hasSearch && !!userObjectId && !favFilter;
+      if (shouldLoadFavoriteTieBreak) {
+        const userDoc = await userSchema
+          .findById(userObjectId)
+          .select("archivedProducts")
+          .lean();
+        archivedProducts = userDoc?.archivedProducts || [];
+      }
+
+      const favoriteProductIdSet = new Set(
+        archivedProducts.map((value) => toComparableId(value)),
+      );
+
       // ============================================================================
       // SECTION 5: ROUTE QUERY VIA 12-CASE FILTER MATRIX
       // ============================================================================
@@ -330,6 +525,9 @@ module.exports = {
 
       const filtersKey = `${Number(!!ownFilter)}${Number(!!recipeFilter)}${Number(!!shieldFilter)}${Number(!!favFilter)}`;
       let docs = [];
+      const globalProductsFilter = {
+        $or: [{ userId: null }, { userId: { $exists: false } }],
+      };
       const recipeUserVisibilityFilter = {
         $or: [{ userId: userObjectId }, { userId: { $exists: false } }],
       };
@@ -342,19 +540,25 @@ module.exports = {
         // CASE 1000: Own Products Only
         case "1000": {
           if (!userObjectId) return [];
-          const query = buildTextQuery({ userId: userObjectId });
-          docs = await executeProductQuery({ match: query });
+          const query = buildProductBaseQuery({ userId: userObjectId });
+          docs = await executeProductQuery({
+            match: query,
+            favoriteIdSet: favoriteProductIdSet,
+          });
           break;
         }
 
         // CASE 1001: Own Products + Favorited
         case "1001": {
           if (!userObjectId) return [];
-          const query = buildTextQuery({
+          const query = buildProductBaseQuery({
             userId: userObjectId,
             _id: { $in: archivedProducts },
           });
-          docs = await executeProductQuery({ match: query });
+          docs = await executeProductQuery({
+            match: query,
+            favoriteIdSet: favoriteProductIdSet,
+          });
           break;
         }
 
@@ -420,49 +624,69 @@ module.exports = {
 
         // CASE 0010: Verified Global Products
         case "0010": {
-          const query = buildTextQuery({
+          const query = buildProductBaseQuery({
             verified: shieldFilter,
-            userId: { $exists: false },
+            ...globalProductsFilter,
           });
-          docs = await executeProductQuery({ match: query });
+          docs = await executeProductQuery({
+            match: query,
+            favoriteIdSet: favoriteProductIdSet,
+          });
           break;
         }
 
         // CASE 0011: Verified Global Products + Favorited
         case "0011": {
-          const query = buildTextQuery({
+          const query = buildProductBaseQuery({
             _id: { $in: archivedProducts },
             verified: shieldFilter,
           });
-          docs = await executeProductQuery({ match: query });
+          docs = await executeProductQuery({
+            match: query,
+            favoriteIdSet: favoriteProductIdSet,
+          });
           break;
         }
 
         // CASE 0001: Favorited Global Products
         case "0001": {
-          const query = buildTextQuery({
+          const query = buildProductBaseQuery({
             _id: { $in: archivedProducts },
           });
-          docs = await executeProductQuery({ match: query });
+          docs = await executeProductQuery({
+            match: query,
+            favoriteIdSet: favoriteProductIdSet,
+          });
           break;
         }
 
         // CASE 0000: All Products (User's Own + Global)
         case "0000": {
-          const baseQuery = buildTextQuery();
+          const baseQuery = buildProductBaseQuery();
 
           if (!userObjectId) {
             // No user: only global products
-            docs = await executeProductQuery({ match: baseQuery });
+            docs = await executeProductQuery({
+              match: {
+                ...baseQuery,
+                ...globalProductsFilter,
+              },
+              favoriteIdSet: favoriteProductIdSet,
+            });
           } else {
             // User authenticated: own products + global (with own priority)
             const query = {
               ...baseQuery,
-              $or: [{ userId: userObjectId }, { userId: { $exists: false } }],
+              $or: [
+                { userId: userObjectId },
+                { userId: null },
+                { userId: { $exists: false } },
+              ],
             };
             docs = await executeProductQuery({
               match: query,
               ownPriorityUserId: userObjectId,
+              favoriteIdSet: favoriteProductIdSet,
             });
           }
           break;
@@ -478,7 +702,7 @@ module.exports = {
       // SECTION 6: SORT RESULTS BY RELEVANCE (IF SEARCH ACTIVE)
       // ============================================================================
 
-      if (hasSearch) {
+      if (hasSearch && !!recipeFilter) {
         const normalizedSearchTerms = searchTerms.map((term) =>
           ns.normalizeSearchTerm(term),
         );

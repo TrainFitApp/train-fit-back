@@ -5,6 +5,10 @@ const ProductSchema = Schema({
   code: String,
   name: String,
   brand: String,
+  nameNormalized: String,
+  brandNormalized: String,
+  namePrefixes: [String],
+  brandPrefixes: [String],
 
   // Basic macronutrients
   calcium100g: Number,
@@ -79,11 +83,18 @@ const ProductSchema = Schema({
   userId: { type: Schema.Types.ObjectId, ref: "User", default: null },
 });
 
-// Índices para optimizar búsquedas
-// IMPORTANTE: Crear manualmente en producción con createIndex() en background
-// ProductSchema.index({ name: 'text' });
-// ProductSchema.index({ verified: 1, name: 1 });
-// ProductSchema.index({ userId: 1 });
+// Índices para optimizar búsquedas de productos sin regex
+ProductSchema.index({ nameNormalized: 1 }, { background: true });
+ProductSchema.index({ brandNormalized: 1 }, { background: true });
+ProductSchema.index({ namePrefixes: 1 }, { background: true });
+ProductSchema.index({ brandPrefixes: 1 }, { background: true });
+ProductSchema.index(
+  { name: "text", brand: "text" },
+  { weights: { name: 10, brand: 4 }, background: true },
+);
+ProductSchema.index({ userId: 1, name: 1 }, { background: true });
+ProductSchema.index({ verified: 1, userId: 1, nameNormalized: 1 }, { background: true });
+ProductSchema.index({ verified: 1, userId: 1, namePrefixes: 1 }, { background: true });
 
 // Cascade: when a product is deleted, clean up CustomProducts referencing it
 const handleDeleteOne = async function (next) {

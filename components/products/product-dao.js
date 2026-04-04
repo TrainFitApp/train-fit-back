@@ -3,6 +3,12 @@ const userSchema = require("../users/schema");
 const aggregateService = require("../util/aggregate-service");
 const mongoose = require("mongoose");
 const { cleanObject, prepareUpdateQuery } = require("../util/clean-data");
+const {
+  buildSearchFields,
+  normalizeSearchText,
+  splitSearchTokens,
+  hasEditDistanceOneOrLess,
+} = require("../util/search-index");
 
 function toObjectId(id) {
   if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
@@ -33,10 +39,12 @@ module.exports = {
             isSpanish: {
               $cond: {
                 if: {
-                  $regexMatch: {
-                    input: { $toString: { $ifNull: ["$code", ""] } },
-                    regex: "^84",
-                  },
+                  $eq: [
+                    {
+                      $substrCP: [{ $toString: { $ifNull: ["$code", ""] } }, 0, 2],
+                    },
+                    "84",
+                  ],
                 },
                 then: 1,
                 else: 0,
@@ -99,114 +107,113 @@ module.exports = {
     try {
       const trimmed = (typeof search === "string" ? search : "").trim();
       if (!trimmed) return [];
+      const normalizedQuery = normalizeSearchText(trimmed);
+      if (!normalizedQuery) return [];
 
-      const words = trimmed.split(/\s+/).filter(Boolean);
+      const skipValue = Math.max(0, parseInt((page || 0).toString(), 10)) * limit;
+      const queryTerms = splitSearchTokens(trimmed);
+      const typoEnabled = normalizedQuery.length > 2;
+      const candidateCap = 250;
 
-      // La última palabra puede estar incompleta (usuario tecleando) → $regex.
-      // Las palabras anteriores ya están completas → $text (índice, acentos, rendimiento).
-      const completeWords = words.slice(0, -1);
-      const partialWord = words[words.length - 1];
-
-      // Escapar caracteres especiales de regex para evitar inyección
-      const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const escapedFull = escapeRegex(trimmed);
-      const escapedPartial = escapeRegex(partialWord);
-
-      const isSpanishExpr = {
-        $cond: {
-          if: {
-            $regexMatch: {
-              input: { $toString: { $ifNull: ["$code", ""] } },
-              regex: "^84",
-            },
-          },
-          then: 1,
-          else: 0,
-        },
+      const candidates = new Map();
+      const upsertCandidate = (doc, score) => {
+        if (!doc?._id) return;
+        const key = String(doc._id);
+        const current = candidates.get(key);
+        if (!current || score > current.score) {
+          candidates.set(key, { doc, score });
+        }
       };
 
-      // Ranking de coincidencia sobre el término completo buscado:
-      //   3 → nombre/marca exactamente igual al término
-      //   2 → nombre/marca empieza por el término
-      //   1 → nombre/marca contiene el término en cualquier posición
-      const buildMatchRank = (escapedTerm) => ({
-        $switch: {
-          branches: [
-            {
-              case: {
-                $or: [
-                  { $regexMatch: { input: { $ifNull: ["$name", ""] }, regex: `^${escapedTerm}$`, options: "i" } },
-                  { $regexMatch: { input: { $ifNull: ["$brand", ""] }, regex: `^${escapedTerm}$`, options: "i" } },
-                ],
-              },
-              then: 3,
-            },
-            {
-              case: {
-                $or: [
-                  { $regexMatch: { input: { $ifNull: ["$name", ""] }, regex: `^${escapedTerm}`, options: "i" } },
-                  { $regexMatch: { input: { $ifNull: ["$brand", ""] }, regex: `^${escapedTerm}`, options: "i" } },
-                ],
-              },
-              then: 2,
-            },
-          ],
-          default: 1,
-        },
-      });
+      const [exactDocs, prefixDocs, textDocs] = await Promise.all([
+        productSchema
+          .find({
+            userId: null,
+            $or: [
+              { nameNormalized: normalizedQuery },
+              { brandNormalized: normalizedQuery },
+            ],
+          })
+          .limit(candidateCap)
+          .lean()
+          .exec(),
+        productSchema
+          .find({
+            userId: null,
+            $or: [{ namePrefixes: normalizedQuery }, { brandPrefixes: normalizedQuery }],
+          })
+          .limit(candidateCap)
+          .lean()
+          .exec(),
+        productSchema
+          .find(
+            { userId: null, $text: { $search: trimmed } },
+            { score: { $meta: "textScore" } },
+          )
+          .sort({ score: { $meta: "textScore" } })
+          .limit(candidateCap)
+          .lean()
+          .exec(),
+      ]);
 
-      // ── Caso A: 2+ palabras ─────────────────────────────────────────────────
-      // $text busca las palabras completas en el índice (name + brand, con pesos).
-      // $or filtra además que la palabra parcial aparezca en name o brand.
-      if (completeWords.length > 0) {
-        const textQuery = completeWords.map((w) => `"${w}"`).join(" ");
-        const partialRegex = { $regex: escapedPartial, $options: "i" };
-
-        return await productSchema.aggregate([
-          {
-            $match: {
-              $text: { $search: textQuery },
-              userId: null,
-              $or: [{ name: partialRegex }, { brand: partialRegex }],
-            },
-          },
-          {
-            $addFields: {
-              score: { $meta: "textScore" },
-              isSpanish: isSpanishExpr,
-              matchRank: buildMatchRank(escapedFull),
-            },
-          },
-          // Orden: exacto primero → empieza por → contiene → españoles → verificados → relevancia → alfabético
-          { $sort: { matchRank: -1, isSpanish: -1, verified: -1, score: -1, name: 1 } },
-          { $skip: page * limit },
-          { $limit: limit },
-          { $project: { isSpanish: 0, score: 0, matchRank: 0 } },
-        ]);
+      for (const doc of exactDocs) {
+        const exactName = doc.nameNormalized === normalizedQuery;
+        const score = exactName ? 100000 : 90000;
+        upsertCandidate(doc, score);
       }
 
-      // ── Caso B: 1 sola palabra (puede ser parcial) ──────────────────────────
-      // $text no es útil para prefijos parciales → $regex en name y brand.
-      const partialRegex = { $regex: escapedPartial, $options: "i" };
-      return await productSchema.aggregate([
-        {
-          $match: {
-            userId: null,
-            $or: [{ name: partialRegex }, { brand: partialRegex }],
-          },
-        },
-        {
-          $addFields: {
-            isSpanish: isSpanishExpr,
-            matchRank: buildMatchRank(escapedFull),
-          },
-        },
-        // Orden: exacto primero → empieza por → contiene → españoles → verificados → alfabético
-        { $sort: { matchRank: -1, isSpanish: -1, verified: -1, name: 1 } },
-        { $skip: page * limit },
-        { $limit: limit },
-        { $project: { isSpanish: 0, matchRank: 0 } },
-      ]);
+      for (const doc of prefixDocs) {
+        const prefixInName = Array.isArray(doc.namePrefixes)
+          ? doc.namePrefixes.includes(normalizedQuery)
+          : false;
+        const score = prefixInName ? 70000 : 60000;
+        upsertCandidate(doc, score);
+      }
+
+      for (const doc of textDocs) {
+        const textScore = Number(doc.score || 0);
+        upsertCandidate(doc, 40000 + textScore * 1000);
+      }
+
+      const scored = Array.from(candidates.values()).map(({ doc, score }) => {
+        let total = score;
+        const nameTokens = splitSearchTokens(doc.nameNormalized || doc.name);
+        const brandTokens = splitSearchTokens(doc.brandNormalized || doc.brand);
+
+        for (const term of queryTerms) {
+          if (nameTokens.includes(term)) total += 2000;
+          else if (nameTokens.some((token) => token.startsWith(term))) total += 800;
+
+          if (brandTokens.includes(term)) total += 1200;
+          else if (brandTokens.some((token) => token.startsWith(term))) total += 400;
+
+          if (typoEnabled) {
+            if (nameTokens.some((token) => hasEditDistanceOneOrLess(token, term))) {
+              total += 500;
+            }
+            if (brandTokens.some((token) => hasEditDistanceOneOrLess(token, term))) {
+              total += 250;
+            }
+          }
+        }
+
+        return { doc, score: total };
+      });
+
+      scored.sort((a, b) => {
+        if (a.score !== b.score) return b.score - a.score;
+        const isSpanishA = a.doc.code?.startsWith("84") ? 1 : 0;
+        const isSpanishB = b.doc.code?.startsWith("84") ? 1 : 0;
+        if (isSpanishA !== isSpanishB) return isSpanishB - isSpanishA;
+        const verifiedA = a.doc.verified ? 1 : 0;
+        const verifiedB = b.doc.verified ? 1 : 0;
+        if (verifiedA !== verifiedB) return verifiedB - verifiedA;
+        const nameOrder = (a.doc.name || "").localeCompare(b.doc.name || "");
+        if (nameOrder !== 0) return nameOrder;
+        return String(a.doc._id).localeCompare(String(b.doc._id));
+      });
+
+      return scored.slice(skipValue, skipValue + limit).map((item) => item.doc);
     } catch (err) {
       throw err;
     }
@@ -226,6 +233,8 @@ module.exports = {
       delete cleanedProduct.userId;
     }
 
+    Object.assign(cleanedProduct, buildSearchFields(cleanedProduct));
+
     return await productSchema.create(cleanedProduct);
   },
 
@@ -242,6 +251,13 @@ module.exports = {
       } else {
         delete productData.userId;
       }
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(productData, "name") ||
+      Object.prototype.hasOwnProperty.call(productData, "brand")
+    ) {
+      Object.assign(productData, buildSearchFields(productData));
     }
 
     const allProductFields = Object.keys(productSchema.schema.paths).filter(
