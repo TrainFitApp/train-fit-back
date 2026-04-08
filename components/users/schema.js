@@ -39,6 +39,13 @@ const UserSchema = new Schema({
   archivedExercises: { type: [Schema.Types.ObjectId], default: [] },
   personalAds: Boolean,
   lastLogin: Date,
+  premium: {
+    entitled: { type: Boolean, default: false },
+    plan: String,
+    expiresAt: Date,
+    source: String,
+    lastSyncAt: Date,
+  },
   isPremium: Boolean,
   refreshToken: String,
   previousRefreshToken: String,

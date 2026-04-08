@@ -49,6 +49,10 @@ module.exports = {
     );
   },
 
+  async countByUserId(userId) {
+    return exerciseSchema.countDocuments({ userId });
+  },
+
   async getSearchExercise(page, limit, searchExercisesFilterGroup) {
     try {
       const agg = [];

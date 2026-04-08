@@ -18,6 +18,7 @@ const exercises = require("../components/exercises/exercise-routes");
 const sets = require("../components/sets/set-routes");
 const auth = require("../components/auth/auth-routes");
 const logs = require("../components/util/logs-routes");
+const billing = require("../components/billing/billing-routes");
 
 const router = express.Router();
 
@@ -40,5 +41,6 @@ router.use("/workouts", workouts);
 router.use("/exercises", exercises);
 router.use("/sets", sets);
 router.use("/logs", logs);
+router.use("/billing", billing);
 
 module.exports = router;
