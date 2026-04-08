@@ -23,6 +23,7 @@ app.set("port", port);
 const mongoDBUser = process.env.MONGODB_USER;
 const mongoDBPass = process.env.MONGODB_PASS;
 const mongoDBCluster = process.env.MONGODB_CLUSTER;
+const mongoDBPort = process.env.MONGODB_PORT;
 const mongoDBDB = process.env.MONGODB_DB;
 const serverDomain = process.env.SERVER_DOMAIN;
 
@@ -35,8 +36,11 @@ if (
   mongoDBCluster.includes("localhost") ||
   mongoDBCluster.includes("127.0.0.1")
 ) {
-  // 🧩 Conexión local
-  mongoURI = `mongodb://${mongoDBCluster}/${mongoDBDB}`;
+  // 🧩 Conexión local (incluyendo puerto si existe)
+  const host = mongoDBPort
+    ? `${mongoDBCluster}:${mongoDBPort}`
+    : mongoDBCluster;
+  mongoURI = `mongodb://${host}/${mongoDBDB}`;
 } else {
   // ☁️ Conexión Atlas (producción)
   mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB}`;
