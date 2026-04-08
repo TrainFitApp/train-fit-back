@@ -15,6 +15,10 @@ const dietDayUtil = require("../dietDays/diet-days-util");
 const customProductSchema = require("../customProducts/custom-product-schema");
 
 module.exports = {
+  async countByUserId(userId) {
+    return recipeSchema.countDocuments({ userId });
+  },
+
   async getRecipeById(id) {
     return new Promise((resolve, reject) =>
       recipeSchema.findById(id, (err, doc) => {

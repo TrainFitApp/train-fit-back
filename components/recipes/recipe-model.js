@@ -1,6 +1,10 @@
 const recipeDao = require("./recipe-dao");
 
 module.exports = {
+  async countByUserId(userId) {
+    return recipeDao.countByUserId(userId);
+  },
+
   async getRecipeById(id) {
     return recipeDao.getRecipeById(id);
   },

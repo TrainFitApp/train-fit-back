@@ -257,8 +257,22 @@ module.exports = {
   async updateGoogleUser(userUpdate) {
     try {
       const findUser = await userSchema.findOne({ email: userUpdate.email });
+      if (!findUser) throw new Error("User not found");
       const idUser = findUser._id;
-      const user = await userSchema.findByIdAndUpdate(idUser, userUpdate, {
+      const safeUpdate = { ...userUpdate };
+      [
+        "_id",
+        "isPremium",
+        "premium",
+        "roles",
+        "provider",
+        "refreshToken",
+        "previousRefreshToken",
+        "tokenRotationTimestamp",
+        "hash",
+      ].forEach((field) => delete safeUpdate[field]);
+
+      const user = await userSchema.findByIdAndUpdate(idUser, safeUpdate, {
         new: true,
       });
 
@@ -271,8 +285,22 @@ module.exports = {
   async updateAppleUser(userUpdate) {
     try {
       const findUser = await userSchema.findOne({ email: userUpdate.email });
+      if (!findUser) throw new Error("User not found");
       const idUser = findUser._id;
-      const user = await userSchema.findByIdAndUpdate(idUser, userUpdate, {
+      const safeUpdate = { ...userUpdate };
+      [
+        "_id",
+        "isPremium",
+        "premium",
+        "roles",
+        "provider",
+        "refreshToken",
+        "previousRefreshToken",
+        "tokenRotationTimestamp",
+        "hash",
+      ].forEach((field) => delete safeUpdate[field]);
+
+      const user = await userSchema.findByIdAndUpdate(idUser, safeUpdate, {
         new: true,
       });
 
@@ -361,25 +389,44 @@ module.exports = {
 
   async updateUser(user) {
     try {
-      const update = { $set: user, $unset: {} };
-
-      // Campos que se deben eliminar si son null o undefined
-      const fieldsToUnset = [
-        "hash",
-        "tableInUse",
-        "workoutInUse",
+      const blockedFields = new Set([
+        "_id",
         "isPremium",
+        "premium",
+        "roles",
+        "provider",
         "refreshToken",
-      ];
+        "previousRefreshToken",
+        "tokenRotationTimestamp",
+        "hash",
+        "appleId",
+      ]);
 
-      fieldsToUnset.forEach((field) => {
-        if (user[field] === null || user[field] === undefined) {
-          update.$unset[field] = 1;
-          delete user[field];
+      const safeInput = {};
+      Object.keys(user || {}).forEach((key) => {
+        if (
+          !blockedFields.has(key) &&
+          !key.startsWith("$") &&
+          !key.includes(".")
+        ) {
+          safeInput[key] = user[key];
         }
       });
 
+      const update = { $set: safeInput, $unset: {} };
+      ["tableInUse", "workoutInUse", "dietInUse"].forEach((field) => {
+        if (safeInput[field] === null || safeInput[field] === undefined) {
+          update.$unset[field] = 1;
+          delete update.$set[field];
+        }
+      });
+
+      if (Object.keys(update.$set).length === 0) delete update.$set;
       if (Object.keys(update.$unset).length === 0) delete update.$unset;
+
+      if (!update.$set && !update.$unset) {
+        return await userSchema.findById(user._id);
+      }
 
       return await userSchema.findByIdAndUpdate(user._id, update, {
         new: true,

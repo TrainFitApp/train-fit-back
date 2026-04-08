@@ -27,7 +27,8 @@ const single = async (resource, authUser) => ({
   archivedTables: resource.archivedTables,
   personalAds: resource.personalAds,
   lastLogin: resource.lastLogin,
-  isPremium: resource.isPremium,
+  premium: resource.premium,
+  isPremium: Boolean(resource?.premium?.entitled || resource.isPremium),
   theme: resource.theme,
 });
 

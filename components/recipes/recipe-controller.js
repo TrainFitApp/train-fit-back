@@ -1,5 +1,6 @@
 const recipeModel = require("./recipe-model");
 const userModel = require("../users/model");
+const featureAccessService = require("../billing/feature-access-service");
 
 const controller = {
   async getRecipeById(req, res, next) {
@@ -80,6 +81,14 @@ const controller = {
 
   async createRecipe(req, res, next) {
     try {
+      const ownRecipesCount = await recipeModel.countByUserId(req.user.id);
+      if (!featureAccessService.canCreateRecipe(req.user, ownRecipesCount)) {
+        return res.status(403).json({
+          code: "PREMIUM_LIMIT_RECIPES",
+          message: "L\u00edmite Free alcanzado. Solo puedes crear 3 recetas propias.",
+        });
+      }
+
       const recipe = await recipeModel.createRecipe({
         name: req.body.name,
         description: req.body.description,
@@ -95,6 +104,18 @@ const controller = {
 
   async composeRecipe(req, res, next) {
     try {
+      const isCreatingNewRecipe = !req.body?.recipeId && !!req.body?.recipe;
+      if (isCreatingNewRecipe) {
+        const ownRecipesCount = await recipeModel.countByUserId(req.user.id);
+        if (!featureAccessService.canCreateRecipe(req.user, ownRecipesCount)) {
+          return res.status(403).json({
+            code: "PREMIUM_LIMIT_RECIPES",
+            message:
+              "L\u00edmite Free alcanzado. Solo puedes crear 3 recetas propias.",
+          });
+        }
+      }
+
       const result = await recipeModel.composeRecipe(req.body, req.user.id);
       return res.status(201).json(result);
     } catch (error) {

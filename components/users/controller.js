@@ -86,6 +86,14 @@ const htmlFinalResponse2 = `
   </body>
 </html>`;
 
+function isAdmin(req) {
+  return Boolean(req.userData?.roles?.includes("admin"));
+}
+
+function canActOnUser(req, targetUserId) {
+  return isAdmin(req) || String(req.user?.id) === String(targetUserId);
+}
+
 module.exports = {
   async countUsers(req, res) {
     const count = await userModel.countUsers();
@@ -752,6 +760,10 @@ module.exports = {
   },
 
   async addUserDiet(req, res) {
+    if (!canActOnUser(req, req.params.idUser)) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
+
     const user = await userModel.addUserDiet(
       req.params.idUser,
       req.params.idDiet,
@@ -761,6 +773,10 @@ module.exports = {
   },
 
   async addUserTable(req, res) {
+    if (!canActOnUser(req, req.params.idUser)) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
+
     const user = await userModel.addUserTable(
       req.params.idUser,
       req.params.idTable,
@@ -770,6 +786,13 @@ module.exports = {
   },
 
   async updateUser(req, res) {
+    if (!req.body?._id) {
+      return res.status(400).send({ message: "ID de usuario requerido" });
+    }
+    if (!canActOnUser(req, req.body._id.toString())) {
+      return res.status(403).send({ message: "No tienes permiso para actualizar este usuario" });
+    }
+
     const user = await userModel.updateUser(req.body);
     return res.send(user);
   },
@@ -801,6 +824,9 @@ module.exports = {
 
   async playStopDiet(req, res) {
     if (!req.params.idUser) return res.sendStatus(400);
+    if (!canActOnUser(req, req.params.idUser)) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
 
     const user = await userModel.getUserById(req.params.idUser);
 
@@ -815,6 +841,9 @@ module.exports = {
   async addFavoriteProduct(req, res) {
     if (!req.body.idProduct) return res.sendStatus(400);
     if (!req.body.idUser) return res.sendStatus(400);
+    if (!canActOnUser(req, req.body.idUser)) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
 
     const user = await userModel.getUserById(req.body.idUser);
 
@@ -840,6 +869,9 @@ module.exports = {
   async addFavoriteRecipe(req, res) {
     if (!req.body.idRecipe) return res.sendStatus(400);
     if (!req.body.idUser) return res.sendStatus(400);
+    if (!canActOnUser(req, req.body.idUser)) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
 
     let user = await userModel.getUserById(req.body.idUser);
 

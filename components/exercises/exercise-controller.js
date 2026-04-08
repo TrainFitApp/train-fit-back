@@ -1,5 +1,10 @@
 const exerciseModel = require("./exercise-model");
 const exerciseDTO = require("./exercise-dto");
+const featureAccessService = require("../billing/feature-access-service");
+
+function isAdmin(req) {
+  return Boolean(req.userData?.roles?.includes("admin"));
+}
 
 module.exports = {
   async getExercises(req, res) {
@@ -26,7 +31,18 @@ module.exports = {
   },
 
   async createExercise(req, res) {
-    const exercise = await exerciseModel.createExercise(req.body);
+    const ownExerciseCount = await exerciseModel.countByUserId(req.user.id);
+    if (!featureAccessService.canCreateExercise(req.user, ownExerciseCount)) {
+      return res.status(403).send({
+        code: "PREMIUM_LIMIT_EXERCISES",
+        message: "L\u00edmite Free alcanzado. Solo puedes crear 3 ejercicios propios.",
+      });
+    }
+
+    const exercise = await exerciseModel.createExercise({
+      ...req.body,
+      userId: req.user.id,
+    });
     return res.send(exercise);
     // return res.send(exerciseDTO.single(exercise, req.body));
   },
@@ -41,11 +57,17 @@ module.exports = {
   },
 
   async archiveExercise(req, res) {
+    if (!isAdmin(req) && req.body.idUser !== req.user.id) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
     await exerciseModel.archiveExercise(req.body.idExercise, req.body.idUser);
     return res.sendStatus(204);
   },
 
   async addExerciseToFavorites(req, res) {
+    if (!isAdmin(req) && req.body.idUser !== req.user.id) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
     const result = await exerciseModel.archiveExercise(
       req.body.idExercise,
       req.body.idUser,

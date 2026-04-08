@@ -21,6 +21,10 @@ module.exports = {
     return exerciseDao.getExercise(id);
   },
 
+  async countByUserId(userId) {
+    return exerciseDao.countByUserId(userId);
+  },
+
   async createExercise(exercise) {
     return exerciseDao.createExercise(exercise);
   },
