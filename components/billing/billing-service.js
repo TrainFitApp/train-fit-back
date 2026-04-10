@@ -7,7 +7,10 @@ const billingEventSchema = require("./billing-event-schema");
 const REVENUECAT_API_BASE = "https://api.revenuecat.com/v1";
 const ENTITLEMENT_ID =
   process.env.REVENUECAT_ENTITLEMENT_ID || "no_adds_and_features";
-const WEBHOOK_AUTH = process.env.REVENUECAT_WEBHOOK_AUTH || "";
+const WEBHOOK_AUTH =
+  process.env.REVENUECAT_WEBHOOK_AUTH ||
+  process.env.REVENUECAT_WEBHOOK_SECRET ||
+  "";
 const SECRET_API_KEY = process.env.REVENUECAT_SECRET_API_KEY || "";
 
 function toDateOrNull(value) {
@@ -202,8 +205,20 @@ module.exports = {
       return true;
     }
 
-    const authHeader = req.headers?.authorization || "";
-    return authHeader === `Bearer ${WEBHOOK_AUTH}`;
+    const authHeader = (req.headers?.authorization || "").trim();
+    if (!authHeader) {
+      return false;
+    }
+
+    if (authHeader === WEBHOOK_AUTH) {
+      return true;
+    }
+
+    if (authHeader === `Bearer ${WEBHOOK_AUTH}`) {
+      return true;
+    }
+
+    return false;
   },
 
   async linkCustomer(user, appUserId) {
