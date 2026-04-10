@@ -21,13 +21,47 @@ function toDateOrNull(value) {
 
 function derivePlan(productId) {
   const id = (productId || "").toLowerCase();
-  if (id.includes("year") || id.includes("annual") || id.includes("anual")) {
+  if (
+    id.includes("year") ||
+    id.includes("annual") ||
+    id.includes("anual") ||
+    id.includes("yearly")
+  ) {
     return "annual";
   }
-  if (id.includes("month") || id.includes("mensual")) {
+  if (
+    id.includes("month") ||
+    id.includes("mensual") ||
+    id.includes("monthly")
+  ) {
     return "monthly";
   }
   return "unknown";
+}
+
+function resolveSubscriberProductId(subscriber) {
+  const subscriptions = subscriber?.subscriptions || {};
+  const entries = Object.entries(subscriptions);
+  if (!entries.length) {
+    return null;
+  }
+
+  let winner = null;
+  let winnerTimestamp = -1;
+
+  for (const [productId, payload] of entries) {
+    const expiresAt = toDateOrNull(payload?.expires_date);
+    const purchasedAt = toDateOrNull(payload?.purchase_date);
+    const timestamp =
+      expiresAt?.getTime() || purchasedAt?.getTime() || winnerTimestamp;
+
+    if (timestamp > winnerTimestamp) {
+      winnerTimestamp = timestamp;
+      winner = productId;
+    }
+  }
+
+  return winner;
 }
 
 function parseSDKCustomerInfo(customerInfo) {
@@ -53,6 +87,8 @@ function parseSDKCustomerInfo(customerInfo) {
 function parseRCSubscriberPayload(subscriber) {
   const active = subscriber?.entitlements || {};
   const entitlement = active?.[ENTITLEMENT_ID];
+  const resolvedProductId =
+    entitlement?.product_identifier || resolveSubscriberProductId(subscriber);
 
   const expiresAt = toDateOrNull(entitlement?.expires_date);
   const now = Date.now();
@@ -60,10 +96,10 @@ function parseRCSubscriberPayload(subscriber) {
 
   return {
     entitled,
-    plan: derivePlan(entitlement?.product_identifier),
+    plan: derivePlan(resolvedProductId),
     expiresAt,
     source: "revenuecat",
-    productId: entitlement?.product_identifier || null,
+    productId: resolvedProductId || null,
     store: entitlement?.store || null,
     willRenew: entitled,
     activeEntitlement: entitlement ? ENTITLEMENT_ID : null,
@@ -72,11 +108,15 @@ function parseRCSubscriberPayload(subscriber) {
 
 async function updateUserPremium(userId, premiumState) {
   if (!userId) return null;
+  const normalizedPlan =
+    premiumState?.plan === "monthly" || premiumState?.plan === "annual"
+      ? premiumState.plan
+      : null;
 
   const update = {
     premium: {
       entitled: Boolean(premiumState?.entitled),
-      plan: premiumState?.plan || null,
+      plan: normalizedPlan,
       expiresAt: premiumState?.expiresAt || null,
       source: "revenuecat",
       lastSyncAt: new Date(),
@@ -290,7 +330,7 @@ module.exports = {
   },
 
   async processWebhook(rawPayload) {
-    const event = parseWebhookEvent(rawPayload);
+    let event = parseWebhookEvent(rawPayload);
     const shouldProcess = await ensureEventNotProcessed(event.eventId, event.payload);
     if (!shouldProcess) {
       return { processed: false, duplicated: true };
@@ -300,18 +340,28 @@ module.exports = {
       return { processed: false, reason: "missing_app_user_id" };
     }
 
+    const billingCustomer = await billingCustomerSchema.findOne({
+      appUserId: event.appUserId,
+    });
+
+    if (!event.productId && billingCustomer?.productId) {
+      event.productId = billingCustomer.productId;
+    }
+    if (event.plan === "unknown" && event.productId) {
+      event.plan = derivePlan(event.productId);
+    }
+
     let user = null;
     if (mongoose.Types.ObjectId.isValid(event.appUserId)) {
       user = await userSchema.findById(event.appUserId);
     }
 
-    if (!user) {
-      const billingCustomer = await billingCustomerSchema.findOne({
-        appUserId: event.appUserId,
-      });
-      if (billingCustomer?.userId) {
-        user = await userSchema.findById(billingCustomer.userId);
-      }
+    if (!user && billingCustomer?.userId) {
+      user = await userSchema.findById(billingCustomer.userId);
+    }
+
+    if (event.plan === "unknown" && user?.premium?.plan) {
+      event.plan = user.premium.plan;
     }
 
     if (user) {
