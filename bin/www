@@ -20,11 +20,11 @@ app.set("port", port);
 // -------------------------------------------------------
 // 🔧 Variables de entorno
 // -------------------------------------------------------
-const mongoDBUser = process.env.MONGODB_USER;
-const mongoDBPass = process.env.MONGODB_PASS;
-const mongoDBCluster = process.env.MONGODB_CLUSTER;
-const mongoDBPort = process.env.MONGODB_PORT;
-const mongoDBDB = process.env.MONGODB_DB;
+const mongoDBUser = process.env.MONGODB_USER || process.env.MONGOUSER;
+const mongoDBPass = process.env.MONGODB_PASS || process.env.MONGOPASSWORD;
+const mongoDBCluster = process.env.MONGODB_CLUSTER || process.env.MONGOHOST;
+const mongoDBPort = process.env.MONGODB_PORT || process.env.MONGOPORT;
+const mongoDBDB = process.env.MONGODB_DB || process.env.MONGODATABASE || "trainfit";
 const serverDomain = process.env.SERVER_DOMAIN;
 
 // -------------------------------------------------------
