@@ -2,6 +2,7 @@ const express = require("express");
 const path = require("path");
 const cookieParser = require("cookie-parser");
 const routes = require("./routes");
+const billingController = require("./components/billing/billing-controller");
 const { error404Handler, errorHandler } = require("./middleware");
 const logger = require("./middleware/logger");
 const app = express();
@@ -44,6 +45,8 @@ app.options("*", cors(corsOptions));
 app.set("trust proxy", 1);
 app.use(logger);
 
+// Compatibilidad: algunos paneles externos se configuran sin prefijo /api.
+app.post("/billing/webhooks/revenuecat", billingController.revenueCatWebhook);
 app.use("/api", routes);
 
 // Servir YouTube embed helper como archivo estático desde el servidor
