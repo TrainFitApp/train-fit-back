@@ -33,24 +33,28 @@ const serverDomain = process.env.SERVER_DOMAIN;
 let mongoURI;
 
 if (process.env.MONGODB_URI || process.env.MONGODB_URL) {
-  // 🚂 Conexión directa (Railway, etc.)
+  // 🚂 Conexión por URI completa (Recomendado para Railway/Producción)
   mongoURI = process.env.MONGODB_URI || process.env.MONGODB_URL;
-} else if (
-  mongoDBCluster &&
-  (mongoDBCluster.includes("localhost") || mongoDBCluster.includes("127.0.0.1"))
-) {
-  // 🧩 Conexión local (incluyendo puerto si existe)
-  const host = mongoDBPort
-    ? `${mongoDBCluster}:${mongoDBPort}`
-    : mongoDBCluster;
-  mongoURI = `mongodb://${host}/${mongoDBDB}`;
 } else if (mongoDBCluster) {
-  // ☁️ Conexión Atlas (producción)
-  mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB}`;
+  // 🧩 Construcción manual basada en variables individuales
+  const isLocalOrPrivate = 
+    mongoDBCluster.includes("localhost") || 
+    mongoDBCluster.includes("127.0.0.1") || 
+    mongoDBCluster.includes("railway.internal");
+
+  if (isLocalOrPrivate) {
+    // Conexión estándar (Local o Red Privada Railway)
+    const auth = (mongoDBUser && mongoDBPass) ? `${mongoDBUser}:${mongoDBPass}@` : "";
+    const port = mongoDBPort ? `:${mongoDBPort}` : "";
+    mongoURI = `mongodb://${auth}${mongoDBCluster}${port}/${mongoDBDB || "trainfit"}`;
+  } else {
+    // Conexión Atlas (Producción externa)
+    mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB || "trainfit"}`;
+  }
 } else {
-  // Fallback o error controlado
+  // ⚠️ Fallback de seguridad
   mongoURI = "mongodb://localhost:27017/trainfit";
-  console.warn("⚠️ No se detectó configuración de MongoDB. Usando fallback local.");
+  console.warn("⚠️ Advertencia: No se encontraron variables de MongoDB. Usando backup local.");
 }
 
 // -------------------------------------------------------
