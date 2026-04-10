@@ -32,18 +32,25 @@ const serverDomain = process.env.SERVER_DOMAIN;
 // -------------------------------------------------------
 let mongoURI;
 
-if (
-  mongoDBCluster.includes("localhost") ||
-  mongoDBCluster.includes("127.0.0.1")
+if (process.env.MONGODB_URI || process.env.MONGODB_URL) {
+  // 🚂 Conexión directa (Railway, etc.)
+  mongoURI = process.env.MONGODB_URI || process.env.MONGODB_URL;
+} else if (
+  mongoDBCluster &&
+  (mongoDBCluster.includes("localhost") || mongoDBCluster.includes("127.0.0.1"))
 ) {
   // 🧩 Conexión local (incluyendo puerto si existe)
   const host = mongoDBPort
     ? `${mongoDBCluster}:${mongoDBPort}`
     : mongoDBCluster;
   mongoURI = `mongodb://${host}/${mongoDBDB}`;
-} else {
+} else if (mongoDBCluster) {
   // ☁️ Conexión Atlas (producción)
   mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB}`;
+} else {
+  // Fallback o error controlado
+  mongoURI = "mongodb://localhost:27017/trainfit";
+  console.warn("⚠️ No se detectó configuración de MongoDB. Usando fallback local.");
 }
 
 // -------------------------------------------------------
