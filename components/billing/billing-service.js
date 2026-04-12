@@ -19,6 +19,45 @@ function toDateOrNull(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function toDateFromMsOrNull(value) {
+  if (value === null || value === undefined) return null;
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) return null;
+  return toDateOrNull(new Date(numericValue));
+}
+
+function normalizeEventType(type) {
+  return String(type || "unknown").toUpperCase();
+}
+
+function parseBooleanRenewalFlag(payload) {
+  if (typeof payload?.will_renew === "boolean") {
+    return payload.will_renew;
+  }
+
+  if (typeof payload?.auto_renew_status === "boolean") {
+    return payload.auto_renew_status;
+  }
+
+  if (
+    payload?.auto_renew_status === 1 ||
+    payload?.auto_renew_status === "1" ||
+    payload?.auto_renew_status === "true"
+  ) {
+    return true;
+  }
+
+  if (
+    payload?.auto_renew_status === 0 ||
+    payload?.auto_renew_status === "0" ||
+    payload?.auto_renew_status === "false"
+  ) {
+    return false;
+  }
+
+  return null;
+}
+
 function derivePlan(productId) {
   const id = (productId || "").toLowerCase();
   if (
@@ -182,27 +221,58 @@ async function ensureEventNotProcessed(eventId, payload) {
 
 function parseWebhookEvent(rawPayload) {
   const payload = rawPayload?.event || rawPayload || {};
+  const type = normalizeEventType(payload?.type);
   const eventId =
     payload?.id ||
     payload?.event_id ||
-    `${payload?.type || "unknown"}-${payload?.app_user_id || "unknown"}-${payload?.event_timestamp_ms || Date.now()}`;
+    `${type || "unknown"}-${payload?.app_user_id || "unknown"}-${payload?.event_timestamp_ms || Date.now()}`;
 
   const expiresAt = payload?.expiration_at_ms
     ? new Date(Number(payload.expiration_at_ms))
     : toDateOrNull(payload?.expiration_at);
 
-  const now = Date.now();
-  const isTerminalEvent =
-    payload?.type === "EXPIRATION" ||
-    payload?.type === "REFUND" ||
-    payload?.type === "REVOKE";
+  const eventTimestamp =
+    toDateFromMsOrNull(payload?.event_timestamp_ms) ||
+    toDateOrNull(payload?.event_timestamp) ||
+    new Date();
 
-  const entitled = isTerminalEvent
-    ? false
-    : Boolean(expiresAt && expiresAt.getTime() > now);
+  const now = Date.now();
+  const hasAccessByExpiry = Boolean(expiresAt && expiresAt.getTime() > now);
+  const explicitWillRenew = parseBooleanRenewalFlag(payload);
+
+  let entitled = hasAccessByExpiry;
+  let willRenew = false;
+  let applyEntitlementUpdate = true;
+  let keepExistingSubscriptionState = false;
+
+  if (type === "REFUND" || type === "REVOKE" || type === "EXPIRATION") {
+    entitled = false;
+    willRenew = false;
+  } else if (type === "CANCELLATION") {
+    entitled = hasAccessByExpiry;
+    willRenew = false;
+  } else if (type === "RENEWAL" || type === "INITIAL_PURCHASE") {
+    entitled = hasAccessByExpiry;
+    willRenew = true;
+  } else if (type === "BILLING_ISSUE") {
+    entitled = hasAccessByExpiry;
+    willRenew = explicitWillRenew === null ? false : explicitWillRenew;
+  } else if (type === "TRANSFER" || type === "SUBSCRIBER_ALIAS") {
+    applyEntitlementUpdate = false;
+    keepExistingSubscriptionState = true;
+    entitled = false;
+    willRenew = false;
+  } else {
+    entitled = hasAccessByExpiry;
+    willRenew =
+      explicitWillRenew !== null
+        ? explicitWillRenew
+        : Boolean(payload?.renewal_number || payload?.period_type === "NORMAL");
+  }
 
   return {
     eventId,
+    eventTimestamp,
     appUserId: payload?.app_user_id || null,
     originalAppUserId: payload?.original_app_user_id || payload?.app_user_id || null,
     activeEntitlement:
@@ -212,12 +282,29 @@ function parseWebhookEvent(rawPayload) {
     store: payload?.store || null,
     productId: payload?.product_id || null,
     expiresAt: expiresAt || null,
-    willRenew: Boolean(payload?.renewal_number || payload?.period_type === "NORMAL"),
+    willRenew,
     entitled,
     plan: derivePlan(payload?.product_id),
-    type: payload?.type || "unknown",
+    type,
+    applyEntitlementUpdate,
+    keepExistingSubscriptionState,
     payload,
   };
+}
+
+function shouldApplyEventByOrder(event, billingCustomer) {
+  const customerTimestamp = billingCustomer?.lastEventAt
+    ? new Date(billingCustomer.lastEventAt).getTime()
+    : null;
+  const eventTimestamp = event?.eventTimestamp
+    ? new Date(event.eventTimestamp).getTime()
+    : null;
+
+  if (!customerTimestamp || !eventTimestamp) {
+    return true;
+  }
+
+  return eventTimestamp >= customerTimestamp;
 }
 
 async function getRevenueCatSubscriber(appUserId) {
@@ -333,16 +420,61 @@ module.exports = {
     let event = parseWebhookEvent(rawPayload);
     const shouldProcess = await ensureEventNotProcessed(event.eventId, event.payload);
     if (!shouldProcess) {
+      console.info(
+        "[BillingWebhook]",
+        JSON.stringify({
+          eventId: event.eventId,
+          type: event.type,
+          appUserId: event.appUserId,
+          productId: event.productId,
+          applied: false,
+          reason: "duplicate_event",
+        }),
+      );
       return { processed: false, duplicated: true };
     }
 
     if (!event.appUserId) {
+      console.info(
+        "[BillingWebhook]",
+        JSON.stringify({
+          eventId: event.eventId,
+          type: event.type,
+          appUserId: event.appUserId,
+          productId: event.productId,
+          applied: false,
+          reason: "missing_app_user_id",
+        }),
+      );
       return { processed: false, reason: "missing_app_user_id" };
     }
 
-    const billingCustomer = await billingCustomerSchema.findOne({
+    let billingCustomer = await billingCustomerSchema.findOne({
       appUserId: event.appUserId,
     });
+
+    if (!billingCustomer && event.originalAppUserId) {
+      billingCustomer = await billingCustomerSchema.findOne({
+        originalAppUserId: event.originalAppUserId,
+      });
+    }
+
+    if (!shouldApplyEventByOrder(event, billingCustomer)) {
+      console.info(
+        "[BillingWebhook]",
+        JSON.stringify({
+          eventId: event.eventId,
+          type: event.type,
+          appUserId: event.appUserId,
+          productId: event.productId,
+          entitled: event.entitled,
+          willRenew: event.willRenew,
+          applied: false,
+          reason: "stale_event",
+        }),
+      );
+      return { processed: true, duplicated: false, applied: false, reason: "stale_event" };
+    }
 
     if (!event.productId && billingCustomer?.productId) {
       event.productId = billingCustomer.productId;
@@ -364,7 +496,7 @@ module.exports = {
       event.plan = user.premium.plan;
     }
 
-    if (user) {
+    if (user && event.applyEntitlementUpdate) {
       await updateUserPremium(user._id, event);
       await billingEventSchema.updateOne(
         { eventId: event.eventId },
@@ -372,18 +504,51 @@ module.exports = {
       );
     }
 
+    const resolvedCustomerState = {
+      activeEntitlement: event.keepExistingSubscriptionState
+        ? billingCustomer?.activeEntitlement || null
+        : event.activeEntitlement,
+      store: event.store || billingCustomer?.store || null,
+      productId: event.productId || billingCustomer?.productId || null,
+      expiresAt: event.keepExistingSubscriptionState
+        ? billingCustomer?.expiresAt || null
+        : event.expiresAt,
+      willRenew: event.keepExistingSubscriptionState
+        ? Boolean(billingCustomer?.willRenew)
+        : event.willRenew,
+    };
+
     await upsertBillingCustomer({
       userId: user?._id || null,
       appUserId: event.appUserId,
       originalAppUserId: event.originalAppUserId,
-      activeEntitlement: event.activeEntitlement,
-      store: event.store,
-      productId: event.productId,
-      expiresAt: event.expiresAt,
-      willRenew: event.willRenew,
-      lastEventAt: new Date(),
+      activeEntitlement: resolvedCustomerState.activeEntitlement,
+      store: resolvedCustomerState.store,
+      productId: resolvedCustomerState.productId,
+      expiresAt: resolvedCustomerState.expiresAt,
+      willRenew: resolvedCustomerState.willRenew,
+      lastEventAt: event.eventTimestamp || new Date(),
     });
 
-    return { processed: true, duplicated: false };
+    console.info(
+      "[BillingWebhook]",
+      JSON.stringify({
+        eventId: event.eventId,
+        type: event.type,
+        appUserId: event.appUserId,
+        productId: resolvedCustomerState.productId,
+        entitled: event.applyEntitlementUpdate ? event.entitled : null,
+        willRenew: resolvedCustomerState.willRenew,
+        applied: true,
+        reason: event.applyEntitlementUpdate ? "updated_entitlement" : "mapping_only",
+      }),
+    );
+
+    return {
+      processed: true,
+      duplicated: false,
+      applied: true,
+      mappingOnly: !event.applyEntitlementUpdate,
+    };
   },
 };

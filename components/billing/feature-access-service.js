@@ -13,7 +13,7 @@ const PREMIUM_LIMITS = {
 };
 
 function isPremiumUser(user) {
-  return Boolean(user?.premium?.entitled || user?.isPremium);
+  return Boolean(user?.premium?.entitled);
 }
 
 function getLimits(user) {
@@ -91,4 +91,3 @@ module.exports = {
   canSeeAds,
   buildEntitlements,
 };
-
