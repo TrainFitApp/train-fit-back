@@ -49,12 +49,21 @@ function getRemaining(limit, used) {
   return Math.max(limit - used, 0);
 }
 
+function normalizePlan(plan) {
+  if (typeof plan !== "string") return null;
+  const normalized = plan.trim().toLowerCase();
+  if (normalized === "monthly") return "monthly";
+  if (normalized === "annual") return "annual";
+  return null;
+}
+
 function buildEntitlements(user, usage) {
   const limits = getLimits(user);
+  const normalizedPlan = normalizePlan(user?.premium?.plan);
   return {
     isPremium: isPremiumUser(user),
     source: user?.premium?.source || "legacy",
-    plan: user?.premium?.plan || null,
+    plan: normalizedPlan,
     expiresAt: user?.premium?.expiresAt || null,
     limits: {
       routines: limits.routines === Number.MAX_SAFE_INTEGER ? null : limits.routines,
