@@ -90,6 +90,9 @@ function resolveSubscriberProductId(subscriber) {
 
   for (const [productId, payload] of entries) {
     const expiresAt = toDateOrNull(payload?.expires_date);
+    // M2: ignorar suscripciones ya expiradas para no elegirlas por encima de activas
+    if (expiresAt && expiresAt.getTime() < Date.now()) continue;
+
     const purchasedAt = toDateOrNull(payload?.purchase_date);
     const timestamp =
       expiresAt?.getTime() || purchasedAt?.getTime() || winnerTimestamp;
@@ -133,6 +136,11 @@ function parseRCSubscriberPayload(subscriber) {
   const now = Date.now();
   const entitled = Boolean(expiresAt && expiresAt.getTime() > now);
 
+  // I4: willRenew debe ser false si el usuario canceló (aunque siga con acceso hasta expiración)
+  const willRenew =
+    !subscriber?.subscriptions?.[resolvedProductId]?.unsubscribe_detected_at &&
+    entitled;
+
   return {
     entitled,
     plan: derivePlan(resolvedProductId),
@@ -140,7 +148,7 @@ function parseRCSubscriberPayload(subscriber) {
     source: "revenuecat",
     productId: resolvedProductId || null,
     store: entitlement?.store || null,
-    willRenew: entitled,
+    willRenew,
     activeEntitlement: entitlement ? ENTITLEMENT_ID : null,
   };
 }
@@ -222,10 +230,11 @@ async function ensureEventNotProcessed(eventId, payload) {
 function parseWebhookEvent(rawPayload) {
   const payload = rawPayload?.event || rawPayload || {};
   const type = normalizeEventType(payload?.type);
+  // I5: añadir entropía al fallback para evitar colisiones en eventos simultáneos
   const eventId =
     payload?.id ||
     payload?.event_id ||
-    `${type || "unknown"}-${payload?.app_user_id || "unknown"}-${payload?.event_timestamp_ms || Date.now()}`;
+    `${type || "unknown"}-${payload?.app_user_id || "unknown"}-${payload?.event_timestamp_ms || Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   const expiresAt = payload?.expiration_at_ms
     ? new Date(Number(payload.expiration_at_ms))
@@ -326,6 +335,7 @@ async function getRevenueCatSubscriber(appUserId) {
 
 module.exports = {
   entitlementId: ENTITLEMENT_ID,
+  derivePlan,
 
   validateWebhookAuth(req) {
     if (!WEBHOOK_AUTH) {
@@ -367,8 +377,18 @@ module.exports = {
     });
   },
 
-  async syncFromCustomerInfo(user, customerInfo) {
+  async syncFromCustomerInfo(user, customerInfo, explicitPlan) {
     const premiumState = parseSDKCustomerInfo(customerInfo);
+
+    // Si derivePlan no pudo determinar el plan desde el productId pero el frontend
+    // lo conoce con certeza (viene de purchasePlan), usarlo directamente
+    if (
+      premiumState.plan === "unknown" &&
+      (explicitPlan === "monthly" || explicitPlan === "annual")
+    ) {
+      premiumState.plan = explicitPlan;
+    }
+
     const appUserId = user?._id?.toString();
 
     await Promise.all([
