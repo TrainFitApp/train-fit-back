@@ -389,6 +389,15 @@ module.exports = {
       premiumState.plan = explicitPlan;
     }
 
+    // Si el plan sigue siendo "unknown" (base plans de Google Play sin sufijo en el productId),
+    // preservar el plan que ya tiene el usuario en BD para no machacar lo que el webhook pudo haber sincronizado
+    if (
+      premiumState.plan === "unknown" &&
+      (user?.premium?.plan === "monthly" || user?.premium?.plan === "annual")
+    ) {
+      premiumState.plan = user.premium.plan;
+    }
+
     const appUserId = user?._id?.toString();
 
     await Promise.all([
@@ -417,6 +426,15 @@ module.exports = {
     }
 
     const premiumState = parseRCSubscriberPayload(subscriber);
+
+    // Mismo fallback que syncFromCustomerInfo: si el productId no incluye sufijo de plan
+    // (base plans de Google Play), preservar el plan registrado en BD
+    if (
+      premiumState.plan === "unknown" &&
+      (user?.premium?.plan === "monthly" || user?.premium?.plan === "annual")
+    ) {
+      premiumState.plan = user.premium.plan;
+    }
 
     await Promise.all([
       updateUserPremium(user._id, premiumState),
