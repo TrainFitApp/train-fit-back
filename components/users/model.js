@@ -32,8 +32,8 @@ module.exports = {
     return await userDao.existsByEmail(email);
   },
 
-  async searchUsers(user, date, search) {
-    return userDao.searchUsers(user, date, search);
+  async searchUsers(page, limit, search, filters) {
+    return userDao.searchUsers(page, limit, search, filters);
   },
 
   async createUser(user, date) {
@@ -147,6 +147,18 @@ module.exports = {
 
   async checkHash(id, hash) {
     return userDao.checkHash(id, hash);
+  },
+
+  async clearUserHash(id) {
+    return userDao.clearUserHash(id);
+  },
+
+  async grantLifetimePremium(id) {
+    return userDao.grantLifetimePremium(id);
+  },
+
+  async revokeLifetimePremium(id) {
+    return userDao.revokeLifetimePremium(id);
   },
 
   async validateGoogleToken(token) {

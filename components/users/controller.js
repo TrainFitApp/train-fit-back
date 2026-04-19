@@ -129,9 +129,10 @@ module.exports = {
     const page = req.body.page;
     const limit = 10;
     const search = req.body.search;
+    const filters = req.body.filters || {};
 
-    const users = await userModel.searchUsers(page, limit, search);
-    return res.send(users);
+    const result = await userModel.searchUsers(page, limit, search, filters);
+    return res.send(result);
   },
 
   async createUser(req, res) {
@@ -1090,6 +1091,63 @@ module.exports = {
       });
     } catch (error) {
       console.error("Error al activar cuenta:", error);
+      return res.status(500).send({ message: "Error interno del servidor" });
+    }
+  },
+
+  async clearUserHash(req, res) {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return res.status(400).send({ message: "ID de usuario requerido" });
+      }
+
+      const user = await userModel.clearUserHash(id);
+      if (!user) {
+        return res.status(404).send({ message: "Usuario no encontrado" });
+      }
+
+      return res.status(200).send({ message: "Hash eliminado correctamente" });
+    } catch (error) {
+      console.error("Error al eliminar hash del usuario:", error);
+      return res.status(500).send({ message: "Error interno del servidor" });
+    }
+  },
+
+  async grantLifetimePremium(req, res) {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return res.status(400).send({ message: "ID de usuario requerido" });
+      }
+
+      const user = await userModel.grantLifetimePremium(id);
+      if (!user) {
+        return res.status(404).send({ message: "Usuario no encontrado" });
+      }
+
+      return res.status(200).send(await userDto.single(user, req.user));
+    } catch (error) {
+      console.error("Error al asignar premium lifetime:", error);
+      return res.status(500).send({ message: "Error interno del servidor" });
+    }
+  },
+
+  async revokeLifetimePremium(req, res) {
+    try {
+      const { id } = req.params;
+      if (!id) {
+        return res.status(400).send({ message: "ID de usuario requerido" });
+      }
+
+      const user = await userModel.revokeLifetimePremium(id);
+      if (!user) {
+        return res.status(404).send({ message: "Usuario no encontrado" });
+      }
+
+      return res.status(200).send(await userDto.single(user, req.user));
+    } catch (error) {
+      console.error("Error al revocar premium lifetime:", error);
       return res.status(500).send({ message: "Error interno del servidor" });
     }
   },

@@ -168,10 +168,13 @@ async function updateUserPremium(userId, premiumState) {
       source: "revenuecat",
       lastSyncAt: new Date(),
     },
-    isPremium: Boolean(premiumState?.entitled),
   };
 
-  return userSchema.findByIdAndUpdate(userId, { $set: update }, { new: true });
+  return userSchema.findByIdAndUpdate(
+    userId,
+    { $set: update, $unset: { isPremium: 1 } },
+    { new: true },
+  );
 }
 
 async function upsertBillingCustomer({

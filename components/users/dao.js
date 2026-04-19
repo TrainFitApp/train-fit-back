@@ -63,30 +63,47 @@ module.exports = {
     }
   },
 
-  async searchUsers(page, limit, searchTerm) {
+  async searchUsers(page, limit, searchTerm, filters = {}) {
     try {
-      // Si el searchTerm es vacío, traer usuarios ordenados por lastLogin
-      if (!searchTerm || searchTerm.trim() === "") {
-        const users = await userSchema.aggregate([
-          { $sort: { lastLogin: -1 } }, // Ordenar por lastLogin descendente (más reciente primero)
-          { $skip: page * limit }, // Paginación: Saltar los resultados iniciales
-          { $limit: limit }, // Limitar el número de resultados
-        ]);
+      const normalizedSearch = searchTerm?.trim() || "";
+      const query = {};
 
-        return users;
+      if (filters?.premiumOnly) {
+        query["premium.entitled"] = true;
       }
 
-      // Si hay un término de búsqueda, aplicar la lógica original
-      const query = {
-        $or: [
-          { email: { $regex: searchTerm, $options: "i" } },
-          { name: { $regex: searchTerm, $options: "i" } },
-          { lastname: { $regex: searchTerm, $options: "i" } },
-        ],
-      };
+      if (filters?.premiumLifetimeOnly) {
+        query["premium.entitled"] = true;
+        query["premium.plan"] = "lifetime";
+      }
+
+      if (filters?.withHashOnly) {
+        query.hash = { $exists: true, $nin: [null, ""] };
+      }
+
+      if (normalizedSearch) {
+        query.$or = [
+          { email: { $regex: normalizedSearch, $options: "i" } },
+          { name: { $regex: normalizedSearch, $options: "i" } },
+          { lastname: { $regex: normalizedSearch, $options: "i" } },
+        ];
+      }
+
+      const total = await userSchema.countDocuments(query);
+
+      if (!normalizedSearch) {
+        const users = await userSchema.aggregate([
+          { $match: query },
+          { $sort: { lastLogin: -1 } },
+          { $skip: page * limit },
+          { $limit: limit },
+        ]);
+
+        return { users, total };
+      }
 
       const users = await userSchema.aggregate([
-        { $match: query }, // Filtro inicial basado en el término de búsqueda
+        { $match: query },
         {
           $addFields: {
             matchCount: {
@@ -96,7 +113,7 @@ module.exports = {
                     {
                       $regexMatch: {
                         input: "$email",
-                        regex: searchTerm,
+                        regex: normalizedSearch,
                         options: "i",
                       },
                     },
@@ -109,7 +126,7 @@ module.exports = {
                     {
                       $regexMatch: {
                         input: "$name",
-                        regex: searchTerm,
+                        regex: normalizedSearch,
                         options: "i",
                       },
                     },
@@ -122,7 +139,7 @@ module.exports = {
                     {
                       $regexMatch: {
                         input: "$lastname",
-                        regex: searchTerm,
+                        regex: normalizedSearch,
                         options: "i",
                       },
                     },
@@ -134,19 +151,12 @@ module.exports = {
             },
           },
         },
-        { $sort: { matchCount: -1 } }, // Ordenar por cantidad de coincidencias
-        {
-          $group: {
-            _id: "$_id", // Asegurar documentos únicos usando el ID
-            doc: { $first: "$$ROOT" }, // Obtener el documento completo
-          },
-        },
-        { $replaceRoot: { newRoot: "$doc" } }, // Reemplazar el documento agrupado
-        { $skip: page * limit }, // Paginación: Saltar los resultados iniciales
-        { $limit: limit }, // Limitar el número de resultados
+        { $sort: { matchCount: -1, lastLogin: -1 } },
+        { $skip: page * limit },
+        { $limit: limit },
       ]);
 
-      return users;
+      return { users, total };
     } catch (error) {
       console.error("Error al buscar usuarios:", error);
       throw new Error("No se pudo completar la búsqueda de usuarios.");
@@ -579,6 +589,63 @@ module.exports = {
     } catch (err) {
       console.error("Error en checkHash:", err);
       return null;
+    }
+  },
+
+  async clearUserHash(id) {
+    try {
+      return await userSchema.findByIdAndUpdate(
+        id,
+        { $unset: { hash: 1 } },
+        { new: true },
+      );
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  async grantLifetimePremium(id) {
+    try {
+      return await userSchema.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            premium: {
+              entitled: true,
+              plan: "lifetime",
+              expiresAt: null,
+              source: "admin",
+              lastSyncAt: new Date(),
+            },
+          },
+          $unset: { isPremium: 1 },
+        },
+        { new: true },
+      );
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  async revokeLifetimePremium(id) {
+    try {
+      return await userSchema.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            premium: {
+              entitled: false,
+              plan: null,
+              expiresAt: null,
+              source: null,
+              lastSyncAt: new Date(),
+            },
+          },
+        },
+        { new: true },
+      );
+    } catch (err) {
+      throw err;
     }
   },
 };

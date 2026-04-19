@@ -36,6 +36,9 @@ router.postAsync(
   controller.searchArchivedsByFilter,
 );
 router.getAsync("/hash/:id/:hash", controller.checkHash);
+router.deleteAsync("/hash/:id", auth(["admin", "user"]), controller.clearUserHash);
+router.patchAsync("/premium/lifetime/:id", auth(["admin"]), controller.grantLifetimePremium);
+router.deleteAsync("/premium/lifetime/:id", auth(["admin"]), controller.revokeLifetimePremium);
 router.getAsync("/send/mail/code/:email", controller.sendMailCode);
 router.postAsync("/send/mail/code", controller.checkRestoreCode);
 router.postAsync("/activate", controller.activateAccount);

@@ -28,7 +28,6 @@ const single = async (resource, authUser) => ({
   personalAds: resource.personalAds,
   lastLogin: resource.lastLogin,
   premium: resource.premium,
-  isPremium: Boolean(resource?.premium?.entitled || resource.isPremium),
   theme: resource.theme,
 });
 

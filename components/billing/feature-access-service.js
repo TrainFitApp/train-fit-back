@@ -54,6 +54,7 @@ function normalizePlan(plan) {
   const normalized = plan.trim().toLowerCase();
   if (normalized === "monthly") return "monthly";
   if (normalized === "annual") return "annual";
+  if (normalized === "lifetime") return "lifetime";
   return null;
 }
 
