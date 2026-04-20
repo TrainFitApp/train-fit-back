@@ -59,7 +59,7 @@ module.exports = {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
         message:
-          "L\u00edmite Free alcanzado. Solo puedes tener 8 micro-ciclos por rutina.",
+          "L\u00edmite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
       });
     }
 
@@ -80,7 +80,7 @@ module.exports = {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
         message:
-          "L\u00edmite Free alcanzado. Solo puedes tener 8 micro-ciclos por rutina.",
+          "L\u00edmite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
       });
     }
 

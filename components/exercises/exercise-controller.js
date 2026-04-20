@@ -35,7 +35,7 @@ module.exports = {
     if (!featureAccessService.canCreateExercise(req.user, ownExerciseCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_EXERCISES",
-        message: "L\u00edmite Free alcanzado. Solo puedes crear 3 ejercicios propios.",
+        message: "L\u00edmite Free alcanzado. Solo puedes crear 2 ejercicios propios.",
       });
     }
 

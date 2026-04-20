@@ -85,7 +85,7 @@ const controller = {
       if (!featureAccessService.canCreateRecipe(req.user, ownRecipesCount)) {
         return res.status(403).json({
           code: "PREMIUM_LIMIT_RECIPES",
-          message: "L\u00edmite Free alcanzado. Solo puedes crear 3 recetas propias.",
+          message: "L\u00edmite Free alcanzado. Solo puedes crear 2 recetas propias.",
         });
       }
 
@@ -111,7 +111,7 @@ const controller = {
           return res.status(403).json({
             code: "PREMIUM_LIMIT_RECIPES",
             message:
-              "L\u00edmite Free alcanzado. Solo puedes crear 3 recetas propias.",
+              "L\u00edmite Free alcanzado. Solo puedes crear 2 recetas propias.",
           });
         }
       }

@@ -1,8 +1,8 @@
 const FREE_LIMITS = {
   routines: 1,
-  microcyclesPerRoutine: 8,
-  customExercises: 3,
-  recipes: 3,
+  microcyclesPerRoutine: 4,
+  customExercises: 2,
+  recipes: 2,
 };
 
 const PREMIUM_LIMITS = {
