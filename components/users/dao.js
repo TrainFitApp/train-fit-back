@@ -101,8 +101,9 @@ module.exports = {
             $addFields: {
               productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
               exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
-              hasWorkoutInUse: { $gt: [{ $size: { $ifNull: ["$workoutInUseDoc", []] } }, 0] },
-              hasTableInUse: { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
+              hasWorkoutInUse: { $cond: [{ $and: [{ $ne: ["$workoutInUse", null] }, { $ne: ["$workoutInUse", ""] }] }, true, false] },
+              hasTableInUse: { $cond: [{ $and: [{ $ne: ["$tableInUse", null] }, { $ne: ["$tableInUse", ""] }] }, true, false] },
+              hasDietInUse: { $cond: [{ $and: [{ $ne: ["$dietInUse", null] }, { $ne: ["$dietInUse", ""] }] }, true, false] },
               tableSplitsCount: {
                 $cond: [
                   { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
@@ -189,6 +190,7 @@ module.exports = {
             exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
             hasWorkoutInUse: { $cond: [{ $and: [{ $ne: ["$workoutInUse", null] }, { $ne: ["$workoutInUse", ""] }] }, true, false] },
             hasTableInUse: { $cond: [{ $and: [{ $ne: ["$tableInUse", null] }, { $ne: ["$tableInUse", ""] }] }, true, false] },
+            hasDietInUse: { $cond: [{ $and: [{ $ne: ["$dietInUse", null] }, { $ne: ["$dietInUse", ""] }] }, true, false] },
             tableSplitsCount: {
               $cond: [
                 { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
