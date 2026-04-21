@@ -206,9 +206,9 @@ function parseRCSubscriberPayload(subscriber) {
   const now = Date.now();
   const expiresAt =
     subscriptionExpiresAt &&
-    (!entitlementExpiresAt ||
-      entitlementExpiresAt.getTime() <= now ||
-      subscriptionExpiresAt.getTime() > entitlementExpiresAt.getTime())
+      (!entitlementExpiresAt ||
+        entitlementExpiresAt.getTime() <= now ||
+        subscriptionExpiresAt.getTime() > entitlementExpiresAt.getTime())
       ? subscriptionExpiresAt
       : entitlementExpiresAt;
   const entitled = Boolean(expiresAt && expiresAt.getTime() > now);
@@ -234,8 +234,8 @@ async function updateUserPremium(userId, premiumState) {
   if (!userId) return null;
   const normalizedPlan =
     premiumState?.plan === "monthly" ||
-    premiumState?.plan === "annual" ||
-    premiumState?.plan === "manual"
+      premiumState?.plan === "annual" ||
+      premiumState?.plan === "manual"
       ? premiumState.plan
       : null;
   const isEntitled = Boolean(premiumState?.entitled);
@@ -454,7 +454,7 @@ function getPromotionPayloadForTarget(targetExpiresAt) {
   );
 
   if (!selectedDuration) {
-    const error = new Error("La duracion maxima permitida es 1 ano");
+    const error = new Error("La duracion maxima permitida es 1 año");
     error.status = 400;
     throw error;
   }
