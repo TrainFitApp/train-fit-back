@@ -101,9 +101,9 @@ module.exports = {
             $addFields: {
               productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
               exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
-              hasWorkoutInUse: { $cond: [{ $and: [{ $ne: ["$workoutInUse", null] }, { $ne: ["$workoutInUse", ""] }] }, true, false] },
-              hasTableInUse: { $cond: [{ $and: [{ $ne: ["$tableInUse", null] }, { $ne: ["$tableInUse", ""] }] }, true, false] },
-              hasDietInUse: { $cond: [{ $and: [{ $ne: ["$dietInUse", null] }, { $ne: ["$dietInUse", ""] }] }, true, false] },
+              hasWorkoutInUse: { $gt: ["$workoutInUse", null] },
+              hasTableInUse: { $gt: ["$tableInUse", null] },
+              hasDietInUse: { $gt: ["$dietInUse", null] },
               tableSplitsCount: {
                 $cond: [
                   { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
@@ -183,14 +183,15 @@ module.exports = {
         { $lookup: { from: "products", localField: "_id", foreignField: "userId", as: "createdProducts" } },
         { $lookup: { from: "exercises", localField: "_id", foreignField: "userId", as: "createdExercises" } },
         { $lookup: { from: "tables", localField: "tableInUse", foreignField: "_id", as: "tableInUseDoc" } },
+        { $lookup: { from: "workouts", localField: "workoutInUse", foreignField: "_id", as: "workoutInUseDoc" } },
         { $lookup: { from: "diets", localField: "dietInUse", foreignField: "_id", as: "dietInUseDoc" } },
         {
           $addFields: {
             productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
             exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
-            hasWorkoutInUse: { $cond: [{ $and: [{ $ne: ["$workoutInUse", null] }, { $ne: ["$workoutInUse", ""] }] }, true, false] },
-            hasTableInUse: { $cond: [{ $and: [{ $ne: ["$tableInUse", null] }, { $ne: ["$tableInUse", ""] }] }, true, false] },
-            hasDietInUse: { $cond: [{ $and: [{ $ne: ["$dietInUse", null] }, { $ne: ["$dietInUse", ""] }] }, true, false] },
+            hasWorkoutInUse: { $gt: ["$workoutInUse", null] },
+            hasTableInUse: { $gt: ["$tableInUse", null] },
+            hasDietInUse: { $gt: ["$dietInUse", null] },
             tableSplitsCount: {
               $cond: [
                 { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
@@ -208,7 +209,7 @@ module.exports = {
           }
         },
         {
-          $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, dietInUseDoc: 0 }
+          $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietInUseDoc: 0 }
         }
       ]);
 
