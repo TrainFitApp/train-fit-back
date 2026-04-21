@@ -97,6 +97,36 @@ module.exports = {
           { $sort: { lastLogin: -1 } },
           { $skip: page * limit },
           { $limit: limit },
+          { $lookup: { from: "products", localField: "_id", foreignField: "userId", as: "createdProducts" } },
+          { $lookup: { from: "exercises", localField: "_id", foreignField: "userId", as: "createdExercises" } },
+          { $lookup: { from: "tables", localField: "tableInUse", foreignField: "_id", as: "tableInUseDoc" } },
+          { $lookup: { from: "workouts", localField: "workoutInUse", foreignField: "_id", as: "workoutInUseDoc" } },
+          { $lookup: { from: "diets", localField: "dietInUse", foreignField: "_id", as: "dietInUseDoc" } },
+          {
+            $addFields: {
+              productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
+              exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
+              hasWorkoutInUse: { $gt: [{ $size: { $ifNull: ["$workoutInUseDoc", []] } }, 0] },
+              hasTableInUse: { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
+              tableSplitsCount: {
+                $cond: [
+                  { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
+                  { $size: { $ifNull: [{ $arrayElemAt: ["$tableInUseDoc.splits", 0] }, []] } },
+                  0
+                ]
+              },
+              dietDaysCount: {
+                $cond: [
+                  { $gt: [{ $size: { $ifNull: ["$dietInUseDoc", []] } }, 0] },
+                  { $size: { $ifNull: [{ $arrayElemAt: ["$dietInUseDoc.dietsDay", 0] }, []] } },
+                  0
+                ]
+              }
+            }
+          },
+          {
+            $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietInUseDoc: 0 }
+          }
         ]);
 
         return { users, total };
@@ -154,6 +184,35 @@ module.exports = {
         { $sort: { matchCount: -1, lastLogin: -1 } },
         { $skip: page * limit },
         { $limit: limit },
+        { $lookup: { from: "products", localField: "_id", foreignField: "userId", as: "createdProducts" } },
+        { $lookup: { from: "exercises", localField: "_id", foreignField: "userId", as: "createdExercises" } },
+        { $lookup: { from: "tables", localField: "tableInUse", foreignField: "_id", as: "tableInUseDoc" } },
+        { $lookup: { from: "diets", localField: "dietInUse", foreignField: "_id", as: "dietInUseDoc" } },
+        {
+          $addFields: {
+            productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
+            exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
+            hasWorkoutInUse: { $cond: [{ $and: [{ $ne: ["$workoutInUse", null] }, { $ne: ["$workoutInUse", ""] }] }, true, false] },
+            hasTableInUse: { $cond: [{ $and: [{ $ne: ["$tableInUse", null] }, { $ne: ["$tableInUse", ""] }] }, true, false] },
+            tableSplitsCount: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
+                { $size: { $ifNull: [{ $arrayElemAt: ["$tableInUseDoc.splits", 0] }, []] } },
+                0
+              ]
+            },
+            dietDaysCount: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ["$dietInUseDoc", []] } }, 0] },
+                { $size: { $ifNull: [{ $arrayElemAt: ["$dietInUseDoc.dietsDay", 0] }, []] } },
+                0
+              ]
+            }
+          }
+        },
+        {
+          $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, dietInUseDoc: 0 }
+        }
       ]);
 
       return { users, total };
