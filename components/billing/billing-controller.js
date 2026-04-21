@@ -16,6 +16,15 @@ function sendBillingAdminError(res, error) {
   return res.status(status).send({ message });
 }
 
+function disableCache(res) {
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Surrogate-Control": "no-store",
+  });
+}
+
 module.exports = {
   async linkCustomer(req, res) {
     const user = req.user;
@@ -29,6 +38,8 @@ module.exports = {
   },
 
   async getEntitlements(req, res) {
+    disableCache(res);
+
     const user = req.user;
 
     // C2: si el usuario es premium pero sin plan registrado, derivarlo desde

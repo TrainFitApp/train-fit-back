@@ -106,6 +106,36 @@ function resolvePremiumSource(store, productId) {
   return "revenuecat";
 }
 
+function getSubscriberSubscription(subscriber, productId) {
+  if (!productId) return null;
+  return subscriber?.subscriptions?.[productId] || null;
+}
+
+function resolveActiveSubscriptionEntry(subscriber) {
+  const subscriptions = subscriber?.subscriptions || {};
+  const entries = Object.entries(subscriptions);
+  if (!entries.length) {
+    return null;
+  }
+
+  let winner = null;
+  let winnerTimestamp = -1;
+  const now = Date.now();
+
+  for (const [productId, payload] of entries) {
+    const expiresAt = toDateOrNull(payload?.expires_date);
+    if (!expiresAt || expiresAt.getTime() <= now) continue;
+
+    const timestamp = expiresAt.getTime();
+    if (timestamp > winnerTimestamp) {
+      winnerTimestamp = timestamp;
+      winner = { productId, payload, expiresAt };
+    }
+  }
+
+  return winner;
+}
+
 function resolveSubscriberProductId(subscriber) {
   const subscriptions = subscriber?.subscriptions || {};
   const entries = Object.entries(subscriptions);
@@ -163,33 +193,43 @@ function parseSDKCustomerInfo(customerInfo) {
 function parseRCSubscriberPayload(subscriber) {
   const active = subscriber?.entitlements || {};
   const entitlement = active?.[ENTITLEMENT_ID];
+  const activeSubscription = resolveActiveSubscriptionEntry(subscriber);
   const resolvedProductId =
-    entitlement?.product_identifier || resolveSubscriberProductId(subscriber);
+    activeSubscription?.productId ||
+    entitlement?.product_identifier ||
+    resolveSubscriberProductId(subscriber);
+  const subscriptionPayload = getSubscriberSubscription(subscriber, resolvedProductId);
 
-  const expiresAt = toDateOrNull(entitlement?.expires_date);
+  const entitlementExpiresAt = toDateOrNull(entitlement?.expires_date);
+  const subscriptionExpiresAt =
+    activeSubscription?.expiresAt || toDateOrNull(subscriptionPayload?.expires_date);
   const now = Date.now();
+  const expiresAt =
+    subscriptionExpiresAt &&
+    (!entitlementExpiresAt ||
+      entitlementExpiresAt.getTime() <= now ||
+      subscriptionExpiresAt.getTime() > entitlementExpiresAt.getTime())
+      ? subscriptionExpiresAt
+      : entitlementExpiresAt;
   const entitled = Boolean(expiresAt && expiresAt.getTime() > now);
+  const store = entitlement?.store || subscriptionPayload?.store || null;
 
-  // I4: willRenew debe ser false si el usuario canceló (aunque siga con acceso hasta expiración)
-  const willRenew =
-    !subscriber?.subscriptions?.[resolvedProductId]?.unsubscribe_detected_at &&
-    entitled;
+  const willRenew = !subscriptionPayload?.unsubscribe_detected_at && entitled;
 
   return {
     entitled,
     plan:
-      resolvePremiumSource(entitlement?.store, resolvedProductId) === "manual"
+      resolvePremiumSource(store, resolvedProductId) === "manual"
         ? "manual"
         : derivePlan(resolvedProductId),
     expiresAt,
-    source: resolvePremiumSource(entitlement?.store, resolvedProductId),
+    source: resolvePremiumSource(store, resolvedProductId),
     productId: resolvedProductId || null,
-    store: entitlement?.store || null,
+    store,
     willRenew,
-    activeEntitlement: entitlement ? ENTITLEMENT_ID : null,
+    activeEntitlement: entitlement || entitled ? ENTITLEMENT_ID : null,
   };
 }
-
 async function updateUserPremium(userId, premiumState) {
   if (!userId) return null;
   const normalizedPlan =
@@ -438,6 +478,22 @@ async function grantPromotionalEntitlement(appUserId, targetExpiresAt) {
   return response?.data?.subscriber || null;
 }
 
+function ensureManualGrantWasApplied(premiumState) {
+  if (
+    premiumState?.entitled !== true ||
+    premiumState?.source !== "manual" ||
+    premiumState?.plan !== "manual" ||
+    !premiumState?.expiresAt ||
+    new Date(premiumState.expiresAt).getTime() <= Date.now()
+  ) {
+    const error = new Error(
+      "RevenueCat no devolvio un entitlement promocional activo para este usuario",
+    );
+    error.status = 502;
+    throw error;
+  }
+}
+
 async function revokePromotionalEntitlement(appUserId) {
   const url = `${REVENUECAT_API_BASE}/subscribers/${encodeURIComponent(
     appUserId,
@@ -510,7 +566,7 @@ function isRealStorePremium(user, billingCustomer) {
   return user?.premium?.source === "revenuecat" || Boolean(billingCustomer?.store);
 }
 
-async function syncSubscriberForUser(user, subscriber, appUserId) {
+async function syncSubscriberForUser(user, subscriber, appUserId, options = {}) {
   if (!subscriber) {
     const error = new Error("No se pudo sincronizar la suscripcion con RevenueCat");
     error.status = 502;
@@ -518,6 +574,10 @@ async function syncSubscriberForUser(user, subscriber, appUserId) {
   }
 
   const premiumState = parseRCSubscriberPayload(subscriber);
+  if (options.expectManualGrant) {
+    ensureManualGrantWasApplied(premiumState);
+  }
+
   const updatedUser = await updateUserPremium(user._id, premiumState);
 
   await upsertBillingCustomer({
@@ -702,11 +762,12 @@ module.exports = {
         throw error;
       }
     });
-    const subscriber =
-      (await grantPromotionalEntitlement(appUserId, targetExpiresAt)) ||
-      (await getRevenueCatSubscriber(appUserId));
+    await grantPromotionalEntitlement(appUserId, targetExpiresAt);
+    const subscriber = await getRevenueCatSubscriber(appUserId);
 
-    return syncSubscriberForUser(user, subscriber, appUserId);
+    return syncSubscriberForUser(user, subscriber, appUserId, {
+      expectManualGrant: true,
+    });
   },
 
   async extendAdminPremium(userId, duration) {
@@ -732,11 +793,12 @@ module.exports = {
         throw error;
       }
     });
-    const subscriber =
-      (await grantPromotionalEntitlement(appUserId, targetExpiresAt)) ||
-      (await getRevenueCatSubscriber(appUserId));
+    await grantPromotionalEntitlement(appUserId, targetExpiresAt);
+    const subscriber = await getRevenueCatSubscriber(appUserId);
 
-    return syncSubscriberForUser(user, subscriber, appUserId);
+    return syncSubscriberForUser(user, subscriber, appUserId, {
+      expectManualGrant: true,
+    });
   },
 
   async revokeAdminPremium(userId) {
