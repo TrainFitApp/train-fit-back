@@ -153,14 +153,6 @@ module.exports = {
     return userDao.clearUserHash(id);
   },
 
-  async grantLifetimePremium(id) {
-    return userDao.grantLifetimePremium(id);
-  },
-
-  async revokeLifetimePremium(id) {
-    return userDao.revokeLifetimePremium(id);
-  },
-
   async validateGoogleToken(token) {
     try {
       // Decodificar el header del token sin verificar

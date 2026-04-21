@@ -72,11 +72,6 @@ module.exports = {
         query["premium.entitled"] = true;
       }
 
-      if (filters?.premiumLifetimeOnly) {
-        query["premium.entitled"] = true;
-        query["premium.plan"] = "lifetime";
-      }
-
       if (filters?.withHashOnly) {
         query.hash = { $exists: true, $nin: [null, ""] };
       }
@@ -663,48 +658,4 @@ module.exports = {
     }
   },
 
-  async grantLifetimePremium(id) {
-    try {
-      return await userSchema.findByIdAndUpdate(
-        id,
-        {
-          $set: {
-            premium: {
-              entitled: true,
-              plan: "lifetime",
-              expiresAt: null,
-              source: "admin",
-              lastSyncAt: new Date(),
-            },
-          },
-          $unset: { isPremium: 1 },
-        },
-        { new: true },
-      );
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  async revokeLifetimePremium(id) {
-    try {
-      return await userSchema.findByIdAndUpdate(
-        id,
-        {
-          $set: {
-            premium: {
-              entitled: false,
-              plan: null,
-              expiresAt: null,
-              source: null,
-              lastSyncAt: new Date(),
-            },
-          },
-        },
-        { new: true },
-      );
-    } catch (err) {
-      throw err;
-    }
-  },
 };

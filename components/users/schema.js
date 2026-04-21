@@ -46,7 +46,6 @@ const UserSchema = new Schema({
     source: String,
     lastSyncAt: Date,
   },
-  isPremium: Boolean,
   refreshToken: String,
   previousRefreshToken: String,
   tokenRotationTimestamp: Date,

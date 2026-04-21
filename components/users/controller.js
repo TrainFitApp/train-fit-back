@@ -1114,41 +1114,4 @@ module.exports = {
     }
   },
 
-  async grantLifetimePremium(req, res) {
-    try {
-      const { id } = req.params;
-      if (!id) {
-        return res.status(400).send({ message: "ID de usuario requerido" });
-      }
-
-      const user = await userModel.grantLifetimePremium(id);
-      if (!user) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      return res.status(200).send(await userDto.single(user, req.user));
-    } catch (error) {
-      console.error("Error al asignar premium lifetime:", error);
-      return res.status(500).send({ message: "Error interno del servidor" });
-    }
-  },
-
-  async revokeLifetimePremium(req, res) {
-    try {
-      const { id } = req.params;
-      if (!id) {
-        return res.status(400).send({ message: "ID de usuario requerido" });
-      }
-
-      const user = await userModel.revokeLifetimePremium(id);
-      if (!user) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      return res.status(200).send(await userDto.single(user, req.user));
-    } catch (error) {
-      console.error("Error al revocar premium lifetime:", error);
-      return res.status(500).send({ message: "Error interno del servidor" });
-    }
-  },
 };

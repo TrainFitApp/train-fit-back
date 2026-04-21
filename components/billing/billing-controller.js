@@ -4,6 +4,17 @@ const billingCustomerSchema = require("./billing-customer-schema");
 const exerciseModel = require("../exercises/exercise-model");
 const recipeModel = require("../recipes/recipe-model");
 const userSchema = require("../users/schema");
+const userDto = require("../users/dto");
+
+function sendBillingAdminError(res, error) {
+  const status = error?.status || error?.response?.status || 500;
+  const message =
+    error?.response?.data?.message ||
+    error?.message ||
+    "Error al gestionar premium";
+
+  return res.status(status).send({ message });
+}
 
 module.exports = {
   async linkCustomer(req, res) {
@@ -90,6 +101,50 @@ module.exports = {
     } catch (error) {
       console.error("[BillingWebhook] Error inesperado en processWebhook", error);
       return res.status(500).send({ message: "Internal server error processing webhook" });
+    }
+  },
+
+  async grantPremium(req, res) {
+    try {
+      const user = await billingService.grantAdminPremium(
+        req.body?.userId,
+        req.body?.duration,
+      );
+      return res.send(await userDto.single(user, req.user));
+    } catch (error) {
+      return sendBillingAdminError(res, error);
+    }
+  },
+
+  async extendPremium(req, res) {
+    try {
+      const user = await billingService.extendAdminPremium(
+        req.body?.userId,
+        req.body?.duration,
+      );
+      return res.send(await userDto.single(user, req.user));
+    } catch (error) {
+      return sendBillingAdminError(res, error);
+    }
+  },
+
+  async revokePremium(req, res) {
+    try {
+      const user = await billingService.revokeAdminPremium(req.body?.userId);
+      return res.send(await userDto.single(user, req.user));
+    } catch (error) {
+      return sendBillingAdminError(res, error);
+    }
+  },
+
+  async getSubscriptionStatus(req, res) {
+    try {
+      const status = await billingService.getAdminSubscriptionStatus(
+        req.params?.userId,
+      );
+      return res.send(status);
+    } catch (error) {
+      return sendBillingAdminError(res, error);
     }
   },
 };

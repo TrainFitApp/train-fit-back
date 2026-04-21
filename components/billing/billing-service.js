@@ -12,6 +12,22 @@ const WEBHOOK_AUTH =
   process.env.REVENUECAT_WEBHOOK_SECRET ||
   "";
 const SECRET_API_KEY = process.env.REVENUECAT_SECRET_API_KEY || "";
+const PROMOTIONAL_DURATIONS = [
+  { id: "daily", ms: 24 * 60 * 60 * 1000 },
+  { id: "three_day", ms: 3 * 24 * 60 * 60 * 1000 },
+  { id: "weekly", ms: 7 * 24 * 60 * 60 * 1000 },
+  { id: "monthly", ms: 31 * 24 * 60 * 60 * 1000 },
+  { id: "two_month", ms: 61 * 24 * 60 * 60 * 1000 },
+  { id: "three_month", ms: 92 * 24 * 60 * 60 * 1000 },
+  { id: "six_month", ms: 183 * 24 * 60 * 60 * 1000 },
+  { id: "yearly", ms: 365 * 24 * 60 * 60 * 1000 },
+];
+const PRESET_DURATIONS = {
+  "1d": 1 * 24 * 60 * 60 * 1000,
+  "1w": 7 * 24 * 60 * 60 * 1000,
+  "1m": 31 * 24 * 60 * 60 * 1000,
+  "1y": 365 * 24 * 60 * 60 * 1000,
+};
 
 function toDateOrNull(value) {
   if (!value) return null;
@@ -78,6 +94,18 @@ function derivePlan(productId) {
   return "unknown";
 }
 
+function isPromotionalStore(store) {
+  const normalized = String(store || "").trim().toLowerCase();
+  return normalized === "promotional" || normalized === "promotional_entitlement";
+}
+
+function resolvePremiumSource(store, productId) {
+  if (isPromotionalStore(store) || String(productId || "").startsWith("rc_promo_")) {
+    return "manual";
+  }
+  return "revenuecat";
+}
+
 function resolveSubscriberProductId(subscriber) {
   const subscriptions = subscriber?.subscriptions || {};
   const entries = Object.entries(subscriptions);
@@ -116,9 +144,15 @@ function parseSDKCustomerInfo(customerInfo) {
 
   return {
     entitled,
-    plan: derivePlan(selectedEntitlement?.productIdentifier),
+    plan:
+      resolvePremiumSource(selectedEntitlement?.store, selectedEntitlement?.productIdentifier) === "manual"
+        ? "manual"
+        : derivePlan(selectedEntitlement?.productIdentifier),
     expiresAt,
-    source: "revenuecat",
+    source: resolvePremiumSource(
+      selectedEntitlement?.store,
+      selectedEntitlement?.productIdentifier,
+    ),
     productId: selectedEntitlement?.productIdentifier || null,
     store: selectedEntitlement?.store || null,
     willRenew: Boolean(selectedEntitlement?.willRenew),
@@ -143,9 +177,12 @@ function parseRCSubscriberPayload(subscriber) {
 
   return {
     entitled,
-    plan: derivePlan(resolvedProductId),
+    plan:
+      resolvePremiumSource(entitlement?.store, resolvedProductId) === "manual"
+        ? "manual"
+        : derivePlan(resolvedProductId),
     expiresAt,
-    source: "revenuecat",
+    source: resolvePremiumSource(entitlement?.store, resolvedProductId),
     productId: resolvedProductId || null,
     store: entitlement?.store || null,
     willRenew,
@@ -156,16 +193,21 @@ function parseRCSubscriberPayload(subscriber) {
 async function updateUserPremium(userId, premiumState) {
   if (!userId) return null;
   const normalizedPlan =
-    premiumState?.plan === "monthly" || premiumState?.plan === "annual"
+    premiumState?.plan === "monthly" ||
+    premiumState?.plan === "annual" ||
+    premiumState?.plan === "manual"
       ? premiumState.plan
       : null;
+  const isEntitled = Boolean(premiumState?.entitled);
+  const normalizedSource =
+    !isEntitled ? null : premiumState?.source === "manual" ? "manual" : "revenuecat";
 
   const update = {
     premium: {
-      entitled: Boolean(premiumState?.entitled),
+      entitled: isEntitled,
       plan: normalizedPlan,
       expiresAt: premiumState?.expiresAt || null,
-      source: "revenuecat",
+      source: normalizedSource,
       lastSyncAt: new Date(),
     },
   };
@@ -296,7 +338,10 @@ function parseWebhookEvent(rawPayload) {
     expiresAt: expiresAt || null,
     willRenew,
     entitled,
-    plan: derivePlan(payload?.product_id),
+    plan: resolvePremiumSource(payload?.store, payload?.product_id) === "manual"
+      ? "manual"
+      : derivePlan(payload?.product_id),
+    source: resolvePremiumSource(payload?.store, payload?.product_id),
     type,
     applyEntitlementUpdate,
     keepExistingSubscriptionState,
@@ -336,9 +381,164 @@ async function getRevenueCatSubscriber(appUserId) {
   return response?.data?.subscriber || null;
 }
 
+function assertRevenueCatSecret() {
+  if (!SECRET_API_KEY) {
+    const error = new Error("RevenueCat secret API key is not configured");
+    error.status = 500;
+    throw error;
+  }
+}
+
+function getRevenueCatHeaders() {
+  assertRevenueCatSecret();
+  return {
+    Authorization: `Bearer ${SECRET_API_KEY}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+}
+
+function getPromotionPayloadForTarget(targetExpiresAt) {
+  const targetMs = new Date(targetExpiresAt).getTime();
+  const nowMs = Date.now();
+  const requestedMs = targetMs - nowMs;
+
+  if (!Number.isFinite(targetMs) || requestedMs <= 0) {
+    const error = new Error("La fecha de expiracion debe estar en el futuro");
+    error.status = 400;
+    throw error;
+  }
+
+  const selectedDuration = PROMOTIONAL_DURATIONS.find(
+    (duration) => requestedMs <= duration.ms,
+  );
+
+  if (!selectedDuration) {
+    const error = new Error("La duracion maxima permitida es 1 ano");
+    error.status = 400;
+    throw error;
+  }
+
+  return {
+    duration: selectedDuration.id,
+    start_time_ms: targetMs - selectedDuration.ms,
+  };
+}
+
+async function grantPromotionalEntitlement(appUserId, targetExpiresAt) {
+  const url = `${REVENUECAT_API_BASE}/subscribers/${encodeURIComponent(
+    appUserId,
+  )}/entitlements/${encodeURIComponent(ENTITLEMENT_ID)}/promotional`;
+  const payload = getPromotionPayloadForTarget(targetExpiresAt);
+  const response = await axios.post(url, payload, {
+    headers: getRevenueCatHeaders(),
+    timeout: 10000,
+  });
+
+  return response?.data?.subscriber || null;
+}
+
+async function revokePromotionalEntitlement(appUserId) {
+  const url = `${REVENUECAT_API_BASE}/subscribers/${encodeURIComponent(
+    appUserId,
+  )}/entitlements/${encodeURIComponent(ENTITLEMENT_ID)}/revoke_promotionals`;
+  const response = await axios.post(url, {}, {
+    headers: getRevenueCatHeaders(),
+    timeout: 10000,
+  });
+
+  return response?.data?.subscriber || null;
+}
+
+function normalizeDurationRequest(duration) {
+  if (!duration || typeof duration !== "object") {
+    const error = new Error("Duracion requerida");
+    error.status = 400;
+    throw error;
+  }
+
+  if (duration.type === "preset") {
+    const durationMs = PRESET_DURATIONS[duration.value];
+    if (!durationMs) {
+      const error = new Error("Duracion predefinida no valida");
+      error.status = 400;
+      throw error;
+    }
+    return { type: "preset", durationMs };
+  }
+
+  if (duration.type === "customDate") {
+    const expiresAt = toDateOrNull(duration.expiresAt);
+    if (!expiresAt) {
+      const error = new Error("Fecha personalizada no valida");
+      error.status = 400;
+      throw error;
+    }
+    return { type: "customDate", expiresAt };
+  }
+
+  const error = new Error("Tipo de duracion no valido");
+  error.status = 400;
+  throw error;
+}
+
+function getManualBaseDate(user) {
+  const expiresAt = toDateOrNull(user?.premium?.expiresAt);
+  const isManualActive =
+    user?.premium?.source === "manual" &&
+    user?.premium?.entitled === true &&
+    expiresAt &&
+    expiresAt.getTime() > Date.now();
+
+  return isManualActive ? expiresAt : new Date();
+}
+
+function resolveTargetExpiration(user, duration, mode) {
+  const normalizedDuration = normalizeDurationRequest(duration);
+  if (normalizedDuration.type === "customDate") {
+    return normalizedDuration.expiresAt;
+  }
+
+  const baseDate = mode === "extend" ? getManualBaseDate(user) : new Date();
+  return new Date(baseDate.getTime() + normalizedDuration.durationMs);
+}
+
+function isRealStorePremium(user, billingCustomer) {
+  if (!user?.premium?.entitled) return false;
+  if (user?.premium?.source === "manual") return false;
+  if (isPromotionalStore(billingCustomer?.store)) return false;
+  return user?.premium?.source === "revenuecat" || Boolean(billingCustomer?.store);
+}
+
+async function syncSubscriberForUser(user, subscriber, appUserId) {
+  if (!subscriber) {
+    const error = new Error("No se pudo sincronizar la suscripcion con RevenueCat");
+    error.status = 502;
+    throw error;
+  }
+
+  const premiumState = parseRCSubscriberPayload(subscriber);
+  const updatedUser = await updateUserPremium(user._id, premiumState);
+
+  await upsertBillingCustomer({
+    userId: user._id,
+    appUserId,
+    originalAppUserId: subscriber?.original_app_user_id || appUserId,
+    activeEntitlement: premiumState.activeEntitlement,
+    store: premiumState.store,
+    productId: premiumState.productId,
+    expiresAt: premiumState.expiresAt,
+    willRenew: premiumState.willRenew,
+    lastEventAt: new Date(),
+  });
+
+  return updatedUser;
+}
+
 module.exports = {
   entitlementId: ENTITLEMENT_ID,
   derivePlan,
+  parseRCSubscriberPayload,
 
   validateWebhookAuth(req) {
     if (!WEBHOOK_AUTH) {
@@ -455,6 +655,111 @@ module.exports = {
     ]);
 
     return premiumState;
+  },
+
+  async getAdminSubscriptionStatus(userId) {
+    const user = await userSchema.findById(userId);
+    if (!user) {
+      const error = new Error("Usuario no encontrado");
+      error.status = 404;
+      throw error;
+    }
+
+    const appUserId = user._id.toString();
+    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+    return {
+      userId: appUserId,
+      isPremium: Boolean(user?.premium?.entitled),
+      source: user?.premium?.source || null,
+      plan: user?.premium?.plan || null,
+      expiresAt: user?.premium?.expiresAt || null,
+      store: billingCustomer?.store || null,
+      productId: billingCustomer?.productId || null,
+      willRenew: Boolean(billingCustomer?.willRenew),
+    };
+  },
+
+  async grantAdminPremium(userId, duration) {
+    const user = await userSchema.findById(userId);
+    if (!user) {
+      const error = new Error("Usuario no encontrado");
+      error.status = 404;
+      throw error;
+    }
+
+    const appUserId = user._id.toString();
+    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+    if (isRealStorePremium(user, billingCustomer)) {
+      const error = new Error("El usuario tiene una suscripcion activa de tienda");
+      error.status = 409;
+      throw error;
+    }
+
+    const targetExpiresAt = resolveTargetExpiration(user, duration, "grant");
+    await revokePromotionalEntitlement(appUserId).catch((error) => {
+      const status = error?.response?.status;
+      if (status !== 400 && status !== 404) {
+        throw error;
+      }
+    });
+    const subscriber =
+      (await grantPromotionalEntitlement(appUserId, targetExpiresAt)) ||
+      (await getRevenueCatSubscriber(appUserId));
+
+    return syncSubscriberForUser(user, subscriber, appUserId);
+  },
+
+  async extendAdminPremium(userId, duration) {
+    const user = await userSchema.findById(userId);
+    if (!user) {
+      const error = new Error("Usuario no encontrado");
+      error.status = 404;
+      throw error;
+    }
+
+    const appUserId = user._id.toString();
+    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+    if (isRealStorePremium(user, billingCustomer)) {
+      const error = new Error("El usuario tiene una suscripcion activa de tienda");
+      error.status = 409;
+      throw error;
+    }
+
+    const targetExpiresAt = resolveTargetExpiration(user, duration, "extend");
+    await revokePromotionalEntitlement(appUserId).catch((error) => {
+      const status = error?.response?.status;
+      if (status !== 400 && status !== 404) {
+        throw error;
+      }
+    });
+    const subscriber =
+      (await grantPromotionalEntitlement(appUserId, targetExpiresAt)) ||
+      (await getRevenueCatSubscriber(appUserId));
+
+    return syncSubscriberForUser(user, subscriber, appUserId);
+  },
+
+  async revokeAdminPremium(userId) {
+    const user = await userSchema.findById(userId);
+    if (!user) {
+      const error = new Error("Usuario no encontrado");
+      error.status = 404;
+      throw error;
+    }
+
+    const appUserId = user._id.toString();
+    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+    if (isRealStorePremium(user, billingCustomer)) {
+      const error = new Error("El usuario tiene una suscripcion activa de tienda");
+      error.status = 409;
+      throw error;
+    }
+
+    const subscriber =
+      (await revokePromotionalEntitlement(appUserId)) ||
+      (await getRevenueCatSubscriber(appUserId));
+
+    return syncSubscriberForUser(user, subscriber, appUserId);
   },
 
   async processWebhook(rawPayload) {
