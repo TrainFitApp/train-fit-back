@@ -66,16 +66,6 @@ const controller = {
     return res.send(dietDay);
   },
 
-  async createDataRecipeOnNewDietDay(req, res) {
-    const dietDay = await dietDayModel.createDataRecipeOnNewDietDay(
-      req.body.dataRecipe,
-      req.body.indexMeal,
-      req.params.dietInUseId,
-      req.body.currentDate,
-    );
-    return res.send(dietDay);
-  },
-
   async createCustomRecipeOnNewDietDay(req, res) {
     const dietDay = await dietDayModel.createCustomRecipeOnNewDietDay(
       req.body.customRecipe,
@@ -93,17 +83,6 @@ const controller = {
       req.body.customRecipe,
       req.body.date,
       req.body.indexMeal,
-    );
-
-    return res.send(dietDay);
-  },
-
-  async createCustomRecipeInstanceOnNewDietDay(req, res) {
-    const dietDay = await dietDayModel.createCustomRecipeInstanceOnNewDietDay(
-      req.body.customRecipeInstance,
-      req.body.indexMeal,
-      req.params.dietInUseId,
-      req.body.currentDate,
     );
 
     return res.send(dietDay);

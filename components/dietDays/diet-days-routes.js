@@ -37,16 +37,6 @@ router.postAsync(
   auth(["admin", "user"]),
   controller.createOwnCustomRecipeOnNewDietDay,
 );
-router.postAsync(
-  "/datarecipe/:dietInUseId",
-  auth(["admin", "user"]),
-  controller.createDataRecipeOnNewDietDay,
-);
-router.postAsync(
-  "/customrecipeinstance/:dietInUseId",
-  auth(["admin", "user"]),
-  controller.createCustomRecipeInstanceOnNewDietDay,
-);
 
 router.postAsync(
   "/create/on/new/:dietInUseId",

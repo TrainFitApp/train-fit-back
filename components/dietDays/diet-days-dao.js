@@ -282,64 +282,6 @@ module.exports = {
     }
   },
 
-  async createDataRecipeOnNewDietDay(
-    dataRecipe,
-    indexMeal,
-    dietInUseId,
-    dietDay,
-  ) {
-    try {
-      // 1. Crear el DataRecipe
-      const dataRecipeSchema = require("../dataRecipes/data-recipe-schema");
-
-      // Ensure recipe is an ID (robustness)
-      const recipeId =
-        dataRecipe.recipeId || dataRecipe.recipe?._id || dataRecipe.recipe;
-      const payload = {
-        recipe: recipeId,
-        quantity: dataRecipe.quantity,
-        quantityCooked: dataRecipe.quantityCooked,
-      };
-
-      const dataRecipeDoc = await dataRecipeSchema.create(payload);
-
-      // 2. Crear DietDay
-      let dietDayDoc = await this.createDietDay(dietDay);
-      const dietDayId = dietDayDoc._id.toString();
-
-      // 3. Añadir DietDay a la Dieta
-      const dietDoc = await dietModel.addDietDietDay(dietInUseId, dietDayId);
-
-      // 4. Recuperar el DietDay actualizado dentro de la dieta (para asegurar consistencia)
-      const diet = dietDoc.toObject();
-      const indexDietDay = diet.dietsDay.findIndex(
-        (dietDayTemp) => dietDayTemp._id.toString() === dietDayId,
-      );
-      dietDayDoc = diet.dietsDay[indexDietDay];
-
-      // 5. Añadir DataRecipe a la Meal correspondiente
-      let meal = dietDayDoc.meals[indexMeal];
-      // Usamos el mealModel para añadir el dataRecipe
-      // mealModel.addDataRecipeToMeal no existe explícitamente en el snippet anterior,
-      // pero asumimos que podemos hacerlo vía update directo si no.
-      // Mejor usamos update directo sobre mealSchema para añadir el dataRecipe
-
-      const mealUpdate = { $push: { dataRecipes: dataRecipeDoc._id } };
-      await mealSchema.findByIdAndUpdate(meal._id, mealUpdate);
-
-      // Actualizamos el objeto meal local para devolverlo
-      if (!meal.dataRecipes) meal.dataRecipes = [];
-      // dataRecipeDoc es un documento mongoose, toObject para devolver limpio o usar directamente
-      meal.dataRecipes.push(dataRecipeDoc);
-
-      dietDayDoc.meals[indexMeal] = meal;
-
-      return dietDayDoc;
-    } catch (error) {
-      throw error;
-    }
-  },
-
   // Crea dietDay con meals y añade custom recipe
   async createCustomRecipeOnNewDietDay(
     customRecipe,
@@ -348,8 +290,13 @@ module.exports = {
     dietDay,
   ) {
     try {
+      const customRecipeToCreate = customRecipe?.toObject
+        ? customRecipe.toObject()
+        : { ...customRecipe };
+      delete customRecipeToCreate._id;
+
       // Creación customRecipe
-      const customRecipeDoc = await customRecipeSchema.create(customRecipe);
+      const customRecipeDoc = await customRecipeSchema.create(customRecipeToCreate);
       // Creación dietDay
       let dietDayDoc = await this.createDietDay(dietDay);
       const dietDayId = dietDayDoc._id.toString();
@@ -431,58 +378,6 @@ module.exports = {
     }
   },
 
-  // Create dietDay with meals and add CustomRecipeInstance
-  async createCustomRecipeInstanceOnNewDietDay(
-    customRecipeInstance,
-    indexMeal,
-    dietInUseId,
-    dietDay,
-  ) {
-    try {
-      const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
-
-      // Map dataRecipeId to dataRecipe for schema compatibility
-      if (customRecipeInstance.dataRecipeId) {
-        customRecipeInstance.dataRecipe = customRecipeInstance.dataRecipeId;
-        delete customRecipeInstance.dataRecipeId;
-      }
-
-      // 1. Create CustomRecipeInstance
-      const customRecipeInstanceDoc =
-        await customRecipeSchema.create(customRecipeInstance);
-
-      // 2. Create DietDay with meals
-      let dietDayDoc = await this.createDietDay(dietDay);
-      const dietDayId = dietDayDoc._id.toString();
-
-      // 3. Add DietDay to Diet
-      const dietDoc = await dietModel.addDietDietDay(dietInUseId, dietDayId);
-
-      // 4. Get the created dietDay from the updated diet
-      const diet = dietDoc.toObject();
-      const indexDietDay = diet.dietsDay.findIndex(
-        (dietDayTemp) => dietDayTemp._id.toString() === dietDayId,
-      );
-      dietDayDoc = diet.dietsDay[indexDietDay];
-
-      // 5. Get the current meal
-      let meal = dietDayDoc.meals[indexMeal];
-
-      // 6. Add CustomRecipeInstance to meal
-      meal = await mealModel.addMealCustomRecipeInstance(
-        meal._id.toString(),
-        customRecipeInstanceDoc._id.toString(),
-      );
-
-      // 7. Update meal in dietDay
-      dietDayDoc.meals[indexMeal] = meal;
-
-      return dietDayDoc;
-    } catch (error) {
-      throw error;
-    }
-  },
-
   async addDietDayMeal(idDietDay, idMeal) {
     const addMeal = {
       $push: { meals: idMeal },
@@ -544,32 +439,9 @@ module.exports = {
   },
 
   async pasteDietDayByIdDiet(id, dietDayClipboard, dietDayToPaste) {
-    const dataRecipeSchema = require("../dataRecipes/data-recipe-schema");
     const normalizeId = (value) => value?._id || value;
     const toPlainObject = (value) =>
       value?.toObject ? value.toObject() : { ...value };
-    const getDataRecipePayload = async (instanceObj) => {
-      let dataRecipeObj = instanceObj.dataRecipe;
-
-      if (dataRecipeObj && !dataRecipeObj.recipe) {
-        dataRecipeObj = await dataRecipeSchema.findById(dataRecipeObj).lean();
-      }
-
-      if (!dataRecipeObj) {
-        return null;
-      }
-
-      const recipeId = normalizeId(dataRecipeObj.recipe);
-      if (!recipeId) {
-        return null;
-      }
-
-      return {
-        recipe: recipeId,
-        quantity: dataRecipeObj.quantity,
-        quantityCooked: dataRecipeObj.quantityCooked,
-      };
-    };
 
     const mealsToCreate = [];
 
@@ -588,55 +460,67 @@ module.exports = {
         ? await customProductSchema.insertMany(customProductsToCreate)
         : [];
 
-      const createdCustomRecipeInstances = [];
-      const sourceInstances =
-        mealObj.customRecipeInstances || mealObj.customRecipes || [];
+      const createdCustomRecipes = [];
+      const sourceCustomRecipes = mealObj.customRecipes || [];
 
-      for (const instanceRef of sourceInstances) {
-        const instanceObj = toPlainObject(instanceRef);
+      for (const customRecipeRef of sourceCustomRecipes) {
+        const customRecipeObj = toPlainObject(customRecipeRef);
+        const recipeId = normalizeId(
+          customRecipeObj.recipe,
+        );
 
-        const dataRecipePayload = await getDataRecipePayload(instanceObj);
-        if (!dataRecipePayload) {
+        if (!recipeId) {
           continue;
         }
 
-        const newDataRecipe = await dataRecipeSchema.create(dataRecipePayload);
-
-        const customProductsOverrides = (
-          instanceObj.customProductsOverrides || []
-        )
-          .map((override) => ({
-            customProductId: normalizeId(override.customProductId),
-            quantity:
-              override.quantity === undefined ? null : override.quantity,
-            removed: !!override.removed,
-          }))
-          .filter((override) => !!override.customProductId);
-
-        const additionalCustomProducts = (
-          instanceObj.additionalCustomProducts || []
-        )
-          .map((additional) => ({
-            quantity: additional.quantity,
-            product: normalizeId(additional.product),
-          }))
-          .filter((additional) => !!additional.product);
-
-        const newCustomRecipeInstance = await customRecipeSchema.create({
-          dataRecipe: newDataRecipe._id,
-          quantity: instanceObj.quantity ?? 0,
-          customProductsOverrides,
-          additionalCustomProducts,
+        const newCustomRecipe = await customRecipeSchema.create({
+          recipe: recipeId,
+          quantity: customRecipeObj.quantity ?? null,
+          quantityCooked: customRecipeObj.quantityCooked ?? null,
+          addedCustomProducts: (customRecipeObj.addedCustomProducts ||
+            customRecipeObj.additionalCustomProducts ||
+            [])
+            .map((additional) => ({
+              quantity: additional.quantity,
+              product: normalizeId(additional.product),
+            }))
+            .filter((additional) => additional.product),
+          modifiedBaseCustomProducts: (
+            customRecipeObj.modifiedBaseCustomProducts ||
+            customRecipeObj.customProductsOverrides ||
+            []
+          )
+            .map((override) => ({
+              baseCustomProductId: normalizeId(
+                override.baseCustomProductId || override.customProductId,
+              ),
+              quantity: override.quantity,
+            }))
+            .filter(
+              (override) =>
+                override.baseCustomProductId &&
+                override.quantity !== undefined &&
+                override.quantity !== null,
+            ),
+          removedBaseCustomProductIds: (
+            customRecipeObj.removedBaseCustomProductIds ||
+            (customRecipeObj.customProductsOverrides || [])
+              .filter((override) => override.removed)
+              .map((override) => override.customProductId) ||
+            []
+          )
+            .map((removedId) => normalizeId(removedId))
+            .filter(Boolean),
         });
 
-        createdCustomRecipeInstances.push(newCustomRecipeInstance._id);
+        createdCustomRecipes.push(newCustomRecipe._id);
       }
 
       const createdMeal = await mealSchema.create({
         name: mealObj.name,
         notes: mealObj.notes,
         customProducts: createdCustomProducts.map((cp) => cp._id),
-        customRecipeInstances: createdCustomRecipeInstances,
+        customRecipes: createdCustomRecipes,
       });
 
       mealsToCreate.push(createdMeal._id);

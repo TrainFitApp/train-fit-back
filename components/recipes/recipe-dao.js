@@ -2,19 +2,91 @@
 // const userSchema = require("../users/schema");
 const recipeSchema = require("./recipe-schema");
 const userSchema = require("../users/schema");
-const dataRecipeSchema = require("../dataRecipes/data-recipe-schema");
-const customRecipeInstanceSchema = require("../customRecipes/custom-recipe-schema");
+const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const mealSchema = require("../meals/meal-schema");
 
-const dataRecipeDao = require("../dataRecipes/data-recipe-dao");
-const customRecipeInstanceDao = require("../customRecipes/custom-recipe-instance-dao");
+const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const mealModel = require("../meals/meal-service");
 const dietDayDao = require("../dietDays/diet-days-dao");
 const dietDayUtil = require("../dietDays/diet-days-util");
+const recipeMergeService = require("./recipe-merge.service");
 
 const customProductSchema = require("../customProducts/custom-product-schema");
 
 module.exports = {
+  normalizeCustomProductId(value) {
+    const normalizedValue = value?._id || value;
+    return normalizedValue?.toString?.() || null;
+  },
+
+  buildCustomProductPayload(cpData) {
+    return recipeMergeService.sanitizeCustomProductData(cpData, {
+      includeProduct: true,
+      includeId: true,
+    });
+  },
+
+  async syncRecipeCustomProducts(nextCustomProducts, currentCustomProductIds = []) {
+    const normalizedNextProducts = (nextCustomProducts || []).map((cpData) =>
+      this.buildCustomProductPayload(cpData),
+    );
+
+    const currentIds = (currentCustomProductIds || [])
+      .map((id) => this.normalizeCustomProductId(id))
+      .filter(Boolean);
+    const nextIds = [];
+
+    for (const cpData of normalizedNextProducts) {
+      const existingId = this.normalizeCustomProductId(cpData._id);
+      delete cpData._id;
+
+      if (existingId && currentIds.includes(existingId)) {
+        await customProductSchema.findByIdAndUpdate(existingId, { $set: cpData });
+        nextIds.push(existingId);
+        continue;
+      }
+
+      const createdCP = await customProductSchema.create(cpData);
+      nextIds.push(createdCP._id.toString());
+    }
+
+    const removedIds = currentIds.filter((id) => !nextIds.includes(id));
+    if (removedIds.length > 0) {
+      await customProductSchema.deleteMany({ _id: { $in: removedIds } });
+    }
+
+    return nextIds;
+  },
+
+  async rebaseCustomRecipesForRecipe(recipeId, validBaseCustomProductIds = []) {
+    const validIds = new Set(
+      validBaseCustomProductIds
+        .map((id) => this.normalizeCustomProductId(id))
+        .filter(Boolean),
+    );
+    const customRecipes = await customRecipeSchema.find({ recipe: recipeId });
+
+    for (const customRecipe of customRecipes) {
+      const nextModified = (customRecipe.modifiedBaseCustomProducts || []).filter((item) => {
+        const baseId = item?.baseCustomProductId?._id || item?.baseCustomProductId;
+        return !!baseId && validIds.has(baseId.toString());
+      });
+      const nextRemoved = (customRecipe.removedBaseCustomProductIds || []).filter((item) => {
+        const baseId = item?._id || item;
+        return !!baseId && validIds.has(baseId.toString());
+      });
+
+      if (
+        nextModified.length !== (customRecipe.modifiedBaseCustomProducts || []).length ||
+        nextRemoved.length !== (customRecipe.removedBaseCustomProductIds || []).length
+      ) {
+        customRecipe.modifiedBaseCustomProducts = nextModified;
+        customRecipe.removedBaseCustomProductIds = nextRemoved;
+        await customRecipe.save();
+      }
+    }
+  },
+
   async countByUserId(userId) {
     return recipeSchema.countDocuments({ userId });
   },
@@ -30,53 +102,9 @@ module.exports = {
 
   async createRecipe(recipe) {
     try {
-      if (recipe.customProducts && recipe.customProducts.length > 0) {
-        const customProductIds = [];
-
-        for (const cpData of recipe.customProducts) {
-          // If product is already a string (ID), use it directly (reference to existing product)
-          const productId = cpData.product?._id || cpData.product;
-
-          // If it's just { quantity, product: "id" }, use as reference only
-          if (
-            typeof productId === "string" &&
-            !cpData.energyKcal100g &&
-            !cpData.protein100g &&
-            !cpData.carbohydrates100g &&
-            !cpData.fat100g
-          ) {
-            // This is a reference to an existing product - create CustomProduct with just reference
-            const refCP = {
-              quantity: cpData.quantity,
-              product: productId || undefined,
-            };
-            Object.keys(refCP).forEach(
-              (key) => refCP[key] === undefined && delete refCP[key],
-            );
-            const createdCP = await customProductSchema.create(refCP);
-            customProductIds.push(createdCP._id);
-          } else {
-            // This is a full CustomProduct (new or with macro overrides)
-            const newCP = {
-              quantity: cpData.quantity,
-              product: productId,
-              energyKcal100g: cpData.energyKcal100g,
-              protein100g: cpData.protein100g,
-              carbohydrates100g: cpData.carbohydrates100g,
-              fat100g: cpData.fat100g,
-            };
-
-            Object.keys(newCP).forEach(
-              (key) => newCP[key] === undefined && delete newCP[key],
-            );
-
-            const createdCP = await customProductSchema.create(newCP);
-            customProductIds.push(createdCP._id);
-          }
-        }
-
-        recipe.customProducts = customProductIds;
-      }
+      recipe.customProducts = await this.syncRecipeCustomProducts(
+        recipe.customProducts || [],
+      );
 
       return await recipeSchema.create(recipe);
     } catch (err) {
@@ -86,58 +114,20 @@ module.exports = {
 
   async updateRecipe(id, recipe) {
     try {
-      if (recipe.customProducts && recipe.customProducts.length > 0) {
-        const customProductIds = [];
+      const currentRecipe = await recipeSchema
+        .findById(id)
+        .select("customProducts")
+        .setOptions({ autopopulate: false });
+      if (!currentRecipe) {
+        throw new Error("Recipe not found");
+      }
 
-        for (const cpData of recipe.customProducts) {
-          // Si ya es un ID (string), lo mantenemos tal cual
-          if (typeof cpData === "string") {
-            customProductIds.push(cpData);
-            continue;
-          }
-
-          // Extract product ID
-          const productId = cpData.product?._id || cpData.product;
-
-          // If it's just { quantity, product: "id" }, use as reference only
-          if (
-            typeof productId === "string" &&
-            !cpData.energyKcal100g &&
-            !cpData.protein100g &&
-            !cpData.carbohydrates100g &&
-            !cpData.fat100g
-          ) {
-            // This is a reference to an existing product - create CustomProduct with just reference
-            const refCP = {
-              quantity: cpData.quantity,
-              product: productId || undefined,
-            };
-            Object.keys(refCP).forEach(
-              (key) => refCP[key] === undefined && delete refCP[key],
-            );
-            const createdCP = await customProductSchema.create(refCP);
-            customProductIds.push(createdCP._id);
-          } else {
-            // This is a full CustomProduct (new or with macro overrides)
-            const newCP = {
-              quantity: cpData.quantity,
-              product: productId,
-              energyKcal100g: cpData.energyKcal100g,
-              protein100g: cpData.protein100g,
-              carbohydrates100g: cpData.carbohydrates100g,
-              fat100g: cpData.fat100g,
-            };
-
-            Object.keys(newCP).forEach(
-              (key) => newCP[key] === undefined && delete newCP[key],
-            );
-
-            const createdCP = await customProductSchema.create(newCP);
-            customProductIds.push(createdCP._id);
-          }
-        }
-
-        recipe.customProducts = customProductIds;
+      if (recipe.customProducts !== undefined) {
+        recipe.customProducts = await this.syncRecipeCustomProducts(
+          recipe.customProducts,
+          currentRecipe.customProducts || [],
+        );
+        await this.rebaseCustomRecipesForRecipe(id, recipe.customProducts);
       }
 
       return await recipeSchema.findByIdAndUpdate(
@@ -159,54 +149,29 @@ module.exports = {
       });
     }
 
-    // 2. Find ALL historical traces (DataRecipes and direct Instances)
-    const dataRecipes = await dataRecipeSchema
+    // 2. Find customRecipes referencing this recipe
+    const historicalCustomRecipes = await customRecipeSchema
       .find({ recipe: id }, "_id")
       .lean();
-    const dataRecipeIds = dataRecipes.map((dr) => dr._id);
+    const customRecipeIds = historicalCustomRecipes.map((ins) => ins._id);
 
-    // Find instances via DataRecipe (legacy) OR direct recipe reference (optimized)
-    const historicalInstances = await customRecipeInstanceSchema
-      .find({
-        $or: [{ dataRecipe: { $in: dataRecipeIds } }, { recipe: id }],
-      })
-      .lean();
-
-    const instanceIds = historicalInstances.map((ins) => ins._id);
-
-    if (instanceIds.length > 0) {
-      // 2.a Clean up overrides (CustomProducts created specifically for these instances)
-      const overrideIds = historicalInstances.flatMap(
-        (ins) => ins.customProductsOverrides || [],
-      );
-      if (overrideIds.length > 0) {
-        await customProductSchema.deleteMany({ _id: { $in: overrideIds } });
-      }
-
-      // 2.b Remove references from all meals in history
+    if (customRecipeIds.length > 0) {
       await mealSchema.updateMany(
-        { customRecipeInstances: { $in: instanceIds } },
-        { $pull: { customRecipeInstances: { $in: instanceIds } } },
+        { customRecipes: { $in: customRecipeIds } },
+        { $pull: { customRecipes: { $in: customRecipeIds } } },
       );
-
-      // 2.c Delete the instances themselves
-      await customRecipeInstanceSchema.deleteMany({
-        _id: { $in: instanceIds },
+      await customRecipeSchema.deleteMany({
+        _id: { $in: customRecipeIds },
       });
     }
 
-    // 3. Delete historical snapshots (DataRecipes)
-    if (dataRecipeIds.length > 0) {
-      await dataRecipeSchema.deleteMany({ _id: { $in: dataRecipeIds } });
-    }
-
-    // 4. Clean up user archived recipes
+    // 3. Clean up user archived recipes
     await userSchema.updateMany(
       { archivedRecipes: id },
       { $pull: { archivedRecipes: id } },
     );
 
-    // 5. Finally delete the blueprint Recipe
+    // 4. Finally delete the blueprint Recipe
     return recipeSchema.findByIdAndDelete(id);
   },
 
@@ -230,8 +195,7 @@ module.exports = {
 
   async composeRecipe(payload, userId) {
     try {
-      const { recipe, recipeId, dataRecipe, instance, context, mode } =
-        payload || {};
+      const { recipe, recipeId, customRecipe, context, mode } = payload || {};
 
       let recipeDoc = null;
       let isEditMode = mode === "edit";
@@ -239,14 +203,24 @@ module.exports = {
       if (recipeId) {
         recipeDoc = await this.getRecipeById(recipeId);
 
-        // If edit mode and user is owner, update recipe definition
-        if (isEditMode && recipe && recipe.name) {
+        if (!recipeDoc) {
+          throw new Error("Recipe not found");
+        }
+
+        if (
+          isEditMode &&
+          recipe &&
+          recipe.name &&
+          recipeDoc.userId?.toString() === userId
+        ) {
           const updateData = {
             name: recipe.name,
             description: recipe.description,
             customProducts: recipe.customProducts || [],
           };
           recipeDoc = await this.updateRecipe(recipeId, updateData);
+        } else if (isEditMode && recipe) {
+          throw new Error("Cannot edit recipes you don't own");
         }
       } else if (recipe) {
         recipeDoc = await this.createRecipe({
@@ -272,78 +246,57 @@ module.exports = {
         return { recipe: recipeDoc };
       }
 
-      // For edit mode, update existing dataRecipe or create new one
-      let dataRecipeDoc = null;
-      if (isEditMode && context?.dataRecipeId) {
-        dataRecipeDoc = await dataRecipeDao.update(context.dataRecipeId, {
-          quantity: dataRecipe?.quantity,
-          quantityCooked: dataRecipe?.quantityCooked,
-        });
-      } else {
-        dataRecipeDoc = await dataRecipeDao.create({
-          recipeId: recipeDoc._id,
-          quantity: dataRecipe?.quantity,
-          quantityCooked: dataRecipe?.quantityCooked,
-        });
-      }
-
-      const instanceQuantity =
-        instance?.quantity ??
-        dataRecipe?.quantity ??
-        dataRecipe?.quantityCooked;
-
-      let instanceData = {
-        quantity: instanceQuantity,
-        customProductsOverrides: instance?.customProductsOverrides || [],
-        additionalCustomProducts: instance?.additionalCustomProducts || [],
+      let customRecipeDoc = null;
+      const nextCustomRecipe = {
+        recipe: recipeDoc._id,
+        quantity: recipeMergeService.normalizePositiveNumber(
+          customRecipe?.quantity,
+        ),
+        quantityCooked: recipeMergeService.normalizePositiveNumber(
+          customRecipe?.quantityCooked,
+        ),
+        addedCustomProducts: customRecipe?.addedCustomProducts || [],
+        modifiedBaseCustomProducts:
+          customRecipe?.modifiedBaseCustomProducts || [],
+        removedBaseCustomProductIds:
+          customRecipe?.removedBaseCustomProductIds || [],
       };
 
-      // For edit mode, use existing dataRecipe; for create, set new one
-      if (!isEditMode) {
-        instanceData.dataRecipeId = dataRecipeDoc._id;
-      }
+      recipeMergeService.validateCustomRecipe(nextCustomRecipe);
 
-      let customRecipeInstance = null;
-
-      if (isEditMode && context?.customRecipeInstanceId) {
-        // Update existing instance
-        customRecipeInstance = await customRecipeInstanceDao.update(
-          context.customRecipeInstanceId,
-          instanceData,
+      if (isEditMode && context?.customRecipeId) {
+        customRecipeDoc = await customRecipeDao.update(
+          context.customRecipeId,
+          nextCustomRecipe,
         );
-      } else if (!isEditMode) {
-        // Create new instance
-        customRecipeInstance =
-          await customRecipeInstanceDao.create(instanceData);
+      } else {
+        customRecipeDoc = await customRecipeDao.createCustomRecipe(
+          nextCustomRecipe,
+        );
       }
 
       if (hasMealContext) {
         let updatedMeal = null;
 
         if (isEditMode) {
-          // For edit mode, instance is already in meal, just fetch it
           updatedMeal = await mealModel.findById(context.mealId);
         } else {
-          // For create mode, add instance to meal
-          updatedMeal = await mealModel.addMealCustomRecipeInstance(
+          updatedMeal = await mealModel.addMealCustomRecipe(
             context.mealId,
-            customRecipeInstance._id.toString(),
+            customRecipeDoc._id.toString(),
           );
         }
 
         return {
           recipe: recipeDoc,
-          dataRecipe: dataRecipeDoc,
-          customRecipeInstance,
+          customRecipe: customRecipeDoc,
           meal: updatedMeal,
         };
       }
 
-      const standardDietDay = dietDayUtil.getStandardDietDay(
-        context.currentDate,
-      );
-      const dietDay = await dietDayDao.createCustomRecipeInstanceOnNewDietDay(
-        { ...instanceData, dataRecipeId: dataRecipeDoc._id },
+      const standardDietDay = dietDayUtil.getStandardDietDay(context.currentDate);
+      const dietDay = await dietDayDao.createCustomRecipeOnNewDietDay(
+        customRecipeDoc.toObject(),
         context.indexMeal,
         context.dietInUseId,
         standardDietDay,
@@ -351,7 +304,7 @@ module.exports = {
 
       return {
         recipe: recipeDoc,
-        dataRecipe: dataRecipeDoc,
+        customRecipe: customRecipeDoc,
         dietDay,
       };
     } catch (err) {

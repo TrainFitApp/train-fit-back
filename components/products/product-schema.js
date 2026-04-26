@@ -144,37 +144,40 @@ const handleDeleteOne = async function (next) {
           const CustomRecipeModel = mongoose.model("CustomRecipe");
           await CustomRecipeModel.updateMany(
             {
-              customProductsOverrides: {
-                $elemMatch: { customProductId: { $in: cpIds } },
+              modifiedBaseCustomProducts: {
+                $elemMatch: { baseCustomProductId: { $in: cpIds } },
               },
             },
             {
               $pull: {
-                customProductsOverrides: { customProductId: { $in: cpIds } },
+                modifiedBaseCustomProducts: {
+                  baseCustomProductId: { $in: cpIds },
+                },
+                removedBaseCustomProductIds: { $in: cpIds },
               },
             },
           );
         } catch (e) {
           console.warn(
-            "[ProductSchema] Error cleaning customProductsOverrides",
+            "[ProductSchema] Error cleaning modifiedBaseCustomProducts",
             e,
           );
         }
         await customProductSchema.deleteMany({ _id: { $in: cpIds } });
       }
 
-      // Remove additionalCustomProducts in CustomRecipeInstances that reference this product directly
+      // Remove addedCustomProducts in CustomRecipes that reference this product directly
       try {
         const CustomRecipeModel = mongoose.model("CustomRecipe");
         await CustomRecipeModel.updateMany(
           {
-            additionalCustomProducts: { $elemMatch: { product: product._id } },
+            addedCustomProducts: { $elemMatch: { product: product._id } },
           },
-          { $pull: { additionalCustomProducts: { product: product._id } } },
+          { $pull: { addedCustomProducts: { product: product._id } } },
         );
       } catch (e) {
         console.warn(
-          "[ProductSchema] Error cleaning additionalCustomProducts",
+          "[ProductSchema] Error cleaning addedCustomProducts",
           e,
         );
       }

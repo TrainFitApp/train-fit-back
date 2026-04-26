@@ -125,12 +125,11 @@ module.exports = {
     return res.send(meal);
   },
 
-  // CustomRecipeInstance methods
-  async addMealCustomRecipeInstance(req, res) {
+  async addMealCustomRecipe(req, res) {
     try {
-      const meal = await mealService.addMealCustomRecipeInstance(
+      const meal = await mealService.addMealCustomRecipe(
         req.params.idMeal,
-        req.params.idCustomRecipeInstance,
+        req.params.idCustomRecipe,
       );
       return res.json(meal);
     } catch (error) {
@@ -138,11 +137,11 @@ module.exports = {
     }
   },
 
-  async deleteMealCustomRecipeInstance(req, res) {
+  async deleteMealCustomRecipeRef(req, res) {
     try {
-      const meal = await mealService.deleteMealCustomRecipeInstance(
+      const meal = await mealService.deleteMealCustomRecipe(
         req.params.idMeal,
-        req.params.idCustomRecipeInstance,
+        req.params.idCustomRecipe,
       );
       return res.json(meal);
     } catch (error) {
@@ -150,11 +149,9 @@ module.exports = {
     }
   },
 
-  async deleteMealCustomRecipeInstances(req, res) {
+  async deleteMealCustomRecipesRef(req, res) {
     try {
-      const meal = await mealService.deleteMealCustomRecipeInstances(
-        req.params.id,
-      );
+      const meal = await mealService.deleteMealCustomRecipes(req.params.id);
       return res.json(meal);
     } catch (error) {
       return res.status(500).json({ message: error.message });

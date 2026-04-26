@@ -2,8 +2,7 @@ const mongoose = require("mongoose");
 const mongooseAutopopulate = require("mongoose-autopopulate");
 const Schema = mongoose.Schema;
 const customProductSchema = require("../customProducts/custom-product-schema");
-const customRecipeInstanceSchema = require("../customRecipes/custom-recipe-schema");
-const dataRecipeSchema = require("../dataRecipes/data-recipe-schema");
+const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 
 const MealSchema = Schema({
   name: String,
@@ -15,10 +14,10 @@ const MealSchema = Schema({
       autopopulate: true,
     },
   ],
-  customRecipeInstances: [
+  customRecipes: [
     {
       type: Schema.Types.ObjectId,
-      ref: "CustomRecipe", // Note: model name is "CustomRecipe" but it's CustomRecipeInstance
+      ref: "CustomRecipe",
       autopopulate: true,
     },
   ],
@@ -33,23 +32,14 @@ const handleDelete = async function (next) {
     if (!meal) return next();
 
     const customProductIds = meal.customProducts || [];
-    const customRecipeInstanceIds = meal.customRecipeInstances || [];
-
-    // Pre-calculate dataRecipeIds before deleting instances
-    const customRecipeInstances = await customRecipeInstanceSchema
-      .find({ _id: { $in: customRecipeInstanceIds } }, "dataRecipe")
-      .lean();
-    const dataRecipeIds = customRecipeInstances
-      .map((cri) => cri.dataRecipe)
-      .filter(Boolean);
+    const customRecipeIds = meal.customRecipes || [];
 
     // Perform deletions
     await customProductSchema.deleteMany({ _id: { $in: customProductIds } });
-    await customRecipeInstanceSchema.deleteMany({
-      _id: { $in: customRecipeInstanceIds },
+    await customRecipeSchema.deleteMany({
+      _id: { $in: customRecipeIds },
     });
-    await dataRecipeSchema.deleteMany({ _id: { $in: dataRecipeIds } });
-    
+
     next();
   } catch (error) {
     next(error);
@@ -66,25 +56,18 @@ MealSchema.pre("deleteMany", async function (next) {
     const mealsPToDelete = await this.model.find(filter, "customProducts");
     const mealsRToDelete = await this.model.find(
       filter,
-      "customRecipeInstances",
+      "customRecipes",
     );
     const customProductsIds = mealsPToDelete.flatMap(
       (meal) => meal.customProducts,
     );
-    const customRecipeInstancesIds = mealsRToDelete.flatMap(
-      (meal) => meal.customRecipeInstances,
+    const customRecipeIds = mealsRToDelete.flatMap(
+      (meal) => meal.customRecipes,
     );
-    const customRecipeInstances = await customRecipeInstanceSchema
-      .find({ _id: { $in: customRecipeInstancesIds } }, "dataRecipe")
-      .lean();
-    const dataRecipeIds = customRecipeInstances
-      .map((cri) => cri.dataRecipe)
-      .filter(Boolean);
     await customProductSchema.deleteMany({ _id: { $in: customProductsIds } });
-    await customRecipeInstanceSchema.deleteMany({
-      _id: { $in: customRecipeInstancesIds },
+    await customRecipeSchema.deleteMany({
+      _id: { $in: customRecipeIds },
     });
-    await dataRecipeSchema.deleteMany({ _id: { $in: dataRecipeIds } });
     next();
   } catch (error) {
     next(error);

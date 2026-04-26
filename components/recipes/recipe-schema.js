@@ -35,9 +35,8 @@ const RecipeSchema = Schema(
   },
 );
 
-// IMPORTANTE: Recipe es INMUTABLE después de creación
-// Solo se modifica en creación, nunca después
-// Los cambios en comidas se hacen en CustomRecipeInstance
+// IMPORTANTE: Recipe es la base compartida de la receta.
+// Las variaciones por comida se representan en CustomRecipe.
 
 RecipeSchema.plugin(require("mongoose-autopopulate"));
 

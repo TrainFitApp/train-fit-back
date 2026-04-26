@@ -52,21 +52,20 @@ router.deleteAsync(
   controller.deleteMealCustomRecipes,
 );
 
-// CustomRecipeInstance routes
 router.postAsync(
-  "/:idMeal/customrecipeinstances/:idCustomRecipeInstance",
+  "/:idMeal/customrecipes/:idCustomRecipe",
   auth(["admin", "user"]),
-  controller.addMealCustomRecipeInstance,
+  controller.addMealCustomRecipe,
 );
 router.deleteAsync(
-  "/customrecipeinstance/:idMeal/:idCustomRecipeInstance",
+  "/customrecipe/:idMeal/:idCustomRecipe",
   auth(["admin", "user"]),
-  controller.deleteMealCustomRecipeInstance,
+  controller.deleteMealCustomRecipeRef,
 );
 router.deleteAsync(
-  "/all/customrecipeinstances/:id",
+  "/all/customrecipesref/:id",
   auth(["admin", "user"]),
-  controller.deleteMealCustomRecipeInstances,
+  controller.deleteMealCustomRecipesRef,
 );
 
 module.exports = router;

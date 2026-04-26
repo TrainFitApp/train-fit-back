@@ -73,21 +73,6 @@ module.exports = {
     );
   },
 
-  async createDataRecipeOnNewDietDay(
-    dataRecipe,
-    indexMeal,
-    dietInUseId,
-    currentDate,
-  ) {
-    let standarDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    return dietDayDao.createDataRecipeOnNewDietDay(
-      dataRecipe,
-      indexMeal,
-      dietInUseId,
-      standarDietDay,
-    );
-  },
-
   async createCustomRecipeOnNewDietDay(
     customRecipe,
     indexMeal,
@@ -115,21 +100,6 @@ module.exports = {
       customRecipe,
       standarDietDay,
       indexMeal,
-    );
-  },
-
-  async createCustomRecipeInstanceOnNewDietDay(
-    customRecipeInstance,
-    indexMeal,
-    dietInUseId,
-    currentDate,
-  ) {
-    let standarDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    return dietDayDao.createCustomRecipeInstanceOnNewDietDay(
-      customRecipeInstance,
-      indexMeal,
-      dietInUseId,
-      standarDietDay,
     );
   },
 

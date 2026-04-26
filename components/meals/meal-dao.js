@@ -755,42 +755,15 @@ module.exports = {
 
   async pasteMeal(mealClipboard, mealToPaste, merge) {
     try {
-      const dataRecipeSchema = require("../dataRecipes/data-recipe-schema");
       const normalizeId = (value) => value?._id || value;
       const toPlainObject = (value) =>
         value?.toObject ? value.toObject() : { ...value };
-      const getDataRecipePayload = async (instanceObj) => {
-        let dataRecipeObj = instanceObj.dataRecipe;
-
-        if (dataRecipeObj && !dataRecipeObj.recipe) {
-          dataRecipeObj = await dataRecipeSchema.findById(dataRecipeObj).lean();
-        }
-
-        if (!dataRecipeObj) {
-          return null;
-        }
-
-        const recipeId = normalizeId(dataRecipeObj.recipe);
-        if (!recipeId) {
-          return null;
-        }
-
-        return {
-          recipe: recipeId,
-          quantity: dataRecipeObj.quantity,
-          quantityCooked: dataRecipeObj.quantityCooked,
-        };
-      };
 
       const clipboardCustomProducts = mealClipboard.customProducts || [];
-      const clipboardCustomRecipeInstances =
-        mealClipboard.customRecipeInstances ||
-        mealClipboard.customRecipes ||
-        [];
+      const clipboardCustomRecipes = mealClipboard.customRecipes || [];
 
       const targetCustomProducts = mealToPaste.customProducts || [];
-      const targetCustomRecipeInstances =
-        mealToPaste.customRecipeInstances || mealToPaste.customRecipes || [];
+      const targetCustomRecipes = mealToPaste.customRecipes || [];
 
       const customProductsToCreate = clipboardCustomProducts.map((cp) => {
         const cpObj = toPlainObject(cp);
@@ -802,46 +775,61 @@ module.exports = {
         ? await customProductSchema.insertMany(customProductsToCreate)
         : [];
 
-      const newCustomRecipeInstances = [];
+      const newCustomRecipes = [];
 
-      for (const instanceRef of clipboardCustomRecipeInstances) {
-        const instanceObj = toPlainObject(instanceRef);
+      for (const customRecipeRef of clipboardCustomRecipes) {
+        const customRecipeObj = toPlainObject(customRecipeRef);
+        const recipeId = normalizeId(
+          customRecipeObj.recipe,
+        );
 
-        const dataRecipePayload = await getDataRecipePayload(instanceObj);
-        if (!dataRecipePayload) {
+        if (!recipeId) {
           continue;
         }
 
-        const newDataRecipe = await dataRecipeSchema.create(dataRecipePayload);
-
-        const customProductsOverrides = (
-          instanceObj.customProductsOverrides || []
-        )
-          .map((override) => ({
-            customProductId: normalizeId(override.customProductId),
-            quantity:
-              override.quantity === undefined ? null : override.quantity,
-            removed: !!override.removed,
-          }))
-          .filter((override) => !!override.customProductId);
-
-        const additionalCustomProducts = (
-          instanceObj.additionalCustomProducts || []
-        )
-          .map((additional) => ({
-            quantity: additional.quantity,
-            product: normalizeId(additional.product),
-          }))
-          .filter((additional) => !!additional.product);
-
-        const newInstance = await customRecipeSchema.create({
-          dataRecipe: newDataRecipe._id,
-          quantity: instanceObj.quantity ?? 0,
-          customProductsOverrides,
-          additionalCustomProducts,
+        const newCustomRecipe = await customRecipeSchema.create({
+          recipe: recipeId,
+          quantity: customRecipeObj.quantity ?? null,
+          quantityCooked: customRecipeObj.quantityCooked ?? null,
+          addedCustomProducts: (
+            customRecipeObj.addedCustomProducts ||
+            customRecipeObj.additionalCustomProducts ||
+            []
+          )
+            .map((additional) => ({
+              quantity: additional.quantity,
+              product: normalizeId(additional.product),
+            }))
+            .filter((additional) => additional.product),
+          modifiedBaseCustomProducts: (
+            customRecipeObj.modifiedBaseCustomProducts ||
+            customRecipeObj.customProductsOverrides ||
+            []
+          )
+            .map((override) => ({
+              baseCustomProductId: normalizeId(
+                override.baseCustomProductId || override.customProductId,
+              ),
+              quantity: override.quantity,
+            }))
+            .filter(
+              (override) =>
+                override.baseCustomProductId &&
+                override.quantity !== undefined &&
+                override.quantity !== null,
+            ),
+          removedBaseCustomProductIds: (
+            customRecipeObj.removedBaseCustomProductIds ||
+            (customRecipeObj.customProductsOverrides || [])
+              .filter((override) => override.removed)
+              .map((override) => override.customProductId) ||
+            []
+          )
+            .map((removedId) => normalizeId(removedId))
+            .filter(Boolean),
         });
 
-        newCustomRecipeInstances.push(newInstance);
+        newCustomRecipes.push(newCustomRecipe);
       }
 
       if (!merge) {
@@ -855,8 +843,8 @@ module.exports = {
 
         await customRecipeSchema.deleteMany({
           _id: {
-            $in: targetCustomRecipeInstances
-              .map((instanceTemp) => normalizeId(instanceTemp))
+            $in: targetCustomRecipes
+              .map((customRecipeTemp) => normalizeId(customRecipeTemp))
               .filter(Boolean),
           },
         });
@@ -868,9 +856,9 @@ module.exports = {
             .filter(Boolean)
         : [];
 
-      const targetCustomRecipeInstanceIds = merge
-        ? targetCustomRecipeInstances
-            .map((instanceTemp) => normalizeId(instanceTemp))
+      const targetCustomRecipeIds = merge
+        ? targetCustomRecipes
+            .map((customRecipeTemp) => normalizeId(customRecipeTemp))
             .filter(Boolean)
         : [];
 
@@ -878,8 +866,8 @@ module.exports = {
         customProducts: targetCustomProductIds.concat(
           newCustomProducts.map((cp) => cp._id),
         ),
-        customRecipeInstances: targetCustomRecipeInstanceIds.concat(
-          newCustomRecipeInstances.map((instance) => instance._id),
+        customRecipes: targetCustomRecipeIds.concat(
+          newCustomRecipes.map((customRecipe) => customRecipe._id),
         ),
       };
 
@@ -1197,52 +1185,51 @@ function calculateMatchScore(name, searchTerms) {
   return Math.max(0, score); // Asegurar que la puntuación no sea negativa
 }
 
-// CustomRecipeInstance methods for meals
-module.exports.addMealCustomRecipeInstance = async function (
+module.exports.addMealCustomRecipe = async function (
   idMeal,
-  idCustomRecipeInstance,
+  idCustomRecipe,
 ) {
   return mealSchema.findByIdAndUpdate(
     idMeal,
-    { $push: { customRecipeInstances: idCustomRecipeInstance } },
+    { $push: { customRecipes: idCustomRecipe } },
     { new: true },
   );
 };
 
-module.exports.deleteMealCustomRecipeInstance = async function (
+module.exports.deleteMealCustomRecipe = async function (
   idMeal,
-  idCustomRecipeInstance,
+  idCustomRecipe,
 ) {
   const CustomRecipe = require("../customRecipes/custom-recipe-schema");
 
   // Remove from meal
   const meal = await mealSchema.findByIdAndUpdate(
     idMeal,
-    { $pull: { customRecipeInstances: idCustomRecipeInstance } },
+    { $pull: { customRecipes: idCustomRecipe } },
     { new: true },
   );
 
-  // Delete the customRecipeInstance document
-  await CustomRecipe.findByIdAndDelete(idCustomRecipeInstance);
+  // Delete the customRecipe document
+  await CustomRecipe.findByIdAndDelete(idCustomRecipe);
 
   return meal;
 };
 
-module.exports.deleteMealCustomRecipeInstances = async function (id) {
+module.exports.deleteMealCustomRecipes = async function (id) {
   const CustomRecipe = require("../customRecipes/custom-recipe-schema");
 
   const meal = await mealSchema.findById(id);
   if (
     meal &&
-    meal.customRecipeInstances &&
-    meal.customRecipeInstances.length > 0
+    meal.customRecipes &&
+    meal.customRecipes.length > 0
   ) {
-    await CustomRecipe.deleteMany({ _id: { $in: meal.customRecipeInstances } });
+    await CustomRecipe.deleteMany({ _id: { $in: meal.customRecipes } });
   }
 
   return mealSchema.findByIdAndUpdate(
     id,
-    { $set: { customRecipeInstances: [] } },
+    { $set: { customRecipes: [] } },
     { new: true },
   );
 };

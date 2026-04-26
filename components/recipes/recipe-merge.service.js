@@ -1,186 +1,268 @@
-/**
- * RecipeMergeService - Servicio para calcular macros finales de una CustomRecipeInstance
- * CRÍTICO: Este servicio es esencial para que los cálculos de macros sean correctos
- */
-
+const mongoose = require("mongoose");
 const recipeDao = require("./recipe-dao");
-const dataRecipeDao = require("../dataRecipes/data-recipe-dao");
-const customProductDao = require("../customProducts/custom-product-dao");
 
 class RecipeMergeService {
-  /**
-   * Obtiene los CustomProducts finales de una CustomRecipeInstance
-   * Aplica overrides y calcula cantidades ajustadas por porción
-   *
-   * @param {Object} customRecipeInstance - La instancia de receta en la meal
-   * @returns {Promise<Object>} { finalCustomProducts, totalMacros }
-   */
-  async getMergedRecipeData(customRecipeInstance) {
-    try {
-      // 1. Obtener DataRecipe completa
-      const dataRecipe = await dataRecipeDao.getById(
-        customRecipeInstance.dataRecipe._id || customRecipeInstance.dataRecipe,
-      );
+  constructor() {
+    this.CUSTOM_PRODUCT_OVERRIDE_FIELDS = [
+      "quantity",
+      "energyKcal100g",
+      "protein100g",
+      "carbohydrates100g",
+      "fat100g",
+      "saturatedFat100g",
+      "sugars100g",
+      "fiber100g",
+      "salt100g",
+      "sodium100g",
+      "cholesterol100g",
+      "transFat100g",
+      "calcium100g",
+      "iron100g",
+      "magnesium100g",
+      "phosphorus100g",
+      "potassium100g",
+      "zinc100g",
+      "copper100g",
+      "manganese100g",
+      "selenium100g",
+      "iodine100g",
+      "vitaminA100g",
+      "vitaminC100g",
+      "vitaminD100g",
+      "vitaminE100g",
+      "vitaminK100g",
+      "vitaminB1100g",
+      "vitaminB2100g",
+      "vitaminB3100g",
+      "vitaminB5100g",
+      "vitaminB6100g",
+      "vitaminB9100g",
+      "vitaminB12100g",
+      "biotin100g",
+      "omega3100g",
+      "omega6100g",
+      "omega9100g",
+      "caffeine100g",
+      "taurine100g",
+      "alcohol100g",
+      "ingredients",
+      "allergens",
+      "traces",
+      "vegan",
+      "vegetarian",
+      "lactoseFree",
+      "glutenFree",
+    ];
+  }
 
-      if (!dataRecipe) {
-        throw new Error(
-          `DataRecipe not found: ${customRecipeInstance.dataRecipe}`,
-        );
-      }
+  normalizePositiveNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+  }
 
-      // 2. Obtener Recipe completa con CustomProducts poblados
-      const recipe = await recipeDao.getRecipeById(
-        dataRecipe.recipe._id || dataRecipe.recipe,
-      );
+  validateCustomRecipe(customRecipe) {
+    if (!customRecipe.recipe) {
+      throw new Error("customRecipe.recipe is required");
+    }
 
-      if (!recipe || !recipe.customProducts) {
-        throw new Error(`Recipe not found or has no customProducts`);
-      }
+    const quantity = this.normalizePositiveNumber(customRecipe.quantity);
+    if (customRecipe.quantity !== undefined && customRecipe.quantity !== null && !quantity) {
+      throw new Error("customRecipe.quantity must be a positive number");
+    }
 
-      // 3. Construir mapa de overrides para acceso rápido
-      const overridesMap = new Map();
-      if (customRecipeInstance.customProductsOverrides) {
-        customRecipeInstance.customProductsOverrides.forEach((override) => {
-          overridesMap.set(override.customProductId.toString(), override);
-        });
-      }
+    const quantityCooked = this.normalizePositiveNumber(customRecipe.quantityCooked);
+    if (
+      customRecipe.quantityCooked !== undefined &&
+      customRecipe.quantityCooked !== null &&
+      !quantityCooked
+    ) {
+      throw new Error("customRecipe.quantityCooked must be a positive number");
+    }
 
-      // 4. Aplicar overrides a los CustomProducts originales
-      const finalCustomProducts = [];
+    if (
+      customRecipe.modifiedBaseCustomProducts &&
+      !Array.isArray(customRecipe.modifiedBaseCustomProducts)
+    ) {
+      throw new Error("modifiedBaseCustomProducts must be an array");
+    }
 
-      for (const cp of recipe.customProducts) {
-        const cpId = cp._id.toString();
-        const override = overridesMap.get(cpId);
+    if (
+      customRecipe.removedBaseCustomProductIds &&
+      !Array.isArray(customRecipe.removedBaseCustomProductIds)
+    ) {
+      throw new Error("removedBaseCustomProductIds must be an array");
+    }
 
-        // Si está marcado como removed, saltar
-        if (override?.removed) {
-          continue;
-        }
-
-        // Usar cantidad del override o la original
-        const originalQuantity = override?.quantity ?? cp.quantity;
-
-        // Escalar por la cantidad de receta añadida a la meal
-        // Ejemplo: si la receta original es 100g total y se añaden 300g,
-        // cada ingrediente se multiplica por 3
-        const scaledQuantity =
-          (originalQuantity * customRecipeInstance.quantity) / 100;
-
-        finalCustomProducts.push({
-          ...(cp.toObject ? cp.toObject() : cp),
-          quantity: scaledQuantity,
-          _customProductId: cpId, // Tag para tracking
-        });
-      }
-
-      // 5. Añadir ingredientes adicionales
-      if (customRecipeInstance.additionalCustomProducts?.length) {
-        customRecipeInstance.additionalCustomProducts.forEach((addCP) => {
-          const scaledQuantity =
-            (addCP.quantity * customRecipeInstance.quantity) / 100;
-
-          finalCustomProducts.push({
-            ...addCP,
-            quantity: scaledQuantity,
-            _isAdditional: true, // Tag para tracking
-          });
-        });
-      }
-
-      // 6. Calcular macros totales
-      const totalMacros = this.calculateMacros(finalCustomProducts);
-
-      return {
-        finalCustomProducts,
-        totalMacros,
-      };
-    } catch (err) {
-      throw new Error(`Error merging recipe data: ${err.message}`);
+    if (customRecipe.addedCustomProducts && !Array.isArray(customRecipe.addedCustomProducts)) {
+      throw new Error("addedCustomProducts must be an array");
     }
   }
 
-  /**
-   * Calcula los macros totales de un array de CustomProducts
-   * @private
-   */
+  normalizeArrayValue(value) {
+    return Array.isArray(value) ? [...value] : value;
+  }
+
+  normalizeObjectId(value) {
+    if (!value) return null;
+
+    const rawValue = value?._id || value;
+    const normalizedValue =
+      typeof rawValue === "string" ? rawValue : rawValue?.toString?.();
+
+    if (!normalizedValue || !mongoose.Types.ObjectId.isValid(normalizedValue)) {
+      return null;
+    }
+
+    return normalizedValue;
+  }
+
+  sanitizeCustomProductData(customProduct, options = {}) {
+    const {
+      includeBaseCustomProductId = false,
+      includeProduct = true,
+      includeId = false,
+    } = options;
+    const nextValue = {};
+
+    if (includeId && customProduct?._id) {
+      const normalizedId = this.normalizeObjectId(customProduct._id);
+      if (normalizedId) {
+        nextValue._id = normalizedId;
+      }
+    }
+
+    if (includeBaseCustomProductId && customProduct?.baseCustomProductId) {
+      const normalizedBaseCustomProductId = this.normalizeObjectId(
+        customProduct.baseCustomProductId,
+      );
+      if (normalizedBaseCustomProductId) {
+        nextValue.baseCustomProductId = normalizedBaseCustomProductId;
+      }
+    }
+
+    if (includeProduct) {
+      const productId = this.normalizeObjectId(customProduct?.product);
+      if (productId) {
+        nextValue.product = productId;
+      }
+    }
+
+    this.CUSTOM_PRODUCT_OVERRIDE_FIELDS.forEach((field) => {
+      const value =
+        field === "quantity"
+          ? this.normalizePositiveNumber(customProduct?.[field])
+          : this.normalizeArrayValue(customProduct?.[field]);
+
+      if (value !== undefined && value !== null && value !== "") {
+        nextValue[field] = value;
+      }
+    });
+
+    return nextValue;
+  }
+
+  async resolveRecipe(customRecipe) {
+    const recipeRef =
+      customRecipe.recipe?._id || customRecipe.recipeId || customRecipe.recipe;
+    const recipe = await recipeDao.getRecipeById(recipeRef);
+    if (!recipe) {
+      throw new Error(`Recipe not found: ${recipeRef}`);
+    }
+    return recipe;
+  }
+
+  buildMergedIngredients(recipe, customRecipe) {
+    const baseIngredients = recipe.customProducts || [];
+    const modifiedMap = new Map();
+    const removedSet = new Set(
+      (customRecipe.removedBaseCustomProductIds || []).map((id) =>
+        (id?._id || id).toString(),
+      ),
+    );
+
+    (customRecipe.modifiedBaseCustomProducts || []).forEach((item) => {
+      const id = item.baseCustomProductId?._id || item.baseCustomProductId;
+      if (!id) return;
+      modifiedMap.set(id.toString(), item);
+    });
+
+    const activeBaseIngredients = baseIngredients
+      .filter((ingredient) => !removedSet.has(ingredient._id.toString()))
+      .map((ingredient) => {
+        const modified = modifiedMap.get(ingredient._id.toString());
+        if (!modified) return ingredient;
+        const ingredientObj = ingredient.toObject?.() || { ...ingredient };
+        const mergedIngredient = { ...ingredientObj };
+
+        this.CUSTOM_PRODUCT_OVERRIDE_FIELDS.forEach((field) => {
+          if (modified[field] !== undefined) {
+            mergedIngredient[field] = this.normalizeArrayValue(modified[field]);
+          }
+        });
+
+        return mergedIngredient;
+      });
+
+    const addedIngredients = (customRecipe.addedCustomProducts || []).map((item) => ({
+      ...item.toObject?.(),
+      ...item,
+    }));
+
+    const removedIngredients = baseIngredients.filter((ingredient) =>
+      removedSet.has(ingredient._id.toString()),
+    );
+
+    return {
+      ingredients: [...activeBaseIngredients, ...addedIngredients],
+      removedIngredients,
+    };
+  }
+
   calculateMacros(customProducts) {
     return customProducts.reduce(
-      (acc, cp) => ({
-        kcal:
-          acc.kcal + this.calculateMacroValue(cp.energyKcal100g, cp.quantity),
-        protein:
-          acc.protein + this.calculateMacroValue(cp.protein100g, cp.quantity),
-        carbs:
-          acc.carbs +
-          this.calculateMacroValue(cp.carbohydrates100g, cp.quantity),
-        fat: acc.fat + this.calculateMacroValue(cp.fat100g, cp.quantity),
-      }),
-      { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+      (acc, cp) => {
+        const quantity = this.normalizePositiveNumber(cp.quantity) || 0;
+        const ratio = quantity / 100;
+        const product = cp.product || {};
+
+        acc.kcal += (cp.energyKcal100g ?? product.energyKcal100g ?? 0) * ratio;
+        acc.protein += (cp.protein100g ?? product.protein100g ?? 0) * ratio;
+        acc.carbs +=
+          (cp.carbohydrates100g ?? product.carbohydrates100g ?? 0) * ratio;
+        acc.fat += (cp.fat100g ?? product.fat100g ?? 0) * ratio;
+        acc.quantity += quantity;
+        return acc;
+      },
+      { kcal: 0, protein: 0, carbs: 0, fat: 0, quantity: 0 },
     );
   }
 
-  /**
-   * Calcula un macro específico (valor_por_100g * cantidad_en_gramos / 100)
-   * @private
-   */
-  calculateMacroValue(valuePer100g, quantityGrams) {
-    if (!valuePer100g || !quantityGrams) return 0;
-    return (valuePer100g * quantityGrams) / 100;
-  }
-
-  /**
-   * Valida que la estructura de una CustomRecipeInstance sea correcta
-   * @throws {Error} si hay errores de estructura
-   */
-  validateCustomRecipeInstance(customRecipeInstance) {
-    console.log("🔍 Validating CustomRecipeInstance:", customRecipeInstance);
-
-    // Aceptar tanto dataRecipe como dataRecipeId
-    if (
-      !customRecipeInstance.dataRecipe &&
-      !customRecipeInstance.dataRecipeId
-    ) {
-      console.error("❌ Validation failed: no dataRecipe or dataRecipeId");
-      throw new Error("customRecipeInstance.dataRecipe is required");
-    }
-
-    console.log(
-      "✅ dataRecipe/dataRecipeId exists:",
-      customRecipeInstance.dataRecipe || customRecipeInstance.dataRecipeId,
+  async getMergedRecipeData(customRecipe) {
+    const recipe = await this.resolveRecipe(customRecipe);
+    const { ingredients, removedIngredients } = this.buildMergedIngredients(
+      recipe,
+      customRecipe,
     );
+    const totals = this.calculateMacros(ingredients);
+    const baseline =
+      this.normalizePositiveNumber(customRecipe.quantityCooked) || totals.quantity || 0;
+    const consumed = this.normalizePositiveNumber(customRecipe.quantity) || 0;
+    const ratio = baseline > 0 ? consumed / baseline : 0;
 
-    if (
-      typeof customRecipeInstance.quantity !== "number" ||
-      customRecipeInstance.quantity <= 0
-    ) {
-      console.error(
-        "❌ Validation failed: invalid quantity",
-        customRecipeInstance.quantity,
-      );
-      throw new Error(
-        "customRecipeInstance.quantity must be a positive number",
-      );
-    }
-
-    console.log("✅ Quantity valid:", customRecipeInstance.quantity);
-
-    if (customRecipeInstance.customProductsOverrides) {
-      if (!Array.isArray(customRecipeInstance.customProductsOverrides)) {
-        throw new Error("customProductsOverrides must be an array");
-      }
-
-      customRecipeInstance.customProductsOverrides.forEach((override) => {
-        if (!override.customProductId) {
-          throw new Error("Each override must have customProductId");
-        }
-      });
-    }
-
-    if (customRecipeInstance.additionalCustomProducts) {
-      if (!Array.isArray(customRecipeInstance.additionalCustomProducts)) {
-        throw new Error("additionalCustomProducts must be an array");
-      }
-    }
+    return {
+      recipe,
+      ingredients,
+      removedIngredients,
+      totalMacros: totals,
+      portionMacros: {
+        kcal: totals.kcal * ratio,
+        protein: totals.protein * ratio,
+        carbs: totals.carbs * ratio,
+        fat: totals.fat * ratio,
+      },
+    };
   }
 }
 

@@ -56,6 +56,13 @@ const CustomProductSchema = Schema({
   caffeine100g: Number,
   taurine100g: Number,
   alcohol100g: Number,
+  ingredients: String,
+  allergens: [String],
+  traces: [String],
+  vegan: Boolean,
+  vegetarian: Boolean,
+  lactoseFree: Boolean,
+  glutenFree: Boolean,
   // TODO Esto no debería ser obligatorio por el caso de las recetas
   mealId: {
     type: Schema.Types.ObjectId,

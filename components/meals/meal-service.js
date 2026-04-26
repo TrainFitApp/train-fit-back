@@ -75,19 +75,18 @@ module.exports = {
     return mealDao.deleteMealCustomRecipes(id);
   },
 
-  // CustomRecipeInstance methods
-  async addMealCustomRecipeInstance(idMeal, idCustomRecipeInstance) {
-    return mealDao.addMealCustomRecipeInstance(idMeal, idCustomRecipeInstance);
+  async addMealCustomRecipe(idMeal, idCustomRecipe) {
+    return mealDao.addMealCustomRecipe(idMeal, idCustomRecipe);
   },
 
-  async deleteMealCustomRecipeInstance(idMeal, idCustomRecipeInstance) {
-    return mealDao.deleteMealCustomRecipeInstance(
+  async deleteMealCustomRecipe(idMeal, idCustomRecipe) {
+    return mealDao.deleteMealCustomRecipe(
       idMeal,
-      idCustomRecipeInstance,
+      idCustomRecipe,
     );
   },
 
-  async deleteMealCustomRecipeInstances(id) {
-    return mealDao.deleteMealCustomRecipeInstances(id);
+  async deleteMealCustomRecipes(id) {
+    return mealDao.deleteMealCustomRecipes(id);
   },
 };

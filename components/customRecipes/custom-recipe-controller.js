@@ -1,10 +1,15 @@
 const customRecipeModel = require("./custom-recipe-model");
+const recipeMergeService = require("../recipes/recipe-merge.service");
 
 const controller = {
   async getCustomRecipeById(req, res) {
-    const recipe = await customRecipeModel.getCustomRecipeById(req.params.id);
+    const customRecipe = await customRecipeModel.getCustomRecipeById(req.params.id);
+    if (!customRecipe) {
+      return res.status(404).json({ message: "CustomRecipe not found" });
+    }
 
-    return res.send(recipe);
+    const merged = await recipeMergeService.getMergedRecipeData(customRecipe);
+    return res.send({ ...customRecipe.toObject(), merged });
   },
 
   async searchCustomRecipes(req, res) {
@@ -13,51 +18,22 @@ const controller = {
     const recipes = await customRecipeModel.searchCustomRecipe(
       page,
       limit,
-      req.body.search
+      req.body.search,
     );
     return res.send(recipes);
   },
 
   async createCustomRecipe(req, res) {
-    const customRecipeOrDietDay = await customRecipeModel.createCustomRecipe(
-      req.body.customRecipe,
-      req.body.dietDay,
-      req.body.meal,
-      req.body.idDietInUse,
-      req.body.idUser
-    );
-
-    return res.send(customRecipeOrDietDay);
-  },
-
-  async createNewCustomRecipe(req, res) {
-    const newCustomRecipe = await customRecipeModel.createNewCustomRecipe(
-      req.params.idUser,
-      req.params.idMeal,
-      req.body
-    );
-    return res.send(newCustomRecipe);
+    const customRecipe = await customRecipeModel.createCustomRecipe(req.body);
+    const merged = await recipeMergeService.getMergedRecipeData(customRecipe);
+    return res.status(201).send({ ...customRecipe.toObject(), merged });
   },
 
   async update(req, res) {
-    const customRecipe = await customRecipeModel.update(
-      req.body
-    );
-    return res.send(customRecipe);
+    const customRecipe = await customRecipeModel.update(req.params.id, req.body);
+    const merged = await recipeMergeService.getMergedRecipeData(customRecipe);
+    return res.send({ ...customRecipe.toObject(), merged });
   },
-
-  async addCustomRecipeCustomProduct(req, res) {
-    const customRecipe = await customRecipeModel.addCustomRecipeCustomProduct(
-      req.params.idCustomRecipe,
-      req.body
-    );
-    return res.send(customRecipe);
-  },
-
-  // async deleteCustomRecipeCustomProduct(req, res) {
-  //   const recipe = await customRecipeModel.deleteCustomRecipeCustomProduct(req.params.idCustomRecipe, req.params.idCustomProduct);
-  //   return res.send(recipe);
-  // },
 
   async delete(req, res) {
     await customRecipeModel.delete(req.params.id);
