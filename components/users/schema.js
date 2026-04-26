@@ -46,6 +46,8 @@ const UserSchema = new Schema({
     source: String,
     lastSyncAt: Date,
   },
+  passwordVersion: { type: Number, default: 0 },
+  lastPasswordChangeAt: Date,
   refreshToken: String,
   previousRefreshToken: String,
   tokenRotationTimestamp: Date,
@@ -57,6 +59,13 @@ UserSchema.plugin(require("mongoose-autopopulate"));
 UserSchema.pre("save", function (next) {
   let user = this;
   if (!user.isModified("password")) return next();
+
+  user.lastPasswordChangeAt = new Date();
+  if (user.isNew) {
+    user.passwordVersion = user.passwordVersion > 0 ? user.passwordVersion : 1;
+  } else {
+    user.passwordVersion = (user.passwordVersion || 0) + 1;
+  }
 
   // generate a salt
   bcrypt.genSalt(SALT_WORK_FACTOR, function (err, salt) {

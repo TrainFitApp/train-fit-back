@@ -33,7 +33,15 @@ const useCredentials = true;
 const corsOptions = {
   origin: true, // Permitir todos los orígenes por ahora
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "x-client-platform",
+    "x-client-family",
+    "x-refresh-token",
+    "x-device-label",
+  ],
   credentials: useCredentials, // Enable cookies
   optionsSuccessStatus: 204,
 };

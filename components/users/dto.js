@@ -29,6 +29,7 @@ const single = async (resource, authUser) => ({
   lastLogin: resource.lastLogin,
   premium: resource.premium,
   theme: resource.theme,
+  provider: resource.provider,
 });
 
 const multiple = (resources, authUser) =>

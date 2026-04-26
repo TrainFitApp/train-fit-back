@@ -11,6 +11,17 @@ const jwt = require("jsonwebtoken");
 const axios = require("axios");
 const jwkToPem = require("jwk-to-pem");
 
+const GOOGLE_ALLOWED_CLIENT_IDS = (
+  process.env.GOOGLE_ALLOWED_CLIENT_IDS ||
+  [
+    "775987417074-s1e767h7tps05ectmrb85uqh7hhp9p8n.apps.googleusercontent.com",
+    "775987417074-ibu27rm1ku8uuunaacebmp14ahvuuk4u.apps.googleusercontent.com",
+  ].join(",")
+)
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+
 module.exports = {
   async getUserById(id) {
     return userDao.getUserById(id);
@@ -155,7 +166,6 @@ module.exports = {
 
   async validateGoogleToken(token) {
     try {
-      // Decodificar el header del token sin verificar
       const decodedHeader = jwt.decode(token, { complete: true });
       if (!decodedHeader) throw new Error("Token inválido");
 
@@ -173,12 +183,21 @@ module.exports = {
       // Convertir la clave pública de JWK a PEM
       const publicKey = jwkToPem(key);
 
-      // Verificar y decodificar el token
       const payload = jwt.verify(token, publicKey, {
         algorithms: ["RS256"],
+        audience: GOOGLE_ALLOWED_CLIENT_IDS,
+        issuer: ["https://accounts.google.com", "accounts.google.com"],
       });
 
-      return payload; // Contiene los datos del usuario
+      if (!payload?.email) {
+        throw new Error("El token de Google no contiene email");
+      }
+
+      if (!payload?.email_verified) {
+        throw new Error("El email de Google no está verificado");
+      }
+
+      return payload;
     } catch (error) {
       throw new Error(`Error en la validación: ${error.message}`);
     }
@@ -201,10 +220,15 @@ module.exports = {
 
       const publicKey = jwkToPem(key);
 
-      const audiences = [
-        process.env.APPLE_BUNDLE_ID,
-        process.env.APPLE_SERVICE_ID,
-      ].filter(Boolean);
+      const audiences = (
+        process.env.APPLE_ALLOWED_AUDIENCES ||
+        [process.env.APPLE_BUNDLE_ID, process.env.APPLE_SERVICE_ID]
+          .filter(Boolean)
+          .join(",")
+      )
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
 
       const verifyOptions = {
         algorithms: ["RS256"],
