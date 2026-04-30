@@ -1,7 +1,6 @@
-const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
 
-// Cargar claves desde variables de entorno (PEM directo o Base64)
 function decodeMaybeBase64(value) {
   try {
     const decoded = Buffer.from(value, "base64").toString("utf8");
@@ -14,25 +13,29 @@ function decodeMaybeBase64(value) {
 function loadKeyFromEnv(envVarName) {
   const raw = process.env[envVarName];
   if (!raw) return null;
-  // Convertir secuencias \\n literales a saltos de línea reales
   const normalized = raw.replace(/\\n/g, "\n");
-  if (normalized.includes("BEGIN")) {
-    return normalized;
-  }
-  return decodeMaybeBase64(normalized);
+  return normalized.includes("BEGIN")
+    ? normalized
+    : decodeMaybeBase64(normalized);
 }
-
-const publicKey = loadKeyFromEnv("PUBLIC_KEY");
-const privateKey = loadKeyFromEnv("PRIVATE_KEY");
 
 function requireKey(key, name) {
   if (!key) throw new Error(`${name} not configured`);
   return key;
 }
 
-/**
- * Token Service - Centraliza generación y verificación de JWT
- */
+const publicKey = loadKeyFromEnv("PUBLIC_KEY");
+const privateKey = loadKeyFromEnv("PRIVATE_KEY");
+const ISSUER = process.env.JWT_ISSUER || "trainfit-auth";
+const REFRESH_COOKIE_NAME = "refreshToken";
+const DEFAULT_ALLOWED_AUDIENCES = (
+  process.env.JWT_ALLOWED_AUDIENCES ||
+  "trainfit-front,train-fit-management"
+)
+  .split(",")
+  .map((audience) => audience.trim())
+  .filter(Boolean);
+
 class TokenService {
   static getRefreshCookieOptions(maxAge = 30 * 24 * 60 * 60 * 1000) {
     const envSecure = process.env.COOKIE_SECURE;
@@ -44,7 +47,6 @@ class TokenService {
     let sameSite = process.env.COOKIE_SAMESITE || (secure ? "none" : "lax");
     sameSite = String(sameSite).toLowerCase();
 
-    // Browsers reject SameSite=None without Secure. Fallback safely in local http.
     if (!secure && sameSite === "none") {
       sameSite = "lax";
     }
@@ -54,100 +56,141 @@ class TokenService {
       secure,
       sameSite,
       maxAge,
-      path: "/api",
+      path: "/api/auth",
     };
   }
 
-  /**
-   * Genera un Access Token (JWT) con duración por defecto de 15 minutos
-   * @param {Object} payload - Datos a incluir en el token (email, roles)
-   * @param {string|number} [expiresIn="15m"] - Tiempo de expiración opcional
-   * @returns {string} JWT firmado
-   */
-  static generateAccessToken(payload, expiresIn = "15m") {
-    return jwt.sign(payload, requireKey(privateKey, "PRIVATE_KEY"), {
-      algorithm: "RS256",
-      expiresIn,
-    });
+  static generateSessionId() {
+    return crypto.randomUUID();
   }
 
-  /**
-   * Genera un Refresh Token (JWT) con duración por defecto de 30 días
-   * @param {Object} payload - Datos a incluir en el token (email, roles, tokenVersion)
-   * @param {string|number} [expiresIn="30d"] - Tiempo de expiración opcional
-   * @returns {string} JWT firmado
-   */
-  static generateRefreshToken(payload, expiresIn = "30d") {
-    return jwt.sign(
-      { ...payload, tokenVersion: Date.now() },
-      requireKey(privateKey, "PRIVATE_KEY"),
-      {
-        algorithm: "RS256",
-        expiresIn,
-      },
-    );
-  }
-
-  /**
-   * Verifica un Access Token
-   * @param {string} token - Token a verificar
-   * @returns {Object|null} Payload decodificado o null si inválido
-   */
-  static verifyAccessToken(token) {
-    try {
-      return jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
-        algorithms: ["RS256"],
-      });
-    } catch (error) {
-      return null;
-    }
-  }
-
-  /**
-   * Verifica un Refresh Token
-   * @param {string} token - Token a verificar
-   * @returns {Object|null} Payload decodificado o null si inválido
-   */
-  static verifyRefreshToken(token) {
-    try {
-      return jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
-        algorithms: ["RS256"],
-      });
-    } catch (error) {
-      return null;
-    }
-  }
-
-  /**
-   * Hash de un token usando SHA-256 para almacenamiento seguro en DB
-   * @param {string} token - Token a hashear
-   * @returns {string} Hash hexadecimal
-   */
   static hashToken(token) {
     return crypto.createHash("sha256").update(token).digest("hex");
   }
 
-  /**
-   * Configura cookie de refresh token con opciones seguras
-   * @param {Object} res - Response object de Express
-   * @param {string} refreshToken - Token a almacenar en cookie
-   */
+  static getAllowedAudiences() {
+    return DEFAULT_ALLOWED_AUDIENCES;
+  }
+
+  static generateAccessToken(payload, options = {}) {
+    const { audience = "trainfit-front", expiresIn = "15m" } = options;
+    return jwt.sign(
+      {
+        ...payload,
+        type: "access",
+      },
+      requireKey(privateKey, "PRIVATE_KEY"),
+      {
+        algorithm: "RS256",
+        expiresIn,
+        issuer: ISSUER,
+        audience,
+      }
+    );
+  }
+
+  static generateRefreshToken(payload, options = {}) {
+    const { audience = "trainfit-front", expiresIn = "30d" } = options;
+    return jwt.sign(
+      {
+        ...payload,
+        type: "refresh",
+        jti: crypto.randomUUID(),
+      },
+      requireKey(privateKey, "PRIVATE_KEY"),
+      {
+        algorithm: "RS256",
+        expiresIn,
+        issuer: ISSUER,
+        audience,
+      }
+    );
+  }
+
+  static verifyAccessToken(token, options = {}) {
+    try {
+      return jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
+        algorithms: ["RS256"],
+        issuer: ISSUER,
+        audience: options.audiences || TokenService.getAllowedAudiences(),
+      });
+    } catch (error) {
+      return null;
+    }
+  }
+
+  static verifyRefreshToken(token, options = {}) {
+    try {
+      return jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
+        algorithms: ["RS256"],
+        issuer: ISSUER,
+        audience: options.audiences || TokenService.getAllowedAudiences(),
+      });
+    } catch (error) {
+      return null;
+    }
+  }
+
+  static decode(token) {
+    try {
+      return jwt.decode(token);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  static getExpirationDate(token) {
+    const payload = TokenService.decode(token);
+    if (!payload?.exp) {
+      return null;
+    }
+    return new Date(payload.exp * 1000);
+  }
+
   static setRefreshTokenCookie(res, refreshToken) {
     res.cookie(
-      "refreshToken",
+      REFRESH_COOKIE_NAME,
       refreshToken,
       TokenService.getRefreshCookieOptions()
     );
   }
 
-  /**
-   * Limpia la cookie de refresh token
-   * @param {Object} res - Response object de Express
-   */
   static clearRefreshTokenCookie(res) {
-    // Flags DEBEN ser idénticos a los de setRefreshTokenCookie.
-    // Si no coinciden, el browser no identifica la cookie a borrar.
-    res.cookie("refreshToken", "", TokenService.getRefreshCookieOptions(0));
+    res.cookie(
+      REFRESH_COOKIE_NAME,
+      "",
+      TokenService.getRefreshCookieOptions(0)
+    );
+  }
+
+  static extractBearerToken(req) {
+    const authHeader = req.headers?.authorization || "";
+    if (!authHeader.startsWith("Bearer ")) {
+      return null;
+    }
+    return authHeader.slice("Bearer ".length).trim() || null;
+  }
+
+  static extractRefreshToken(req) {
+    const headerToken = req.headers?.["x-refresh-token"];
+    const cookieToken = req.cookies?.[REFRESH_COOKIE_NAME];
+
+    if (headerToken && cookieToken && headerToken !== cookieToken) {
+      return {
+        token: null,
+        source: "conflict",
+      };
+    }
+
+    if (headerToken) {
+      return { token: String(headerToken), source: "header" };
+    }
+
+    if (cookieToken) {
+      return { token: String(cookieToken), source: "cookie" };
+    }
+
+    return { token: null, source: null };
   }
 }
 

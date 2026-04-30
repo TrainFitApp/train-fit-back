@@ -548,6 +548,7 @@ module.exports = {
 
     user.password = password; // Update the password directly on the document
     await user.save(); // Save the updated document with the hashed password
+    return user;
   },
 
   async sendMailCode(email, hash) {

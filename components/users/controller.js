@@ -4,6 +4,7 @@ const userSchema = require("../users/schema");
 const bcrypt = require("../util/bcrypt");
 const mail = require("./../util/mail");
 const TokenService = require("../../services/token.service");
+const AuthSessionService = require("../../services/auth-session.service");
 const jwt = require("jsonwebtoken");
 const serverDomain = process.env.SERVER_DOMAIN;
 
@@ -924,7 +925,13 @@ module.exports = {
   },
 
   async updatePassword(req, res) {
-    await userModel.updatePassword(req.params.email, req.params.password);
+    const user = await userModel.updatePassword(req.params.email, req.params.password);
+    if (user?._id) {
+      await AuthSessionService.revokeAllUserSessions(
+        user._id,
+        "password_changed"
+      );
+    }
     return res.send(
       htmlFinalResponse1 + "Contraseña actualizada" + htmlFinalResponse2,
     );
@@ -947,6 +954,12 @@ module.exports = {
         req.body.password,
         req.body.hash,
       );
+      if (response?._id) {
+        await AuthSessionService.revokeAllUserSessions(
+          response._id,
+          "password_changed"
+        );
+      }
       return res.send(response);
     } catch (error) {
       console.error("Error in checkRestoreCode:", error.message);
@@ -1038,16 +1051,13 @@ module.exports = {
         return res.status(400).send({ message: "userId es requerido" });
       }
 
-      // Eliminar completamente el refreshToken usando $unset
-      const result = await userSchema.findByIdAndUpdate(
-        userId,
-        { $unset: { refreshToken: "" } },
-        { new: true },
-      );
+      const result = await userSchema.findById(userId);
 
       if (!result) {
         return res.status(404).send({ message: "Usuario no encontrado" });
       }
+
+      await AuthSessionService.revokeAllUserSessions(userId, "admin_logout");
 
       return res.send({
         message: "Sesión cerrada correctamente",
