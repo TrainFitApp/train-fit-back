@@ -24,6 +24,10 @@ module.exports = {
     return workoutDao.addWorkoutsToSplits(idTable, workout);
   },
 
+  async addExerciseToWorkouts(workoutIds, exerciseId) {
+    return workoutDao.addExerciseToWorkouts(workoutIds, exerciseId);
+  },
+
   async addWorkoutExercise(idWorkout, idExercise) {
     return workoutDao.addWorkoutExercise(idWorkout, idExercise);
   },

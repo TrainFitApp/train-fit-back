@@ -14,6 +14,11 @@ router.postAsync(
   controller.addDataExerciseToWorkout,
 );
 router.postAsync(
+  "/multiple/exercises",
+  auth(["admin", "user"]),
+  controller.addExerciseToWorkouts,
+);
+router.postAsync(
   "/multiple/:idTable",
   auth(["admin", "user"]),
   controller.addWorkoutsToSplits,

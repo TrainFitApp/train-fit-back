@@ -43,6 +43,12 @@ module.exports = {
     return res.send(table);
   },
 
+  async addExerciseToWorkouts(req, res) {
+    const { workoutIds, exerciseId } = req.body;
+    const result = await workoutModel.addExerciseToWorkouts(workoutIds, exerciseId);
+    return res.send(result);
+  },
+
   async getWorkoutByIdAndDate(req, res) {
     const workout = await workoutModel.getWorkoutByIdAndDate(
       req.params.id,

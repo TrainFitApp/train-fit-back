@@ -263,6 +263,42 @@ module.exports = {
     return tableDoc.splits;
   },
 
+  async addExerciseToWorkouts(workoutIds, exerciseId) {
+    try {
+      if (!Array.isArray(workoutIds) || workoutIds.length === 0) {
+        return [];
+      }
+
+      const customExercisesData = workoutIds.map(() => ({
+        exercise: exerciseId,
+        sets: [],
+        notes: null,
+      }));
+
+      const insertedCustomExercises = await customExerciseSchema.insertMany(customExercisesData);
+
+      const bulkOperations = workoutIds.map((wId, i) => ({
+        updateOne: {
+          filter: { _id: wId },
+          update: { $push: { exercises: insertedCustomExercises[i]._id } }
+        }
+      }));
+
+      await workoutSchema.bulkWrite(bulkOperations);
+
+      await customExerciseSchema.populate(insertedCustomExercises, { path: "exercise" });
+
+      const result = workoutIds.map((wId, i) => ({
+        workoutId: wId,
+        customExercise: insertedCustomExercises[i]
+      }));
+
+      return result;
+    } catch (err) {
+      throw err;
+    }
+  },
+
   async addWorkoutExercise(idWorkout, idExercise) {
     const addExercise = {
       $push: { exercises: idExercise },
