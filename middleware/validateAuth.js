@@ -47,27 +47,10 @@ const auth = (permissions) => {
         });
       }
 
-      const session = await AuthSessionService.getSessionById(decoded.sid);
-      if (!session || session.revokedAt) {
-        return res.status(401).send({
-          message: "Session revoked",
-          requiresRelogin: true,
-        });
-      }
-
       const user = await userSchema.findById(decoded.sub);
       if (!user) {
-        await AuthSessionService.revokeSession(decoded.sid, "user_missing");
         return res.status(401).send({
           message: "User not found",
-          requiresRelogin: true,
-        });
-      }
-
-      if ((user.passwordVersion || 0) !== (session.passwordVersion || 0)) {
-        await AuthSessionService.revokeSession(decoded.sid, "password_changed");
-        return res.status(401).send({
-          message: "Session expired by password change",
           requiresRelogin: true,
         });
       }
@@ -82,13 +65,13 @@ const auth = (permissions) => {
 
       req.auth = {
         userId: user._id.toString(),
-        sessionId: session.sessionId,
+        sessionId: decoded.sid,
         roles: userRoles,
         email: user.email,
       };
       req.userData = {
         sub: user._id.toString(),
-        sid: session.sessionId,
+        sid: decoded.sid,
         email: user.email,
         roles: userRoles,
         provider: user.provider || null,

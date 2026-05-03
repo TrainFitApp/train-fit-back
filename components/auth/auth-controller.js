@@ -57,11 +57,7 @@ async function issueSession(user, req, res) {
   const userRoles = user.roles || ["user"];
   const passwordVersion = user.passwordVersion || 0;
 
-  await AuthSessionService.revokeAllUserSessions(
-    user._id,
-    "replaced_by_new_login",
-    sessionId
-  );
+  await AuthSessionService.revokeAllUserSessions(user._id);
 
   const refreshToken = TokenService.generateRefreshToken(
     {
@@ -90,14 +86,9 @@ async function issueSession(user, req, res) {
   await AuthSessionService.createSession({
     sessionId,
     userId: user._id,
-    clientFamily: clientContext.clientFamily,
     platform: clientContext.platform,
     refreshTokenHash: TokenService.hashToken(refreshToken),
     expiresAt: TokenService.getExpirationDate(refreshToken),
-    passwordVersion,
-    ip: req.ip,
-    userAgent: req.headers?.["user-agent"] || null,
-    deviceLabel: req.headers?.["x-device-label"] || null,
   });
 
   if (!clientContext.isNativeClient) {
@@ -119,12 +110,12 @@ function clearRefreshArtifacts(req, res) {
   }
 }
 
-async function revokeSessionByPayload(payload, reason = "logout") {
+async function revokeSessionByPayload(payload) {
   const sessionId = payload?.sid;
   if (!sessionId) {
     return;
   }
-  await AuthSessionService.revokeSession(sessionId, reason);
+  await AuthSessionService.revokeSession(sessionId);
 }
 
 async function getValidatedGoogleIdentity(tokenGoogle) {
@@ -254,7 +245,7 @@ module.exports = {
 
       const user = await userSchema.findById(decoded.sub);
       if (!user) {
-        await AuthSessionService.revokeSession(session.sessionId, "user_missing");
+        await AuthSessionService.revokeSession(session.sessionId);
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "User not found",
@@ -263,14 +254,8 @@ module.exports = {
       }
 
       const passwordVersion = user.passwordVersion || 0;
-      if (
-        decoded.pver !== passwordVersion ||
-        session.passwordVersion !== passwordVersion
-      ) {
-        await AuthSessionService.revokeSession(
-          session.sessionId,
-          "password_changed"
-        );
+      if (decoded.pver !== passwordVersion) {
+        await AuthSessionService.revokeSession(session.sessionId);
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Session expired by password change",
@@ -279,7 +264,7 @@ module.exports = {
       }
 
       if (session.expiresAt && new Date(session.expiresAt) <= new Date()) {
-        await AuthSessionService.revokeSession(session.sessionId, "refresh_expired");
+        await AuthSessionService.revokeSession(session.sessionId);
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Refresh session expired",
@@ -316,10 +301,7 @@ module.exports = {
           });
         }
 
-        await AuthSessionService.revokeSession(
-          session.sessionId,
-          "refresh_token_reuse_detected"
-        );
+        await AuthSessionService.revokeSession(session.sessionId);
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Refresh token reuse detected",
@@ -352,7 +334,6 @@ module.exports = {
         currentRefreshTokenHash: currentTokenHash,
         nextRefreshTokenHash: TokenService.hashToken(nextRefreshToken),
         expiresAt: TokenService.getExpirationDate(nextRefreshToken),
-        passwordVersion,
       });
 
       if (!clientContext.isNativeClient) {
@@ -384,13 +365,13 @@ module.exports = {
         : null;
 
       if (accessPayload?.sid) {
-        await AuthSessionService.revokeSession(accessPayload.sid, "logout");
+        await AuthSessionService.revokeSession(accessPayload.sid);
       } else {
         const extracted = TokenService.extractRefreshToken(req);
         if (extracted.token) {
           const refreshPayload = TokenService.verifyRefreshToken(extracted.token);
           if (refreshPayload?.sid) {
-            await AuthSessionService.revokeSession(refreshPayload.sid, "logout");
+            await AuthSessionService.revokeSession(refreshPayload.sid);
           }
         }
       }
