@@ -1,5 +1,9 @@
 const nodemailer = require("nodemailer");
 const dns = require("dns").promises;
+const registerHost = process.env.REGISTER_MAIL_SENDER_HOST;
+const registerPort = process.env.REGISTER_MAIL_SENDER_PORT;
+const registerUser = process.env.REGISTER_MAIL_SENDER_USER;
+const registerPass = process.env.REGISTER_MAIL_SENDER_PASS;
 const suggestionsHost = process.env.SUGGESTIONS_MAIL_SENDER_HOST;
 const suggestionsPort = process.env.SUGGESTIONS_MAIL_SENDER_PORT;
 const suggestionsUser = process.env.SUGGESTIONS_MAIL_SENDER_USER;
@@ -8,39 +12,55 @@ const sesSmtpUser = process.env.SES_SMTP_USER;
 const sesSmtpPass = process.env.SES_SMTP_PASS;
 const sesRegion = process.env.SES_REGION;
 const fromEmail = process.env.FROM_EMAIL;
+const registrationNotificationEmail =
+  process.env.REGISTRATION_NOTIFICATION_EMAIL || registerUser;
 
-const suggestionsSecure = String(suggestionsPort) === "465";
-const suggestionsTransporter = nodemailer.createTransport({
+const createSmtpTransporter = ({ host, port, user, pass }) =>
+  nodemailer.createTransport({
+    host,
+    port: Number(port),
+    secure: String(port) === "465",
+    auth: { user, pass },
+    tls: { minVersion: "TLSv1.2" },
+  });
+
+const registerTransporter = createSmtpTransporter({
+  host: registerHost,
+  port: registerPort,
+  user: registerUser,
+  pass: registerPass,
+});
+
+const suggestionsTransporter = createSmtpTransporter({
   host: suggestionsHost,
-  port: Number(suggestionsPort),
-  secure: suggestionsSecure,
-  auth: { user: suggestionsUser, pass: suggestionsPass },
-  tls: { minVersion: "TLSv1.2" },
+  port: suggestionsPort,
+  user: suggestionsUser,
+  pass: suggestionsPass,
 });
 
 const sesTransporter = nodemailer.createTransport({
-  host: `email-smtp.eu-west-3.amazonaws.com`,
+  host: `email-smtp.${sesRegion || "eu-west-3"}.amazonaws.com`,
   port: 587,
   secure: false,
   auth: {
-    user: "AKIA5CBGTKIMMRREJWZG",
-    pass: "BCeXPzQ0CMqshyQE8liQT9jNKCKZ70csYy4jT1ePbXi2",
+    user: sesSmtpUser,
+    pass: sesSmtpPass,
   },
   tls: { minVersion: "TLSv1.2" },
 });
 
 Promise.allSettled([
+  registerTransporter.verify(),
   suggestionsTransporter.verify(),
   sesTransporter.verify(),
 ]).then((results) => {
   results.forEach((r, i) => {
+    const label =
+      i === 0 ? "Register SMTP" : i === 1 ? "Suggestions SMTP" : "SES SMTP";
     if (r.status === "fulfilled") {
-      console.log(i === 0 ? "Suggestions SMTP ready" : "SES SMTP ready");
+      console.log(`${label} ready`);
     } else {
-      console.warn(
-        i === 0 ? "Suggestions SMTP verify failed:" : "SES SMTP verify failed:",
-        r.reason?.message || r.reason,
-      );
+      console.warn(`${label} verify failed:`, r.reason?.message || r.reason);
     }
   });
 });
@@ -86,6 +106,23 @@ const validateEmailExists = async (email) => {
 const sendMail = async (sender, to, subject, html) => {
   const mailOptions = { from: sender, to, subject, html };
   return suggestionsTransporter.sendMail(mailOptions);
+};
+
+const sendRegisterMail = async (to, subject, html, options = {}) => {
+  const sender = options.from || registerUser;
+  const mailOptions = {
+    from: {
+      name: options.fromName || "TrainFit",
+      address: sender,
+    },
+    replyTo: options.replyTo || sender,
+    to,
+    subject,
+    html,
+    text: htmlToText(html),
+  };
+
+  return registerTransporter.sendMail(mailOptions);
 };
 
 /**
@@ -239,6 +276,146 @@ const generateMail = (header1, description, linkHref, linkContent) => {
 </html>`;
 };
 
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const formatMailValue = (value) => {
+  if (value === undefined || value === null || value === "") return "No informado";
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "No informado";
+  if (typeof value === "object") {
+    if (value._id) return value._id.toString();
+    if (
+      typeof value.toString === "function" &&
+      value.toString() !== "[object Object]"
+    ) {
+      return value.toString();
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+};
+
+const getUserPlainObject = (user) => {
+  if (!user) return {};
+  if (typeof user.toObject === "function") return user.toObject();
+  return user;
+};
+
+const formatRegistrationDate = (value) => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return formatMailValue(value);
+
+  return date.toLocaleString("es-ES", {
+    timeZone: process.env.REGISTRATION_NOTIFICATION_TIME_ZONE || "Europe/Madrid",
+  });
+};
+
+const buildDetailRows = (details) =>
+  details
+    .map(
+      ([label, value]) => `
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #E5E7EB;color:#6B7280;font-size:13px;width:38%;vertical-align:top">
+            ${escapeHtml(label)}
+          </td>
+          <td style="padding:10px 12px;border-bottom:1px solid #E5E7EB;color:#111827;font-size:13px;font-weight:600;vertical-align:top">
+            ${escapeHtml(formatMailValue(value))}
+          </td>
+        </tr>`,
+    )
+    .join("");
+
+const generateRegistrationNotificationMail = (user, context = {}) => {
+  const userData = getUserPlainObject(user);
+  const createdAt = userData.createdAt || context.createdAt || new Date();
+  const details = [
+    ["Correo electronico", userData.email],
+    ["Name", userData.name],
+    ["Lastname", userData.lastname],
+    ["Fecha de registro", formatRegistrationDate(createdAt)],
+  ];
+
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//ES" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html dir="ltr" lang="es">
+  <head>
+    <meta content="text/html; charset=UTF-8" http-equiv="Content-Type" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Registro - TrainFit</title>
+    <span style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0">Registro ${escapeHtml(userData.email || "")}</span>
+  </head>
+  <body style='background-color:#F3F4F6;font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol";padding-top:40px;padding-bottom:40px;margin:0;'>
+    <table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#ffffff;border-radius:12px;margin:0 auto;padding:24px;max-width:640px;box-shadow:0 1px 2px rgba(0,0,0,0.04)">
+      <tbody>
+        <tr style="width:100%">
+          <td>
+            <div style="text-align:center;margin:0 0 16px 0">
+              <span style="display:inline-block;background-color:#FE9000;color:#ffffff;font-weight:700;padding:6px 12px;border-radius:9999px;font-size:12px;letter-spacing:.3px">TrainFit</span>
+            </div>
+
+            <h1 style="font-size:24px;font-weight:700;text-align:center;margin:14px 0 8px 0;color:#111827">
+              Registro
+            </h1>
+
+            <p style="font-size:16px;line-height:24px;color:#374151;margin:8px 0 20px 0;text-align:center">
+              Se ha registrado un nuevo usuario en TrainFit.
+            </p>
+
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="border:1px solid #E5E7EB;border-radius:8px;border-collapse:separate;overflow:hidden;margin:20px 0">
+              <tbody>
+                ${buildDetailRows(details)}
+              </tbody>
+            </table>
+
+            <p style="font-size:12px;line-height:16px;color:#6B7280;margin:4px 0;text-align:center">
+              Este aviso se envia automaticamente desde la cuenta de registro.
+            </p>
+            <p style="font-size:12px;line-height:16px;color:#6B7280;margin:0;text-align:center">
+              © ${new Date().getFullYear()} TrainFit. Todos los derechos reservados.
+            </p>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>`;
+};
+
+const sendRegistrationNotification = async (user, context = {}) => {
+  if (!registrationNotificationEmail) {
+    throw new Error("REGISTER_MAIL_SENDER_USER no configurado");
+  }
+
+  const userData = getUserPlainObject(user);
+  const subjectEmail = userData.email || "sin email";
+  const html = generateRegistrationNotificationMail(user, context);
+
+  return sendRegisterMail(
+    registrationNotificationEmail,
+    `Registro '${subjectEmail}'`,
+    html,
+    {
+      fromName: "TrainFit Registros",
+      replyTo: userData.email || registerUser,
+    },
+  );
+};
+
+const notifyUserRegistered = (user, context = {}) => {
+  sendRegistrationNotification(user, context).catch((error) => {
+    console.error(
+      "Error enviando aviso interno de registro:",
+      error?.message || error,
+    );
+  });
+};
+
 /**
  * Plantilla de correo para mostrar un código/hash de verificación
  *
@@ -309,8 +486,12 @@ const generateHashMail = (header1, description, hash) => {
 
 module.exports = {
   sendMail,
+  sendRegisterMail,
   sendMailSES,
   generateMail,
   generateHashMail,
+  generateRegistrationNotificationMail,
+  sendRegistrationNotification,
+  notifyUserRegistered,
   validateEmailExists,
 };

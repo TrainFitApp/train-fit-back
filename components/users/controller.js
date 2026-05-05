@@ -95,6 +95,15 @@ function canActOnUser(req, targetUserId) {
   return isAdmin(req) || String(req.user?.id) === String(targetUserId);
 }
 
+function notifyUserRegistered(user, req, source, provider) {
+  mail.notifyUserRegistered(user, {
+    source,
+    provider: provider || user?.provider || "email",
+    ip: req.ip,
+    userAgent: req.headers?.["user-agent"],
+  });
+}
+
 module.exports = {
   async countUsers(req, res) {
     const count = await userModel.countUsers();
@@ -183,6 +192,8 @@ module.exports = {
         },
         req.body.date,
       );
+
+      notifyUserRegistered(user, req, "users.createUser", "email");
 
       // ---- Cabeceras y textos del NUEVO correo de activación ----
       const header1 = `Hola ${req.body.user.name}, verifique su cuenta`;
@@ -299,6 +310,8 @@ module.exports = {
       // Sin embargo, insertMany es suficiente si pasamos los campos correctos.
       let user = await userSchema.insertMany([newUser]);
       user = user[0];
+
+      notifyUserRegistered(user, req, "users.createSocialUser", provider);
 
       // Generar tokens y configurar cookie
       const { accessToken } = await generateAndSetTokens(user, res);
@@ -697,6 +710,8 @@ module.exports = {
 
       // Crear usuario
       const user = await userModel.createUserApple(newUser, date);
+
+      notifyUserRegistered(user, req, "users.createUserApple", "apple");
 
       // Generar tokens y configurar cookie
       const { accessToken } = await generateAndSetTokens(user, res);

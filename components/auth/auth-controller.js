@@ -4,6 +4,7 @@ const userModel = require("../users/model");
 const userSchema = require("../users/schema");
 const TokenService = require("../../services/token.service");
 const AuthSessionService = require("../../services/auth-session.service");
+const mail = require("../util/mail");
 
 const REFRESH_GRACE_MS = Number(process.env.REFRESH_TOKEN_GRACE_MS || 60000);
 const AUTH_RESPONSE_EXPIRES_IN_SECONDS = 15 * 60;
@@ -185,7 +186,6 @@ module.exports = {
         user.hash = hashTemp;
         await userModel.updateUser(user);
 
-        const mail = require("../util/mail");
         const header1 = `Hola ${user.name}, verifique su cuenta`;
         const description =
           "Introduce el siguiente código en la aplicación para finalizar el registro.";
@@ -548,6 +548,12 @@ module.exports = {
           appleId: identity.appleId || undefined,
           roles: ["user"],
           provider,
+        });
+        mail.notifyUserRegistered(user, {
+          source: "auth.registerSocial",
+          provider,
+          ip: req.ip,
+          userAgent: req.headers?.["user-agent"],
         });
       } else if (provider === "apple" && identity.appleId && !user.appleId) {
         user = await userSchema.findByIdAndUpdate(
