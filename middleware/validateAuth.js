@@ -2,6 +2,10 @@ const userSchema = require("../components/users/schema");
 const AuthSessionService = require("../services/auth-session.service");
 const TokenService = require("../services/token.service");
 
+function resolveClientFamily(req) {
+  return String(req.headers?.["x-client-family"] || "").trim() || "trainfit-front";
+}
+
 const basicAuth = async (req, res, next) => {
   if (!req.headers.authorization) {
     const err = new Error("Not Authenticated!");
@@ -35,9 +39,19 @@ const auth = (permissions) => {
         return res.status(401).send({ message: "No token provided" });
       }
 
-      const decoded = TokenService.verifyAccessToken(token);
+      const clientFamily = resolveClientFamily(req);
+      const decoded = TokenService.verifyAccessToken(token, {
+        audiences: [clientFamily],
+      });
       if (!decoded || decoded.type !== "access") {
         return res.status(401).send({ message: "Invalid or expired token" });
+      }
+
+      if (decoded.aud !== clientFamily) {
+        return res.status(401).send({
+          message: "Invalid token audience",
+          requiresRelogin: true,
+        });
       }
 
       if (!decoded.sid || !decoded.sub) {

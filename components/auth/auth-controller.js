@@ -8,6 +8,10 @@ const mail = require("../util/mail");
 
 const REFRESH_GRACE_MS = Number(process.env.REFRESH_TOKEN_GRACE_MS || 60000);
 const AUTH_RESPONSE_EXPIRES_IN_SECONDS = 15 * 60;
+const MAX_ACTIVE_SESSIONS_PER_USER = Math.max(
+  1,
+  Number(process.env.AUTH_MAX_ACTIVE_SESSIONS || 3) || 3
+);
 
 function normalizeEmail(email) {
   return typeof email === "string" ? email.trim().toLowerCase() : null;
@@ -52,17 +56,11 @@ async function buildAuthResponse({
   return response;
 }
 
-async function issueSession(user, req, res) {
+async function issueSession(user, req, res, sessionOptions = {}) {
   const clientContext = resolveClientContext(req);
   const sessionId = TokenService.generateSessionId();
   const userRoles = user.roles || ["user"];
   const passwordVersion = user.passwordVersion || 0;
-
-  await AuthSessionService.revokeAllUserSessions(
-    user._id,
-    "replaced_by_new_login",
-    sessionId
-  );
 
   const refreshToken = TokenService.generateRefreshToken(
     {
@@ -96,14 +94,41 @@ async function issueSession(user, req, res) {
     refreshTokenHash: TokenService.hashToken(refreshToken),
     expiresAt: TokenService.getExpirationDate(refreshToken),
     passwordVersion,
+    impersonatedByUserId: sessionOptions.impersonatedByUserId || null,
+    impersonatedFromSessionId:
+      sessionOptions.impersonatedFromSessionId || null,
     ip: req.ip,
     userAgent: req.headers?.["user-agent"] || null,
     deviceLabel: req.headers?.["x-device-label"] || null,
   });
 
+  const limitResult = await AuthSessionService.enforceActiveSessionLimit(
+    user._id,
+    MAX_ACTIVE_SESSIONS_PER_USER,
+    sessionId
+  );
+  const revokedByLimit =
+    limitResult?.modifiedCount ?? limitResult?.nModified ?? 0;
+  if (revokedByLimit > 0) {
+    console.info("[AUTH] auth_session_revoked", {
+      userId: user._id.toString(),
+      reason: "session_limit_exceeded",
+      count: revokedByLimit,
+      replacedBySessionId: sessionId,
+    });
+  }
+
   if (!clientContext.isNativeClient) {
     TokenService.setRefreshTokenCookie(res, refreshToken);
   }
+
+  console.info("[AUTH] auth_login_success", {
+    userId: user._id.toString(),
+    sessionId,
+    platform: clientContext.platform,
+    clientFamily: clientContext.clientFamily,
+    impersonatedByUserId: sessionOptions.impersonatedByUserId || null,
+  });
 
   return buildAuthResponse({
     user,
@@ -243,6 +268,15 @@ module.exports = {
         });
       }
 
+      const clientContext = resolveClientContext(req);
+      if (decoded.aud !== clientContext.audience) {
+        clearRefreshArtifacts(req, res);
+        return res.status(401).send({
+          message: "Invalid refresh token audience",
+          requiresRelogin: true,
+        });
+      }
+
       const session = await AuthSessionService.getSessionById(decoded.sid);
       if (!session || session.revokedAt) {
         clearRefreshArtifacts(req, res);
@@ -294,10 +328,18 @@ module.exports = {
         !!session.rotationTimestamp &&
         Date.now() - new Date(session.rotationTimestamp).getTime() <
           REFRESH_GRACE_MS;
-      const clientContext = resolveClientContext(req);
 
       if (!isCurrent) {
         if (isPrevious && withinGrace) {
+          const nextRefreshToken = TokenService.generateRefreshToken(
+            {
+              sub: user._id.toString(),
+              sid: session.sessionId,
+              pver: passwordVersion,
+            },
+            { audience: clientContext.audience }
+          );
+
           const accessToken = TokenService.generateAccessToken(
             {
               sub: user._id.toString(),
@@ -309,17 +351,55 @@ module.exports = {
             { audience: clientContext.audience }
           );
 
-          return res.send({
+          const rotatedSession =
+            await AuthSessionService.updateRotatedRefreshTokenFromPreviousGrace({
+              sessionId: session.sessionId,
+              previousRefreshTokenHash: currentTokenHash,
+              nextPreviousRefreshTokenHash: session.refreshTokenHash,
+              nextRefreshTokenHash: TokenService.hashToken(nextRefreshToken),
+              expiresAt: TokenService.getExpirationDate(nextRefreshToken),
+              passwordVersion,
+              graceStartedAfter: new Date(Date.now() - REFRESH_GRACE_MS),
+            });
+
+          if (!rotatedSession) {
+            return res.status(409).send({
+              message: "Refresh token already rotated",
+            });
+          }
+
+          if (!clientContext.isNativeClient) {
+            TokenService.setRefreshTokenCookie(res, nextRefreshToken);
+          }
+
+          const response = {
             access_token: accessToken,
             expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
             token_type: "Bearer",
+          };
+
+          if (clientContext.isNativeClient) {
+            response.refresh_token = nextRefreshToken;
+          }
+
+          console.info("[AUTH] auth_refresh_grace_reuse", {
+            userId: user._id.toString(),
+            sessionId: session.sessionId,
+            recoveredRefreshToken: true,
           });
+
+          return res.send(response);
         }
 
         await AuthSessionService.revokeSession(
           session.sessionId,
           "refresh_token_reuse_detected"
         );
+        console.warn("[AUTH] auth_refresh_reuse_detected", {
+          userId: user._id.toString(),
+          sessionId: session.sessionId,
+          source: extracted.source,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Refresh token reuse detected",
@@ -347,13 +427,19 @@ module.exports = {
         { audience: clientContext.audience }
       );
 
-      await AuthSessionService.updateRotatedRefreshToken({
+      const rotatedSession = await AuthSessionService.updateRotatedRefreshToken({
         sessionId: session.sessionId,
         currentRefreshTokenHash: currentTokenHash,
         nextRefreshTokenHash: TokenService.hashToken(nextRefreshToken),
         expiresAt: TokenService.getExpirationDate(nextRefreshToken),
         passwordVersion,
       });
+
+      if (!rotatedSession) {
+        return res.status(409).send({
+          message: "Refresh token already rotated",
+        });
+      }
 
       if (!clientContext.isNativeClient) {
         TokenService.setRefreshTokenCookie(res, nextRefreshToken);
@@ -368,6 +454,12 @@ module.exports = {
       if (clientContext.isNativeClient) {
         response.refresh_token = nextRefreshToken;
       }
+
+      console.info("[AUTH] auth_refresh_success", {
+        userId: user._id.toString(),
+        sessionId: session.sessionId,
+        platform: clientContext.platform,
+      });
 
       return res.send(response);
     } catch (error) {
@@ -494,6 +586,12 @@ module.exports = {
         });
       }
 
+      if (user.appleId && user.appleId !== identity.appleId) {
+        return res.status(401).send({
+          message: "Apple ID no corresponde al usuario",
+        });
+      }
+
       if (!user.appleId) {
         user = await userSchema.findByIdAndUpdate(
           user._id,
@@ -524,8 +622,14 @@ module.exports = {
       } else {
         identity = await getValidatedAppleIdentity(
           req.body?.tokenApple,
-          req.body?.email
+          req.body?.email || req.body?.user?.email
         );
+      }
+
+      if (!identity.email) {
+        return res.status(400).send({
+          message: "Email requerido para completar el registro social",
+        });
       }
 
       let user = null;
@@ -540,6 +644,16 @@ module.exports = {
         return res
           .status(409)
           .send({ message: "Este usuario ya está registrado" });
+      }
+
+      if (
+        provider === "apple" &&
+        user?.appleId &&
+        user.appleId !== identity.appleId
+      ) {
+        return res.status(409).send({
+          message: "Este email ya esta vinculado a otra cuenta de Apple",
+        });
       }
 
       if (!user) {
@@ -597,6 +711,109 @@ module.exports = {
       return res
         .status(500)
         .send({ message: "No se pudo completar el perfil social" });
+    }
+  },
+
+  async impersonate(req, res) {
+    try {
+      const targetUserId = req.body?.userId;
+      if (!targetUserId) {
+        return res.status(400).send({ message: "userId requerido" });
+      }
+
+      const targetUser = await userSchema.findById(targetUserId);
+      if (!targetUser) {
+        return res.status(404).send({ message: "Usuario no encontrado" });
+      }
+
+      await userSchema.findByIdAndUpdate(targetUser._id, {
+        $set: { lastLogin: new Date() },
+      });
+
+      const response = await issueSession(targetUser, req, res, {
+        impersonatedByUserId: req.user._id,
+        impersonatedFromSessionId: req.auth.sessionId,
+      });
+
+      return res.status(200).send(response);
+    } catch (error) {
+      console.error("Error en auth/impersonate:", error);
+      return res.status(500).send({ message: "Error al impersonar usuario" });
+    }
+  },
+
+  async revertImpersonation(req, res) {
+    try {
+      const currentSession = await AuthSessionService.getSessionById(
+        req.auth?.sessionId
+      );
+
+      if (
+        !currentSession ||
+        !currentSession.impersonatedByUserId ||
+        !currentSession.impersonatedFromSessionId
+      ) {
+        return res.status(400).send({ message: "No active impersonation" });
+      }
+
+      const adminAccessToken = req.headers?.["x-admin-access-token"];
+      if (!adminAccessToken) {
+        return res.status(401).send({
+          message: "Admin token required",
+          requiresRelogin: true,
+        });
+      }
+
+      const clientContext = resolveClientContext(req);
+      const adminPayload = TokenService.verifyAccessToken(adminAccessToken, {
+        audiences: [clientContext.audience],
+      });
+
+      if (
+        !adminPayload ||
+        adminPayload.type !== "access" ||
+        !adminPayload.sid ||
+        !adminPayload.sub
+      ) {
+        return res.status(401).send({
+          message: "Invalid admin token",
+          requiresRelogin: true,
+        });
+      }
+
+      const adminSession = await AuthSessionService.getActiveSessionById(
+        adminPayload.sid
+      );
+      const adminUser = await userSchema.findById(adminPayload.sub);
+      const isExpectedAdmin =
+        currentSession.impersonatedByUserId.toString() ===
+          adminPayload.sub.toString() &&
+        currentSession.impersonatedFromSessionId === adminPayload.sid;
+
+      if (
+        !adminSession ||
+        !adminUser ||
+        !(adminUser.roles || []).includes("admin") ||
+        !isExpectedAdmin
+      ) {
+        return res.status(401).send({
+          message: "Invalid impersonation revert",
+          requiresRelogin: true,
+        });
+      }
+
+      await AuthSessionService.revokeSession(
+        currentSession.sessionId,
+        "impersonation_reverted",
+        adminSession.sessionId
+      );
+
+      return res.status(200).send(await issueSession(adminUser, req, res));
+    } catch (error) {
+      console.error("Error en auth/impersonate/revert:", error);
+      return res.status(500).send({
+        message: "Error al volver a la sesion admin",
+      });
     }
   },
 };

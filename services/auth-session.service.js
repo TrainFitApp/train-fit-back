@@ -9,6 +9,8 @@ class AuthSessionService {
     refreshTokenHash,
     expiresAt,
     passwordVersion,
+    impersonatedByUserId,
+    impersonatedFromSessionId,
     ip,
     userAgent,
     deviceLabel,
@@ -21,6 +23,8 @@ class AuthSessionService {
       refreshTokenHash,
       expiresAt,
       passwordVersion: passwordVersion || 0,
+      impersonatedByUserId: impersonatedByUserId || null,
+      impersonatedFromSessionId: impersonatedFromSessionId || null,
       ip: ip || null,
       userAgent: userAgent || null,
       deviceLabel: deviceLabel || null,
@@ -68,13 +72,69 @@ class AuthSessionService {
       return;
     }
 
-    await AuthSession.updateMany(
+    return AuthSession.updateMany(
       { userId, revokedAt: null },
       {
         $set: {
           revokedAt: new Date(),
           revokedReason: reason,
           replacedBySessionId: replacedBySessionId || null,
+        },
+      }
+    );
+  }
+
+  static async enforceActiveSessionLimit(
+    userId,
+    maxActiveSessions = 3,
+    keepSessionId = null
+  ) {
+    if (!userId || maxActiveSessions < 1) {
+      return [];
+    }
+
+    const activeSessions = await AuthSession.find({
+      userId,
+      revokedAt: null,
+    })
+      .sort({ lastUsedAt: -1, createdAt: -1 })
+      .lean();
+
+    if (activeSessions.length <= maxActiveSessions) {
+      return [];
+    }
+
+    const keptSessionIds = new Set();
+    const sessionsToKeep = [];
+    if (keepSessionId) {
+      keptSessionIds.add(keepSessionId);
+      sessionsToKeep.push(keepSessionId);
+    }
+
+    for (const session of activeSessions) {
+      if (sessionsToKeep.length >= maxActiveSessions) {
+        break;
+      }
+
+      if (keptSessionIds.has(session.sessionId)) {
+        continue;
+      }
+
+      keptSessionIds.add(session.sessionId);
+      sessionsToKeep.push(session.sessionId);
+    }
+
+    return AuthSession.updateMany(
+      {
+        userId,
+        revokedAt: null,
+        sessionId: { $nin: sessionsToKeep },
+      },
+      {
+        $set: {
+          revokedAt: new Date(),
+          revokedReason: "session_limit_exceeded",
+          replacedBySessionId: keepSessionId || null,
         },
       }
     );
@@ -88,10 +148,44 @@ class AuthSessionService {
     passwordVersion,
   }) {
     return AuthSession.findOneAndUpdate(
-      { sessionId, revokedAt: null },
+      {
+        sessionId,
+        revokedAt: null,
+        refreshTokenHash: currentRefreshTokenHash,
+      },
       {
         $set: {
           previousRefreshTokenHash: currentRefreshTokenHash,
+          refreshTokenHash: nextRefreshTokenHash,
+          rotationTimestamp: new Date(),
+          lastUsedAt: new Date(),
+          expiresAt,
+          passwordVersion: passwordVersion || 0,
+        },
+      },
+      { new: true }
+    );
+  }
+
+  static async updateRotatedRefreshTokenFromPreviousGrace({
+    sessionId,
+    previousRefreshTokenHash,
+    nextPreviousRefreshTokenHash,
+    nextRefreshTokenHash,
+    expiresAt,
+    passwordVersion,
+    graceStartedAfter,
+  }) {
+    return AuthSession.findOneAndUpdate(
+      {
+        sessionId,
+        revokedAt: null,
+        previousRefreshTokenHash,
+        rotationTimestamp: { $gte: graceStartedAfter },
+      },
+      {
+        $set: {
+          previousRefreshTokenHash: nextPreviousRefreshTokenHash || null,
           refreshTokenHash: nextRefreshTokenHash,
           rotationTimestamp: new Date(),
           lastUsedAt: new Date(),

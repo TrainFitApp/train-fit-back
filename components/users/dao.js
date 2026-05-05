@@ -5,7 +5,6 @@ const dietUtil = require("../diets/diet-util");
 const dietModel = require("../diets/diet-model");
 const aggregateService = require("../util/aggregate-service");
 const mail = require("../util/mail");
-const TokenService = require("../../services/token.service");
 const recipeSchema = require("../recipes/recipe-schema");
 const recipeModel = require("../recipes/recipe-model");
 
@@ -254,10 +253,6 @@ module.exports = {
       // user.tableInUse = createdTable._id;
       user.dietInUse = createdDiet._id;
 
-      user.refreshToken = TokenService.generateRefreshToken({
-        email: user.email,
-        roles: user.roles,
-      });
       let userDoc;
       if (user) {
         let existingUser = await userSchema.findOne({ email: user.email });
@@ -286,11 +281,6 @@ module.exports = {
 
       user.dietInUse = createdDiet._id;
 
-      user.refreshToken = TokenService.generateRefreshToken({
-        email: user.email,
-        roles: user.roles,
-      });
-
       const userDoc = await userSchema.create(user);
 
       return userDoc;
@@ -309,11 +299,6 @@ module.exports = {
       const createdDiet = await dietModel.createDiet(diet);
 
       user.dietInUse = createdDiet._id;
-
-      user.refreshToken = TokenService.generateRefreshToken({
-        email: user.email,
-        roles: user.roles,
-      });
 
       const userDoc = await userSchema.create(user);
 
