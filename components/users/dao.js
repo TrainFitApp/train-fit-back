@@ -6,6 +6,8 @@ const dietModel = require("../diets/diet-model");
 const aggregateService = require("../util/aggregate-service");
 const mail = require("../util/mail");
 const TokenService = require("../../services/token.service");
+const recipeSchema = require("../recipes/recipe-schema");
+const recipeModel = require("../recipes/recipe-model");
 
 module.exports = {
   async getUserById(id) {
@@ -611,6 +613,12 @@ module.exports = {
 
   async deleteUser(id) {
     try {
+      const ownRecipes = await recipeSchema.find({ userId: id }).select("_id").lean();
+
+      for (const recipe of ownRecipes) {
+        await recipeModel.deleteRecipe(recipe._id);
+      }
+
       return await userSchema.deleteOne({ _id: id });
     } catch (e) {
       throw e;

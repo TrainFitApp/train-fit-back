@@ -2,7 +2,6 @@ const productSchema = require("./product-schema");
 const userSchema = require("../users/schema");
 const aggregateService = require("../util/aggregate-service");
 const mongoose = require("mongoose");
-const { cleanObject, prepareUpdateQuery } = require("../util/clean-data");
 const {
   buildSearchFields,
   normalizeSearchText,
@@ -27,6 +26,125 @@ function normalizeUserId(rawUserId) {
   }
 
   return toObjectId(rawUserId);
+}
+
+function cleanProductObject(data, excludeFields = []) {
+  if (!data || typeof data !== "object") {
+    return data;
+  }
+
+  const cleaned = {};
+
+  Object.keys(data).forEach((key) => {
+    if (excludeFields.includes(key)) {
+      cleaned[key] = data[key];
+      return;
+    }
+
+    const value = data[key];
+
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      value === false
+    ) {
+      return;
+    }
+
+    if (typeof value === "object" && !Array.isArray(value)) {
+      const nestedValue = cleanProductObject(value, excludeFields);
+
+      if (
+        nestedValue &&
+        typeof nestedValue === "object" &&
+        !Array.isArray(nestedValue) &&
+        Object.keys(nestedValue).length === 0
+      ) {
+        return;
+      }
+
+      cleaned[key] = nestedValue;
+      return;
+    }
+
+    cleaned[key] = value;
+  });
+
+  return cleaned;
+}
+
+function prepareProductUpdateQuery(data, options = {}) {
+  if (!data || typeof data !== "object") {
+    return {};
+  }
+
+  const {
+    booleanFields = [],
+    criticalFields = [],
+    excludeFields = [],
+    unsetMissingFields = false,
+    allFields = [],
+    protectedUnsetFields = [],
+  } = options;
+
+  const toSet = {};
+  const toUnset = {};
+
+  Object.keys(data).forEach((key) => {
+    if (excludeFields.includes(key)) return;
+
+    const value = data[key];
+
+    if (booleanFields.includes(key)) {
+      if (value) {
+        toSet[key] = true;
+      } else {
+        toUnset[key] = "";
+      }
+      return;
+    }
+
+    if (criticalFields.includes(key)) {
+      if (
+        value !== null &&
+        value !== undefined &&
+        value !== "" &&
+        value !== false
+      ) {
+        toSet[key] = value;
+      }
+      return;
+    }
+
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      value === false
+    ) {
+      toUnset[key] = "";
+      return;
+    }
+
+    toSet[key] = value;
+  });
+
+  if (unsetMissingFields && Array.isArray(allFields) && allFields.length > 0) {
+    allFields.forEach((field) => {
+      if (excludeFields.includes(field)) return;
+      if (protectedUnsetFields.includes(field)) return;
+      if (criticalFields.includes(field)) return;
+      if (Object.prototype.hasOwnProperty.call(data, field)) return;
+      toUnset[field] = "";
+    });
+  }
+
+  const queryUpdate = {};
+  if (Object.keys(toSet).length > 0) queryUpdate.$set = toSet;
+  if (Object.keys(toUnset).length > 0) queryUpdate.$unset = toUnset;
+
+  return queryUpdate;
 }
 
 module.exports = {
@@ -224,7 +342,7 @@ module.exports = {
    */
   async createProduct(product) {
     // Usar utility centralizado para limpiar datos
-    const cleanedProduct = cleanObject(product);
+    const cleanedProduct = cleanProductObject(product);
     const normalizedUserId = normalizeUserId(cleanedProduct.userId);
 
     if (normalizedUserId) {
@@ -284,7 +402,7 @@ module.exports = {
       protectedUnsetFields: ["userId", "verified"],
     };
 
-    const queryUpdate = prepareUpdateQuery(productData, options);
+    const queryUpdate = prepareProductUpdateQuery(productData, options);
 
     if (Object.keys(queryUpdate).length === 0) {
       return await productSchema.findById(_id);
