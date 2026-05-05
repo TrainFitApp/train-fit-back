@@ -10,16 +10,15 @@ const dietModel = require("../diets/diet-model");
 const userSchema = require("../users/schema");
 const dietDaysUtil = require("./diet-days-util");
 
-const isUnsettable = (value) =>
-  value === null ||
-  value === undefined ||
-  (typeof value === "string" && value.trim() === "");
+const isBlankString = (value) =>
+  typeof value === "string" && value.trim() === "";
 
 const cleanForCreate = (payload = {}) => {
   const cleaned = {};
   Object.keys(payload).forEach((key) => {
     const value = payload[key];
-    if (isUnsettable(value)) return;
+    if (value === undefined) return;
+    if (isBlankString(value)) return;
     cleaned[key] = value;
   });
   return cleaned;

@@ -14,6 +14,18 @@ const recipeMergeService = require("./recipe-merge.service");
 const customProductSchema = require("../customProducts/custom-product-schema");
 
 module.exports = {
+  hasOwn(value, key) {
+    return !!value && Object.prototype.hasOwnProperty.call(value, key);
+  },
+
+  areCustomProductValuesEqual(left, right, epsilon = 1e-9) {
+    if (left === right) return true;
+    if (typeof left === "number" && typeof right === "number") {
+      return Math.abs(left - right) < epsilon;
+    }
+    return false;
+  },
+
   normalizeCustomProductId(value) {
     const normalizedValue = value?._id || value;
     return normalizedValue?.toString?.() || null;
@@ -26,6 +38,57 @@ module.exports = {
     });
   },
 
+  buildCustomProductUpdateQuery(currentCustomProduct, cpData) {
+    const $set = {};
+    const $unset = {};
+    const overrideFields = recipeMergeService.CUSTOM_PRODUCT_OVERRIDE_FIELDS.filter(
+      (field) => field !== "quantity",
+    );
+
+    Object.keys(cpData || {}).forEach((key) => {
+      if (key === "_id") return;
+      if (overrideFields.includes(key)) return;
+      $set[key] = cpData[key];
+    });
+
+    overrideFields.forEach((field) => {
+      if (!this.hasOwn(cpData, field)) {
+        $unset[field] = "";
+        return;
+      }
+
+      const value = cpData[field];
+      const baseValue = currentCustomProduct?.product?.[field];
+
+      if (value === undefined) {
+        $unset[field] = "";
+        return;
+      }
+
+      if (typeof value === "string" && value.trim() === "") {
+        $unset[field] = "";
+        return;
+      }
+
+      if (value === null) {
+        $set[field] = null;
+        return;
+      }
+
+      if (this.areCustomProductValuesEqual(value, baseValue)) {
+        $unset[field] = "";
+        return;
+      }
+
+      $set[field] = value;
+    });
+
+    const updateQuery = {};
+    if (Object.keys($set).length) updateQuery.$set = $set;
+    if (Object.keys($unset).length) updateQuery.$unset = $unset;
+    return updateQuery;
+  },
+
   async syncRecipeCustomProducts(nextCustomProducts, currentCustomProductIds = []) {
     const normalizedNextProducts = (nextCustomProducts || []).map((cpData) =>
       this.buildCustomProductPayload(cpData),
@@ -34,6 +97,15 @@ module.exports = {
     const currentIds = (currentCustomProductIds || [])
       .map((id) => this.normalizeCustomProductId(id))
       .filter(Boolean);
+    const currentCustomProducts = currentIds.length
+      ? await customProductSchema.find({ _id: { $in: currentIds } })
+      : [];
+    const currentCustomProductMap = new Map(
+      currentCustomProducts.map((customProduct) => [
+        customProduct._id.toString(),
+        customProduct,
+      ]),
+    );
     const nextIds = [];
 
     for (const cpData of normalizedNextProducts) {
@@ -41,7 +113,16 @@ module.exports = {
       delete cpData._id;
 
       if (existingId && currentIds.includes(existingId)) {
-        await customProductSchema.findByIdAndUpdate(existingId, { $set: cpData });
+        const currentCustomProduct = currentCustomProductMap.get(existingId);
+        const updateQuery = this.buildCustomProductUpdateQuery(
+          currentCustomProduct,
+          cpData,
+        );
+
+        if (Object.keys(updateQuery).length > 0) {
+          await customProductSchema.findByIdAndUpdate(existingId, updateQuery);
+        }
+
         nextIds.push(existingId);
         continue;
       }

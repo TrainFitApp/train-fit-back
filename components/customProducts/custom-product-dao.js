@@ -8,32 +8,122 @@ const dietSchema = require("../diets/diet-schema");
 const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
 const dietDayUtil = require("../dietDays/diet-days-util");
-const isUnsettable = (value) =>
-  value === null ||
-  value === undefined ||
-  (typeof value === "string" && value.trim() === "");
+const CUSTOM_PRODUCT_NUTRITION_FIELDS = [
+  "energyKcal100g",
+  "protein100g",
+  "carbohydrates100g",
+  "fat100g",
+  "saturatedFat100g",
+  "sugars100g",
+  "fiber100g",
+  "salt100g",
+  "sodium100g",
+  "cholesterol100g",
+  "transFat100g",
+  "calcium100g",
+  "iron100g",
+  "magnesium100g",
+  "phosphorus100g",
+  "potassium100g",
+  "zinc100g",
+  "copper100g",
+  "manganese100g",
+  "selenium100g",
+  "iodine100g",
+  "vitaminA100g",
+  "vitaminC100g",
+  "vitaminD100g",
+  "vitaminE100g",
+  "vitaminK100g",
+  "vitaminB1100g",
+  "vitaminB2100g",
+  "vitaminB3100g",
+  "vitaminB5100g",
+  "vitaminB6100g",
+  "vitaminB9100g",
+  "vitaminB12100g",
+  "biotin100g",
+  "omega3100g",
+  "omega6100g",
+  "omega9100g",
+  "caffeine100g",
+  "taurine100g",
+  "alcohol100g",
+];
+
+const isBlankString = (value) =>
+  typeof value === "string" && value.trim() === "";
+
+const hasOwn = (object, key) =>
+  !!object && Object.prototype.hasOwnProperty.call(object, key);
+
+const areValuesEqual = (left, right, epsilon = 1e-9) => {
+  if (left === right) return true;
+  if (typeof left === "number" && typeof right === "number") {
+    return Math.abs(left - right) < epsilon;
+  }
+  return false;
+};
 
 const cleanForCreate = (payload = {}) => {
   const cleaned = {};
   Object.keys(payload).forEach((key) => {
     const value = payload[key];
-    if (isUnsettable(value)) return;
+    if (value === undefined) return;
+    if (isBlankString(value)) return;
     cleaned[key] = value;
   });
   return cleaned;
 };
 
-const toSetUnsetUpdate = (payload = {}) => {
+const buildCustomProductUpdate = (currentDoc, payload = {}) => {
   const $set = {};
   const $unset = {};
 
   Object.keys(payload).forEach((key) => {
+    if (key === "_id" || CUSTOM_PRODUCT_NUTRITION_FIELDS.includes(key)) {
+      return;
+    }
+
     const value = payload[key];
-    if (isUnsettable(value)) {
+
+    if (value === undefined) {
+      return;
+    }
+
+    if (isBlankString(value)) {
       $unset[key] = "";
       return;
     }
+
     $set[key] = value;
+  });
+
+  CUSTOM_PRODUCT_NUTRITION_FIELDS.forEach((field) => {
+    if (!hasOwn(payload, field)) {
+      $unset[field] = "";
+      return;
+    }
+
+    const value = payload[field];
+    const baseValue = currentDoc?.product?.[field];
+
+    if (value === undefined || isBlankString(value)) {
+      $unset[field] = "";
+      return;
+    }
+
+    if (value === null) {
+      $set[field] = null;
+      return;
+    }
+
+    if (areValuesEqual(value, baseValue)) {
+      $unset[field] = "";
+      return;
+    }
+
+    $set[field] = value;
   });
 
   const updateQuery = {};
@@ -132,27 +222,26 @@ module.exports = {
   async updateCustomProduct(customProduct) {
     return new Promise((resolve, reject) => {
       const { _id, ...data } = customProduct;
-      const updateQuery = toSetUnsetUpdate(data);
+      customProductSchema.findById(_id, (findErr, currentDoc) => {
+        if (findErr) return reject(findErr);
+        if (!currentDoc) return resolve(null);
 
-      if (
-        !updateQuery ||
-        (!updateQuery.$set && !updateQuery.$unset)
-      ) {
-        return customProductSchema.findById(_id, (findErr, currentDoc) => {
-          if (findErr) return reject(findErr);
+        const updateQuery = buildCustomProductUpdate(currentDoc, data);
+
+        if (!updateQuery || (!updateQuery.$set && !updateQuery.$unset)) {
           return resolve(currentDoc);
-        });
-      }
+        }
 
-      customProductSchema.findByIdAndUpdate(
-        _id,
-        updateQuery,
-        { new: true },
-        (err, doc) => {
-          if (err) return reject(err);
-          return resolve(doc);
-        },
-      );
+        customProductSchema.findByIdAndUpdate(
+          _id,
+          updateQuery,
+          { new: true },
+          (err, doc) => {
+            if (err) return reject(err);
+            return resolve(doc);
+          },
+        );
+      });
     });
   },
 

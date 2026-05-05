@@ -55,6 +55,10 @@ class RecipeMergeService {
     ];
   }
 
+  hasOwn(object, key) {
+    return !!object && Object.prototype.hasOwnProperty.call(object, key);
+  }
+
   normalizePositiveNumber(value) {
     if (value === null || value === undefined || value === "") return null;
     const parsed = Number(value);
@@ -150,14 +154,25 @@ class RecipeMergeService {
     }
 
     this.CUSTOM_PRODUCT_OVERRIDE_FIELDS.forEach((field) => {
+      if (!this.hasOwn(customProduct, field)) {
+        return;
+      }
+
+      const rawValue = customProduct?.[field];
       const value =
         field === "quantity"
-          ? this.normalizePositiveNumber(customProduct?.[field])
-          : this.normalizeArrayValue(customProduct?.[field]);
+          ? this.normalizePositiveNumber(rawValue)
+          : this.normalizeArrayValue(rawValue);
 
-      if (value !== undefined && value !== null && value !== "") {
-        nextValue[field] = value;
+      if (value === undefined) {
+        return;
       }
+
+      if (typeof value === "string" && value.trim() === "") {
+        return;
+      }
+
+      nextValue[field] = value;
     });
 
     return nextValue;
