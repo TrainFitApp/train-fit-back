@@ -1,6 +1,6 @@
 {
   "name": "trainfitback",
-  "version": "101.2.8",
+  "version": "101.2.9",
   "private": true,
   "scripts": {
     "start": "node ./bin/www",
