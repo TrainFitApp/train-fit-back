@@ -258,6 +258,32 @@ function uniqueRefs(...lists) {
   return [...byId.values()];
 }
 
+function collectRefsWithInvalidCount(...lists) {
+  const byId = new Map();
+  let invalidCount = 0;
+
+  for (const list of lists) {
+    for (const value of list || []) {
+      const id = normalizeObjectId(value);
+      const key = id?.toString?.();
+
+      if (!id || !key) {
+        invalidCount += 1;
+        continue;
+      }
+
+      if (!byId.has(key)) {
+        byId.set(key, id);
+      }
+    }
+  }
+
+  return {
+    refs: [...byId.values()],
+    invalidCount,
+  };
+}
+
 async function collectionExists(name) {
   const found = await db
     .listCollections({ name }, { nameOnly: true })
@@ -756,16 +782,29 @@ async function migrateMeals() {
   let planned = 0;
   let matched = 0;
   let modified = 0;
+  let omittedInvalidCustomRecipeRefs = 0;
+  let omittedMissingCustomRecipeRefs = 0;
   const cursor = meals.find({
     customRecipeInstances: { $exists: true },
   });
 
   while (await cursor.hasNext()) {
     const meal = await cursor.next();
-    const customRecipesNext = uniqueRefs(
+    const candidateCustomRecipeRefs = collectRefsWithInvalidCount(
       meal.customRecipes || [],
       meal.customRecipeInstances || [],
     );
+    const customRecipesNext = [];
+    omittedInvalidCustomRecipeRefs += candidateCustomRecipeRefs.invalidCount;
+
+    for (const customRecipeId of candidateCustomRecipeRefs.refs) {
+      if (!(await customRecipeExists(customRecipeId))) {
+        omittedMissingCustomRecipeRefs += 1;
+        continue;
+      }
+
+      customRecipesNext.push(customRecipeId);
+    }
 
     planned += 1;
 
@@ -785,7 +824,13 @@ async function migrateMeals() {
     modified += result.modifiedCount || 0;
   }
 
-  return { planned, matched, modified };
+  return {
+    planned,
+    matched,
+    modified,
+    omittedInvalidCustomRecipeRefs,
+    omittedMissingCustomRecipeRefs,
+  };
 }
 
 async function ensureIndexes() {
