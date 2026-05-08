@@ -14,18 +14,16 @@ function normalizePort(val) {
   return false;
 }
 
-const port = normalizePort(process.env.PORT || process.env.SERVER_PORT || 3000);
+const port = normalizePort(process.env.SERVER_PORT || 3000);
 app.set("port", port);
 
 // -------------------------------------------------------
 // 🔧 Variables de entorno
 // -------------------------------------------------------
-const mongoDBUser = process.env.MONGODB_USER || process.env.MONGOUSER;
-const mongoDBPass = process.env.MONGODB_PASS || process.env.MONGOPASSWORD;
-const mongoDBCluster = process.env.MONGODB_CLUSTER || process.env.MONGOHOST;
-const mongoDBHost = process.env.MONGODB_HOST;
-const mongoDBPort = process.env.MONGODB_PORT || process.env.MONGOPORT;
-const mongoDBDB = process.env.MONGODB_DB || process.env.MONGODATABASE || "trainfit";
+const mongoDBUser = process.env.MONGODB_USER;
+const mongoDBPass = process.env.MONGODB_PASS;
+const mongoDBCluster = process.env.MONGODB_CLUSTER;
+const mongoDBDB = process.env.MONGODB_DB;
 const serverDomain = process.env.SERVER_DOMAIN;
 
 // -------------------------------------------------------
@@ -33,22 +31,15 @@ const serverDomain = process.env.SERVER_DOMAIN;
 // -------------------------------------------------------
 let mongoURI;
 
-if (process.env.MONGODB_URI || process.env.MONGODB_URL) {
-  // 🚂 Conexión por URI completa (Recomendado para Railway/Producción)
-  mongoURI = process.env.MONGODB_URI || process.env.MONGODB_URL;
-} else if (mongoDBCluster && !mongoDBCluster.includes("localhost") && !mongoDBCluster.includes("127.0.0.1")) {
-  // ☁️ Conexión Atlas (Producción externa via Cluster)
-  mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB || "trainfit"}`;
-} else if (mongoDBHost || mongoDBCluster) {
-  // 🧩 Conexión estándar (Local o Red Privada)
-  const host = mongoDBHost || mongoDBCluster;
-  const auth = (mongoDBUser && mongoDBPass) ? `${mongoDBUser}:${mongoDBPass}@` : "";
-  const port = mongoDBPort ? `:${mongoDBPort}` : "";
-  mongoURI = `mongodb://${auth}${host}${port}/${mongoDBDB || "trainfit"}`;
+if (
+  mongoDBCluster.includes("localhost") ||
+  mongoDBCluster.includes("127.0.0.1")
+) {
+  // 🧩 Conexión local
+  mongoURI = `mongodb://${mongoDBCluster}/${mongoDBDB}`;
 } else {
-  // ⚠️ Fallback de seguridad
-  mongoURI = "mongodb://localhost:27017/trainfit";
-  console.warn("⚠️ Advertencia: No se encontraron variables de MongoDB. Usando backup local.");
+  // ☁️ Conexión Atlas (producción)
+  mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB}`;
 }
 
 // -------------------------------------------------------
