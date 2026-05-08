@@ -5,6 +5,7 @@ const mealModel = require("../meals/meal-service");
 const productSchema = require("../products/product-schema");
 const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
+const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const { default: mongoose } = require("mongoose");
 const dietModel = require("../diets/diet-model");
 const userSchema = require("../users/schema");
@@ -295,7 +296,8 @@ module.exports = {
       delete customRecipeToCreate._id;
 
       // Creación customRecipe
-      const customRecipeDoc = await customRecipeSchema.create(customRecipeToCreate);
+      const customRecipeDoc =
+        await customRecipeDao.createCustomRecipe(customRecipeToCreate);
       // Creación dietDay
       let dietDayDoc = await this.createDietDay(dietDay);
       const dietDayId = dietDayDoc._id.toString();
@@ -441,6 +443,45 @@ module.exports = {
     const normalizeId = (value) => value?._id || value;
     const toPlainObject = (value) =>
       value?.toObject ? value.toObject() : { ...value };
+    const cloneCustomProductPayload = (value) => {
+      const payload = toPlainObject(value);
+      delete payload._id;
+      return payload;
+    };
+    const buildCustomRecipeClonePayload = (customRecipeObj) => ({
+      recipe: normalizeId(customRecipeObj.recipe),
+      quantity: customRecipeObj.quantity ?? null,
+      quantityCooked: customRecipeObj.quantityCooked ?? null,
+      addedCustomProducts: (
+        customRecipeObj.addedCustomProducts ||
+        customRecipeObj.additionalCustomProducts ||
+        []
+      ).map(cloneCustomProductPayload),
+      modifiedBaseCustomProducts: (
+        customRecipeObj.modifiedBaseCustomProducts ||
+        customRecipeObj.customProductsOverrides ||
+        []
+      )
+        .map((override) => {
+          const payload = cloneCustomProductPayload(override);
+          payload.baseCustomProductId = normalizeId(
+            payload.baseCustomProductId || payload.customProductId,
+          );
+          delete payload.customProductId;
+          delete payload.removed;
+          return payload;
+        })
+        .filter((override) => override.baseCustomProductId),
+      removedBaseCustomProductIds: (
+        customRecipeObj.removedBaseCustomProductIds ||
+        (customRecipeObj.customProductsOverrides || [])
+          .filter((override) => override.removed)
+          .map((override) => override.customProductId) ||
+        []
+      )
+        .map((removedId) => normalizeId(removedId))
+        .filter(Boolean),
+    });
 
     const mealsToCreate = [];
 
@@ -472,45 +513,9 @@ module.exports = {
           continue;
         }
 
-        const newCustomRecipe = await customRecipeSchema.create({
-          recipe: recipeId,
-          quantity: customRecipeObj.quantity ?? null,
-          quantityCooked: customRecipeObj.quantityCooked ?? null,
-          addedCustomProducts: (customRecipeObj.addedCustomProducts ||
-            customRecipeObj.additionalCustomProducts ||
-            [])
-            .map((additional) => ({
-              quantity: additional.quantity,
-              product: normalizeId(additional.product),
-            }))
-            .filter((additional) => additional.product),
-          modifiedBaseCustomProducts: (
-            customRecipeObj.modifiedBaseCustomProducts ||
-            customRecipeObj.customProductsOverrides ||
-            []
-          )
-            .map((override) => ({
-              baseCustomProductId: normalizeId(
-                override.baseCustomProductId || override.customProductId,
-              ),
-              quantity: override.quantity,
-            }))
-            .filter(
-              (override) =>
-                override.baseCustomProductId &&
-                override.quantity !== undefined &&
-                override.quantity !== null,
-            ),
-          removedBaseCustomProductIds: (
-            customRecipeObj.removedBaseCustomProductIds ||
-            (customRecipeObj.customProductsOverrides || [])
-              .filter((override) => override.removed)
-              .map((override) => override.customProductId) ||
-            []
-          )
-            .map((removedId) => normalizeId(removedId))
-            .filter(Boolean),
-        });
+        const newCustomRecipe = await customRecipeDao.createCustomRecipe(
+          buildCustomRecipeClonePayload(customRecipeObj),
+        );
 
         createdCustomRecipes.push(newCustomRecipe._id);
       }

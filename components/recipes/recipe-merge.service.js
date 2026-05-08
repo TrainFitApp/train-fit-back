@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const recipeDao = require("./recipe-dao");
+const recipeSchema = require("./recipe-schema");
 
 class RecipeMergeService {
   constructor() {
@@ -181,7 +181,7 @@ class RecipeMergeService {
   async resolveRecipe(customRecipe) {
     const recipeRef =
       customRecipe.recipe?._id || customRecipe.recipeId || customRecipe.recipe;
-    const recipe = await recipeDao.getRecipeById(recipeRef);
+    const recipe = await recipeSchema.findById(recipeRef);
     if (!recipe) {
       throw new Error(`Recipe not found: ${recipeRef}`);
     }
@@ -220,10 +220,9 @@ class RecipeMergeService {
         return mergedIngredient;
       });
 
-    const addedIngredients = (customRecipe.addedCustomProducts || []).map((item) => ({
-      ...item.toObject?.(),
-      ...item,
-    }));
+    const addedIngredients = (customRecipe.addedCustomProducts || []).map(
+      (item) => item.toObject?.() || { ...item },
+    );
 
     const removedIngredients = baseIngredients.filter((ingredient) =>
       removedSet.has(ingredient._id.toString()),

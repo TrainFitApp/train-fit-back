@@ -9,7 +9,9 @@
     "reset:product-search-stack": "node ./scripts/reset-product-search-stack.js",
     "create:product-search-indexes": "node ./scripts/create-product-search-indexes.js",
     "backfill:product-search-fields": "node ./scripts/backfill-product-search-fields.js",
-    "verify:product-search-indexes": "node ./scripts/verify-product-search-indexes.js"
+    "verify:product-search-indexes": "node ./scripts/verify-product-search-indexes.js",
+    "migrate:custom-recipes": "node ./scripts/migrate-custom-recipes.mjs",
+    "migrate:custom-recipes:commit": "node ./scripts/migrate-custom-recipes.mjs --commit"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",

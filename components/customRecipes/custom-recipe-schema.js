@@ -1,132 +1,27 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
-const ModifiedBaseCustomProductSchema = new Schema(
-  {
-    baseCustomProductId: {
-      type: Schema.Types.ObjectId,
-      ref: "CustomProduct",
-      required: true,
-    },
-    quantity: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    energyKcal100g: Number,
-    protein100g: Number,
-    carbohydrates100g: Number,
-    fat100g: Number,
-    saturatedFat100g: Number,
-    sugars100g: Number,
-    fiber100g: Number,
-    salt100g: Number,
-    sodium100g: Number,
-    cholesterol100g: Number,
-    transFat100g: Number,
-    calcium100g: Number,
-    iron100g: Number,
-    magnesium100g: Number,
-    phosphorus100g: Number,
-    potassium100g: Number,
-    zinc100g: Number,
-    copper100g: Number,
-    manganese100g: Number,
-    selenium100g: Number,
-    iodine100g: Number,
-    vitaminA100g: Number,
-    vitaminC100g: Number,
-    vitaminD100g: Number,
-    vitaminE100g: Number,
-    vitaminK100g: Number,
-    vitaminB1100g: Number,
-    vitaminB2100g: Number,
-    vitaminB3100g: Number,
-    vitaminB5100g: Number,
-    vitaminB6100g: Number,
-    vitaminB9100g: Number,
-    vitaminB12100g: Number,
-    biotin100g: Number,
-    omega3100g: Number,
-    omega6100g: Number,
-    omega9100g: Number,
-    caffeine100g: Number,
-    taurine100g: Number,
-    alcohol100g: Number,
-    ingredients: String,
-    allergens: [String],
-    traces: [String],
-    vegan: Boolean,
-    vegetarian: Boolean,
-    lactoseFree: Boolean,
-    glutenFree: Boolean,
-  },
-  { _id: false },
-);
+const normalizeCustomProductId = (value) => {
+  const normalized = value?._id || value;
+  return normalized?.toString?.() || null;
+};
 
-const AddedCustomProductSchema = new Schema(
-  {
-    quantity: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    product: {
-      type: Schema.Types.ObjectId,
-      ref: "Product",
-      autopopulate: true,
-      required: true,
-    },
-    energyKcal100g: Number,
-    protein100g: Number,
-    carbohydrates100g: Number,
-    fat100g: Number,
-    saturatedFat100g: Number,
-    sugars100g: Number,
-    fiber100g: Number,
-    salt100g: Number,
-    sodium100g: Number,
-    cholesterol100g: Number,
-    transFat100g: Number,
-    calcium100g: Number,
-    iron100g: Number,
-    magnesium100g: Number,
-    phosphorus100g: Number,
-    potassium100g: Number,
-    zinc100g: Number,
-    copper100g: Number,
-    manganese100g: Number,
-    selenium100g: Number,
-    iodine100g: Number,
-    vitaminA100g: Number,
-    vitaminC100g: Number,
-    vitaminD100g: Number,
-    vitaminE100g: Number,
-    vitaminK100g: Number,
-    vitaminB1100g: Number,
-    vitaminB2100g: Number,
-    vitaminB3100g: Number,
-    vitaminB5100g: Number,
-    vitaminB6100g: Number,
-    vitaminB9100g: Number,
-    vitaminB12100g: Number,
-    biotin100g: Number,
-    omega3100g: Number,
-    omega6100g: Number,
-    omega9100g: Number,
-    caffeine100g: Number,
-    taurine100g: Number,
-    alcohol100g: Number,
-    ingredients: String,
-    allergens: [String],
-    traces: [String],
-    vegan: Boolean,
-    vegetarian: Boolean,
-    lactoseFree: Boolean,
-    glutenFree: Boolean,
-  },
-  { _id: false, strict: true },
-);
+const deleteIngredientCustomProducts = async (customRecipes) => {
+  const ids = [];
+
+  for (const customRecipe of customRecipes || []) {
+    ids.push(
+      ...(customRecipe?.addedCustomProducts || []),
+      ...(customRecipe?.modifiedBaseCustomProducts || []),
+    );
+  }
+
+  const normalizedIds = ids.map(normalizeCustomProductId).filter(Boolean);
+  if (!normalizedIds.length) return;
+
+  const CustomProduct = mongoose.model("CustomProduct");
+  await CustomProduct.deleteMany({ _id: { $in: normalizedIds } });
+};
 
 const CustomRecipeSchema = new Schema(
   {
@@ -147,8 +42,20 @@ const CustomRecipeSchema = new Schema(
       min: 0,
       default: null,
     },
-    addedCustomProducts: [AddedCustomProductSchema],
-    modifiedBaseCustomProducts: [ModifiedBaseCustomProductSchema],
+    addedCustomProducts: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "CustomProduct",
+        autopopulate: true,
+      },
+    ],
+    modifiedBaseCustomProducts: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "CustomProduct",
+        autopopulate: true,
+      },
+    ],
     removedBaseCustomProductIds: [
       {
         type: Schema.Types.ObjectId,
@@ -163,5 +70,44 @@ const CustomRecipeSchema = new Schema(
 );
 
 CustomRecipeSchema.plugin(require("mongoose-autopopulate"));
+
+const handleDeleteOne = async function (next) {
+  try {
+    const customRecipe = await this.model
+      .findOne(this.getQuery())
+      .select("addedCustomProducts modifiedBaseCustomProducts")
+      .setOptions({ autopopulate: false });
+
+    if (customRecipe) {
+      await deleteIngredientCustomProducts([customRecipe]);
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+CustomRecipeSchema.pre(
+  "deleteOne",
+  { document: false, query: true },
+  handleDeleteOne,
+);
+CustomRecipeSchema.pre("findOneAndDelete", handleDeleteOne);
+CustomRecipeSchema.pre("findOneAndRemove", handleDeleteOne);
+
+CustomRecipeSchema.pre("deleteMany", async function (next) {
+  try {
+    const customRecipes = await this.model
+      .find(this.getFilter())
+      .select("addedCustomProducts modifiedBaseCustomProducts")
+      .setOptions({ autopopulate: false });
+
+    await deleteIngredientCustomProducts(customRecipes);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 module.exports = mongoose.model("CustomRecipe", CustomRecipeSchema);

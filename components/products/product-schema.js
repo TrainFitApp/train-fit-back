@@ -117,11 +117,20 @@ const handleDeleteOne = async function (next) {
     // Clean up CustomProducts referencing this product
     try {
       const customProductSchema = require("../customProducts/custom-product-schema");
-      const customProducts = await customProductSchema
+      let customProducts = await customProductSchema
         .find({ product: product._id })
         .lean();
       if (customProducts.length > 0) {
-        const cpIds = customProducts.map((cp) => cp._id);
+        let cpIds = customProducts.map((cp) => cp._id);
+        const dependentCustomProducts = await customProductSchema
+          .find({ baseCustomProductId: { $in: cpIds } })
+          .lean();
+
+        if (dependentCustomProducts.length > 0) {
+          customProducts = customProducts.concat(dependentCustomProducts);
+          cpIds = customProducts.map((cp) => cp._id);
+        }
+
         try {
           const MealModel = mongoose.model("Meal");
           await MealModel.updateMany(
@@ -144,15 +153,16 @@ const handleDeleteOne = async function (next) {
           const CustomRecipeModel = mongoose.model("CustomRecipe");
           await CustomRecipeModel.updateMany(
             {
-              modifiedBaseCustomProducts: {
-                $elemMatch: { baseCustomProductId: { $in: cpIds } },
-              },
+              $or: [
+                { addedCustomProducts: { $in: cpIds } },
+                { modifiedBaseCustomProducts: { $in: cpIds } },
+                { removedBaseCustomProductIds: { $in: cpIds } },
+              ],
             },
             {
               $pull: {
-                modifiedBaseCustomProducts: {
-                  baseCustomProductId: { $in: cpIds },
-                },
+                addedCustomProducts: { $in: cpIds },
+                modifiedBaseCustomProducts: { $in: cpIds },
                 removedBaseCustomProductIds: { $in: cpIds },
               },
             },
@@ -166,7 +176,7 @@ const handleDeleteOne = async function (next) {
         await customProductSchema.deleteMany({ _id: { $in: cpIds } });
       }
 
-      // Remove addedCustomProducts in CustomRecipes that reference this product directly
+      // Legacy cleanup for CustomRecipes that still have embedded added ingredients.
       try {
         const CustomRecipeModel = mongoose.model("CustomRecipe");
         await CustomRecipeModel.updateMany(

@@ -68,6 +68,17 @@ const CustomProductSchema = Schema({
     type: Schema.Types.ObjectId,
     ref: "Meal",
   },
+  customRecipeId: {
+    type: Schema.Types.ObjectId,
+    ref: "CustomRecipe",
+    index: true,
+  },
+  baseCustomProductId: {
+    type: Schema.Types.ObjectId,
+    ref: "CustomProduct",
+    autopopulate: true,
+    index: true,
+  },
 });
 
 CustomProductSchema.plugin(require("mongoose-autopopulate"));

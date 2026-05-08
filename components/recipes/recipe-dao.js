@@ -31,6 +31,11 @@ module.exports = {
     return normalizedValue?.toString?.() || null;
   },
 
+  getModifiedBaseCustomProductId(value) {
+    const baseValue = value?.baseCustomProductId || value?.customProductId;
+    return this.normalizeCustomProductId(baseValue);
+  },
+
   buildCustomProductPayload(cpData) {
     return recipeMergeService.sanitizeCustomProductData(cpData, {
       includeProduct: true,
@@ -148,9 +153,15 @@ module.exports = {
     const customRecipes = await customRecipeSchema.find({ recipe: recipeId });
 
     for (const customRecipe of customRecipes) {
+      const removedModifiedIds = [];
       const nextModified = (customRecipe.modifiedBaseCustomProducts || []).filter((item) => {
-        const baseId = item?.baseCustomProductId?._id || item?.baseCustomProductId;
-        return !!baseId && validIds.has(baseId.toString());
+        const baseId = this.getModifiedBaseCustomProductId(item);
+        const keep = !!baseId && validIds.has(baseId);
+        if (!keep) {
+          const customProductId = this.normalizeCustomProductId(item);
+          if (customProductId) removedModifiedIds.push(customProductId);
+        }
+        return keep;
       });
       const nextRemoved = (customRecipe.removedBaseCustomProductIds || []).filter((item) => {
         const baseId = item?._id || item;
@@ -161,9 +172,15 @@ module.exports = {
         nextModified.length !== (customRecipe.modifiedBaseCustomProducts || []).length ||
         nextRemoved.length !== (customRecipe.removedBaseCustomProductIds || []).length
       ) {
-        customRecipe.modifiedBaseCustomProducts = nextModified;
+        customRecipe.modifiedBaseCustomProducts = nextModified
+          .map((item) => this.normalizeCustomProductId(item))
+          .filter(Boolean);
         customRecipe.removedBaseCustomProductIds = nextRemoved;
         await customRecipe.save();
+      }
+
+      if (removedModifiedIds.length > 0) {
+        await customProductSchema.deleteMany({ _id: { $in: removedModifiedIds } });
       }
     }
   },
@@ -345,19 +362,19 @@ module.exports = {
 
       recipeMergeService.validateCustomRecipe(nextCustomRecipe);
 
-      if (isEditMode && context?.customRecipeId) {
-        customRecipeDoc = await customRecipeDao.update(
-          context.customRecipeId,
-          nextCustomRecipe,
-        );
-      } else {
-        customRecipeDoc = await customRecipeDao.createCustomRecipe(
-          nextCustomRecipe,
-        );
-      }
-
       if (hasMealContext) {
         let updatedMeal = null;
+
+        if (isEditMode && context?.customRecipeId) {
+          customRecipeDoc = await customRecipeDao.update(
+            context.customRecipeId,
+            nextCustomRecipe,
+          );
+        } else {
+          customRecipeDoc = await customRecipeDao.createCustomRecipe(
+            nextCustomRecipe,
+          );
+        }
 
         if (isEditMode) {
           updatedMeal = await mealModel.findById(context.mealId);
@@ -377,7 +394,7 @@ module.exports = {
 
       const standardDietDay = dietDayUtil.getStandardDietDay(context.currentDate);
       const dietDay = await dietDayDao.createCustomRecipeOnNewDietDay(
-        customRecipeDoc.toObject(),
+        nextCustomRecipe,
         context.indexMeal,
         context.dietInUseId,
         standardDietDay,
@@ -385,7 +402,6 @@ module.exports = {
 
       return {
         recipe: recipeDoc,
-        customRecipe: customRecipeDoc,
         dietDay,
       };
     } catch (err) {
