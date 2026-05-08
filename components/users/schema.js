@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const Schema = mongoose.Schema;
 const dietSchema = require("../diets/diet-schema");
+const exerciseSchema = require("../exercises/exercise-schema");
 const ownTableSchema = require("../ownTables/own-table-schema");
 const SALT_WORK_FACTOR = 10;
 
@@ -82,7 +83,7 @@ UserSchema.pre("save", function (next) {
 });
 
 // Middleware para eliminar las referencias al eliminar un usuario con deleteOne
-UserSchema.pre("deleteOne", async function () {
+UserSchema.pre("deleteOne", async function (next) {
   try {
     const query = this.getQuery();
     const user = await this.model.findOne(query);
@@ -92,9 +93,20 @@ UserSchema.pre("deleteOne", async function () {
       if (user.dietInUse) await dietSchema.deleteOne({ _id: user.dietInUse });
       if (user.ownTables)
         await ownTableSchema.deleteMany({ _id: { $in: user.ownTables } });
+
+      const ownExercises = await exerciseSchema
+        .find({ userId: user._id })
+        .select("_id")
+        .lean();
+
+      for (const exercise of ownExercises) {
+        await exerciseSchema.deleteOne({ _id: exercise._id });
+      }
+
       // Note: user-created products (with userId) are NOT deleted on user delete
       // to preserve data referenced in meals/customProducts.
     }
+    next();
   } catch (e) {
     next(e);
   }
