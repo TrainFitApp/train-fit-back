@@ -1,6 +1,37 @@
 const setSchema = require("./set-schema");
 const mealSchema = require("../meals/meal-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
+const { normalizeSetsOrder } = require("./set-order-util");
+
+function getSetId(set) {
+  const id = set?._id ?? set;
+  return id == null ? null : id.toString();
+}
+
+async function normalizeCustomExerciseAfterSetDelete(customExercise, deletedSetId) {
+  if (!customExercise) return;
+
+  const normalizedSets = normalizeSetsOrder(
+    (customExercise.sets || []).filter(
+      (setTemp) => getSetId(setTemp) !== deletedSetId.toString(),
+    ),
+  );
+
+  const bulkOps = normalizedSets.map((setTemp) => ({
+    updateOne: {
+      filter: { _id: setTemp._id },
+      update: { $set: { order: setTemp.order } },
+    },
+  }));
+
+  if (bulkOps.length > 0) {
+    await setSchema.bulkWrite(bulkOps);
+  }
+
+  await customExerciseSchema.findByIdAndUpdate(customExercise._id, {
+    $set: { sets: normalizedSets.map((setTemp) => setTemp._id) },
+  });
+}
 
 module.exports = {
   async createSet(set) {
@@ -39,11 +70,14 @@ module.exports = {
   },
 
   async deleteSet(id) {
-    return new Promise((resolve, reject) =>
-      setSchema.deleteOne({ _id: id }, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
+    try {
+      const customExercise = await customExerciseSchema.findOne({ sets: id });
+      const result = await setSchema.deleteOne({ _id: id });
+
+      await normalizeCustomExerciseAfterSetDelete(customExercise, id);
+      return result;
+    } catch (err) {
+      throw err;
+    }
   },
 };

@@ -11,7 +11,9 @@
     "backfill:product-search-fields": "node ./scripts/backfill-product-search-fields.js",
     "verify:product-search-indexes": "node ./scripts/verify-product-search-indexes.js",
     "migrate:custom-recipes": "node ./scripts/migrate-custom-recipes.mjs",
-    "migrate:custom-recipes:commit": "node ./scripts/migrate-custom-recipes.mjs --commit"
+    "migrate:custom-recipes:commit": "node ./scripts/migrate-custom-recipes.mjs --commit",
+    "normalize:custom-exercise-set-orders": "node ./scripts/normalize-custom-exercise-set-orders.js",
+    "normalize:custom-exercise-set-orders:commit": "node ./scripts/normalize-custom-exercise-set-orders.js --commit"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",

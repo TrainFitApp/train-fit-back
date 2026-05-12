@@ -1,6 +1,7 @@
 const customExerciseSchema = require("./custom-exercise-schema");
 const workoutSchema = require("../workouts/workout-schema");
 const setSchema = require("../sets/set-schema");
+const { normalizeSetsOrder } = require("../sets/set-order-util");
 const { default: mongoose } = require("mongoose");
 
 const SET_UPDATE_FIELDS = [
@@ -55,6 +56,48 @@ function buildSetUpdate(set) {
   if (Object.keys(updateOperation).length > 0) update.$set = updateOperation;
   if (Object.keys(unsetOperation).length > 0) update.$unset = unsetOperation;
   return update;
+}
+
+async function normalizeAndPersistCustomExerciseSets(customExerciseOrId) {
+  const shouldFetch =
+    typeof customExerciseOrId === "string" ||
+    customExerciseOrId instanceof mongoose.Types.ObjectId;
+  const customExercise = shouldFetch
+    ? await customExerciseSchema.findById(customExerciseOrId)
+    : customExerciseOrId;
+
+  if (!customExercise) return customExercise;
+
+  const normalizedSets = normalizeSetsOrder(
+    (customExercise.sets || []).map(plainSet),
+  );
+
+  const bulkOps = normalizedSets
+    .map((setTemp) => {
+      const setId = getSetId(setTemp);
+      if (!mongoose.Types.ObjectId.isValid(setId)) return null;
+
+      const update = buildSetUpdate(setTemp);
+      if (Object.keys(update).length === 0) return null;
+
+      return {
+        updateOne: {
+          filter: { _id: mongoose.Types.ObjectId(setId) },
+          update,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  if (bulkOps.length > 0) {
+    await setSchema.bulkWrite(bulkOps);
+  }
+
+  await customExerciseSchema.findByIdAndUpdate(customExercise._id, {
+    $set: { sets: normalizedSets.map((setTemp) => setTemp._id) },
+  });
+
+  return customExerciseSchema.findById(customExercise._id);
 }
 
 module.exports = {
@@ -193,13 +236,11 @@ module.exports = {
   async addSetToCustomExercise(id, set) {
     try {
       const newSet = await setSchema.create(set);
-      const update = { $push: { sets: newSet } };
-      const customExerciseDoc = await customExerciseSchema.findByIdAndUpdate(
-        id,
-        update,
-        { new: true },
-      );
-      return customExerciseDoc;
+      await customExerciseSchema.findByIdAndUpdate(id, {
+        $push: { sets: newSet._id },
+      });
+
+      return normalizeAndPersistCustomExerciseSets(id);
     } catch (err) {
       throw err;
     }
@@ -208,17 +249,20 @@ module.exports = {
   async copySetOnCustomExercise(order, customExercise) {
     try {
       const newSetId = new mongoose.Types.ObjectId();
-      let newSet = customExercise.sets.find((sTemp) => !sTemp._id);
+      const normalizedSets = normalizeSetsOrder(
+        (customExercise.sets || []).map((setTemp) => {
+          const currentSet = plainSet(setTemp);
+          if (!currentSet._id) currentSet._id = newSetId;
+          return currentSet;
+        }),
+      );
 
-      customExercise.sets.forEach((sTemp) => {
-        if (!sTemp._id) sTemp._id = newSetId;
-      });
-
-      const update = {
-        $push: {
-          sets: newSetId,
-        },
-      };
+      const newSet = normalizedSets.find(
+        (setTemp) => getSetId(setTemp) === newSetId.toString(),
+      );
+      if (!newSet) {
+        throw new Error("No set to copy found in custom exercise payload");
+      }
 
       const bulkOps = [];
 
@@ -228,13 +272,17 @@ module.exports = {
         },
       });
 
-      customExercise.sets.forEach((sTemp) => {
+      normalizedSets.forEach((sTemp) => {
+        const setId = getSetId(sTemp);
+        if (setId === newSetId.toString()) return;
+
+        const update = buildSetUpdate(sTemp);
+        if (Object.keys(update).length === 0) return;
+
         bulkOps.push({
           updateOne: {
             filter: { _id: sTemp._id },
-            update: {
-              $set: sTemp,
-            },
+            update,
           },
         });
       });
@@ -245,7 +293,7 @@ module.exports = {
         updateOne: {
           filter: { _id: customExercise._id },
           update: {
-            $set: { sets: customExercise.sets.map((sTemp) => sTemp._id) },
+            $set: { sets: normalizedSets.map((sTemp) => sTemp._id) },
           },
         },
       });

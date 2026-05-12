@@ -9,6 +9,7 @@ const workoutService = require("../workouts/workout-service");
 
 const { default: mongoose } = require("mongoose");
 const setSchema = require("../sets/set-schema");
+const { normalizeSetsOrder } = require("../sets/set-order-util");
 const tableSchema = require("../tables/table-schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
@@ -174,13 +175,14 @@ module.exports = {
         workoutTemp.exercises.forEach((exerciseTemp) => {
           exerciseTemp._id = new mongoose.Types.ObjectId();
           // delete exerciseTemp.notes;
-          if (withSets)
+          if (withSets) {
+            exerciseTemp.sets = normalizeSetsOrder(exerciseTemp.sets || []);
             exerciseTemp.sets.forEach((setTemp) => {
               setTemp._id = new mongoose.Types.ObjectId();
               normalizeSetForTemplateCopy(setTemp);
               newSets.push(setTemp);
             });
-          else exerciseTemp.sets = [];
+          } else exerciseTemp.sets = [];
           newCustomExercises.push(exerciseTemp);
         });
       });
