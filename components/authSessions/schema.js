@@ -37,6 +37,7 @@ const AuthSessionSchema = new mongoose.Schema(
   },
   {
     versionKey: false,
+    collection: process.env.MONGODB_SESSION_STORAGE || "authsessions",
   }
 );
 

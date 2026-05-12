@@ -41,6 +41,7 @@ const corsOptions = {
     "x-client-family",
     "x-refresh-token",
     "x-device-label",
+    "x-client-version",
   ],
   credentials: useCredentials, // Enable cookies
   optionsSuccessStatus: 204,

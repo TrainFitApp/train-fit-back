@@ -18,10 +18,13 @@ const auth = require("../components/auth/auth-routes");
 const logs = require("../components/util/logs-routes");
 const billing = require("../components/billing/billing-routes");
 const appVersion = require("../components/appVersion/app-version-routes");
+const runtimePolicy = require("../middleware/runtimePolicy");
 
 const router = express.Router();
 
 router.use("/auth", auth);
+router.use("/app", appVersion);
+router.use(runtimePolicy);
 router.use("/products", products);
 router.use("/users", users);
 router.use("/diets", diets);
@@ -39,6 +42,5 @@ router.use("/exercises", exercises);
 router.use("/sets", sets);
 router.use("/logs", logs);
 router.use("/billing", billing);
-router.use("/app", appVersion);
 
 module.exports = router;
