@@ -4092,7 +4092,9 @@ module.exports = {
             sTemp._id = new mongoose.Types.ObjectId();
 
             if (sTemp.rir !== null && sTemp.rir !== undefined)
-              sTemp.expectedRir = [sTemp.rir];
+              sTemp.expectedRir = Array.isArray(sTemp.rir)
+                ? [...sTemp.rir]
+                : [sTemp.rir];
 
             delete sTemp.rir;
             newSets.push(sTemp);

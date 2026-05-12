@@ -5,7 +5,7 @@ const SetSchema = Schema(
   {
     reps: Number,
     weight: Number,
-    rir: Number,
+    rir: [Number],
     expectedRir: [Number],
     expectedReps: [Number],
     drop: Boolean,
