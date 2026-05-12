@@ -245,6 +245,11 @@ module.exports = {
       const extracted = TokenService.extractRefreshToken(req);
 
       if (extracted.source === "conflict") {
+        console.warn("[AUTH] auth_refresh_invalid_cookie", {
+          reason: "conflicting_refresh_token_sources",
+          source: extracted.source,
+          platform: resolveClientContext(req).platform,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Conflicting refresh token sources",
@@ -253,6 +258,11 @@ module.exports = {
       }
 
       if (!extracted.token) {
+        console.warn("[AUTH] auth_refresh_missing_token", {
+          reason: "missing_refresh_token",
+          source: extracted.source || null,
+          platform: resolveClientContext(req).platform,
+        });
         clearRefreshArtifacts(req, res);
         return res
           .status(401)
@@ -261,6 +271,12 @@ module.exports = {
 
       const decoded = TokenService.verifyRefreshToken(extracted.token);
       if (!decoded || decoded.type !== "refresh") {
+        console.warn("[AUTH] auth_refresh_invalid_cookie", {
+          reason: "invalid_refresh_token",
+          source: extracted.source,
+          hasDecodedPayload: !!decoded,
+          tokenType: decoded?.type || null,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Invalid refresh token",
@@ -270,6 +286,14 @@ module.exports = {
 
       const clientContext = resolveClientContext(req);
       if (decoded.aud !== clientContext.audience) {
+        console.warn("[AUTH] auth_refresh_invalid_cookie", {
+          reason: "invalid_refresh_token_audience",
+          source: extracted.source,
+          expectedAudience: clientContext.audience,
+          tokenAudience: decoded.aud || null,
+          sessionId: decoded.sid || null,
+          userId: decoded.sub || null,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Invalid refresh token audience",
@@ -279,6 +303,13 @@ module.exports = {
 
       const session = await AuthSessionService.getSessionById(decoded.sid);
       if (!session || session.revokedAt) {
+        console.warn("[AUTH] auth_refresh_invalid_cookie", {
+          reason: session?.revokedAt ? "session_revoked" : "session_missing",
+          source: extracted.source,
+          sessionId: decoded.sid,
+          userId: decoded.sub,
+          revokedReason: session?.revokedReason || null,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Session revoked",
@@ -289,6 +320,12 @@ module.exports = {
       const user = await userSchema.findById(decoded.sub);
       if (!user) {
         await AuthSessionService.revokeSession(session.sessionId, "user_missing");
+        console.warn("[AUTH] auth_refresh_invalid_cookie", {
+          reason: "user_missing",
+          source: extracted.source,
+          sessionId: session.sessionId,
+          userId: decoded.sub,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "User not found",
@@ -305,6 +342,15 @@ module.exports = {
           session.sessionId,
           "password_changed"
         );
+        console.warn("[AUTH] auth_refresh_invalid_cookie", {
+          reason: "password_version_mismatch",
+          source: extracted.source,
+          sessionId: session.sessionId,
+          userId: user._id.toString(),
+          tokenPasswordVersion: decoded.pver,
+          userPasswordVersion: passwordVersion,
+          sessionPasswordVersion: session.passwordVersion,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Session expired by password change",
@@ -314,6 +360,13 @@ module.exports = {
 
       if (session.expiresAt && new Date(session.expiresAt) <= new Date()) {
         await AuthSessionService.revokeSession(session.sessionId, "refresh_expired");
+        console.warn("[AUTH] auth_refresh_invalid_cookie", {
+          reason: "refresh_expired",
+          source: extracted.source,
+          sessionId: session.sessionId,
+          userId: user._id.toString(),
+          expiresAt: session.expiresAt,
+        });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
           message: "Refresh session expired",
@@ -331,15 +384,6 @@ module.exports = {
 
       if (!isCurrent) {
         if (isPrevious && withinGrace) {
-          const nextRefreshToken = TokenService.generateRefreshToken(
-            {
-              sub: user._id.toString(),
-              sid: session.sessionId,
-              pver: passwordVersion,
-            },
-            { audience: clientContext.audience }
-          );
-
           const accessToken = TokenService.generateAccessToken(
             {
               sub: user._id.toString(),
@@ -351,41 +395,17 @@ module.exports = {
             { audience: clientContext.audience }
           );
 
-          const rotatedSession =
-            await AuthSessionService.updateRotatedRefreshTokenFromPreviousGrace({
-              sessionId: session.sessionId,
-              previousRefreshTokenHash: currentTokenHash,
-              nextPreviousRefreshTokenHash: session.refreshTokenHash,
-              nextRefreshTokenHash: TokenService.hashToken(nextRefreshToken),
-              expiresAt: TokenService.getExpirationDate(nextRefreshToken),
-              passwordVersion,
-              graceStartedAfter: new Date(Date.now() - REFRESH_GRACE_MS),
-            });
-
-          if (!rotatedSession) {
-            return res.status(409).send({
-              message: "Refresh token already rotated",
-            });
-          }
-
-          if (!clientContext.isNativeClient) {
-            TokenService.setRefreshTokenCookie(res, nextRefreshToken);
-          }
-
           const response = {
             access_token: accessToken,
             expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
             token_type: "Bearer",
+            refresh_already_rotated: true,
           };
-
-          if (clientContext.isNativeClient) {
-            response.refresh_token = nextRefreshToken;
-          }
 
           console.info("[AUTH] auth_refresh_grace_reuse", {
             userId: user._id.toString(),
             sessionId: session.sessionId,
-            recoveredRefreshToken: true,
+            source: extracted.source,
           });
 
           return res.send(response);
@@ -399,6 +419,8 @@ module.exports = {
           userId: user._id.toString(),
           sessionId: session.sessionId,
           source: extracted.source,
+          reason: "refresh_token_reuse_detected",
+          withinGrace,
         });
         clearRefreshArtifacts(req, res);
         return res.status(401).send({
@@ -436,6 +458,32 @@ module.exports = {
       });
 
       if (!rotatedSession) {
+        const latestSession = await AuthSessionService.getSessionById(
+          session.sessionId
+        );
+        const lostRaceWithinGrace =
+          latestSession?.previousRefreshTokenHash === currentTokenHash &&
+          !!latestSession.rotationTimestamp &&
+          Date.now() - new Date(latestSession.rotationTimestamp).getTime() <
+            REFRESH_GRACE_MS &&
+          !latestSession.revokedAt;
+
+        if (lostRaceWithinGrace) {
+          console.info("[AUTH] auth_refresh_grace_reuse", {
+            userId: user._id.toString(),
+            sessionId: session.sessionId,
+            source: extracted.source,
+            reason: "lost_rotation_race",
+          });
+
+          return res.send({
+            access_token: accessToken,
+            expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
+            token_type: "Bearer",
+            refresh_already_rotated: true,
+          });
+        }
+
         return res.status(409).send({
           message: "Refresh token already rotated",
         });
@@ -459,6 +507,7 @@ module.exports = {
         userId: user._id.toString(),
         sessionId: session.sessionId,
         platform: clientContext.platform,
+        source: extracted.source,
       });
 
       return res.send(response);
@@ -477,12 +526,22 @@ module.exports = {
 
       if (accessPayload?.sid) {
         await AuthSessionService.revokeSession(accessPayload.sid, "logout");
+        console.info("[AUTH] auth_logout_called", {
+          source: "access_token",
+          sessionId: accessPayload.sid,
+          userId: accessPayload.sub || null,
+        });
       } else {
         const extracted = TokenService.extractRefreshToken(req);
         if (extracted.token) {
           const refreshPayload = TokenService.verifyRefreshToken(extracted.token);
           if (refreshPayload?.sid) {
             await AuthSessionService.revokeSession(refreshPayload.sid, "logout");
+            console.info("[AUTH] auth_logout_called", {
+              source: extracted.source,
+              sessionId: refreshPayload.sid,
+              userId: refreshPayload.sub || null,
+            });
           }
         }
       }
