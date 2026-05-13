@@ -12,9 +12,36 @@ const MAX_ACTIVE_SESSIONS_PER_USER = Math.max(
   1,
   Number(process.env.AUTH_MAX_ACTIVE_SESSIONS || 3) || 3
 );
+const LOGIN_INVALID_RESPONSE = {
+  error: "INVALID_CREDENTIALS",
+  message: "Correo o contraseña incorrectos",
+};
+const LOGIN_UNAVAILABLE_RESPONSE = {
+  error: "LOGIN_UNAVAILABLE",
+  message: "Ha ocurrido un error inesperado",
+};
 
 function normalizeEmail(email) {
   return typeof email === "string" ? email.trim().toLowerCase() : null;
+}
+
+function sendInvalidLoginResponse(res) {
+  return res.status(401).send(LOGIN_INVALID_RESPONSE);
+}
+
+function isPasswordValid(password, encryptedPassword) {
+  if (!password || !encryptedPassword) {
+    return false;
+  }
+
+  try {
+    return bcrypt.comparePasswords(password, encryptedPassword);
+  } catch (error) {
+    console.warn("[AUTH] auth_login_password_compare_failed", {
+      reason: error?.message || "password_compare_failed",
+    });
+    return false;
+  }
 }
 
 function resolveClientContext(req) {
@@ -198,12 +225,20 @@ module.exports = {
       if (!email || !password) {
         return res
           .status(400)
-          .send({ message: "Email y contraseña requeridos" });
+          .send({
+            error: "INVALID_LOGIN_REQUEST",
+            message: "Email y contraseña requeridos",
+          });
       }
 
       const user = await userModel.getUserByEmail(email);
       if (!user) {
-        return res.status(404).send({ message: "Este usuario no existe" });
+        return sendInvalidLoginResponse(res);
+      }
+
+      const isMatch = isPasswordValid(password, user.password);
+      if (!isMatch) {
+        return sendInvalidLoginResponse(res);
       }
 
       if (user.hash) {
@@ -228,15 +263,13 @@ module.exports = {
         });
       }
 
-      const isMatch = bcrypt.comparePasswords(password, user.password);
-      if (!isMatch) {
-        return res.status(401).send({ message: "Contraseña incorrecta" });
-      }
-
       return res.status(200).send(await issueSession(user, req, res));
     } catch (error) {
-      console.error("Error in auth/login:", error);
-      return res.status(500).send({ message: "Error al iniciar sesión" });
+      console.error("[AUTH] auth_login_unexpected_error", {
+        message: error?.message,
+        stack: error?.stack,
+      });
+      return res.status(500).send(LOGIN_UNAVAILABLE_RESPONSE);
     }
   },
 
