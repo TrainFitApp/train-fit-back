@@ -63,6 +63,45 @@ function resolveClientContext(req) {
   };
 }
 
+function generateAccessTokenForSession(user, sessionId, audience) {
+  return TokenService.generateAccessToken(
+    {
+      sub: user._id.toString(),
+      sid: sessionId,
+      email: user.email,
+      roles: user.roles || ["user"],
+      provider: user.provider || null,
+    },
+    { audience }
+  );
+}
+
+function generateRefreshTokenForSession(user, sessionId, passwordVersion, audience) {
+  return TokenService.generateRefreshToken(
+    {
+      sub: user._id.toString(),
+      sid: sessionId,
+      pver: passwordVersion,
+    },
+    { audience }
+  );
+}
+
+function buildRefreshResponse(accessToken, refreshToken, clientContext, extra = {}) {
+  const response = {
+    access_token: accessToken,
+    expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
+    token_type: "Bearer",
+    ...extra,
+  };
+
+  if (clientContext.isNativeClient && refreshToken) {
+    response.refresh_token = refreshToken;
+  }
+
+  return response;
+}
+
 async function buildAuthResponse({
   user,
   accessToken,
@@ -86,31 +125,19 @@ async function buildAuthResponse({
 async function issueSession(user, req, res, sessionOptions = {}) {
   const clientContext = resolveClientContext(req);
   const sessionId = TokenService.generateSessionId();
-  const userRoles = user.roles || ["user"];
   const passwordVersion = user.passwordVersion || 0;
 
-  const refreshToken = TokenService.generateRefreshToken(
-    {
-      sub: user._id.toString(),
-      sid: sessionId,
-      pver: passwordVersion,
-    },
-    {
-      audience: clientContext.audience,
-    }
+  const refreshToken = generateRefreshTokenForSession(
+    user,
+    sessionId,
+    passwordVersion,
+    clientContext.audience
   );
 
-  const accessToken = TokenService.generateAccessToken(
-    {
-      sub: user._id.toString(),
-      sid: sessionId,
-      email: user.email,
-      roles: userRoles,
-      provider: user.provider || null,
-    },
-    {
-      audience: clientContext.audience,
-    }
+  const accessToken = generateAccessTokenForSession(
+    user,
+    sessionId,
+    clientContext.audience
   );
 
   await AuthSessionService.createSession({
@@ -417,23 +444,63 @@ module.exports = {
 
       if (!isCurrent) {
         if (isPrevious && withinGrace) {
-          const accessToken = TokenService.generateAccessToken(
-            {
-              sub: user._id.toString(),
-              sid: session.sessionId,
-              email: user.email,
-              roles: user.roles || ["user"],
-              provider: user.provider || null,
-            },
-            { audience: clientContext.audience }
+          const accessToken = generateAccessTokenForSession(
+            user,
+            session.sessionId,
+            clientContext.audience
           );
 
-          const response = {
-            access_token: accessToken,
-            expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
-            token_type: "Bearer",
-            refresh_already_rotated: true,
-          };
+          if (clientContext.isNativeClient) {
+            const recoveredRefreshToken = generateRefreshTokenForSession(
+              user,
+              session.sessionId,
+              passwordVersion,
+              clientContext.audience
+            );
+            const recoveredSession =
+              await AuthSessionService.updateRotatedRefreshTokenFromPreviousGrace(
+                {
+                  sessionId: session.sessionId,
+                  previousRefreshTokenHash: currentTokenHash,
+                  nextPreviousRefreshTokenHash: session.refreshTokenHash,
+                  nextRefreshTokenHash: TokenService.hashToken(
+                    recoveredRefreshToken
+                  ),
+                  expiresAt:
+                    TokenService.getExpirationDate(recoveredRefreshToken),
+                  passwordVersion,
+                  graceStartedAfter: new Date(Date.now() - REFRESH_GRACE_MS),
+                }
+              );
+
+            if (recoveredSession) {
+              console.info("[AUTH] auth_refresh_previous_grace_rotated", {
+                userId: user._id.toString(),
+                sessionId: session.sessionId,
+                source: extracted.source,
+                platform: clientContext.platform,
+              });
+
+              return res.send(
+                buildRefreshResponse(
+                  accessToken,
+                  recoveredRefreshToken,
+                  clientContext,
+                  {
+                    refresh_recovered_from_previous: true,
+                  }
+                )
+              );
+            }
+
+            console.info("[AUTH] auth_refresh_lost_response_recovered", {
+              userId: user._id.toString(),
+              sessionId: session.sessionId,
+              source: extracted.source,
+              platform: clientContext.platform,
+              reason: "previous_grace_already_rotated",
+            });
+          }
 
           console.info("[AUTH] auth_refresh_grace_reuse", {
             userId: user._id.toString(),
@@ -441,7 +508,11 @@ module.exports = {
             source: extracted.source,
           });
 
-          return res.send(response);
+          return res.send(
+            buildRefreshResponse(accessToken, null, clientContext, {
+              refresh_already_rotated: true,
+            })
+          );
         }
 
         await AuthSessionService.revokeSession(
@@ -462,24 +533,17 @@ module.exports = {
         });
       }
 
-      const nextRefreshToken = TokenService.generateRefreshToken(
-        {
-          sub: user._id.toString(),
-          sid: session.sessionId,
-          pver: passwordVersion,
-        },
-        { audience: clientContext.audience }
+      const nextRefreshToken = generateRefreshTokenForSession(
+        user,
+        session.sessionId,
+        passwordVersion,
+        clientContext.audience
       );
 
-      const accessToken = TokenService.generateAccessToken(
-        {
-          sub: user._id.toString(),
-          sid: session.sessionId,
-          email: user.email,
-          roles: user.roles || ["user"],
-          provider: user.provider || null,
-        },
-        { audience: clientContext.audience }
+      const accessToken = generateAccessTokenForSession(
+        user,
+        session.sessionId,
+        clientContext.audience
       );
 
       const rotatedSession = await AuthSessionService.updateRotatedRefreshToken({
@@ -502,6 +566,52 @@ module.exports = {
           !latestSession.revokedAt;
 
         if (lostRaceWithinGrace) {
+          if (clientContext.isNativeClient) {
+            const recoveredRefreshToken = generateRefreshTokenForSession(
+              user,
+              session.sessionId,
+              passwordVersion,
+              clientContext.audience
+            );
+            const recoveredSession =
+              await AuthSessionService.updateRotatedRefreshTokenFromPreviousGrace(
+                {
+                  sessionId: session.sessionId,
+                  previousRefreshTokenHash: currentTokenHash,
+                  nextPreviousRefreshTokenHash:
+                    latestSession.refreshTokenHash || null,
+                  nextRefreshTokenHash: TokenService.hashToken(
+                    recoveredRefreshToken
+                  ),
+                  expiresAt:
+                    TokenService.getExpirationDate(recoveredRefreshToken),
+                  passwordVersion,
+                  graceStartedAfter: new Date(Date.now() - REFRESH_GRACE_MS),
+                }
+              );
+
+            if (recoveredSession) {
+              console.info("[AUTH] auth_refresh_lost_response_recovered", {
+                userId: user._id.toString(),
+                sessionId: session.sessionId,
+                source: extracted.source,
+                platform: clientContext.platform,
+                reason: "lost_rotation_race",
+              });
+
+              return res.send(
+                buildRefreshResponse(
+                  accessToken,
+                  recoveredRefreshToken,
+                  clientContext,
+                  {
+                    refresh_recovered_from_previous: true,
+                  }
+                )
+              );
+            }
+          }
+
           console.info("[AUTH] auth_refresh_grace_reuse", {
             userId: user._id.toString(),
             sessionId: session.sessionId,
@@ -509,13 +619,19 @@ module.exports = {
             reason: "lost_rotation_race",
           });
 
-          return res.send({
-            access_token: accessToken,
-            expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
-            token_type: "Bearer",
-            refresh_already_rotated: true,
-          });
+          return res.send(
+            buildRefreshResponse(accessToken, null, clientContext, {
+              refresh_already_rotated: true,
+            })
+          );
         }
+
+        console.warn("[AUTH] auth_refresh_rotation_conflict", {
+          userId: user._id.toString(),
+          sessionId: session.sessionId,
+          source: extracted.source,
+          platform: clientContext.platform,
+        });
 
         return res.status(409).send({
           message: "Refresh token already rotated",
@@ -526,15 +642,11 @@ module.exports = {
         TokenService.setRefreshTokenCookie(res, nextRefreshToken);
       }
 
-      const response = {
-        access_token: accessToken,
-        expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
-        token_type: "Bearer",
-      };
-
-      if (clientContext.isNativeClient) {
-        response.refresh_token = nextRefreshToken;
-      }
+      const response = buildRefreshResponse(
+        accessToken,
+        nextRefreshToken,
+        clientContext
+      );
 
       console.info("[AUTH] auth_refresh_success", {
         userId: user._id.toString(),

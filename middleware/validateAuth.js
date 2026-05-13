@@ -69,6 +69,30 @@ const auth = (permissions) => {
         });
       }
 
+      const sessionUserId = session.userId?.toString();
+      if (sessionUserId !== decoded.sub) {
+        return res.status(401).send({
+          message: "Invalid session user",
+          requiresRelogin: true,
+        });
+      }
+
+      const sessionClientFamily = session.clientFamily || "trainfit-front";
+      if (sessionClientFamily !== clientFamily) {
+        return res.status(401).send({
+          message: "Invalid session audience",
+          requiresRelogin: true,
+        });
+      }
+
+      if (session.expiresAt && new Date(session.expiresAt) <= new Date()) {
+        await AuthSessionService.revokeSession(session.sessionId, "session_expired");
+        return res.status(401).send({
+          message: "Session expired",
+          requiresRelogin: true,
+        });
+      }
+
       const user = await userSchema.findById(decoded.sub);
       if (!user) {
         await AuthSessionService.revokeSession(decoded.sid, "user_missing");
