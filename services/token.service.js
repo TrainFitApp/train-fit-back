@@ -27,7 +27,13 @@ function requireKey(key, name) {
 const publicKey = loadKeyFromEnv("PUBLIC_KEY");
 const privateKey = loadKeyFromEnv("PRIVATE_KEY");
 const ISSUER = process.env.JWT_ISSUER || "trainfit-auth";
-const REFRESH_COOKIE_NAME = "refreshToken";
+const REFRESH_COOKIE_NAME = process.env.REFRESH_COOKIE_NAME || "tfRefreshToken";
+const LEGACY_REFRESH_COOKIE_NAMES = (
+  process.env.LEGACY_REFRESH_COOKIE_NAMES || "refreshToken"
+)
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name && name !== REFRESH_COOKIE_NAME);
 const DEFAULT_ALLOWED_AUDIENCES = (
   process.env.JWT_ALLOWED_AUDIENCES ||
   "trainfit-front,train-fit-management"
@@ -163,6 +169,66 @@ class TokenService {
     );
   }
 
+  static getCookieValues(req, cookieName) {
+    const rawCookieHeader = req.headers?.cookie || "";
+    const values = [];
+
+    for (const cookiePair of rawCookieHeader.split(";")) {
+      const separatorIndex = cookiePair.indexOf("=");
+      if (separatorIndex < 0) {
+        continue;
+      }
+
+      const name = cookiePair.slice(0, separatorIndex).trim();
+      if (name !== cookieName) {
+        continue;
+      }
+
+      const rawValue = cookiePair.slice(separatorIndex + 1).trim();
+      try {
+        values.push(decodeURIComponent(rawValue));
+      } catch (_error) {
+        values.push(rawValue);
+      }
+    }
+
+    const parsedCookie = req.cookies?.[cookieName];
+    if (parsedCookie && !values.includes(parsedCookie)) {
+      values.push(String(parsedCookie));
+    }
+
+    return values.filter(Boolean);
+  }
+
+  static isSessionRefreshToken(token) {
+    const payload = TokenService.decode(token);
+    return !!(
+      payload?.type === "refresh" &&
+      payload?.sub &&
+      payload?.sid &&
+      payload?.pver !== undefined
+    );
+  }
+
+  static getRefreshCookieCandidates(req) {
+    const cookieNames = [REFRESH_COOKIE_NAME, ...LEGACY_REFRESH_COOKIE_NAMES];
+    const candidates = [];
+
+    for (const cookieName of cookieNames) {
+      for (const token of TokenService.getCookieValues(req, cookieName)) {
+        candidates.push({
+          token,
+          source:
+            cookieName === REFRESH_COOKIE_NAME
+              ? "cookie"
+              : `legacy_cookie:${cookieName}`,
+        });
+      }
+    }
+
+    return candidates;
+  }
+
   static extractBearerToken(req) {
     const authHeader = req.headers?.authorization || "";
     if (!authHeader.startsWith("Bearer ")) {
@@ -173,21 +239,22 @@ class TokenService {
 
   static extractRefreshToken(req) {
     const headerToken = req.headers?.["x-refresh-token"];
-    const cookieToken = req.cookies?.[REFRESH_COOKIE_NAME];
-
-    if (headerToken && cookieToken && headerToken !== cookieToken) {
-      return {
-        token: null,
-        source: "conflict",
-      };
-    }
 
     if (headerToken) {
       return { token: String(headerToken), source: "header" };
     }
 
-    if (cookieToken) {
-      return { token: String(cookieToken), source: "cookie" };
+    const cookieCandidates = TokenService.getRefreshCookieCandidates(req);
+    const sessionRefreshCandidate = cookieCandidates.find((candidate) =>
+      TokenService.isSessionRefreshToken(candidate.token)
+    );
+
+    if (sessionRefreshCandidate) {
+      return sessionRefreshCandidate;
+    }
+
+    if (cookieCandidates.length > 0) {
+      return cookieCandidates[0];
     }
 
     return { token: null, source: null };
