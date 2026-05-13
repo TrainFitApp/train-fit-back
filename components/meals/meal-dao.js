@@ -372,17 +372,6 @@ module.exports = {
                   { brandPrefixes: { $exists: false } },
                 ],
               },
-              {
-                name: 1,
-                brand: 1,
-                code: 1,
-                verified: 1,
-                userId: 1,
-                nameNormalized: 1,
-                brandNormalized: 1,
-                namePrefixes: 1,
-                brandPrefixes: 1,
-              },
             )
             .limit(500)
             .lean()
