@@ -15,55 +15,55 @@ const fromEmail = process.env.FROM_EMAIL;
 const registrationNotificationEmail =
   process.env.REGISTRATION_NOTIFICATION_EMAIL || registerUser;
 
-//const createSmtpTransporter = ({ host, port, user, pass }) =>
-//  nodemailer.createTransport({
-//    host,
-//    port: Number(port),
-//    secure: String(port) === "465",
-//    auth: { user, pass },
-//    tls: { minVersion: "TLSv1.2" },
-//  });
-//
-//const registerTransporter = createSmtpTransporter({
-//  host: registerHost,
-//  port: registerPort,
-//  user: registerUser,
-//  pass: registerPass,
-//});
-//
-//const suggestionsTransporter = createSmtpTransporter({
-//  host: suggestionsHost,
-//  port: suggestionsPort,
-//  user: suggestionsUser,
-//  pass: suggestionsPass,
-//});
-//
-//const sesTransporter = nodemailer.createTransport({
-//  host: `email-smtp.${sesRegion || "eu-west-3"}.amazonaws.com`,
-//  port: 587,
-//  secure: false,
-//  auth: {
-//    user: sesSmtpUser,
-//    pass: sesSmtpPass,
-//  },
-//  tls: { minVersion: "TLSv1.2" },
-//});
-//
-//Promise.allSettled([
-//  registerTransporter.verify(),
-//  suggestionsTransporter.verify(),
-//  sesTransporter.verify(),
-//]).then((results) => {
-//  results.forEach((r, i) => {
-//    const label =
-//      i === 0 ? "Register SMTP" : i === 1 ? "Suggestions SMTP" : "SES SMTP";
-//    if (r.status === "fulfilled") {
-//      console.log(`${label} ready`);
-//    } else {
-//      console.warn(`${label} verify failed:`, r.reason?.message || r.reason);
-//    }
-//  });
-//});
+const createSmtpTransporter = ({ host, port, user, pass }) =>
+  nodemailer.createTransport({
+    host,
+    port: Number(port),
+    secure: String(port) === "465",
+    auth: { user, pass },
+    tls: { minVersion: "TLSv1.2" },
+  });
+
+const registerTransporter = createSmtpTransporter({
+  host: registerHost,
+  port: registerPort,
+  user: registerUser,
+  pass: registerPass,
+});
+
+const suggestionsTransporter = createSmtpTransporter({
+  host: suggestionsHost,
+  port: suggestionsPort,
+  user: suggestionsUser,
+  pass: suggestionsPass,
+});
+
+const sesTransporter = nodemailer.createTransport({
+  host: `email-smtp.${sesRegion || "eu-west-3"}.amazonaws.com`,
+  port: 587,
+  secure: false,
+  auth: {
+    user: sesSmtpUser,
+    pass: sesSmtpPass,
+  },
+  tls: { minVersion: "TLSv1.2" },
+});
+
+Promise.allSettled([
+  registerTransporter.verify(),
+  suggestionsTransporter.verify(),
+  sesTransporter.verify(),
+]).then((results) => {
+  results.forEach((r, i) => {
+    const label =
+      i === 0 ? "Register SMTP" : i === 1 ? "Suggestions SMTP" : "SES SMTP";
+    if (r.status === "fulfilled") {
+      console.log(`${label} ready`);
+    } else {
+      console.warn(`${label} verify failed:`, r.reason?.message || r.reason);
+    }
+  });
+});
 
 /**
  * Valida que un email tenga formato correcto y dominio con registros MX válidos
