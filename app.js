@@ -23,15 +23,28 @@ const allowedOrigins = [
   "https://localhost", // iOS cuando iosScheme = 'https'
   "http://localhost", // Android Capacitor (webview)
   "http://localhost:8100", // Desarrollo local Ionic
+  "http://localhost:4200",
+  "http://localhost:4300",
   serverDomain, // Dominio del servidor (opcional)
   clientDomain, // Dominio de producción del cliente (opcional)
+  ...(process.env.CORS_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 ].filter(Boolean);
 
 // Enable credentials for cookie support (refresh tokens)
 const useCredentials = true;
 
 const corsOptions = {
-  origin: true, // Permitir todos los orígenes por ahora
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error("Not allowed by CORS"));
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: [
     "Content-Type",

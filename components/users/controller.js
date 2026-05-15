@@ -3,34 +3,11 @@ const userDto = require("./dto");
 const userSchema = require("../users/schema");
 const bcrypt = require("../util/bcrypt");
 const mail = require("./../util/mail");
-const TokenService = require("../../services/token.service");
-const AuthSessionService = require("../../services/auth-session.service");
 const jwt = require("jsonwebtoken");
 const serverDomain = process.env.SERVER_DOMAIN;
 
-/**
- * Genera tokens (access + refresh) y guarda el token en el usuario.
- * @param {Object} user - Documento del usuario de la BD
- * @param {Object} res  - Express response object
- * @returns {Object} { accessToken, refreshToken }
- */
 async function generateAndSetTokens(user, res) {
-  const payload = { email: user.email, roles: user.roles || ["user"] };
-
-  const accessToken = TokenService.generateAccessToken(payload);
-  const refreshToken = TokenService.generateRefreshToken(payload);
-
-  // Al hacer login, inicializamos el flujo:
-  // RT actual = nuevo hash, Previo = null (sesión limpia)
-  await userSchema.findByIdAndUpdate(user._id, {
-    refreshToken: TokenService.hashToken(refreshToken),
-    previousRefreshToken: null,
-    tokenRotationTimestamp: new Date(),
-  });
-
-  TokenService.setRefreshTokenCookie(res, refreshToken);
-
-  return { accessToken, refreshToken };
+  throw new Error("Auth endpoint moved to /api/auth");
 }
 
 const htmlFinalResponse1 = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -102,6 +79,11 @@ function notifyUserRegistered(user, req, source, provider) {
     ip: req.ip,
     userAgent: req.headers?.["user-agent"],
   });
+}
+
+async function clearUserAuth(userId) {
+  if (!userId) return null;
+  return userSchema.findByIdAndUpdate(userId, { $unset: { auth: 1 } });
 }
 
 module.exports = {
@@ -398,130 +380,17 @@ module.exports = {
   },
 
   async refreshToken(req, res) {
-    try {
-      const refreshToken = req.cookies?.refreshToken;
-      if (!refreshToken) {
-        console.warn("[AUTH] refresh-token without cookie", {
-          origin: req.headers?.origin,
-          userAgent: req.headers?.["user-agent"],
-          ip: req.ip,
-        });
-        return res
-          .status(401)
-          .send({ message: "No refresh token", requiresRelogin: true });
-      }
-
-      // 1. Verificar JWT del Refresh Token
-      let decoded;
-      try {
-        decoded = TokenService.verifyRefreshToken(refreshToken);
-        if (!decoded) throw new Error();
-      } catch (err) {
-        TokenService.clearRefreshTokenCookie(res);
-        return res
-          .status(401)
-          .send({ message: "Invalid refresh token", requiresRelogin: true });
-      }
-
-      // 2. Buscar usuario
-      const user = await userSchema.findOne({ email: decoded.email });
-      if (!user) {
-        TokenService.clearRefreshTokenCookie(res);
-        return res
-          .status(401)
-          .send({ message: "User not found", requiresRelogin: true });
-      }
-
-      const hashedToken = TokenService.hashToken(refreshToken);
-      const now = Date.now();
-      const gracePeriodMs = 120000; // 2 minutos para tolerar carreras/red lenta en móvil
-
-      // 3. Lógica de Rotación
-      const isCurrent = user.refreshToken === hashedToken;
-      const isPrevious = user.previousRefreshToken === hashedToken;
-      const withinGrace =
-        user.tokenRotationTimestamp &&
-        now - new Date(user.tokenRotationTimestamp).getTime() < gracePeriodMs;
-
-      if (isCurrent) {
-        // Rotación normal
-        const newAT = TokenService.generateAccessToken({
-          email: user.email,
-          roles: user.roles,
-        });
-        const newRT = TokenService.generateRefreshToken({
-          email: user.email,
-          roles: user.roles,
-        });
-
-        await userSchema.findByIdAndUpdate(user._id, {
-          refreshToken: TokenService.hashToken(newRT),
-          previousRefreshToken: hashedToken,
-          tokenRotationTimestamp: new Date(),
-        });
-
-        TokenService.setRefreshTokenCookie(res, newRT);
-        return res.send({ access_token: newAT, theme: user.theme });
-      } else if (isPrevious && withinGrace) {
-        // Caso de carrera: se usó el token anterior dentro del margen de gracia
-        const newAT = TokenService.generateAccessToken({
-          email: user.email,
-          roles: user.roles,
-        });
-        return res.send({ access_token: newAT, theme: user.theme });
-      } else if (isPrevious) {
-        // Token previo fuera de la ventana de gracia.
-        // No invalidamos toda la sesión activa para evitar falsos positivos por
-        // peticiones retrasadas (background/resume en móviles), pero forzamos
-        // re-login del cliente que presenta este token obsoleto.
-        TokenService.clearRefreshTokenCookie(res);
-        return res
-          .status(401)
-          .send({ message: "Stale refresh token", requiresRelogin: true });
-      } else {
-        // Token no reconocido (ni actual ni previo): posible reutilización real.
-        // Invalidamos toda la cadena para contener una posible exfiltración.
-        await userSchema.findByIdAndUpdate(user._id, {
-          refreshToken: null,
-          previousRefreshToken: null,
-        });
-        TokenService.clearRefreshTokenCookie(res);
-        return res
-          .status(401)
-          .send({ message: "Token reuse detected", requiresRelogin: true });
-      }
-    } catch (error) {
-      console.error("Error in refreshToken:", error);
-      return res.status(500).send({ message: "Internal server error" });
-    }
+    return res.status(410).send({
+      message: "Auth endpoint moved to /api/auth",
+      code: "AUTH_ENDPOINT_GONE",
+    });
   },
 
   async logout(req, res) {
-    try {
-      let email = req.userData?.email;
-
-      if (!email) {
-        const refreshToken = req.cookies?.refreshToken;
-        if (refreshToken) {
-          const decoded = TokenService.verifyRefreshToken(refreshToken);
-          if (decoded) email = decoded.email;
-        }
-      }
-
-      if (email) {
-        await userSchema.findOneAndUpdate(
-          { email },
-          { refreshToken: null, previousRefreshToken: null },
-        );
-      }
-
-      TokenService.clearRefreshTokenCookie(res);
-      return res.status(200).send({ message: "Logged out" });
-    } catch (error) {
-      console.error("Error in logout:", error);
-      TokenService.clearRefreshTokenCookie(res);
-      return res.status(200).send({ message: "Logged out" });
-    }
+    return res.status(410).send({
+      message: "Auth endpoint moved to /api/auth",
+      code: "AUTH_ENDPOINT_GONE",
+    });
   },
 
   /**
@@ -942,10 +811,7 @@ module.exports = {
   async updatePassword(req, res) {
     const user = await userModel.updatePassword(req.params.email, req.params.password);
     if (user?._id) {
-      await AuthSessionService.revokeAllUserSessions(
-        user._id,
-        "password_changed"
-      );
+      await clearUserAuth(user._id);
     }
     return res.send(
       htmlFinalResponse1 + "Contraseña actualizada" + htmlFinalResponse2,
@@ -970,10 +836,7 @@ module.exports = {
         req.body.hash,
       );
       if (response?._id) {
-        await AuthSessionService.revokeAllUserSessions(
-          response._id,
-          "password_changed"
-        );
+        await clearUserAuth(response._id);
       }
       return res.send(response);
     } catch (error) {
@@ -1038,12 +901,6 @@ module.exports = {
       targetUser.lastLogin = new Date();
       await targetUser.save();
 
-      const token = TokenService.generateAccessToken({
-        email: targetUser.email,
-        roles: targetUser.roles || ["user"],
-      });
-
-      // Usar generateAndSetTokens para crear la sesión de impersonación
       const { accessToken } = await generateAndSetTokens(targetUser, res);
 
       return res.send({
@@ -1072,7 +929,7 @@ module.exports = {
         return res.status(404).send({ message: "Usuario no encontrado" });
       }
 
-      await AuthSessionService.revokeAllUserSessions(userId, "admin_logout");
+      await clearUserAuth(userId);
 
       return res.send({
         message: "Sesión cerrada correctamente",

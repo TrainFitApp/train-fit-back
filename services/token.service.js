@@ -28,12 +28,6 @@ const publicKey = loadKeyFromEnv("PUBLIC_KEY");
 const privateKey = loadKeyFromEnv("PRIVATE_KEY");
 const ISSUER = process.env.JWT_ISSUER || "trainfit-auth";
 const REFRESH_COOKIE_NAME = process.env.REFRESH_COOKIE_NAME || "tfRefreshToken";
-const LEGACY_REFRESH_COOKIE_NAMES = (
-  process.env.LEGACY_REFRESH_COOKIE_NAMES || "refreshToken"
-)
-  .split(",")
-  .map((name) => name.trim())
-  .filter((name) => name && name !== REFRESH_COOKIE_NAME);
 const DEFAULT_ALLOWED_AUDIENCES = (
   process.env.JWT_ALLOWED_AUDIENCES ||
   "trainfit-front,train-fit-management"
@@ -43,6 +37,14 @@ const DEFAULT_ALLOWED_AUDIENCES = (
   .filter(Boolean);
 
 class TokenService {
+  static get ACCESS_TOKEN_TTL_SECONDS() {
+    return 15 * 60;
+  }
+
+  static get REFRESH_TOKEN_TTL_SECONDS() {
+    return 30 * 24 * 60 * 60;
+  }
+
   static getRefreshCookieOptions(maxAge = 30 * 24 * 60 * 60 * 1000) {
     const envSecure = process.env.COOKIE_SECURE;
     const secure =
@@ -79,6 +81,10 @@ class TokenService {
   }
 
   static generateAccessToken(payload, options = {}) {
+    return TokenService.signAccess(payload, options);
+  }
+
+  static signAccess(payload, options = {}) {
     const { audience = "trainfit-front", expiresIn = "15m" } = options;
     return jwt.sign(
       {
@@ -96,6 +102,10 @@ class TokenService {
   }
 
   static generateRefreshToken(payload, options = {}) {
+    return TokenService.signRefresh(payload, options);
+  }
+
+  static signRefresh(payload, options = {}) {
     const { audience = "trainfit-front", expiresIn = "30d" } = options;
     return jwt.sign(
       {
@@ -114,26 +124,44 @@ class TokenService {
   }
 
   static verifyAccessToken(token, options = {}) {
+    return TokenService.verifyAccess(token, options).payload;
+  }
+
+  static verifyAccess(token, options = {}) {
     try {
-      return jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
+      const payload = jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
         algorithms: ["RS256"],
         issuer: ISSUER,
         audience: options.audiences || TokenService.getAllowedAudiences(),
       });
+      return { payload, code: null, error: null };
     } catch (error) {
-      return null;
+      return {
+        payload: null,
+        code: error?.name === "TokenExpiredError" ? "ACCESS_EXPIRED" : "ACCESS_INVALID",
+        error,
+      };
     }
   }
 
   static verifyRefreshToken(token, options = {}) {
+    return TokenService.verifyRefresh(token, options).payload;
+  }
+
+  static verifyRefresh(token, options = {}) {
     try {
-      return jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
+      const payload = jwt.verify(token, requireKey(publicKey, "PUBLIC_KEY"), {
         algorithms: ["RS256"],
         issuer: ISSUER,
         audience: options.audiences || TokenService.getAllowedAudiences(),
       });
+      return { payload, code: null, error: null };
     } catch (error) {
-      return null;
+      return {
+        payload: null,
+        code: error?.name === "TokenExpiredError" ? "REFRESH_EXPIRED" : "REFRESH_INVALID",
+        error,
+      };
     }
   }
 
@@ -210,25 +238,6 @@ class TokenService {
     );
   }
 
-  static getRefreshCookieCandidates(req) {
-    const cookieNames = [REFRESH_COOKIE_NAME, ...LEGACY_REFRESH_COOKIE_NAMES];
-    const candidates = [];
-
-    for (const cookieName of cookieNames) {
-      for (const token of TokenService.getCookieValues(req, cookieName)) {
-        candidates.push({
-          token,
-          source:
-            cookieName === REFRESH_COOKIE_NAME
-              ? "cookie"
-              : `legacy_cookie:${cookieName}`,
-        });
-      }
-    }
-
-    return candidates;
-  }
-
   static extractBearerToken(req) {
     const authHeader = req.headers?.authorization || "";
     if (!authHeader.startsWith("Bearer ")) {
@@ -244,17 +253,9 @@ class TokenService {
       return { token: String(headerToken), source: "header" };
     }
 
-    const cookieCandidates = TokenService.getRefreshCookieCandidates(req);
-    const sessionRefreshCandidate = cookieCandidates.find((candidate) =>
-      TokenService.isSessionRefreshToken(candidate.token)
-    );
-
-    if (sessionRefreshCandidate) {
-      return sessionRefreshCandidate;
-    }
-
-    if (cookieCandidates.length > 0) {
-      return cookieCandidates[0];
+    const cookieValues = TokenService.getCookieValues(req, REFRESH_COOKIE_NAME);
+    if (cookieValues.length > 0) {
+      return { token: cookieValues[0], source: "cookie" };
     }
 
     return { token: null, source: null };

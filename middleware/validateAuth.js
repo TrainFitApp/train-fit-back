@@ -1,5 +1,4 @@
 const userSchema = require("../components/users/schema");
-const AuthSessionService = require("../services/auth-session.service");
 const TokenService = require("../services/token.service");
 
 function resolveClientFamily(req) {
@@ -40,11 +39,18 @@ const auth = (permissions) => {
       }
 
       const clientFamily = resolveClientFamily(req);
-      const decoded = TokenService.verifyAccessToken(token, {
+      const verification = TokenService.verifyAccess(token, {
         audiences: [clientFamily],
       });
+      const decoded = verification.payload;
       if (!decoded || decoded.type !== "access") {
-        return res.status(401).send({ message: "Invalid or expired token" });
+        return res.status(401).send({
+          message:
+            verification.code === "ACCESS_EXPIRED"
+              ? "Access token expired"
+              : "Invalid access token",
+          code: verification.code || "ACCESS_INVALID",
+        });
       }
 
       if (decoded.aud !== clientFamily) {
@@ -61,51 +67,49 @@ const auth = (permissions) => {
         });
       }
 
-      const session = await AuthSessionService.getSessionById(decoded.sid);
-      if (!session || session.revokedAt) {
-        return res.status(401).send({
-          message: "Session revoked",
-          requiresRelogin: true,
-        });
-      }
-
-      const sessionUserId = session.userId?.toString();
-      if (sessionUserId !== decoded.sub) {
-        return res.status(401).send({
-          message: "Invalid session user",
-          requiresRelogin: true,
-        });
-      }
-
-      const sessionClientFamily = session.clientFamily || "trainfit-front";
-      if (sessionClientFamily !== clientFamily) {
-        return res.status(401).send({
-          message: "Invalid session audience",
-          requiresRelogin: true,
-        });
-      }
-
-      if (session.expiresAt && new Date(session.expiresAt) <= new Date()) {
-        await AuthSessionService.revokeSession(session.sessionId, "session_expired");
-        return res.status(401).send({
-          message: "Session expired",
-          requiresRelogin: true,
-        });
-      }
-
       const user = await userSchema.findById(decoded.sub);
       if (!user) {
-        await AuthSessionService.revokeSession(decoded.sid, "user_missing");
         return res.status(401).send({
           message: "User not found",
+          code: "USER_NOT_FOUND",
           requiresRelogin: true,
         });
       }
 
-      if ((user.passwordVersion || 0) !== (session.passwordVersion || 0)) {
-        await AuthSessionService.revokeSession(decoded.sid, "password_changed");
+      const currentAuth = user.auth || {};
+      if (!currentAuth.sessionId || currentAuth.sessionId !== decoded.sid) {
+        return res.status(401).send({
+          message: "Session replaced",
+          code: "SESSION_REPLACED",
+          requiresRelogin: true,
+        });
+      }
+
+      if (currentAuth.clientFamily && currentAuth.clientFamily !== clientFamily) {
+        return res.status(401).send({
+          message: "Invalid session audience",
+          code: "SESSION_REPLACED",
+          requiresRelogin: true,
+        });
+      }
+
+      if (
+        currentAuth.refreshExpiresAt &&
+        new Date(currentAuth.refreshExpiresAt) <= new Date()
+      ) {
+        await userSchema.findByIdAndUpdate(user._id, { $unset: { auth: 1 } });
+        return res.status(401).send({
+          message: "Refresh session expired",
+          code: "REFRESH_EXPIRED",
+          requiresRelogin: true,
+        });
+      }
+
+      if ((user.passwordVersion || 0) !== (decoded.pver || 0)) {
+        await userSchema.findByIdAndUpdate(user._id, { $unset: { auth: 1 } });
         return res.status(401).send({
           message: "Session expired by password change",
+          code: "PASSWORD_CHANGED",
           requiresRelogin: true,
         });
       }
@@ -120,13 +124,13 @@ const auth = (permissions) => {
 
       req.auth = {
         userId: user._id.toString(),
-        sessionId: session.sessionId,
+        sessionId: currentAuth.sessionId,
         roles: userRoles,
         email: user.email,
       };
       req.userData = {
         sub: user._id.toString(),
-        sid: session.sessionId,
+        sid: currentAuth.sessionId,
         email: user.email,
         roles: userRoles,
         provider: user.provider || null,

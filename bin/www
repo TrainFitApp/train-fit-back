@@ -2,6 +2,7 @@ require("dotenv").config();
 const mongoose = require("mongoose");
 mongoose.set("strictQuery", true);
 const app = require("../app");
+const { buildMongoUri, redactMongoUri } = require("../scripts/_mongo-uri");
 
 // -------------------------------------------------------
 // 🧩 Normalización del puerto
@@ -20,27 +21,12 @@ app.set("port", port);
 // -------------------------------------------------------
 // 🔧 Variables de entorno
 // -------------------------------------------------------
-const mongoDBUser = process.env.MONGODB_USER;
-const mongoDBPass = process.env.MONGODB_PASS;
-const mongoDBCluster = process.env.MONGODB_CLUSTER;
-const mongoDBDB = process.env.MONGODB_DB;
 const serverDomain = process.env.SERVER_DOMAIN;
 
 // -------------------------------------------------------
 // ⚙️ Construcción de la URI de conexión
 // -------------------------------------------------------
-let mongoURI;
-
-if (
-  mongoDBCluster.includes("localhost") ||
-  mongoDBCluster.includes("127.0.0.1")
-) {
-  // 🧩 Conexión local
-  mongoURI = `mongodb://${mongoDBCluster}/${mongoDBDB}`;
-} else {
-  // ☁️ Conexión Atlas (producción)
-  mongoURI = `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB}`;
-}
+const mongoURI = buildMongoUri();
 
 // -------------------------------------------------------
 // 🚀 Conexión y arranque del servidor
@@ -50,7 +36,7 @@ mongoose
   .connect(mongoURI)
   .then(() => {
     console.log("✅ Conexión a la base de datos establecida con éxito");
-    console.log(`🔗 Mongo URI: ${mongoURI}`);
+    console.log(`🔗 Mongo URI: ${redactMongoUri(mongoURI)}`);
 
     // Crear servidor Express
     const serv = app.listen(port, () => {

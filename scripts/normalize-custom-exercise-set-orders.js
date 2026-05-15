@@ -1,5 +1,6 @@
 require("dotenv").config();
 const mongoose = require("mongoose");
+const { buildMongoUri } = require("./_mongo-uri");
 mongoose.set("strictQuery", true);
 
 function parseArgs(argv) {
@@ -12,27 +13,6 @@ function parseArgs(argv) {
     },
     { commit: false, limit: 0, sample: 10 },
   );
-}
-
-function buildMongoUri() {
-  const mongoDBUser = process.env.MONGODB_USER;
-  const mongoDBPass = process.env.MONGODB_PASS;
-  const mongoDBCluster =
-    process.env.MONGODB_CLUSTER || process.env.MONGODB_HOST || "localhost";
-  const mongoDBDB = process.env.MONGODB_DB;
-
-  if (!mongoDBDB) {
-    throw new Error("MONGODB_DB is required");
-  }
-
-  if (
-    mongoDBCluster.includes("localhost") ||
-    mongoDBCluster.includes("127.0.0.1")
-  ) {
-    return `mongodb://${mongoDBCluster}/${mongoDBDB}`;
-  }
-
-  return `mongodb+srv://${mongoDBUser}:${mongoDBPass}@${mongoDBCluster}.mongodb.net/${mongoDBDB}`;
 }
 
 function numericOrder(value, fallback) {

@@ -49,9 +49,21 @@ const UserSchema = new Schema({
   },
   passwordVersion: { type: Number, default: 0 },
   lastPasswordChangeAt: Date,
-  refreshToken: String,
-  previousRefreshToken: String,
-  tokenRotationTimestamp: Date,
+  auth: {
+    sessionId: { type: String, default: null, index: true },
+    refreshTokenHash: { type: String, default: null },
+    refreshExpiresAt: { type: Date, default: null },
+    clientFamily: { type: String, default: null },
+    platform: { type: String, default: null },
+    issuedAt: { type: Date, default: null },
+    lastUsedAt: { type: Date, default: null },
+    impersonatedByUserId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    impersonatedFromSessionId: { type: String, default: null },
+  },
   provider: String,
 });
 

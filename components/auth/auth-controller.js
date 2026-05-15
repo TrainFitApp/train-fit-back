@@ -3,15 +3,8 @@ const userDto = require("../users/dto");
 const userModel = require("../users/model");
 const userSchema = require("../users/schema");
 const TokenService = require("../../services/token.service");
-const AuthSessionService = require("../../services/auth-session.service");
 const mail = require("../util/mail");
 
-const REFRESH_GRACE_MS = Number(process.env.REFRESH_TOKEN_GRACE_MS || 60000);
-const AUTH_RESPONSE_EXPIRES_IN_SECONDS = 15 * 60;
-const MAX_ACTIVE_SESSIONS_PER_USER = Math.max(
-  1,
-  Number(process.env.AUTH_MAX_ACTIVE_SESSIONS || 3) || 3
-);
 const LOGIN_INVALID_RESPONSE = {
   error: "INVALID_CREDENTIALS",
   message: "Correo o contraseña incorrectos",
@@ -63,43 +56,61 @@ function resolveClientContext(req) {
   };
 }
 
-function generateAccessTokenForSession(user, sessionId, audience) {
-  return TokenService.generateAccessToken(
+function generateAccessTokenForSession(user, sessionId, audience, extra = {}) {
+  return TokenService.signAccess(
     {
       sub: user._id.toString(),
       sid: sessionId,
-      email: user.email,
       roles: user.roles || ["user"],
-      provider: user.provider || null,
+      pver: user.passwordVersion || 0,
+      ...extra,
     },
     { audience }
   );
 }
 
-function generateRefreshTokenForSession(user, sessionId, passwordVersion, audience) {
-  return TokenService.generateRefreshToken(
+function generateRefreshTokenForSession(user, sessionId, audience) {
+  return TokenService.signRefresh(
     {
       sub: user._id.toString(),
       sid: sessionId,
-      pver: passwordVersion,
+      pver: user.passwordVersion || 0,
     },
     { audience }
   );
 }
 
-function buildRefreshResponse(accessToken, refreshToken, clientContext, extra = {}) {
-  const response = {
-    access_token: accessToken,
-    expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
-    token_type: "Bearer",
-    ...extra,
-  };
+function isCurrentSession(user, sessionId) {
+  return !!(user?.auth?.sessionId && user.auth.sessionId === sessionId);
+}
 
-  if (clientContext.isNativeClient && refreshToken) {
-    response.refresh_token = refreshToken;
+async function clearUserAuthIfCurrent(userId, sessionId) {
+  if (!userId || !sessionId) {
+    return null;
   }
 
-  return response;
+  return userSchema.findOneAndUpdate(
+    { _id: userId, "auth.sessionId": sessionId },
+    { $unset: { auth: 1 } },
+    { new: true }
+  );
+}
+
+function clearRefreshArtifacts(req, res) {
+  const clientContext = resolveClientContext(req);
+  if (!clientContext.isNativeClient) {
+    TokenService.clearRefreshTokenCookie(res);
+  }
+}
+
+function buildRefreshResponse(accessToken, user, isImpersonating = false) {
+  return {
+    user,
+    access_token: accessToken,
+    expires_in: TokenService.ACCESS_TOKEN_TTL_SECONDS,
+    token_type: "Bearer",
+    is_impersonating: isImpersonating,
+  };
 }
 
 async function buildAuthResponse({
@@ -107,13 +118,13 @@ async function buildAuthResponse({
   accessToken,
   refreshToken,
   clientContext,
+  isImpersonating,
 }) {
-  const response = {
-    user: await userDto.single(user),
-    access_token: accessToken,
-    expires_in: AUTH_RESPONSE_EXPIRES_IN_SECONDS,
-    token_type: "Bearer",
-  };
+  const response = buildRefreshResponse(
+    accessToken,
+    await userDto.single(user),
+    isImpersonating
+  );
 
   if (clientContext.isNativeClient && refreshToken) {
     response.refresh_token = refreshToken;
@@ -125,58 +136,53 @@ async function buildAuthResponse({
 async function issueSession(user, req, res, sessionOptions = {}) {
   const clientContext = resolveClientContext(req);
   const sessionId = TokenService.generateSessionId();
-  const passwordVersion = user.passwordVersion || 0;
-
   const refreshToken = generateRefreshTokenForSession(
     user,
     sessionId,
-    passwordVersion,
     clientContext.audience
   );
-
+  const refreshExpiresAt = TokenService.getExpirationDate(refreshToken);
+  const isImpersonating = !!sessionOptions.impersonatedByUserId;
   const accessToken = generateAccessTokenForSession(
     user,
     sessionId,
-    clientContext.audience
+    clientContext.audience,
+    isImpersonating ? { imp: true } : {}
   );
+  const now = new Date();
 
-  await AuthSessionService.createSession({
-    sessionId,
-    userId: user._id,
-    clientFamily: clientContext.clientFamily,
-    platform: clientContext.platform,
-    refreshTokenHash: TokenService.hashToken(refreshToken),
-    expiresAt: TokenService.getExpirationDate(refreshToken),
-    passwordVersion,
-    impersonatedByUserId: sessionOptions.impersonatedByUserId || null,
-    impersonatedFromSessionId:
-      sessionOptions.impersonatedFromSessionId || null,
-    ip: req.ip,
-    userAgent: req.headers?.["user-agent"] || null,
-    deviceLabel: req.headers?.["x-device-label"] || null,
-  });
-
-  const limitResult = await AuthSessionService.enforceActiveSessionLimit(
+  const updatedUser = await userSchema.findByIdAndUpdate(
     user._id,
-    MAX_ACTIVE_SESSIONS_PER_USER,
-    sessionId
+    {
+      $set: {
+        lastLogin: now,
+        auth: {
+          sessionId,
+          refreshTokenHash: TokenService.hashToken(refreshToken),
+          refreshExpiresAt,
+          clientFamily: clientContext.clientFamily,
+          platform: clientContext.platform,
+          issuedAt: now,
+          lastUsedAt: now,
+          impersonatedByUserId: sessionOptions.impersonatedByUserId || null,
+          impersonatedFromSessionId:
+            sessionOptions.impersonatedFromSessionId || null,
+        },
+      },
+      $unset: {
+        refreshToken: 1,
+        previousRefreshToken: 1,
+        tokenRotationTimestamp: 1,
+      },
+    },
+    { new: true }
   );
-  const revokedByLimit =
-    limitResult?.modifiedCount ?? limitResult?.nModified ?? 0;
-  if (revokedByLimit > 0) {
-    console.info("[AUTH] auth_session_revoked", {
-      userId: user._id.toString(),
-      reason: "session_limit_exceeded",
-      count: revokedByLimit,
-      replacedBySessionId: sessionId,
-    });
-  }
 
   if (!clientContext.isNativeClient) {
     TokenService.setRefreshTokenCookie(res, refreshToken);
   }
 
-  console.info("[AUTH] auth_login_success", {
+  console.info("[AUTH] auth_session_issued", {
     userId: user._id.toString(),
     sessionId,
     platform: clientContext.platform,
@@ -185,26 +191,20 @@ async function issueSession(user, req, res, sessionOptions = {}) {
   });
 
   return buildAuthResponse({
-    user,
+    user: updatedUser,
     accessToken,
     refreshToken,
     clientContext,
+    isImpersonating,
   });
 }
 
-function clearRefreshArtifacts(req, res) {
-  const clientContext = resolveClientContext(req);
-  if (!clientContext.isNativeClient) {
-    TokenService.clearRefreshTokenCookie(res);
-  }
-}
-
-async function revokeSessionByPayload(payload, reason = "logout") {
-  const sessionId = payload?.sid;
-  if (!sessionId) {
-    return;
-  }
-  await AuthSessionService.revokeSession(sessionId, reason);
+function authTerminalResponse(res, status, code, message) {
+  return res.status(status).send({
+    message,
+    code,
+    requiresRelogin: true,
+  });
 }
 
 async function getValidatedGoogleIdentity(tokenGoogle) {
@@ -250,12 +250,10 @@ module.exports = {
       const password = req.body?.password;
 
       if (!email || !password) {
-        return res
-          .status(400)
-          .send({
-            error: "INVALID_LOGIN_REQUEST",
-            message: "Email y contraseña requeridos",
-          });
+        return res.status(400).send({
+          error: "INVALID_LOGIN_REQUEST",
+          message: "Email y contraseña requeridos",
+        });
       }
 
       const user = await userModel.getUserByEmail(email);
@@ -303,359 +301,114 @@ module.exports = {
   async refresh(req, res) {
     try {
       const extracted = TokenService.extractRefreshToken(req);
-
-      if (extracted.source === "conflict") {
-        console.warn("[AUTH] auth_refresh_invalid_cookie", {
-          reason: "conflicting_refresh_token_sources",
-          source: extracted.source,
-          platform: resolveClientContext(req).platform,
-        });
-        clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "Conflicting refresh token sources",
-          requiresRelogin: true,
-        });
-      }
+      const clientContext = resolveClientContext(req);
 
       if (!extracted.token) {
-        console.warn("[AUTH] auth_refresh_missing_token", {
-          reason: "missing_refresh_token",
-          source: extracted.source || null,
-          platform: resolveClientContext(req).platform,
-        });
         clearRefreshArtifacts(req, res);
-        return res
-          .status(401)
-          .send({ message: "No refresh token", requiresRelogin: true });
+        return authTerminalResponse(
+          res,
+          401,
+          "REFRESH_INVALID",
+          "No refresh token"
+        );
       }
 
-      const decoded = TokenService.verifyRefreshToken(extracted.token);
+      const verification = TokenService.verifyRefresh(extracted.token, {
+        audiences: [clientContext.audience],
+      });
+      const decoded = verification.payload;
+
       if (!decoded || decoded.type !== "refresh") {
-        console.warn("[AUTH] auth_refresh_invalid_cookie", {
-          reason: "invalid_refresh_token",
-          source: extracted.source,
-          hasDecodedPayload: !!decoded,
-          tokenType: decoded?.type || null,
-        });
         clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "Invalid refresh token",
-          requiresRelogin: true,
-        });
+        return authTerminalResponse(
+          res,
+          401,
+          verification.code || "REFRESH_INVALID",
+          verification.code === "REFRESH_EXPIRED"
+            ? "Refresh token expired"
+            : "Invalid refresh token"
+        );
       }
 
-      const clientContext = resolveClientContext(req);
       if (decoded.aud !== clientContext.audience) {
-        console.warn("[AUTH] auth_refresh_invalid_cookie", {
-          reason: "invalid_refresh_token_audience",
-          source: extracted.source,
-          expectedAudience: clientContext.audience,
-          tokenAudience: decoded.aud || null,
-          sessionId: decoded.sid || null,
-          userId: decoded.sub || null,
-        });
         clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "Invalid refresh token audience",
-          requiresRelogin: true,
-        });
-      }
-
-      const session = await AuthSessionService.getSessionById(decoded.sid);
-      if (!session || session.revokedAt) {
-        console.warn("[AUTH] auth_refresh_invalid_cookie", {
-          reason: session?.revokedAt ? "session_revoked" : "session_missing",
-          source: extracted.source,
-          sessionId: decoded.sid,
-          userId: decoded.sub,
-          revokedReason: session?.revokedReason || null,
-        });
-        clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "Session revoked",
-          requiresRelogin: true,
-        });
+        return authTerminalResponse(
+          res,
+          401,
+          "REFRESH_INVALID",
+          "Invalid refresh token audience"
+        );
       }
 
       const user = await userSchema.findById(decoded.sub);
       if (!user) {
-        await AuthSessionService.revokeSession(session.sessionId, "user_missing");
-        console.warn("[AUTH] auth_refresh_invalid_cookie", {
-          reason: "user_missing",
-          source: extracted.source,
-          sessionId: session.sessionId,
-          userId: decoded.sub,
-        });
         clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "User not found",
-          requiresRelogin: true,
-        });
+        return authTerminalResponse(res, 401, "REFRESH_INVALID", "User not found");
       }
 
-      const passwordVersion = user.passwordVersion || 0;
-      if (
-        decoded.pver !== passwordVersion ||
-        session.passwordVersion !== passwordVersion
-      ) {
-        await AuthSessionService.revokeSession(
-          session.sessionId,
-          "password_changed"
-        );
-        console.warn("[AUTH] auth_refresh_invalid_cookie", {
-          reason: "password_version_mismatch",
-          source: extracted.source,
-          sessionId: session.sessionId,
-          userId: user._id.toString(),
-          tokenPasswordVersion: decoded.pver,
-          userPasswordVersion: passwordVersion,
-          sessionPasswordVersion: session.passwordVersion,
-        });
-        clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "Session expired by password change",
-          requiresRelogin: true,
-        });
-      }
-
-      if (session.expiresAt && new Date(session.expiresAt) <= new Date()) {
-        await AuthSessionService.revokeSession(session.sessionId, "refresh_expired");
-        console.warn("[AUTH] auth_refresh_invalid_cookie", {
-          reason: "refresh_expired",
-          source: extracted.source,
-          sessionId: session.sessionId,
-          userId: user._id.toString(),
-          expiresAt: session.expiresAt,
-        });
-        clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "Refresh session expired",
-          requiresRelogin: true,
-        });
-      }
-
+      const currentAuth = user.auth || {};
       const currentTokenHash = TokenService.hashToken(extracted.token);
-      const isCurrent = session.refreshTokenHash === currentTokenHash;
-      const isPrevious = session.previousRefreshTokenHash === currentTokenHash;
-      const withinGrace =
-        !!session.rotationTimestamp &&
-        Date.now() - new Date(session.rotationTimestamp).getTime() <
-          REFRESH_GRACE_MS;
-
-      if (!isCurrent) {
-        if (isPrevious && withinGrace) {
-          const accessToken = generateAccessTokenForSession(
-            user,
-            session.sessionId,
-            clientContext.audience
-          );
-
-          if (clientContext.isNativeClient) {
-            const recoveredRefreshToken = generateRefreshTokenForSession(
-              user,
-              session.sessionId,
-              passwordVersion,
-              clientContext.audience
-            );
-            const recoveredSession =
-              await AuthSessionService.updateRotatedRefreshTokenFromPreviousGrace(
-                {
-                  sessionId: session.sessionId,
-                  previousRefreshTokenHash: currentTokenHash,
-                  nextPreviousRefreshTokenHash: session.refreshTokenHash,
-                  nextRefreshTokenHash: TokenService.hashToken(
-                    recoveredRefreshToken
-                  ),
-                  expiresAt:
-                    TokenService.getExpirationDate(recoveredRefreshToken),
-                  passwordVersion,
-                  graceStartedAfter: new Date(Date.now() - REFRESH_GRACE_MS),
-                }
-              );
-
-            if (recoveredSession) {
-              console.info("[AUTH] auth_refresh_previous_grace_rotated", {
-                userId: user._id.toString(),
-                sessionId: session.sessionId,
-                source: extracted.source,
-                platform: clientContext.platform,
-              });
-
-              return res.send(
-                buildRefreshResponse(
-                  accessToken,
-                  recoveredRefreshToken,
-                  clientContext,
-                  {
-                    refresh_recovered_from_previous: true,
-                  }
-                )
-              );
-            }
-
-            console.info("[AUTH] auth_refresh_lost_response_recovered", {
-              userId: user._id.toString(),
-              sessionId: session.sessionId,
-              source: extracted.source,
-              platform: clientContext.platform,
-              reason: "previous_grace_already_rotated",
-            });
-          }
-
-          console.info("[AUTH] auth_refresh_grace_reuse", {
-            userId: user._id.toString(),
-            sessionId: session.sessionId,
-            source: extracted.source,
-          });
-
-          return res.send(
-            buildRefreshResponse(accessToken, null, clientContext, {
-              refresh_already_rotated: true,
-            })
-          );
-        }
-
-        await AuthSessionService.revokeSession(
-          session.sessionId,
-          "refresh_token_reuse_detected"
-        );
-        console.warn("[AUTH] auth_refresh_reuse_detected", {
-          userId: user._id.toString(),
-          sessionId: session.sessionId,
-          source: extracted.source,
-          reason: "refresh_token_reuse_detected",
-          withinGrace,
-        });
+      if (
+        !currentAuth.sessionId ||
+        currentAuth.sessionId !== decoded.sid ||
+        currentAuth.refreshTokenHash !== currentTokenHash ||
+        currentAuth.clientFamily !== clientContext.clientFamily
+      ) {
         clearRefreshArtifacts(req, res);
-        return res.status(401).send({
-          message: "Refresh token reuse detected",
-          requiresRelogin: true,
-        });
+        return authTerminalResponse(
+          res,
+          401,
+          "SESSION_REPLACED",
+          "Session replaced"
+        );
       }
 
-      const nextRefreshToken = generateRefreshTokenForSession(
-        user,
-        session.sessionId,
-        passwordVersion,
-        clientContext.audience
-      );
+      if (
+        currentAuth.refreshExpiresAt &&
+        new Date(currentAuth.refreshExpiresAt) <= new Date()
+      ) {
+        await clearUserAuthIfCurrent(user._id, currentAuth.sessionId);
+        clearRefreshArtifacts(req, res);
+        return authTerminalResponse(
+          res,
+          401,
+          "REFRESH_EXPIRED",
+          "Refresh session expired"
+        );
+      }
 
+      if ((user.passwordVersion || 0) !== (decoded.pver || 0)) {
+        await clearUserAuthIfCurrent(user._id, currentAuth.sessionId);
+        clearRefreshArtifacts(req, res);
+        return authTerminalResponse(
+          res,
+          401,
+          "PASSWORD_CHANGED",
+          "Session expired by password change"
+        );
+      }
+
+      const isImpersonating = !!currentAuth.impersonatedByUserId;
       const accessToken = generateAccessTokenForSession(
         user,
-        session.sessionId,
-        clientContext.audience
+        currentAuth.sessionId,
+        clientContext.audience,
+        isImpersonating ? { imp: true } : {}
       );
 
-      const rotatedSession = await AuthSessionService.updateRotatedRefreshToken({
-        sessionId: session.sessionId,
-        currentRefreshTokenHash: currentTokenHash,
-        nextRefreshTokenHash: TokenService.hashToken(nextRefreshToken),
-        expiresAt: TokenService.getExpirationDate(nextRefreshToken),
-        passwordVersion,
-      });
-
-      if (!rotatedSession) {
-        const latestSession = await AuthSessionService.getSessionById(
-          session.sessionId
-        );
-        const lostRaceWithinGrace =
-          latestSession?.previousRefreshTokenHash === currentTokenHash &&
-          !!latestSession.rotationTimestamp &&
-          Date.now() - new Date(latestSession.rotationTimestamp).getTime() <
-            REFRESH_GRACE_MS &&
-          !latestSession.revokedAt;
-
-        if (lostRaceWithinGrace) {
-          if (clientContext.isNativeClient) {
-            const recoveredRefreshToken = generateRefreshTokenForSession(
-              user,
-              session.sessionId,
-              passwordVersion,
-              clientContext.audience
-            );
-            const recoveredSession =
-              await AuthSessionService.updateRotatedRefreshTokenFromPreviousGrace(
-                {
-                  sessionId: session.sessionId,
-                  previousRefreshTokenHash: currentTokenHash,
-                  nextPreviousRefreshTokenHash:
-                    latestSession.refreshTokenHash || null,
-                  nextRefreshTokenHash: TokenService.hashToken(
-                    recoveredRefreshToken
-                  ),
-                  expiresAt:
-                    TokenService.getExpirationDate(recoveredRefreshToken),
-                  passwordVersion,
-                  graceStartedAfter: new Date(Date.now() - REFRESH_GRACE_MS),
-                }
-              );
-
-            if (recoveredSession) {
-              console.info("[AUTH] auth_refresh_lost_response_recovered", {
-                userId: user._id.toString(),
-                sessionId: session.sessionId,
-                source: extracted.source,
-                platform: clientContext.platform,
-                reason: "lost_rotation_race",
-              });
-
-              return res.send(
-                buildRefreshResponse(
-                  accessToken,
-                  recoveredRefreshToken,
-                  clientContext,
-                  {
-                    refresh_recovered_from_previous: true,
-                  }
-                )
-              );
-            }
-          }
-
-          console.info("[AUTH] auth_refresh_grace_reuse", {
-            userId: user._id.toString(),
-            sessionId: session.sessionId,
-            source: extracted.source,
-            reason: "lost_rotation_race",
-          });
-
-          return res.send(
-            buildRefreshResponse(accessToken, null, clientContext, {
-              refresh_already_rotated: true,
-            })
-          );
-        }
-
-        console.warn("[AUTH] auth_refresh_rotation_conflict", {
-          userId: user._id.toString(),
-          sessionId: session.sessionId,
-          source: extracted.source,
-          platform: clientContext.platform,
-        });
-
-        return res.status(409).send({
-          message: "Refresh token already rotated",
-        });
-      }
-
-      if (!clientContext.isNativeClient) {
-        TokenService.setRefreshTokenCookie(res, nextRefreshToken);
-      }
-
-      const response = buildRefreshResponse(
-        accessToken,
-        nextRefreshToken,
-        clientContext
+      const refreshedUser = await userSchema.findByIdAndUpdate(
+        user._id,
+        { $set: { "auth.lastUsedAt": new Date() } },
+        { new: true }
       );
 
-      console.info("[AUTH] auth_refresh_success", {
-        userId: user._id.toString(),
-        sessionId: session.sessionId,
-        platform: clientContext.platform,
-        source: extracted.source,
-      });
-
-      return res.send(response);
+      return res.send(
+        buildRefreshResponse(
+          accessToken,
+          await userDto.single(refreshedUser),
+          isImpersonating
+        )
+      );
     } catch (error) {
       console.error("Error in auth/refresh:", error);
       return res.status(500).send({ message: "Internal server error" });
@@ -669,24 +422,14 @@ module.exports = {
         ? TokenService.verifyAccessToken(accessToken)
         : null;
 
-      if (accessPayload?.sid) {
-        await AuthSessionService.revokeSession(accessPayload.sid, "logout");
-        console.info("[AUTH] auth_logout_called", {
-          source: "access_token",
-          sessionId: accessPayload.sid,
-          userId: accessPayload.sub || null,
-        });
+      if (accessPayload?.sid && accessPayload?.sub) {
+        await clearUserAuthIfCurrent(accessPayload.sub, accessPayload.sid);
       } else {
         const extracted = TokenService.extractRefreshToken(req);
         if (extracted.token) {
           const refreshPayload = TokenService.verifyRefreshToken(extracted.token);
-          if (refreshPayload?.sid) {
-            await AuthSessionService.revokeSession(refreshPayload.sid, "logout");
-            console.info("[AUTH] auth_logout_called", {
-              source: extracted.source,
-              sessionId: refreshPayload.sid,
-              userId: refreshPayload.sub || null,
-            });
+          if (refreshPayload?.sid && refreshPayload?.sub) {
+            await clearUserAuthIfCurrent(refreshPayload.sub, refreshPayload.sid);
           }
         }
       }
@@ -703,6 +446,7 @@ module.exports = {
   async me(req, res) {
     return res.send({
       user: await userDto.single(req.user),
+      is_impersonating: !!req.user?.auth?.impersonatedByUserId,
     });
   },
 
@@ -724,11 +468,13 @@ module.exports = {
         return res.status(400).send({ message: "Código incorrecto" });
       }
 
-      await userSchema.findByIdAndUpdate(user._id, {
-        $unset: { hash: 1 },
-      });
+      const activatedUser = await userSchema.findByIdAndUpdate(
+        user._id,
+        { $unset: { hash: 1 } },
+        { new: true }
+      );
 
-      return res.status(200).send(await issueSession(user, req, res));
+      return res.status(200).send(await issueSession(activatedUser, req, res));
     } catch (error) {
       console.error("Error en auth/activate:", error);
       return res.status(500).send({ message: "Error interno del servidor" });
@@ -930,10 +676,6 @@ module.exports = {
         return res.status(404).send({ message: "Usuario no encontrado" });
       }
 
-      await userSchema.findByIdAndUpdate(targetUser._id, {
-        $set: { lastLogin: new Date() },
-      });
-
       const response = await issueSession(targetUser, req, res, {
         impersonatedByUserId: req.user._id,
         impersonatedFromSessionId: req.auth.sessionId,
@@ -948,70 +690,26 @@ module.exports = {
 
   async revertImpersonation(req, res) {
     try {
-      const currentSession = await AuthSessionService.getSessionById(
-        req.auth?.sessionId
-      );
-
+      const currentAuth = req.user?.auth || {};
       if (
-        !currentSession ||
-        !currentSession.impersonatedByUserId ||
-        !currentSession.impersonatedFromSessionId
+        !currentAuth.sessionId ||
+        currentAuth.sessionId !== req.auth?.sessionId ||
+        !currentAuth.impersonatedByUserId
       ) {
         return res.status(400).send({ message: "No active impersonation" });
       }
 
-      const adminAccessToken = req.headers?.["x-admin-access-token"];
-      if (!adminAccessToken) {
-        return res.status(401).send({
-          message: "Admin token required",
-          requiresRelogin: true,
-        });
+      const adminUser = await userSchema.findById(currentAuth.impersonatedByUserId);
+      if (!adminUser || !(adminUser.roles || []).includes("admin")) {
+        return authTerminalResponse(
+          res,
+          401,
+          "SESSION_REPLACED",
+          "Invalid impersonation revert"
+        );
       }
 
-      const clientContext = resolveClientContext(req);
-      const adminPayload = TokenService.verifyAccessToken(adminAccessToken, {
-        audiences: [clientContext.audience],
-      });
-
-      if (
-        !adminPayload ||
-        adminPayload.type !== "access" ||
-        !adminPayload.sid ||
-        !adminPayload.sub
-      ) {
-        return res.status(401).send({
-          message: "Invalid admin token",
-          requiresRelogin: true,
-        });
-      }
-
-      const adminSession = await AuthSessionService.getActiveSessionById(
-        adminPayload.sid
-      );
-      const adminUser = await userSchema.findById(adminPayload.sub);
-      const isExpectedAdmin =
-        currentSession.impersonatedByUserId.toString() ===
-          adminPayload.sub.toString() &&
-        currentSession.impersonatedFromSessionId === adminPayload.sid;
-
-      if (
-        !adminSession ||
-        !adminUser ||
-        !(adminUser.roles || []).includes("admin") ||
-        !isExpectedAdmin
-      ) {
-        return res.status(401).send({
-          message: "Invalid impersonation revert",
-          requiresRelogin: true,
-        });
-      }
-
-      await AuthSessionService.revokeSession(
-        currentSession.sessionId,
-        "impersonation_reverted",
-        adminSession.sessionId
-      );
-
+      await clearUserAuthIfCurrent(req.user._id, currentAuth.sessionId);
       return res.status(200).send(await issueSession(adminUser, req, res));
     } catch (error) {
       console.error("Error en auth/impersonate/revert:", error);

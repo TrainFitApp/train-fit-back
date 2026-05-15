@@ -12,6 +12,8 @@
     "verify:product-search-indexes": "node ./scripts/verify-product-search-indexes.js",
     "migrate:custom-recipes": "node ./scripts/migrate-custom-recipes.mjs",
     "migrate:custom-recipes:commit": "node ./scripts/migrate-custom-recipes.mjs --commit",
+    "migrate:auth-single-session": "node ./scripts/migrate-auth-single-session.js",
+    "migrate:auth-single-session:commit": "node ./scripts/migrate-auth-single-session.js --commit",
     "normalize:custom-exercise-set-orders": "node ./scripts/normalize-custom-exercise-set-orders.js",
     "normalize:custom-exercise-set-orders:commit": "node ./scripts/normalize-custom-exercise-set-orders.js --commit"
   },
