@@ -15,55 +15,55 @@ const fromEmail = process.env.FROM_EMAIL;
 const registrationNotificationEmail =
   process.env.REGISTRATION_NOTIFICATION_EMAIL || registerUser;
 
-const createSmtpTransporter = ({ host, port, user, pass }) =>
-  nodemailer.createTransport({
-    host,
-    port: Number(port),
-    secure: String(port) === "465",
-    auth: { user, pass },
-    tls: { minVersion: "TLSv1.2" },
-  });
-
-const registerTransporter = createSmtpTransporter({
-  host: registerHost,
-  port: registerPort,
-  user: registerUser,
-  pass: registerPass,
-});
-
-const suggestionsTransporter = createSmtpTransporter({
-  host: suggestionsHost,
-  port: suggestionsPort,
-  user: suggestionsUser,
-  pass: suggestionsPass,
-});
-
-const sesTransporter = nodemailer.createTransport({
-  host: `email-smtp.${sesRegion || "eu-west-3"}.amazonaws.com`,
-  port: 587,
-  secure: false,
-  auth: {
-    user: sesSmtpUser,
-    pass: sesSmtpPass,
-  },
-  tls: { minVersion: "TLSv1.2" },
-});
-
-Promise.allSettled([
-  registerTransporter.verify(),
-  suggestionsTransporter.verify(),
-  sesTransporter.verify(),
-]).then((results) => {
-  results.forEach((r, i) => {
-    const label =
-      i === 0 ? "Register SMTP" : i === 1 ? "Suggestions SMTP" : "SES SMTP";
-    if (r.status === "fulfilled") {
-      console.log(`${label} ready`);
-    } else {
-      console.warn(`${label} verify failed:`, r.reason?.message || r.reason);
-    }
-  });
-});
+//const createSmtpTransporter = ({ host, port, user, pass }) =>
+//  nodemailer.createTransport({
+//    host,
+//    port: Number(port),
+//    secure: String(port) === "465",
+//    auth: { user, pass },
+//    tls: { minVersion: "TLSv1.2" },
+//  });
+//
+//const registerTransporter = createSmtpTransporter({
+//  host: registerHost,
+//  port: registerPort,
+//  user: registerUser,
+//  pass: registerPass,
+//});
+//
+//const suggestionsTransporter = createSmtpTransporter({
+//  host: suggestionsHost,
+//  port: suggestionsPort,
+//  user: suggestionsUser,
+//  pass: suggestionsPass,
+//});
+//
+//const sesTransporter = nodemailer.createTransport({
+//  host: `email-smtp.${sesRegion || "eu-west-3"}.amazonaws.com`,
+//  port: 587,
+//  secure: false,
+//  auth: {
+//    user: sesSmtpUser,
+//    pass: sesSmtpPass,
+//  },
+//  tls: { minVersion: "TLSv1.2" },
+//});
+//
+//Promise.allSettled([
+//  registerTransporter.verify(),
+//  suggestionsTransporter.verify(),
+//  sesTransporter.verify(),
+//]).then((results) => {
+//  results.forEach((r, i) => {
+//    const label =
+//      i === 0 ? "Register SMTP" : i === 1 ? "Suggestions SMTP" : "SES SMTP";
+//    if (r.status === "fulfilled") {
+//      console.log(`${label} ready`);
+//    } else {
+//      console.warn(`${label} verify failed:`, r.reason?.message || r.reason);
+//    }
+//  });
+//});
 
 /**
  * Valida que un email tenga formato correcto y dominio con registros MX válidos
@@ -92,7 +92,7 @@ const validateEmailExists = async (email) => {
       console.warn(`DNS MX lookup failed for domain ${domain}:`, dnsError.code);
       // Si el error es ETIMEOUT, SERVFAIL, etc., asumimos que puede ser válido para no bloquear
       // Solo rechazamos explícitamente si el dominio no existe (ENOTFOUND) o no tiene MX (ENODATA)
-      if (dnsError.code === 'ENOTFOUND' || dnsError.code === 'ENODATA') {
+      if (dnsError.code === "ENOTFOUND" || dnsError.code === "ENODATA") {
         return false;
       }
       return true; // Ante la duda por fallos de red, permitimos el registro
@@ -285,9 +285,11 @@ const escapeHtml = (value) =>
     .replace(/'/g, "&#39;");
 
 const formatMailValue = (value) => {
-  if (value === undefined || value === null || value === "") return "No informado";
+  if (value === undefined || value === null || value === "")
+    return "No informado";
   if (value instanceof Date) return value.toISOString();
-  if (Array.isArray(value)) return value.length ? value.join(", ") : "No informado";
+  if (Array.isArray(value))
+    return value.length ? value.join(", ") : "No informado";
   if (typeof value === "object") {
     if (value._id) return value._id.toString();
     if (
@@ -312,7 +314,8 @@ const formatRegistrationDate = (value) => {
   if (Number.isNaN(date.getTime())) return formatMailValue(value);
 
   return date.toLocaleString("es-ES", {
-    timeZone: process.env.REGISTRATION_NOTIFICATION_TIME_ZONE || "Europe/Madrid",
+    timeZone:
+      process.env.REGISTRATION_NOTIFICATION_TIME_ZONE || "Europe/Madrid",
   });
 };
 
