@@ -5,29 +5,35 @@
  * and recreates only the minimal, non-overlapping set required by the
  * actual queries in product-dao.js and meal-dao.js (searchAllWithFilters).
  *
- * WHY THIS SCRIPT EXISTS
+ * ROOT CAUSE OF THE PRO BUG (ownFilter + search → nutrition = 0)
  * ─────────────────────────────────────────────────────────────────────
- * In PRO, "added by me" (ownFilter) product searches were returning
- * products with empty (0) nutritional info. The root cause:
+ * When ownFilter=true + search text, meal-dao.js executeProductQuery()
+ * fires 7 parallel queries. Queries 1-6 are regular .find() calls that
+ * return FULL documents (including nutritional fields). Query 7 is a
+ * $text search whose .find() projection { score: { $meta: "textScore" } }
+ * returns ONLY _id and score (MongoDB 4.4+ treats $meta as inclusion).
  *
- *   1. The $text index was { name: "text", brand: "text" } WITHOUT
- *      userId in the compound key. When meal-dao spreads
- *      { ...match, $text: { $search: ... } } with match = { userId: X },
- *      MongoDB MUST use the text index for $text queries, but that index
- *      covers ALL products (3M+). The userId filter is applied as a
- *      post-filter on text-index results. On a huge collection, the text
- *      stage can exhaust its candidate set before finding user products,
- *      returning 0 results (and thus 0 nutrition).
+ * Scoring ensures queries 1-6 (score ≥ 70000) ALWAYS beat query 7
+ * (score ~40000), so the full-doc version wins — IF queries 1-6 succeed.
  *
- *   2. Single-field indexes like nameNormalized_1 don't help queries
- *      that also filter by userId — MongoDB picks one index and the
- *      other condition becomes a filter on fetched documents.
+ * THE PROBLEM: In PRO (3M+ products), queries 1-6 used single-field
+ * indexes (e.g. nameNormalized_1). For { userId: X, nameNormalized: Y },
+ * MongoDB picks nameNormalized_1 → scans ALL "Y" matches across 3M docs
+ * → post-filters by userId. On a huge collection this is a COLLSCAN-like
+ * scan that either times out or returns 0 within the limit. Only query 7
+ * ($text) finds the product → stripped doc → nutrition = 0.
  *
- *   FIX: We create COMPOUND indexes that prefix userId so that every
- *   search path — exact, prefix, startsWith, $text — can narrow to the
- *   user's subset first. Since MongoDB only allows ONE text index per
- *   collection, we include userId as a prefix field in that single
- *   compound text index.
+ * In PRE (small DB), the COLLSCAN finishes quickly, queries 1-6 return
+ * full docs, their higher score wins, nutrition is preserved.
+ *
+ * FIX: Compound indexes { userId: 1, nameNormalized: 1 }, etc. so
+ * queries 1-6 use IXSCAN → instant results → full doc always wins.
+ *
+ * NOTE ON TEXT INDEX: We keep { name: "text", brand: "text" } WITHOUT
+ * userId prefix. MongoDB requires equality match on prefix fields of a
+ * compound text index. CASE 0000 uses $or on userId with $text — a
+ * userId prefix would cause "failed to use text index" error.
+ * The text index result is always beaten by queries 1-6 anyway.
  *
  * USAGE
  * ─────────────────────────────────────────────────────────────────────
@@ -65,126 +71,176 @@ const ok = (...args) => console.log(LOG_PREFIX, "✓", ...args);
 // ─────────────────────────────────────────────────────────────────────
 // INDEX DEFINITIONS — THE SINGLE SOURCE OF TRUTH
 // ─────────────────────────────────────────────────────────────────────
-// Every index below maps to real queries in the codebase.
-// Duplicate / overlapping legacy indexes have been eliminated.
+//
+// QUERY TRACE: meal-dao.js executeProductQuery() with hasSearch=true
+// ─────────────────────────────────────────────────────────────────────
+// When ownFilter=true → match = { userId: ObjectId }
+// 7 queries run in parallel:
+//
+//   Q1  exactNameDocs:      { userId: X, nameNormalized: Y }
+//   Q2  startsWithNameDocs: { userId: X, nameNormalized: { $gte: Y, $lte: Y\uffff } }
+//       .sort({ nameNormalized: 1, _id: 1 })
+//   Q3  exactBrandDocs:     { userId: X, brandNormalized: Y }
+//   Q4  startsWithBrandDocs:{ userId: X, brandNormalized: { $gte: Y, $lte: Y\uffff } }
+//       .sort({ brandNormalized: 1, _id: 1 })
+//   Q5  prefixNameDocs:     { userId: X, namePrefixes: Y }
+//   Q6  prefixBrandDocs:    { userId: X, brandPrefixes: Y }
+//   Q7  textDocs:           { userId: X, $text: { $search: Y } }
+//       → projection strips fields, but Q1-Q6 score higher → full doc wins
+//
+// When CASE 0000 (all products) → match = { $or: [{userId:X},{userId:null},...] }
+//   Q1-Q6 use the same fields but with $or → single-field indexes cover each branch
+//   Q7 uses $text → text index WITHOUT userId prefix (required for $or)
+//
+// When CASE 0010 (verified) → match = { verified: true, $or: [{userId:null},...] }
+//   Needs compound { verified, userId, ... } indexes
+//
+// product-dao.js searchProduct():
+//   Always match = { userId: null } → single-field indexes work fine
+// ─────────────────────────────────────────────────────────────────────
 
 const INDEXES = [
-  // ── 1. BARCODE LOOKUP ──────────────────────────────────────────────
-  // product-dao.js → getProductByCode(): { code, userId }
-  // Also useful for the schema pre("deleteOne") cascade.
+  // ══════════════════════════════════════════════════════════════════════
+  // GROUP A: BARCODE LOOKUP
+  // ══════════════════════════════════════════════════════════════════════
+  // product-dao.js → getProductByCode(): .findOne({ code, userId: X/null })
   {
     keys: { code: 1, userId: 1 },
     options: { name: "idx_code_userId", background: true },
-    reason: "getProductByCode() — look up by barcode, first own then global",
+    reason: "getProductByCode() — barcode scan, first own then global",
   },
 
-  // ── 2. USER PRODUCTS: LIST / SORT ──────────────────────────────────
-  // meal-dao.js → CASE 1000 (ownFilter, no search): .find({ userId }).sort({ name:1, _id:1 })
-  // Also covers CASE 1001 (own + fav) since _id is in $in and userId is equality.
+  // ══════════════════════════════════════════════════════════════════════
+  // GROUP B: OWN-PRODUCT COMPOUND INDEXES (userId prefix)
+  // These are THE FIX. Without them, queries Q1-Q6 do COLLSCAN on 3M+
+  // docs in PRO, timeout, and only the $text result (stripped) survives.
+  // ══════════════════════════════════════════════════════════════════════
+
+  // B1: Listing + sort (no search) — CASE 1000/1001
+  // .find({ userId: X }).sort({ name: 1, _id: 1 })
   {
     keys: { userId: 1, name: 1, _id: 1 },
     options: { name: "idx_userId_name_id", background: true },
-    reason: "Own-product listing with name sort (CASE 1000/1001)",
+    reason: "Q: own-product listing sorted by name (CASE 1000/1001, no search)",
   },
 
-  // ── 3. USER PRODUCTS: EXACT nameNormalized ─────────────────────────
-  // meal-dao.js → executeProductQuery: .find({ ...match, nameNormalized: X })
-  // When match = { userId: ObjectId }, this compound index serves it.
-  // When match = { $or: [{ userId: X }, { userId: null }...] }, the
-  // single-field nameNormalized_1 path (index #7) covers it.
+  // B2: Q1 exact nameNormalized + Q2 startsWith nameNormalized range
+  // .find({ userId: X, nameNormalized: Y }) → equality
+  // .find({ userId: X, nameNormalized: { $gte, $lte } }) → range scan
+  // .sort({ nameNormalized: 1, _id: 1 }) → covered by index order
   {
-    keys: { userId: 1, nameNormalized: 1 },
-    options: { name: "idx_userId_nameNormalized", background: true },
-    reason: "Own-product exact name search (ownFilter + search)",
+    keys: { userId: 1, nameNormalized: 1, _id: 1 },
+    options: { name: "idx_userId_nameNormalized_id", background: true },
+    reason: "Q1+Q2: own exact/startsWith name search — THE CRITICAL FIX",
   },
 
-  // ── 4. USER PRODUCTS: EXACT brandNormalized ────────────────────────
+  // B3: Q3 exact brandNormalized + Q4 startsWith brandNormalized range
+  // .find({ userId: X, brandNormalized: Y })
+  // .find({ userId: X, brandNormalized: { $gte, $lte } })
+  // .sort({ brandNormalized: 1, _id: 1 })
   {
-    keys: { userId: 1, brandNormalized: 1 },
-    options: { name: "idx_userId_brandNormalized", background: true },
-    reason: "Own-product exact brand search (ownFilter + search)",
+    keys: { userId: 1, brandNormalized: 1, _id: 1 },
+    options: { name: "idx_userId_brandNormalized_id", background: true },
+    reason: "Q3+Q4: own exact/startsWith brand search",
   },
 
-  // ── 5. USER PRODUCTS: nameNormalized RANGE (startsWith) ────────────
-  // meal-dao.js → .find({ ...match, nameNormalized: { $gte, $lte } })
-  // The compound { userId, nameNormalized } already covers this (range
-  // scan on nameNormalized after equality on userId). No extra index needed.
-  // → Covered by index #3.
-
-  // ── 6. USER PRODUCTS: PREFIX ARRAYS ────────────────────────────────
-  // meal-dao.js → .find({ ...match, namePrefixes: X })
+  // B4: Q5 prefix name array lookup
+  // .find({ userId: X, namePrefixes: Y })
   {
     keys: { userId: 1, namePrefixes: 1 },
     options: { name: "idx_userId_namePrefixes", background: true },
-    reason: "Own-product prefix name search (ownFilter + search)",
+    reason: "Q5: own prefix name search",
   },
+
+  // B5: Q6 prefix brand array lookup
+  // .find({ userId: X, brandPrefixes: Y })
   {
     keys: { userId: 1, brandPrefixes: 1 },
     options: { name: "idx_userId_brandPrefixes", background: true },
-    reason: "Own-product prefix brand search (ownFilter + search)",
+    reason: "Q6: own prefix brand search",
   },
 
-  // ── 7. GLOBAL PRODUCTS: SINGLE-FIELD SEARCH INDEXES ────────────────
-  // product-dao.js → searchProduct(): queries with { userId: null, nameNormalized/... }
-  // meal-dao.js → CASE 0000 (no filters, all products): $or userId combos
-  // For $or queries, MongoDB can use separate indexes per branch.
+  // ══════════════════════════════════════════════════════════════════════
+  // GROUP C: GLOBAL / $or PRODUCT INDEXES (single-field)
+  // For CASE 0000 with $or on userId, MongoDB uses INDEX MERGE —
+  // each $or branch picks the best single-field index.
+  // Also used by product-dao.js searchProduct() (always userId: null).
+  // ══════════════════════════════════════════════════════════════════════
+
+  // C1: exact global name
   {
     keys: { nameNormalized: 1 },
     options: { name: "idx_nameNormalized", background: true },
-    reason: "Global product exact name search + CASE 0000 $or branch",
+    reason: "Global Q1: exact name search + $or branch for CASE 0000",
   },
+
+  // C2: exact global brand
   {
     keys: { brandNormalized: 1 },
     options: { name: "idx_brandNormalized", background: true },
-    reason: "Global product exact brand search + CASE 0000 $or branch",
+    reason: "Global Q3: exact brand search + $or branch for CASE 0000",
   },
+
+  // C3: global prefix name
   {
     keys: { namePrefixes: 1 },
     options: { name: "idx_namePrefixes", background: true },
-    reason: "Global product prefix name search",
+    reason: "Global Q5: prefix name search",
   },
+
+  // C4: global prefix brand
   {
     keys: { brandPrefixes: 1 },
     options: { name: "idx_brandPrefixes", background: true },
-    reason: "Global product prefix brand search",
+    reason: "Global Q6: prefix brand search",
   },
 
-  // ── 8. VERIFIED + GLOBAL: SHIELD FILTER ────────────────────────────
-  // meal-dao.js → CASE 0010: { verified, $or: [{userId:null},{userId:{$exists:false}}] }
-  // meal-dao.js → CASE 0011: { _id: $in, verified }
+  // ══════════════════════════════════════════════════════════════════════
+  // GROUP D: VERIFIED + SHIELD FILTER (CASE 0010, 0011)
+  // ══════════════════════════════════════════════════════════════════════
+
+  // D1: Listing verified products sorted by name
+  // .find({ verified: true, $or: [{userId:null},{userId:{$exists:false}}] })
   {
     keys: { verified: 1, userId: 1, name: 1 },
     options: { name: "idx_verified_userId_name", background: true },
-    reason: "Verified-filter listing with name sort (CASE 0010)",
+    reason: "CASE 0010: verified product listing with name sort",
   },
+
+  // D2: Verified + exact name search
   {
     keys: { verified: 1, userId: 1, nameNormalized: 1 },
     options: { name: "idx_verified_userId_nameNormalized", background: true },
-    reason: "Verified-filter exact name search (CASE 0010 + search)",
+    reason: "CASE 0010 + search: verified exact name",
   },
+
+  // D3: Verified + prefix name search
   {
     keys: { verified: 1, userId: 1, namePrefixes: 1 },
     options: { name: "idx_verified_userId_namePrefixes", background: true },
-    reason: "Verified-filter prefix name search (CASE 0010 + search)",
+    reason: "CASE 0010 + search: verified prefix name",
   },
 
-  // ── 9. TEXT INDEX (ONE PER COLLECTION) ─────────────────────────────
-  // CRITICAL: MongoDB allows only ONE text index. We include userId as
-  // a prefix so that { userId: X, $text: { $search } } can narrow the
-  // text search to only that user's products instead of scanning 3M+.
+  // ══════════════════════════════════════════════════════════════════════
+  // GROUP E: TEXT INDEX (ONE PER COLLECTION)
+  // ══════════════════════════════════════════════════════════════════════
+  // IMPORTANT: NO userId prefix. MongoDB requires equality match on all
+  // prefix fields of a compound text index. CASE 0000 uses:
+  //   { $or: [{userId:X},{userId:null},{userId:{$exists:false}}], $text: ... }
+  // An $or is NOT an equality match → compound text index would fail with
+  // "failed to use text index to satisfy $text query".
   //
-  // For global queries (userId: null), MongoDB still uses this index —
-  // the userId equality prefix filters to userId=null first, then text.
-  //
-  // This is THE fix for the "own products return 0 nutrition" bug.
+  // This is safe because Q1-Q6 always score higher (≥70000) than Q7
+  // (~40000), so the $text result (which may have stripped fields due
+  // to the $meta projection) NEVER wins as the final candidate.
   {
-    keys: { userId: 1, name: "text", brand: "text" },
+    keys: { name: "text", brand: "text" },
     options: {
-      name: "idx_userId_text_name_brand",
+      name: "idx_text_name_brand",
       background: true,
       weights: { name: 10, brand: 4 },
     },
-    reason: "$text search — compound with userId so own-product $text queries work",
+    reason: "Q7: $text fulltext search — no userId prefix (required for $or in CASE 0000)",
   },
 ];
 
@@ -318,7 +374,7 @@ async function backfillSearchFields() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// STEP 4: VERIFY — run explain() on critical query patterns
+// STEP 4: VERIFY — run explain() on ALL critical query patterns
 // ─────────────────────────────────────────────────────────────────────
 function collectStageNames(node, acc = new Set()) {
   if (!node || typeof node !== "object") return acc;
@@ -358,48 +414,82 @@ async function verifyIndexUsage(collection) {
     return;
   }
 
-  // Use a fake ObjectId for the userId equality filter
   const fakeUserId = new mongoose.Types.ObjectId();
+  const queryUpperBound = "pollo\uffff";
 
+  // Every query that executeProductQuery() fires, for both ownFilter and global
   const QUERIES = [
+    // ── OWN PRODUCT QUERIES (ownFilter=true, CASE 1000) ──────────────
     {
-      label: "Global exact nameNormalized",
-      query: { userId: null, nameNormalized: "pollo" },
-    },
-    {
-      label: "Global namePrefixes",
-      query: { userId: null, namePrefixes: "poll" },
-    },
-    {
-      label: "Global $text",
-      query: { userId: null, $text: { $search: "pollo" } },
-      projection: { score: { $meta: "textScore" } },
-      sort: { score: { $meta: "textScore" } },
-    },
-    {
-      label: "Own exact nameNormalized (ownFilter)",
+      label: "OWN Q1: exact nameNormalized",
       query: { userId: fakeUserId, nameNormalized: "pollo" },
     },
     {
-      label: "Own namePrefixes (ownFilter)",
+      label: "OWN Q2: startsWith nameNormalized (range)",
+      query: { userId: fakeUserId, nameNormalized: { $gte: "pollo", $lte: queryUpperBound } },
+      sort: { nameNormalized: 1, _id: 1 },
+    },
+    {
+      label: "OWN Q3: exact brandNormalized",
+      query: { userId: fakeUserId, brandNormalized: "pollo" },
+    },
+    {
+      label: "OWN Q4: startsWith brandNormalized (range)",
+      query: { userId: fakeUserId, brandNormalized: { $gte: "pollo", $lte: queryUpperBound } },
+      sort: { brandNormalized: 1, _id: 1 },
+    },
+    {
+      label: "OWN Q5: namePrefixes",
       query: { userId: fakeUserId, namePrefixes: "poll" },
     },
     {
-      label: "Own $text (ownFilter) ← THE BUG FIX",
+      label: "OWN Q6: brandPrefixes",
+      query: { userId: fakeUserId, brandPrefixes: "poll" },
+    },
+    {
+      label: "OWN Q7: $text",
       query: { userId: fakeUserId, $text: { $search: "pollo" } },
       projection: { score: { $meta: "textScore" } },
       sort: { score: { $meta: "textScore" } },
     },
+    // ── OWN: no search, just listing ─────────────────────────────────
     {
-      label: "Verified global listing",
-      query: { verified: true, userId: null },
+      label: "OWN listing: sort by name (no search)",
+      query: { userId: fakeUserId },
+      sort: { name: 1, _id: 1 },
+    },
+    // ── GLOBAL QUERIES (product-dao.js searchProduct) ────────────────
+    {
+      label: "GLOBAL Q1: exact nameNormalized",
+      query: { userId: null, nameNormalized: "pollo" },
     },
     {
-      label: "Barcode lookup (own)",
+      label: "GLOBAL Q5: namePrefixes",
+      query: { userId: null, namePrefixes: "poll" },
+    },
+    {
+      label: "GLOBAL Q7: $text",
+      query: { userId: null, $text: { $search: "pollo" } },
+      projection: { score: { $meta: "textScore" } },
+      sort: { score: { $meta: "textScore" } },
+    },
+    // ── VERIFIED (CASE 0010) ─────────────────────────────────────────
+    {
+      label: "VERIFIED listing",
+      query: { verified: true, userId: null },
+      sort: { name: 1 },
+    },
+    {
+      label: "VERIFIED + search nameNormalized",
+      query: { verified: true, userId: null, nameNormalized: "pollo" },
+    },
+    // ── BARCODE ──────────────────────────────────────────────────────
+    {
+      label: "BARCODE own",
       query: { code: "8410128000000", userId: fakeUserId },
     },
     {
-      label: "Barcode lookup (global)",
+      label: "BARCODE global",
       query: { code: "8410128000000", userId: null },
     },
   ];
