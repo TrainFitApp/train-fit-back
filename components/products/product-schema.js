@@ -83,18 +83,11 @@ const ProductSchema = Schema({
   userId: { type: Schema.Types.ObjectId, ref: "User", default: null },
 });
 
-// Índices para optimizar búsquedas de productos sin regex
-ProductSchema.index({ nameNormalized: 1 }, { background: true });
-ProductSchema.index({ brandNormalized: 1 }, { background: true });
-ProductSchema.index({ namePrefixes: 1 }, { background: true });
-ProductSchema.index({ brandPrefixes: 1 }, { background: true });
-ProductSchema.index(
-  { name: "text", brand: "text" },
-  { weights: { name: 10, brand: 4 }, background: true },
-);
-ProductSchema.index({ userId: 1, name: 1 }, { background: true });
-ProductSchema.index({ verified: 1, userId: 1, nameNormalized: 1 }, { background: true });
-ProductSchema.index({ verified: 1, userId: 1, namePrefixes: 1 }, { background: true });
+// ─── INDEXES ───────────────────────────────────────────────────────────
+// All product indexes are managed by: scripts/rebuild-product-indexes.js
+// Run:  npm run rebuild:product-indexes
+// Do NOT define indexes here — the script is the single source of truth.
+// ───────────────────────────────────────────────────────────────────────
 
 // Cascade: when a product is deleted, clean up CustomProducts referencing it
 const handleDeleteOne = async function (next) {
