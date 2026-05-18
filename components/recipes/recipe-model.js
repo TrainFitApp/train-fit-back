@@ -21,8 +21,8 @@ module.exports = {
     return recipeDao.deleteRecipe(id);
   },
 
-  async searchRecipes(page, limit, search, userId) {
-    return recipeDao.searchRecipes(page, limit, search, userId);
+  async searchRecipes(page, limit, search, userId, filters) {
+    return recipeDao.searchRecipes(page, limit, search, userId, filters);
   },
 
   async getUserRecipes(userId, page, limit) {

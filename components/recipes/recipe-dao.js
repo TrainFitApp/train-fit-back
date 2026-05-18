@@ -12,6 +12,25 @@ const dietDayUtil = require("../dietDays/diet-days-util");
 const recipeMergeService = require("./recipe-merge.service");
 
 const customProductSchema = require("../customProducts/custom-product-schema");
+const mongoose = require("mongoose");
+const {
+  buildSearchFields,
+  normalizeSearchText,
+  splitSearchTokens,
+  hasEditDistanceOneOrLess,
+} = require("../util/search-index");
+
+function toObjectId(id) {
+  if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
+  return new mongoose.Types.ObjectId(id);
+}
+
+function toComparableId(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value.toString) return value.toString();
+  return String(value);
+}
 
 module.exports = {
   hasOwn(value, key) {
@@ -203,6 +222,9 @@ module.exports = {
       recipe.customProducts = await this.syncRecipeCustomProducts(
         recipe.customProducts || [],
       );
+      const searchFields = buildSearchFields(recipe);
+      recipe.nameNormalized = searchFields.nameNormalized;
+      recipe.namePrefixes = searchFields.namePrefixes;
 
       return await recipeSchema.create(recipe);
     } catch (err) {
@@ -226,6 +248,12 @@ module.exports = {
           currentRecipe.customProducts || [],
         );
         await this.rebaseCustomRecipesForRecipe(id, recipe.customProducts);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(recipe, "name")) {
+        const searchFields = buildSearchFields(recipe);
+        recipe.nameNormalized = searchFields.nameNormalized;
+        recipe.namePrefixes = searchFields.namePrefixes;
       }
 
       return await recipeSchema.findByIdAndUpdate(
@@ -273,22 +301,229 @@ module.exports = {
     return recipeSchema.findByIdAndDelete(id);
   },
 
-  async searchRecipes(page, limit, search, userId) {
-    // All recipes view: current user's recipes + global recipes.
-    const visibilityFilter = userId
-      ? { $or: [{ userId }, { userId: { $exists: false } }] }
-      : { userId: { $exists: false } };
+  async searchRecipes(page, limit, search, userId, filters = {}) {
+    const ownOnly = !!filters.ownOnly;
+    const favoritesOnly = !!filters.favoritesOnly;
+    const verifiedOnly = !!filters.verifiedOnly;
+    const userObjectId = toObjectId(userId);
+    const pageValue = Math.max(0, parseInt((page || 0).toString(), 10));
+    const limitValue = Math.max(1, parseInt((limit || 10).toString(), 10));
+    const skipValue = pageValue * limitValue;
+    const trimmedSearch = String(search || "").trim();
+    const normalizedSearchQuery = normalizeSearchText(trimmedSearch);
+    const searchTerms = splitSearchTokens(trimmedSearch);
+    const hasSearch = normalizedSearchQuery.length > 0;
+    const typoEnabled = normalizedSearchQuery.length > 2;
+    const queryUpperBound = `${normalizedSearchQuery}\uffff`;
+    const candidateLimitPerStage = 200;
 
-    const query = {
-      ...visibilityFilter,
-      name: { $regex: search, $options: "i" },
+    if ((ownOnly || favoritesOnly) && !userObjectId) {
+      return [];
+    }
+
+    let archivedRecipeIds = [];
+    if (favoritesOnly) {
+      const userDoc = await userSchema.findById(userObjectId).select("archivedRecipes");
+      archivedRecipeIds = userDoc?.archivedRecipes || [];
+      if (!archivedRecipeIds.length) {
+        return [];
+      }
+    }
+
+    const visibilityClauses = [];
+    if (ownOnly) {
+      const ownClause = { userId: userObjectId };
+      if (verifiedOnly) {
+        ownClause.verified = true;
+      }
+      visibilityClauses.push(ownClause);
+    } else {
+      if (verifiedOnly) {
+        visibilityClauses.push({ verified: true });
+      } else {
+        visibilityClauses.push({ verified: true });
+        if (userObjectId) {
+          visibilityClauses.push({ userId: userObjectId });
+        }
+      }
+    }
+
+    const baseQuery =
+      visibilityClauses.length === 1
+        ? { ...visibilityClauses[0] }
+        : { $or: visibilityClauses };
+
+    if (favoritesOnly) {
+      baseQuery._id = { $in: archivedRecipeIds };
+    }
+
+    if (!hasSearch) {
+      return recipeSchema
+        .find(baseQuery)
+        .sort({ name: 1, _id: 1 })
+        .skip(skipValue)
+        .limit(limitValue)
+        .exec();
+    }
+
+    const candidatesById = new Map();
+    const upsertCandidate = (doc, score, stagePriority) => {
+      if (!doc?._id) return;
+      const key = toComparableId(doc._id);
+      const current = candidatesById.get(key);
+      if (
+        !current ||
+        score > current.score ||
+        (score === current.score && stagePriority > current.stagePriority)
+      ) {
+        candidatesById.set(key, { doc, score, stagePriority });
+      }
     };
 
-    return recipeSchema
-      .find(query)
-      .skip(page * limit)
-      .limit(limit)
-      .exec();
+    const [exactDocs, startsWithDocs, prefixDocs, textDocs, missingDerivedDocs] =
+      await Promise.all([
+        recipeSchema
+          .find({ ...baseQuery, nameNormalized: normalizedSearchQuery })
+          .limit(candidateLimitPerStage)
+          .lean()
+          .exec(),
+        recipeSchema
+          .find({
+            ...baseQuery,
+            nameNormalized: {
+              $gte: normalizedSearchQuery,
+              $lte: queryUpperBound,
+            },
+          })
+          .sort({ nameNormalized: 1, _id: 1 })
+          .limit(candidateLimitPerStage)
+          .lean()
+          .exec(),
+        recipeSchema
+          .find({ ...baseQuery, namePrefixes: normalizedSearchQuery })
+          .limit(candidateLimitPerStage)
+          .lean()
+          .exec(),
+        recipeSchema
+          .find(
+            { ...baseQuery, $text: { $search: trimmedSearch } },
+            { score: { $meta: "textScore" } },
+          )
+          .sort({ score: { $meta: "textScore" } })
+          .limit(candidateLimitPerStage)
+          .lean()
+          .exec(),
+        recipeSchema
+          .find({
+            $and: [
+              baseQuery,
+              {
+                $or: [
+                  { nameNormalized: { $exists: false } },
+                  { namePrefixes: { $exists: false } },
+                ],
+              },
+            ],
+          })
+          .limit(300)
+          .lean()
+          .exec(),
+      ]);
+
+    for (const doc of exactDocs) upsertCandidate(doc, 100000, 3);
+    for (const doc of startsWithDocs) upsertCandidate(doc, 85000, 2);
+    for (const doc of prefixDocs) upsertCandidate(doc, 70000, 1);
+    for (const doc of textDocs) {
+      upsertCandidate(doc, 40000 + Number(doc.score || 0) * 1200, 0);
+    }
+
+    for (const doc of missingDerivedDocs) {
+      const searchFields = buildSearchFields(doc);
+      const enrichedDoc = {
+        ...doc,
+        nameNormalized: searchFields.nameNormalized,
+        namePrefixes: searchFields.namePrefixes,
+      };
+
+      if (enrichedDoc.nameNormalized === normalizedSearchQuery) {
+        upsertCandidate(enrichedDoc, 95000, 2);
+        continue;
+      }
+
+      if (Array.isArray(enrichedDoc.namePrefixes)) {
+        if (enrichedDoc.namePrefixes.includes(normalizedSearchQuery)) {
+          upsertCandidate(enrichedDoc, 68000, 1);
+          continue;
+        }
+      }
+
+      if (enrichedDoc.nameNormalized?.includes(normalizedSearchQuery)) {
+        upsertCandidate(enrichedDoc, 30000, 0);
+      }
+    }
+
+    const scoredCandidates = Array.from(candidatesById.values()).map(
+      (candidate) => {
+        const nameNormalized = normalizeSearchText(
+          candidate.doc.nameNormalized || candidate.doc.name,
+        );
+        const nameTokens = splitSearchTokens(nameNormalized);
+        let score = candidate.score;
+        let matchPriority = 0;
+
+        if (nameNormalized === normalizedSearchQuery) matchPriority = 900;
+        else if (nameNormalized.startsWith(`${normalizedSearchQuery} `)) {
+          matchPriority = 850;
+        } else if (nameNormalized.startsWith(normalizedSearchQuery)) {
+          matchPriority = 820;
+        } else if (nameTokens.includes(normalizedSearchQuery)) {
+          matchPriority = 780;
+        } else if (
+          nameTokens.some((token) => token.startsWith(normalizedSearchQuery))
+        ) {
+          matchPriority = 740;
+        } else if (nameNormalized.includes(normalizedSearchQuery)) {
+          matchPriority = 700;
+        }
+
+        for (const term of searchTerms) {
+          if (nameTokens.includes(term)) score += 1800;
+          else if (nameTokens.some((token) => token.startsWith(term))) {
+            score += 650;
+          }
+
+          if (
+            typoEnabled &&
+            nameTokens.some((token) => hasEditDistanceOneOrLess(token, term))
+          ) {
+            score += 350;
+          }
+        }
+
+        return {
+          ...candidate,
+          score,
+          matchPriority,
+        };
+      },
+    );
+
+    scoredCandidates.sort((left, right) => {
+      if (left.matchPriority !== right.matchPriority) {
+        return right.matchPriority - left.matchPriority;
+      }
+      if (left.score !== right.score) return right.score - left.score;
+      if (left.stagePriority !== right.stagePriority) {
+        return right.stagePriority - left.stagePriority;
+      }
+      const nameOrder = (left.doc.name || "").localeCompare(right.doc.name || "");
+      if (nameOrder !== 0) return nameOrder;
+      return toComparableId(left.doc._id).localeCompare(toComparableId(right.doc._id));
+    });
+
+    return scoredCandidates
+      .slice(skipValue, skipValue + limitValue)
+      .map((candidate) => candidate.doc);
   },
 
   async composeRecipe(payload, userId) {
@@ -409,44 +644,22 @@ module.exports = {
     }
   },
 
-  async getUserRecipes(userId, page, limit) {
-    return recipeSchema
-      .find({ userId: userId })
-      .skip(page * limit)
-      .limit(limit)
-      .exec();
+  async getUserRecipes(userId, page, limit, search = "") {
+    return this.searchRecipes(page, limit, search, userId, {
+      ownOnly: true,
+    });
   },
 
   async getVerifiedRecipes(page, limit, search) {
-    const query = search
-      ? { verified: true, name: { $regex: search, $options: "i" } }
-      : { verified: true };
-
-    return recipeSchema
-      .find(query)
-      .skip(page * limit)
-      .limit(limit)
-      .exec();
+    return this.searchRecipes(page, limit, search, null, {
+      verifiedOnly: true,
+    });
   },
 
   async getArchivedRecipes(userId, page, limit, search) {
-    const user = await userSchema.findById(userId).select("archivedRecipes");
-    if (!user || !user.archivedRecipes || user.archivedRecipes.length === 0) {
-      return [];
-    }
-
-    const query = search
-      ? {
-          _id: { $in: user.archivedRecipes },
-          name: { $regex: search, $options: "i" },
-        }
-      : { _id: { $in: user.archivedRecipes } };
-
-    return recipeSchema
-      .find(query)
-      .skip(page * limit)
-      .limit(limit)
-      .exec();
+    return this.searchRecipes(page, limit, search, userId, {
+      favoritesOnly: true,
+    });
   },
 
   async toggleArchivedRecipe(userId, recipeId) {

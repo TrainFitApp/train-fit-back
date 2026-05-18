@@ -217,6 +217,9 @@ module.exports = {
 
           return !isOperatorObject;
         })();
+        const fallbackUserScopeId = hasSpecificUserScope
+          ? toObjectId(match.userId) || match.userId
+          : ownPriorityUserId;
 
         // Fast-path: sin búsqueda para scope de usuario concreto
         if (!hasSearch && hasSpecificUserScope) {
@@ -360,19 +363,31 @@ module.exports = {
 
         // Fallback for legacy own products missing derived search fields.
         // Keep this lightweight to avoid UI lag.
-        if (hasSpecificUserScope) {
+        if (fallbackUserScopeId) {
+          const missingDerivedQuery = {
+            userId: fallbackUserScopeId,
+            $or: [
+              { nameNormalized: { $exists: false } },
+              { brandNormalized: { $exists: false } },
+              { namePrefixes: { $exists: false } },
+              { brandPrefixes: { $exists: false } },
+            ],
+          };
+
+          if (
+            match &&
+            Object.prototype.hasOwnProperty.call(match, "verified") &&
+            typeof match.verified === "boolean"
+          ) {
+            missingDerivedQuery.verified = match.verified;
+          }
+
+          if (match && Object.prototype.hasOwnProperty.call(match, "_id")) {
+            missingDerivedQuery._id = match._id;
+          }
+
           const missingDerivedDocs = await productSchema
-            .find(
-              {
-                ...match,
-                $or: [
-                  { nameNormalized: { $exists: false } },
-                  { brandNormalized: { $exists: false } },
-                  { namePrefixes: { $exists: false } },
-                  { brandPrefixes: { $exists: false } },
-                ],
-              },
-            )
+            .find(missingDerivedQuery)
             .limit(500)
             .lean()
             .exec();
@@ -555,6 +570,58 @@ module.exports = {
         // ========================================================================
         // RECIPE CASES (01xx)
         // ========================================================================
+
+        // CASE 1100: Own Recipes Only
+        case "1100": {
+          if (!userObjectId) return [];
+          const query = buildRegexQuery({ userId: userObjectId });
+          docs = await executeRecipeQuery(query);
+          break;
+        }
+
+        // CASE 1110: Own Recipes + Verified
+        case "1110": {
+          if (!userObjectId) return [];
+          const query = buildRegexQuery({
+            userId: userObjectId,
+            verified: shieldFilter,
+          });
+          docs = await executeRecipeQuery(query);
+          break;
+        }
+
+        // CASE 1101: Own Recipes + Favorited
+        case "1101": {
+          if (!userObjectId) return [];
+          if (!archivedRecipes.length) {
+            docs = [];
+            break;
+          }
+
+          const query = buildRegexQuery({
+            userId: userObjectId,
+            _id: { $in: archivedRecipes },
+          });
+          docs = await executeRecipeQuery(query);
+          break;
+        }
+
+        // CASE 1111: Own Recipes + Verified + Favorited
+        case "1111": {
+          if (!userObjectId) return [];
+          if (!archivedRecipes.length) {
+            docs = [];
+            break;
+          }
+
+          const query = buildRegexQuery({
+            userId: userObjectId,
+            verified: shieldFilter,
+            _id: { $in: archivedRecipes },
+          });
+          docs = await executeRecipeQuery(query);
+          break;
+        }
 
         // CASE 0100: All Recipes (No Filters)
         case "0100": {

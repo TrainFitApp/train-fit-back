@@ -8,6 +8,8 @@ const RecipeSchema = Schema(
       type: String,
       required: true,
     },
+    nameNormalized: String,
+    namePrefixes: [String],
     // Descripción opcional
     description: String,
     // Array de CustomProducts (referencias inmutables)

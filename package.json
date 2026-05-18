@@ -5,18 +5,7 @@
   "scripts": {
     "start": "node ./bin/www",
     "serve": "node --watch bin/www",
-    "help:product-search-scripts": "node -e \"console.log('Product search scripts:\\n- create:product-search-indexes => Crea/asegura todos los indices de products (legacy + nuevos).\\n- backfill:product-search-fields => Rellena nameNormalized/brandNormalized/namePrefixes/brandPrefixes en todos los productos.\\n- verify:product-search-indexes -- <term> => Ejecuta explain() para validar uso de indices y detectar COLLSCAN.\\n- reset:product-search-stack [-- --skip-drop|--skip-backfill|--skip-verify|--terms=a,b] => Drop indexes, recreate, backfill y verify en cadena.');\"",
-    "rebuild:product-indexes": "node ./scripts/rebuild-product-indexes.js",
-    "reset:product-search-stack": "node ./scripts/reset-product-search-stack.js",
-    "create:product-search-indexes": "node ./scripts/create-product-search-indexes.js",
-    "backfill:product-search-fields": "node ./scripts/backfill-product-search-fields.js",
-    "verify:product-search-indexes": "node ./scripts/verify-product-search-indexes.js",
-    "migrate:custom-recipes": "node ./scripts/migrate-custom-recipes.mjs",
-    "migrate:custom-recipes:commit": "node ./scripts/migrate-custom-recipes.mjs --commit",
-    "migrate:auth-single-session": "node ./scripts/migrate-auth-single-session.js",
-    "migrate:auth-single-session:commit": "node ./scripts/migrate-auth-single-session.js --commit",
-    "normalize:custom-exercise-set-orders": "node ./scripts/normalize-custom-exercise-set-orders.js",
-    "normalize:custom-exercise-set-orders:commit": "node ./scripts/normalize-custom-exercise-set-orders.js --commit"
+    "rebuild:search-indexes": "node scripts/rebuild-search-indexes.js"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",

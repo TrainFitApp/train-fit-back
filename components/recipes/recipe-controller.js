@@ -1,6 +1,11 @@
 const recipeModel = require("./recipe-model");
-const userModel = require("../users/model");
 const featureAccessService = require("../billing/feature-access-service");
+
+function toBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true";
+  return !!value;
+}
 
 const controller = {
   async getRecipeById(req, res, next) {
@@ -21,12 +26,18 @@ const controller = {
       const limit = parseInt((req.query.limit || 10).toString(), 10);
       const search = req.query.search || req.body.search || "";
       const userId = req.user.id;
+      const filters = {
+        ownOnly: toBoolean(req.query.own || req.body.own),
+        favoritesOnly: toBoolean(req.query.fav || req.body.fav),
+        verifiedOnly: toBoolean(req.query.verified || req.body.verified),
+      };
 
       const recipes = await recipeModel.searchRecipes(
         page,
         limit,
         search,
         userId,
+        filters,
       );
       return res.json(recipes);
     } catch (error) {
@@ -38,9 +49,10 @@ const controller = {
     try {
       const page = parseInt((req.query.page || 0).toString(), 10);
       const limit = parseInt((req.query.limit || 20).toString(), 10);
+      const search = req.query.search || "";
       const userId = req.user.id;
 
-      const recipes = await recipeModel.getUserRecipes(userId, page, limit);
+      const recipes = await recipeModel.getUserRecipes(userId, page, limit, search);
       return res.json(recipes);
     } catch (error) {
       next(error);
