@@ -21,9 +21,50 @@ function buildMongoUri() {
   const dbName = process.env.MONGODB_DB;
   const user = process.env.MONGODB_USER;
   const pass = process.env.MONGODB_PASS;
+  const preferHost = String(process.env.MONGODB_PREFER_HOST || "").toLowerCase();
+  const preferCluster = String(process.env.MONGODB_PREFER_CLUSTER || "").toLowerCase();
 
   if (!dbName) {
     throw new Error("Set MONGODB_DB, or provide MONGODB_URI/MONGO_URI.");
+  }
+
+  const shouldPreferHost = preferHost === "1" || preferHost === "true";
+  const shouldPreferCluster = preferCluster === "1" || preferCluster === "true";
+  const hasRemoteCluster = Boolean(cluster) && !isLocalHost(cluster);
+
+  if (shouldPreferHost && host) {
+    if (host.startsWith("mongodb://") || host.startsWith("mongodb+srv://")) {
+      return host;
+    }
+
+    const localHost = withLocalPort(host, port);
+    const auth =
+      user && pass
+        ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@`
+        : "";
+    return `mongodb://${auth}${localHost}/${dbName}`;
+  }
+
+  if ((shouldPreferCluster || hasRemoteCluster) && cluster) {
+    if (cluster.startsWith("mongodb://") || cluster.startsWith("mongodb+srv://")) {
+      return cluster;
+    }
+
+    if (isLocalHost(cluster)) {
+      return `mongodb://${withLocalPort(cluster, port)}/${dbName}`;
+    }
+
+    if (!user || !pass) {
+      throw new Error("Set MONGODB_USER and MONGODB_PASS for Atlas connections.");
+    }
+
+    const atlasHost = cluster.includes(".mongodb.net")
+      ? cluster
+      : `${cluster}.mongodb.net`;
+
+    return `mongodb+srv://${encodeURIComponent(user)}:${encodeURIComponent(
+      pass,
+    )}@${atlasHost}/${dbName}`;
   }
 
   if (host) {
