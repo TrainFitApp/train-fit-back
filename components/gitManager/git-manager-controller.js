@@ -49,9 +49,9 @@ async function pull(req, res) {
       remoteUrl = remoteUrl.replace("https://", `https://TrainFit:${token}@`);
     }
 
-    exec(`sudo git pull "${remoteUrl}"`, { cwd: BACKEND_ROOT }, (errPull, stdout, stderr) => {
+    exec(`sudo git pull "${remoteUrl}" && sudo npm install`, { cwd: BACKEND_ROOT }, (errPull, stdout, stderr) => {
       if (errPull) {
-        return res.json({ success: false, stdout: stdout || "", stderr: stderr || "Error ejecutando pull" });
+        return res.json({ success: false, stdout: stdout || "", stderr: stderr || "Error ejecutando pull o npm install" });
       }
       res.json({ success: true, stdout: stdout || "", stderr: stderr || "" });
     });

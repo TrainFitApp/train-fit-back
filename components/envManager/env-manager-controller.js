@@ -66,4 +66,38 @@ async function remove(req, res) {
   }
 }
 
-module.exports = { list, create, update, toggle, remove };
+async function listDbProfiles(req, res) {
+  try {
+    const profiles = service.getDbProfiles();
+    res.json({ success: true, profiles });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+async function switchDb(req, res) {
+  try {
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ success: false, message: "Profile name required" });
+    }
+    const result = service.switchDbProfile(name);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    // Fire-and-forget restart after DB switch
+    const { exec } = require("child_process");
+    const path = require("path");
+    const backendRoot = path.resolve(__dirname, "../..");
+    exec("sudo systemctl restart nginx && pm2 restart all", { cwd: backendRoot }, (err) => {
+      if (err) console.error("[env-manager] Restart after DB switch error:", err.message);
+    });
+
+    res.json({ success: true, message: `Switched to "${name}". Servidor reiniciándose.` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+module.exports = { list, create, update, toggle, remove, listDbProfiles, switchDb };

@@ -84,4 +84,81 @@ function deleteEntry(key) {
   return true;
 }
 
-module.exports = { getEntries, addEntry, updateEntry, toggleEntry, deleteEntry };
+// ─── DB profile grouping ─────────────────────────────────────────────────
+
+function groupIntoBlocks(lines) {
+  const blocks = [];
+  let current = [];
+  for (const line of lines) {
+    if (line.type === "blank") {
+      if (current.length) {
+        blocks.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.length) blocks.push(current);
+  return blocks;
+}
+
+function isDbBlock(block) {
+  return block.some((l) => l.type === "entry" && l.key && l.key.startsWith("MONGODB_"));
+}
+
+function getDbProfiles() {
+  const lines = parseFile();
+  const blocks = groupIntoBlocks(lines);
+  const profiles = [];
+
+  for (const block of blocks) {
+    if (!isDbBlock(block)) continue;
+    const nameEntry = block.find((l) => l.type === "entry" && l.key === "MONGODB_DB");
+    if (!nameEntry) continue;
+    const isActive = block.some((l) => l.type === "entry" && !l.commented && l.key.startsWith("MONGODB_"));
+    profiles.push({ name: nameEntry.value, isActive });
+  }
+
+  return profiles;
+}
+
+function switchDbProfile(targetName) {
+  const lines = parseFile();
+  const blocks = groupIntoBlocks(lines);
+  let targetBlock = null;
+  let activeBlock = null;
+
+  for (const block of blocks) {
+    if (!isDbBlock(block)) continue;
+    const nameEntry = block.find((l) => l.type === "entry" && l.key === "MONGODB_DB");
+    if (!nameEntry) continue;
+    const isActive = block.some((l) => l.type === "entry" && !l.commented && l.key.startsWith("MONGODB_"));
+    if (nameEntry.value === targetName) targetBlock = block;
+    if (isActive) activeBlock = block;
+  }
+
+  if (!targetBlock) return { success: false, message: `Profile "${targetName}" not found` };
+  if (targetBlock === activeBlock) return { success: false, message: "Already on this profile" };
+
+  // Comment all lines in active block
+  for (const line of activeBlock) {
+    if (line.type === "entry" && !line.commented) {
+      line.commented = true;
+      line.raw = `#${line.key}=${line.value}`;
+    }
+  }
+
+  // Uncomment all lines in target block
+  for (const line of targetBlock) {
+    if (line.type === "entry" && line.commented) {
+      line.commented = false;
+      line.raw = `${line.key}=${line.value}`;
+    }
+  }
+
+  writeFile(lines);
+  return { success: true };
+}
+
+module.exports = { getEntries, addEntry, updateEntry, toggleEntry, deleteEntry, getDbProfiles, switchDbProfile };

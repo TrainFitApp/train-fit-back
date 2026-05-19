@@ -9,5 +9,7 @@ router.postAsync("/", auth(["admin"]), controller.create);
 router.putAsync("/:key", auth(["admin"]), controller.update);
 router.putAsync("/:key/toggle", auth(["admin"]), controller.toggle);
 router.deleteAsync("/:key", auth(["admin"]), controller.remove);
+router.getAsync("/db-profiles", auth(["admin"]), controller.listDbProfiles);
+router.postAsync("/db-switch", auth(["admin"]), controller.switchDb);
 
 module.exports = router;
