@@ -89,5 +89,6 @@ router.putAsync(
 );
 router.putAsync("/restore", legacyAuthGone);
 router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteUser);
+router.putAsync("/roles/:id", auth(["admin"]), controller.updateRoles);
 
 module.exports = router;

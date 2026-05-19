@@ -996,4 +996,29 @@ module.exports = {
     }
   },
 
+  async updateRoles(req, res) {
+    try {
+      const { id } = req.params;
+      const { roles } = req.body;
+
+      if (!id) {
+        return res.status(400).send({ message: "ID de usuario requerido" });
+      }
+
+      if (!Array.isArray(roles) || !roles.every((r) => ["user", "admin"].includes(r))) {
+        return res.status(400).send({ message: "Roles inválidos. Valores permitidos: user, admin" });
+      }
+
+      const user = await userSchema.findByIdAndUpdate(id, { roles }, { new: true });
+      if (!user) {
+        return res.status(404).send({ message: "Usuario no encontrado" });
+      }
+
+      return res.send({ message: "Roles actualizados", roles: user.roles });
+    } catch (error) {
+      console.error("Error al actualizar roles:", error);
+      return res.status(500).send({ message: "Error interno del servidor" });
+    }
+  },
+
 };
