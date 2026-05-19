@@ -20,6 +20,7 @@ const billing = require("../components/billing/billing-routes");
 const appVersion = require("../components/appVersion/app-version-routes");
 const envManager = require("../components/envManager/env-manager-routes");
 const serverManager = require("../components/serverManager/server-manager-routes");
+const gitManager = require("../components/gitManager/git-manager-routes");
 
 const router = express.Router();
 
@@ -44,5 +45,6 @@ router.use("/billing", billing);
 router.use("/app", appVersion);
 router.use("/env", envManager);
 router.use("/server", serverManager);
+router.use("/git", gitManager);
 
 module.exports = router;
