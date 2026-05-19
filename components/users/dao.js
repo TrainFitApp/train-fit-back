@@ -493,6 +493,18 @@ module.exports = {
     }
   },
 
+  async updateVerificationHash(userId, hash) {
+    try {
+      return await userSchema.findByIdAndUpdate(
+        userId,
+        { $set: { hash } },
+        { new: true },
+      );
+    } catch (err) {
+      throw err;
+    }
+  },
+
   async playStopDiet(id, dietInUse) {
     const update = { $set: { dietInUse } };
 
@@ -555,14 +567,17 @@ module.exports = {
         throw new Error("User not found");
       }
 
-      const setUserHash = { $set: { hash: hash } };
+      const updatedUser = await this.updateVerificationHash(user._id, hash);
+      if (!updatedUser) {
+        throw new Error("User not found");
+      }
       const html = mail.generateHashMail(
         `Hola ${user.email}`,
         "Este es tu código de verificación. Copia y pégalo en la app.",
         hash,
       );
       await mail.sendMailSES(user.email, "Código de verificación", html);
-      return await userSchema.updateOne({ email: user.email }, setUserHash);
+      return updatedUser;
     } catch (e) {
       throw e;
     }
