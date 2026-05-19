@@ -268,8 +268,7 @@ module.exports = {
 
       if (user.hash) {
         const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
-        user.hash = hashTemp;
-        await userModel.updateUser(user);
+        await userModel.updateVerificationHash(user._id, hashTemp);
 
         const header1 = `Hola ${user.name}, verifique su cuenta`;
         const description =

@@ -67,6 +67,10 @@ module.exports = {
     return await userDao.updateUser(user);
   },
 
+  async updateVerificationHash(userId, hash) {
+    return await userDao.updateVerificationHash(userId, hash);
+  },
+
   async updateGoogleUser(user, date) {
     const standardDietDay = dietDayUtil.getStandardDietDay(date);
     const dietDay = await dietDayModel.createDietDay(standardDietDay);
