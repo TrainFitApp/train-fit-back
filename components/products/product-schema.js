@@ -89,105 +89,115 @@ const ProductSchema = Schema({
 // Do NOT define indexes here — the script is the single source of truth.
 // ───────────────────────────────────────────────────────────────────────
 
-// Cascade: when a product is deleted, clean up CustomProducts referencing it
+// ─── Shared cascade logic (single | bulk) ──────────────────────────────
+async function cascadeDeleteProducts(productIds) {
+  if (!productIds.length) return;
+
+  // Remove from archivedProducts in users that have them favorited
+  try {
+    const UserModel = mongoose.model("User");
+    await UserModel.updateMany(
+      { archivedProducts: { $in: productIds } },
+      { $pull: { archivedProducts: { $in: productIds } } },
+    );
+  } catch (e) {
+    console.warn("[ProductSchema] Error updating archivedProducts", e);
+  }
+
+  // Clean up CustomProducts referencing any of these products
+  try {
+    const customProductSchema = require("../customProducts/custom-product-schema");
+    let customProducts = await customProductSchema
+      .find({ product: { $in: productIds } })
+      .lean();
+
+    if (customProducts.length > 0) {
+      let cpIds = customProducts.map((cp) => cp._id);
+      const dependentCustomProducts = await customProductSchema
+        .find({ baseCustomProductId: { $in: cpIds } })
+        .lean();
+
+      if (dependentCustomProducts.length > 0) {
+        customProducts = customProducts.concat(dependentCustomProducts);
+        cpIds = customProducts.map((cp) => cp._id);
+      }
+
+      try {
+        const MealModel = mongoose.model("Meal");
+        await MealModel.updateMany(
+          { customProducts: { $in: cpIds } },
+          { $pull: { customProducts: { $in: cpIds } } },
+        );
+      } catch (e) {
+        console.warn("[ProductSchema] Error updating meals", e);
+      }
+      try {
+        const RecipeModel = mongoose.model("Recipe");
+        await RecipeModel.updateMany(
+          { customProducts: { $in: cpIds } },
+          { $pull: { customProducts: { $in: cpIds } } },
+        );
+      } catch (e) {
+        console.warn("[ProductSchema] Error updating recipes", e);
+      }
+      try {
+        const CustomRecipeModel = mongoose.model("CustomRecipe");
+        await CustomRecipeModel.updateMany(
+          {
+            $or: [
+              { addedCustomProducts: { $in: cpIds } },
+              { modifiedBaseCustomProducts: { $in: cpIds } },
+              { removedBaseCustomProductIds: { $in: cpIds } },
+            ],
+          },
+          {
+            $pull: {
+              addedCustomProducts: { $in: cpIds },
+              modifiedBaseCustomProducts: { $in: cpIds },
+              removedBaseCustomProductIds: { $in: cpIds },
+            },
+          },
+        );
+      } catch (e) {
+        console.warn("[ProductSchema] Error cleaning CustomRecipes", e);
+      }
+      await customProductSchema.deleteMany({ _id: { $in: cpIds } });
+    }
+
+    // Legacy cleanup for CustomRecipes with embedded added ingredients.
+    try {
+      const CustomRecipeModel = mongoose.model("CustomRecipe");
+      await CustomRecipeModel.updateMany(
+        { addedCustomProducts: { $elemMatch: { product: { $in: productIds } } } },
+        { $pull: { addedCustomProducts: { product: { $in: productIds } } } },
+      );
+    } catch (e) {
+      console.warn("[ProductSchema] Error cleaning addedCustomProducts", e);
+    }
+  } catch (e) {
+    console.warn("[ProductSchema] Error cleaning up CustomProducts", e);
+  }
+}
+
+// ─── Hooks ─────────────────────────────────────────────────────────────
 const handleDeleteOne = async function (next) {
   try {
     const query = this.getQuery();
     const product = await this.model.findOne(query);
     if (!product) return next();
+    await cascadeDeleteProducts([product._id]);
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
 
-    // Remove from archivedProducts in users that have it favorited
-    try {
-      const UserModel = mongoose.model("User");
-      await UserModel.updateMany(
-        { archivedProducts: product._id },
-        { $pull: { archivedProducts: product._id } },
-      );
-    } catch (e) {
-      console.warn("[ProductSchema] Error updating archivedProducts", e);
-    }
-
-    // Clean up CustomProducts referencing this product
-    try {
-      const customProductSchema = require("../customProducts/custom-product-schema");
-      let customProducts = await customProductSchema
-        .find({ product: product._id })
-        .lean();
-      if (customProducts.length > 0) {
-        let cpIds = customProducts.map((cp) => cp._id);
-        const dependentCustomProducts = await customProductSchema
-          .find({ baseCustomProductId: { $in: cpIds } })
-          .lean();
-
-        if (dependentCustomProducts.length > 0) {
-          customProducts = customProducts.concat(dependentCustomProducts);
-          cpIds = customProducts.map((cp) => cp._id);
-        }
-
-        try {
-          const MealModel = mongoose.model("Meal");
-          await MealModel.updateMany(
-            { customProducts: { $in: cpIds } },
-            { $pull: { customProducts: { $in: cpIds } } },
-          );
-        } catch (e) {
-          console.warn("[ProductSchema] Error updating meals", e);
-        }
-        try {
-          const RecipeModel = mongoose.model("Recipe");
-          await RecipeModel.updateMany(
-            { customProducts: { $in: cpIds } },
-            { $pull: { customProducts: { $in: cpIds } } },
-          );
-        } catch (e) {
-          console.warn("[ProductSchema] Error updating recipes", e);
-        }
-        try {
-          const CustomRecipeModel = mongoose.model("CustomRecipe");
-          await CustomRecipeModel.updateMany(
-            {
-              $or: [
-                { addedCustomProducts: { $in: cpIds } },
-                { modifiedBaseCustomProducts: { $in: cpIds } },
-                { removedBaseCustomProductIds: { $in: cpIds } },
-              ],
-            },
-            {
-              $pull: {
-                addedCustomProducts: { $in: cpIds },
-                modifiedBaseCustomProducts: { $in: cpIds },
-                removedBaseCustomProductIds: { $in: cpIds },
-              },
-            },
-          );
-        } catch (e) {
-          console.warn(
-            "[ProductSchema] Error cleaning modifiedBaseCustomProducts",
-            e,
-          );
-        }
-        await customProductSchema.deleteMany({ _id: { $in: cpIds } });
-      }
-
-      // Legacy cleanup for CustomRecipes that still have embedded added ingredients.
-      try {
-        const CustomRecipeModel = mongoose.model("CustomRecipe");
-        await CustomRecipeModel.updateMany(
-          {
-            addedCustomProducts: { $elemMatch: { product: product._id } },
-          },
-          { $pull: { addedCustomProducts: { product: product._id } } },
-        );
-      } catch (e) {
-        console.warn(
-          "[ProductSchema] Error cleaning addedCustomProducts",
-          e,
-        );
-      }
-    } catch (e) {
-      console.warn("[ProductSchema] Error cleaning up CustomProducts", e);
-    }
-
+const handleDeleteMany = async function (next) {
+  try {
+    const query = this.getQuery();
+    const products = await this.model.find(query).lean();
+    if (!products.length) return next();
+    await cascadeDeleteProducts(products.map((p) => p._id));
     next();
   } catch (error) {
     next(error);
@@ -197,5 +207,6 @@ const handleDeleteOne = async function (next) {
 ProductSchema.pre("deleteOne", handleDeleteOne);
 ProductSchema.pre("findOneAndDelete", handleDeleteOne);
 ProductSchema.pre("findOneAndRemove", handleDeleteOne);
+ProductSchema.pre("deleteMany", handleDeleteMany);
 
 module.exports = mongoose.model("Product", ProductSchema);

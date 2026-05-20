@@ -4,6 +4,7 @@ const Schema = mongoose.Schema;
 const dietSchema = require("../diets/diet-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
 const ownTableSchema = require("../ownTables/own-table-schema");
+const productSchema = require("../products/product-schema");
 const SALT_WORK_FACTOR = 10;
 
 const UserSchema = new Schema({
@@ -118,8 +119,7 @@ UserSchema.pre("deleteOne", async function (next) {
         await exerciseSchema.deleteOne({ _id: exercise._id });
       }
 
-      // Note: user-created products (with userId) are NOT deleted on user delete
-      // to preserve data referenced in meals/customProducts.
+      await productSchema.deleteMany({ userId: user._id });
     }
     next();
   } catch (e) {
