@@ -90,7 +90,8 @@ async function switchDb(req, res) {
     const { exec } = require("child_process");
     const path = require("path");
     const backendRoot = path.resolve(__dirname, "../..");
-    exec("sudo systemctl restart nginx && pm2 restart all", { cwd: backendRoot }, (err) => {
+    const ecosystemFile = path.join(backendRoot, "ecosystem.config.js");
+    exec(`sudo pm2 kill && sudo systemctl restart nginx && pm2 start ${ecosystemFile}`, { cwd: backendRoot }, (err) => {
       if (err) console.error("[env-manager] Restart after DB switch error:", err.message);
     });
 
