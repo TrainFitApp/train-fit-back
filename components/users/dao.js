@@ -553,7 +553,7 @@ module.exports = {
     return user;
   },
 
-  async sendMailCode(email, hash) {
+  async sendMailCode(email, hash, expiresAt) {
     try {
       // Validar que el email existe (formato + dominio con MX)
       const emailExists = await mail.validateEmailExists(email);
@@ -562,12 +562,24 @@ module.exports = {
       }
 
       // Buscar usuario en BD
-      const user = await userSchema.findOne({ email: email }).select("email");
+      const user = await userSchema.findOne({ email }).select("email lastRestoreCodeSentAt");
       if (!user) {
         throw new Error("User not found");
       }
 
-      const updatedUser = await this.updateVerificationHash(user._id, hash);
+      // Rate limit: 60s entre envíos
+      if (user.lastRestoreCodeSentAt && (Date.now() - user.lastRestoreCodeSentAt.getTime()) < 60000) {
+        throw new Error("Espera 60 segundos antes de solicitar un nuevo código");
+      }
+
+      const updatedUser = await userSchema.findByIdAndUpdate(user._id, {
+        $set: {
+          hash,
+          restoreCodeExpiresAt: expiresAt,
+          restoreFailedAttempts: 0,
+          lastRestoreCodeSentAt: new Date(),
+        },
+      }, { new: true });
       if (!updatedUser) {
         throw new Error("User not found");
       }
@@ -585,17 +597,29 @@ module.exports = {
 
   async checkRestoreCode(email, password, hash) {
     try {
-      // Primero verificar si el usuario existe
-      const userExists = await userSchema.findOne({ email: email });
-      if (!userExists) throw new Error("Usuario no encontrado");
+      const user = await userSchema.findOne({ email });
+      if (!user) throw new Error("Usuario no encontrado");
 
-      // Luego comprobar si el hash coincide
-      const user = await userSchema.findOne({ email: email, hash: hash });
-      if (!user) throw new Error("Código incorrecto");
+      if ((user.restoreFailedAttempts || 0) >= 5) {
+        throw new Error("Demasiados intentos fallidos. Solicita un nuevo código.");
+      }
+
+      if (user.restoreCodeExpiresAt && Date.now() > user.restoreCodeExpiresAt.getTime()) {
+        throw new Error("Código expirado. Solicita uno nuevo.");
+      }
+
+      if (user.hash !== hash) {
+        await userSchema.findByIdAndUpdate(user._id, {
+          $inc: { restoreFailedAttempts: 1 },
+        });
+        throw new Error("Código incorrecto");
+      }
 
       user.hash = undefined;
+      user.restoreCodeExpiresAt = undefined;
+      user.restoreFailedAttempts = 0;
+      user.lastRestoreCodeSentAt = undefined;
       user.password = password;
-      user.roles = ["user"];
 
       return await user.save();
     } catch (e) {
