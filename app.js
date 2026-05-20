@@ -13,32 +13,24 @@ app.use(cookieParser()); // Parse cookies for refresh token
 
 const cors = require("cors");
 // Configuración CORS corregida
-let serverDomain = process.env.SERVER_DOMAIN || null;
-if (serverDomain && !serverDomain.startsWith("http")) {
-  serverDomain = `https://${serverDomain}`;
-}
-const clientDomain = process.env.CLIENT_DOMAIN || null;
 const allowedOrigins = [
-  "capacitor://localhost", // iOS Capacitor (webview)
-  "https://localhost", // iOS cuando iosScheme = 'https'
-  "http://localhost", // Android Capacitor (webview)
-  "http://localhost:8100", // Desarrollo local Ionic
-  "http://localhost:4200",
-  "http://localhost:4300",
-  serverDomain, // Dominio del servidor (opcional)
-  clientDomain, // Dominio de producción del cliente (opcional)
-  ...(process.env.CORS_ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-].filter(Boolean);
+  "capacitor://localhost",
+  "https://localhost",
+  "http://localhost",
+  "http://localhost:8100",
+];
 
 // Enable credentials for cookie support (refresh tokens)
 const useCredentials = true;
 
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin) {
+      callback(new Error("Not allowed by CORS"));
+      return;
+    }
+
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
       return;
     }
