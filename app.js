@@ -12,29 +12,22 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser()); // Parse cookies for refresh token
 
 const cors = require("cors");
-// Configuración CORS corregida
 const allowedOrigins = [
   "capacitor://localhost",
+  "ionic://localhost",
   "https://localhost",
   "http://localhost",
   "http://localhost:8100",
 ];
-
-// Enable credentials for cookie support (refresh tokens)
 const useCredentials = true;
 
 const corsOptions = {
   origin(origin, callback) {
     if (!origin) {
-      callback(new Error("Not allowed by CORS"));
+      callback(new Error("CORS: request without Origin header blocked"));
       return;
     }
-
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-
+    if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
