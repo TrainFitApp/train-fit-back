@@ -38,8 +38,12 @@ async function pull(req, res) {
     return res.status(400).json({ success: false, message: "No hay token guardado" });
   }
 
+  let sent = false;
+
   exec("git remote get-url origin", { cwd: BACKEND_ROOT }, (errOrigin, stdoutOrigin) => {
+    if (sent) return;
     if (errOrigin || !stdoutOrigin.trim()) {
+      sent = true;
       return res.status(500).json({ success: false, message: "No se pudo obtener remote origin", stderr: errOrigin?.message });
     }
 
@@ -50,6 +54,8 @@ async function pull(req, res) {
     }
 
     exec(`sudo git pull "${remoteUrl}" && sudo npm install`, { cwd: BACKEND_ROOT }, (errPull, stdout, stderr) => {
+      if (sent) return;
+      sent = true;
       if (errPull) {
         return res.json({ success: false, stdout: stdout || "", stderr: stderr || "Error ejecutando pull o npm install" });
       }
