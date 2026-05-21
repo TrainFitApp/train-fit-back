@@ -23,10 +23,7 @@ const useCredentials = true;
 
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin) {
-      callback(new Error("CORS: request without Origin header blocked"));
-      return;
-    }
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error("Not allowed by CORS"));
   },
