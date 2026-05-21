@@ -9,22 +9,6 @@ const { default: mongoose } = require("mongoose");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
-  delete setTemp.rir;
-  delete setTemp.reps;
-  delete setTemp.timeMin;
-  delete setTemp.timeSec;
-
-  setTemp.expectedRir = Array.isArray(setTemp.expectedRir)
-    ? [...setTemp.expectedRir]
-    : setTemp.expectedRir != null
-      ? [setTemp.expectedRir]
-      : [];
-
-  setTemp.expectedReps = Array.isArray(setTemp.expectedReps)
-    ? [...setTemp.expectedReps]
-    : setTemp.expectedReps != null
-      ? [setTemp.expectedReps]
-      : [];
 }
 
 module.exports = {

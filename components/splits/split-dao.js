@@ -13,22 +13,7 @@ const { normalizeSetsOrder } = require("../sets/set-order-util");
 const tableSchema = require("../tables/table-schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
-  // Solo borramos el estado de completado para que el nuevo microciclo
-  // empiece de cero, pero mantenemos los valores de rendimiento (peso, reps, rir, etc.)
-  // como punto de partida para el usuario.
   delete setTemp.doned;
-
-  setTemp.expectedRir = Array.isArray(setTemp.expectedRir)
-    ? [...setTemp.expectedRir]
-    : setTemp.expectedRir != null
-      ? [setTemp.expectedRir]
-      : [];
-
-  setTemp.expectedReps = Array.isArray(setTemp.expectedReps)
-    ? [...setTemp.expectedReps]
-    : setTemp.expectedReps != null
-      ? [setTemp.expectedReps]
-      : [];
 }
 
 module.exports = {
