@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const setSchema = require("../sets/set-schema");
+const {
+  LIMITS,
+  stringField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const CustomExerciseSchema = Schema({
   sets: [
@@ -16,7 +21,7 @@ const CustomExerciseSchema = Schema({
     ref: "Exercise",
     autopopulate: true,
   },
-  notes: String,
+  notes: stringField(LIMITS.text.noteMax),
   // workoutId: {
   //   type: Schema.Types.ObjectId,
   //   ref: "Workout",
@@ -24,6 +29,7 @@ const CustomExerciseSchema = Schema({
 });
 
 CustomExerciseSchema.plugin(require("mongoose-autopopulate"));
+applyRunValidators(CustomExerciseSchema);
 
 CustomExerciseSchema.pre("deleteOne", async function (next) {
   try {

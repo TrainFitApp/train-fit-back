@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
+const { LIMITS, applyRunValidators } = require("../util/validation-limits");
 
 const normalizeCustomProductId = (value) => {
   const normalized = value?._id || value;
@@ -34,12 +35,14 @@ const CustomRecipeSchema = new Schema(
     },
     quantity: {
       type: Number,
-      min: 0,
+      min: LIMITS.nutrition.quantityMin,
+      max: LIMITS.nutrition.quantityMax,
       default: null,
     },
     quantityCooked: {
       type: Number,
-      min: 0,
+      min: LIMITS.nutrition.quantityMin,
+      max: LIMITS.nutrition.quantityMax,
       default: null,
     },
     addedCustomProducts: [
@@ -70,6 +73,7 @@ const CustomRecipeSchema = new Schema(
 );
 
 CustomRecipeSchema.plugin(require("mongoose-autopopulate"));
+applyRunValidators(CustomRecipeSchema);
 
 const handleDeleteOne = async function (next) {
   try {

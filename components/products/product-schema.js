@@ -1,72 +1,83 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
+const {
+  LIMITS,
+  stringField,
+  numberField,
+  stringArrayField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const ProductSchema = Schema({
-  code: String,
-  name: String,
-  brand: String,
+  code: stringField(LIMITS.text.barcodeMax),
+  name: stringField(
+    LIMITS.text.productNameMax,
+    false,
+    LIMITS.text.shortNameMin,
+  ),
+  brand: stringField(LIMITS.text.brandMax),
   nameNormalized: String,
   brandNormalized: String,
   namePrefixes: [String],
   brandPrefixes: [String],
 
   // Basic macronutrients
-  calcium100g: Number,
-  carbohydrates100g: Number,
-  cholesterol100g: Number,
-  energyKcal100g: Number,
-  fat100g: Number,
-  fiber100g: Number,
-  iron100g: Number,
-  protein100g: Number,
-  salt100g: Number,
-  saturatedFat100g: Number,
-  sodium100g: Number,
-  sugars100g: Number,
-  transFat100g: Number,
-  vitaminA100g: Number,
-  vitaminC100g: Number,
+  calcium100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  carbohydrates100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  cholesterol100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  energyKcal100g: numberField(LIMITS.nutrition.kcal100gMin, LIMITS.nutrition.kcal100gMax),
+  fat100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  fiber100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  iron100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  protein100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  salt100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  saturatedFat100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  sodium100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  sugars100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  transFat100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  vitaminA100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  vitaminC100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
 
   // Additional minerals (stored in grams, displayed in mg/µg)
-  magnesium100g: Number,
-  phosphorus100g: Number,
-  potassium100g: Number,
-  zinc100g: Number,
-  copper100g: Number,
-  manganese100g: Number,
-  selenium100g: Number,
-  iodine100g: Number,
+  magnesium100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  phosphorus100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  potassium100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  zinc100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  copper100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  manganese100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  selenium100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  iodine100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
 
   // Additional vitamins (stored in grams, displayed in mg/µg)
-  vitaminB1100g: Number, // Thiamin
-  vitaminB2100g: Number, // Riboflavin
-  vitaminB3100g: Number, // Niacin
-  vitaminB5100g: Number, // Pantothenic acid
-  vitaminB6100g: Number,
-  vitaminB9100g: Number, // Folate
-  vitaminB12100g: Number,
-  vitaminD100g: Number,
-  vitaminE100g: Number,
-  vitaminK100g: Number,
-  biotin100g: Number, // Vitamin B7
+  vitaminB1100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax), // Thiamin
+  vitaminB2100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax), // Riboflavin
+  vitaminB3100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax), // Niacin
+  vitaminB5100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax), // Pantothenic acid
+  vitaminB6100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  vitaminB9100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax), // Folate
+  vitaminB12100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  vitaminD100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  vitaminE100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  vitaminK100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  biotin100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax), // Vitamin B7
 
   // Fatty acids (in grams)
-  omega3100g: Number,
-  omega6100g: Number,
-  omega9100g: Number,
+  omega3100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  omega6100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
+  omega9100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
 
   // Other nutrients
-  caffeine100g: Number,
-  taurine100g: Number,
-  alcohol100g: Number,
+  caffeine100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  taurine100g: numberField(LIMITS.nutrition.storedMicroMin, LIMITS.nutrition.storedMicroMax),
+  alcohol100g: numberField(LIMITS.nutrition.grams100gMin, LIMITS.nutrition.grams100gMax),
 
   // Product information
   servingUnit: String,
-  ingredients: String,
+  ingredients: stringField(LIMITS.text.ingredientsMax),
 
   // Allergens and dietary characteristics
-  allergens: [String],
-  traces: [String],
+  allergens: stringArrayField(LIMITS.text.allergensMax),
+  traces: stringArrayField(LIMITS.text.allergensMax),
   vegan: Boolean,
   vegetarian: Boolean,
   lactoseFree: Boolean,
@@ -75,8 +86,8 @@ const ProductSchema = Schema({
   // Nutriscore & serving
   nutriscoreScore: Number,
   nutriscoreGrade: String,
-  productQuantity: Number,
-  servingQuantity: Number,
+  productQuantity: numberField(LIMITS.nutrition.quantityMin, LIMITS.nutrition.quantityMax),
+  servingQuantity: numberField(LIMITS.nutrition.quantityMin, LIMITS.nutrition.quantityMax),
   verified: Boolean,
 
   // Owner: if set, this product was created by the user (replaces OwnProduct)
@@ -208,5 +219,6 @@ ProductSchema.pre("deleteOne", handleDeleteOne);
 ProductSchema.pre("findOneAndDelete", handleDeleteOne);
 ProductSchema.pre("findOneAndRemove", handleDeleteOne);
 ProductSchema.pre("deleteMany", handleDeleteMany);
+applyRunValidators(ProductSchema);
 
 module.exports = mongoose.model("Product", ProductSchema);

@@ -5,29 +5,51 @@ const dietSchema = require("../diets/diet-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
 const ownTableSchema = require("../ownTables/own-table-schema");
 const productSchema = require("../products/product-schema");
+const {
+  LIMITS,
+  stringField,
+  numberField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 const SALT_WORK_FACTOR = 10;
 
 const UserSchema = new Schema({
-  email: { type: String, unique: true, required: true },
+  email: {
+    ...stringField(LIMITS.text.emailMax, true),
+    unique: true,
+    lowercase: true,
+  },
   appleId: { type: String, unique: true, sparse: true },
   password: String,
-  name: String,
-  lastname: String,
-  weight: Number,
-  height: Number,
+  name: stringField(LIMITS.text.personNameMax, false, LIMITS.text.personNameMin),
+  lastname: stringField(LIMITS.text.lastnameMax, false, LIMITS.text.personNameMin),
+  weight: numberField(LIMITS.profile.weightMin, LIMITS.profile.weightMax),
+  height: numberField(LIMITS.profile.heightMin, LIMITS.profile.heightMax),
   status: String,
   roles: { type: [String], default: undefined },
   sex: Number,
   activity: Number,
-  objetive: Number,
+  objetive: numberField(
+    LIMITS.profile.objectiveKcalMin,
+    LIMITS.profile.objectiveKcalMax,
+  ),
   steps: Number,
   stepGoal: Number,
   training: Number,
   birth: Date,
-  kcalTotal: Number,
-  proteinsGTotal: Number,
-  carbohydratesGTotal: Number,
-  fatGTotal: Number,
+  kcalTotal: numberField(LIMITS.profile.kcalMin, LIMITS.profile.kcalMax),
+  proteinsGTotal: numberField(
+    LIMITS.profile.macroGramsMin,
+    LIMITS.profile.macroGramsMax,
+  ),
+  carbohydratesGTotal: numberField(
+    LIMITS.profile.macroGramsMin,
+    LIMITS.profile.macroGramsMax,
+  ),
+  fatGTotal: numberField(
+    LIMITS.profile.macroGramsMin,
+    LIMITS.profile.macroGramsMax,
+  ),
   hash: String,
   restoreCodeExpiresAt: Date,
   restoreFailedAttempts: { type: Number, default: 0 },
@@ -72,6 +94,7 @@ const UserSchema = new Schema({
 });
 
 UserSchema.plugin(require("mongoose-autopopulate"));
+applyRunValidators(UserSchema);
 
 UserSchema.pre("save", function (next) {
   let user = this;

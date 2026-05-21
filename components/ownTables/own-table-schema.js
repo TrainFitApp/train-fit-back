@@ -1,9 +1,18 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const splitSchema = require("../splits/split-schema");
+const {
+  LIMITS,
+  stringField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const OwnTableSchema = Schema({
-  name: String,
+  name: stringField(
+    LIMITS.text.shortNameMax,
+    false,
+    LIMITS.text.shortNameMin,
+  ),
   type: String,
   splits: [
     {
@@ -15,6 +24,7 @@ const OwnTableSchema = Schema({
 });
 
 OwnTableSchema.plugin(require("mongoose-autopopulate"));
+applyRunValidators(OwnTableSchema);
 
 OwnTableSchema.pre("deleteOne", async function (next) {
   try {

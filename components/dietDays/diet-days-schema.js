@@ -2,11 +2,17 @@ const mongoose = require("mongoose");
 const mongooseAutopopulate = require("mongoose-autopopulate");
 const Schema = mongoose.Schema;
 const mealSchema = require("../meals/meal-schema");
+const {
+  LIMITS,
+  stringField,
+  numberField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const DietDaySchema = Schema({
-  weight: Number,
+  weight: numberField(LIMITS.profile.weightMin, LIMITS.profile.weightMax),
   date: Date,
-  notes: String,
+  notes: stringField(LIMITS.text.noteMax),
   steps: Number,
   meals: [
     {
@@ -18,6 +24,7 @@ const DietDaySchema = Schema({
 });
 
 DietDaySchema.plugin(mongooseAutopopulate);
+applyRunValidators(DietDaySchema);
 
 const handleDeleteOne = async function (next) {
   try {

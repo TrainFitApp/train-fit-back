@@ -1,11 +1,20 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
+const {
+  LIMITS,
+  stringField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 
 const WorkoutSchema = Schema({
-  name: String,
-  notes: String,
+  name: stringField(
+    LIMITS.text.shortNameMax,
+    false,
+    LIMITS.text.shortNameMin,
+  ),
+  notes: stringField(LIMITS.text.noteMax),
   date: Date,
   order: Number,
   cronometer: Number,
@@ -21,6 +30,7 @@ const WorkoutSchema = Schema({
 });
 
 WorkoutSchema.plugin(require('mongoose-autopopulate'));
+applyRunValidators(WorkoutSchema);
 
 WorkoutSchema.pre("deleteOne", async function (next) {
   try {

@@ -1,17 +1,26 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
+const {
+  LIMITS,
+  stringField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const RecipeSchema = Schema(
   {
     // Nombre de la receta
     name: {
-      type: String,
+      ...stringField(
+        LIMITS.text.shortNameMax,
+        true,
+        LIMITS.text.shortNameMin,
+      ),
       required: true,
     },
     nameNormalized: String,
     namePrefixes: [String],
     // Descripción opcional
-    description: String,
+    description: stringField(LIMITS.text.descriptionMax),
     // Array de CustomProducts (referencias inmutables)
     customProducts: [
       {
@@ -41,5 +50,6 @@ const RecipeSchema = Schema(
 // Las variaciones por comida se representan en CustomRecipe.
 
 RecipeSchema.plugin(require("mongoose-autopopulate"));
+applyRunValidators(RecipeSchema);
 
 module.exports = mongoose.model("Recipe", RecipeSchema);

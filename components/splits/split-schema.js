@@ -1,9 +1,14 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const workoutSchema = require("../workouts/workout-schema");
+const {
+  LIMITS,
+  stringField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const SplitSchema = Schema({
-  name: String,
+  name: stringField(LIMITS.text.shortNameMax),
   workouts: [
     {
       type: Schema.Types.ObjectId,
@@ -14,6 +19,7 @@ const SplitSchema = Schema({
 });
 
 SplitSchema.plugin(require("mongoose-autopopulate"));
+applyRunValidators(SplitSchema);
 
 SplitSchema.pre("deleteOne", async function (next) {
   try {

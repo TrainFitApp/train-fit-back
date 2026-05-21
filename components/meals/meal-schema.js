@@ -3,10 +3,19 @@ const mongooseAutopopulate = require("mongoose-autopopulate");
 const Schema = mongoose.Schema;
 const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
+const {
+  LIMITS,
+  stringField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const MealSchema = Schema({
-  name: String,
-  notes: String,
+  name: stringField(
+    LIMITS.text.shortNameMax,
+    false,
+    LIMITS.text.shortNameMin,
+  ),
+  notes: stringField(LIMITS.text.noteMax),
   customProducts: [
     {
       type: Schema.Types.ObjectId,
@@ -24,6 +33,7 @@ const MealSchema = Schema({
 });
 
 MealSchema.plugin(mongooseAutopopulate);
+applyRunValidators(MealSchema);
 
 const handleDelete = async function (next) {
   try {

@@ -1,11 +1,20 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
+const {
+  LIMITS,
+  stringField,
+  applyRunValidators,
+} = require("../util/validation-limits");
 
 const ExerciseSchema = Schema({
-  name: String,
+  name: stringField(
+    LIMITS.text.shortNameMax,
+    false,
+    LIMITS.text.shortNameMin,
+  ),
   videoUrl: String,
-  description: String,
+  description: stringField(LIMITS.text.descriptionMax),
   muscleGroups1: [String],
   muscleGroups2: [String],
   category: [String],
@@ -75,5 +84,6 @@ ExerciseSchema.pre("deleteOne", async function (next) {
     next(error);
   }
 });
+applyRunValidators(ExerciseSchema);
 
 module.exports = mongoose.model("Exercise", ExerciseSchema);
