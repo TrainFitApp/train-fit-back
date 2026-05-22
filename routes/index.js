@@ -21,6 +21,7 @@ const appVersion = require("../components/appVersion/app-version-routes");
 const envManager = require("../components/envManager/env-manager-routes");
 const serverManager = require("../components/serverManager/server-manager-routes");
 const gitManager = require("../components/gitManager/git-manager-routes");
+const aiImport = require("../components/aiImport/ai-import-routes");
 
 const router = express.Router();
 
@@ -46,5 +47,6 @@ router.use("/app", appVersion);
 router.use("/env", envManager);
 router.use("/server", serverManager);
 router.use("/git", gitManager);
+router.use("/ai", aiImport);
 
 module.exports = router;
