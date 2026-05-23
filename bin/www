@@ -52,7 +52,7 @@ mongoose
       console.log(`🚀 Server running at port: ${port}`);
     });
 
-    serv.timeout = 30000;
+    serv.timeout = 300000; // 5 minutos para soportar la IA
   })
   .catch((err) => {
     console.error("❌ Error al conectar con MongoDB:");
