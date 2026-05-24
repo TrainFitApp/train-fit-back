@@ -39,23 +39,23 @@ const mongoConnectOptions = {
 // 🚀 Conexión y arranque del servidor
 // -------------------------------------------------------
 mongoose.Promise = global.Promise;
-console.log(`🔌 Connecting to MongoDB: ${redactedMongoURI}`);
-mongoose
-  .connect(mongoURI, mongoConnectOptions)
-  .then(() => {
-    console.log("✅ Conexión a la base de datos establecida con éxito");
-    console.log(`🔗 Mongo URI: ${redactedMongoURI}`);
 
-    // Crear servidor Express
-    const serv = app.listen(port, () => {
-      console.log(`🌍 Server domain: ${serverDomain}`);
-      console.log(`🚀 Server running at port: ${port}`);
+function connectWithRetry() {
+  console.log(`🔌 Connecting to MongoDB: ${redactedMongoURI}`);
+  mongoose
+    .connect(mongoURI, mongoConnectOptions)
+    .then(() => {
+      console.log("✅ Conexión a MongoDB establecida");
+      const serv = app.listen(port, () => {
+        console.log(`🚀 Server running at port: ${port}`);
+      });
+      serv.timeout = 30000;
+    })
+    .catch((err) => {
+      console.error("❌ MongoDB error:", err.message);
+      console.log("🔄 Reintentando en 5s...");
+      setTimeout(connectWithRetry, 5000);
     });
+}
 
-    serv.timeout = 30000;
-  })
-  .catch((err) => {
-    console.error("❌ Error al conectar con MongoDB:");
-    console.error(err);
-    process.exit(1);
-  });
+connectWithRetry();
