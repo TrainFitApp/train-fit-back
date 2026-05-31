@@ -4,6 +4,7 @@ const exerciseModel = require("../exercises/exercise-model");
 const DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
 const DEEPSEEK_MODEL = "deepseek-chat";
 const MAX_EXERCISES_IN_CONTEXT = 300;
+const MAX_EXERCISES_PER_SPLIT = 12;
 
 function extractJson(text) {
   if (!text) return null;
@@ -337,7 +338,7 @@ ${JSON.stringify(exerciseContext)}
 ## Split a procesar:
 ${splitStr}
 
-Devuelve SOLO este split con los ejercicios completados (name, matchedExerciseId, shouldCreate, exerciseData, sets).`;
+Devuelve SOLO este split con ejercicios completados usando campos cortos (n,id,cr,ed,s,reps,rir,w,d,rp,t,ts).`;
 }
 
 async function callDeepSeek(prompt) {
@@ -351,7 +352,11 @@ async function callDeepSeek(prompt) {
       messages: [
         {
           role: "system",
-          content: `Completa estructuras JSON de entrenamiento. SIGUE EXACTAMENTE la estructura. Añade: matchedExerciseId, shouldCreate, exerciseData, sets. Formato sets: {expectedReps:[min,max],expectedRir:[min,max],weight:number,drop:bool,restPause:number|null,expectedMin:null,expectedSec:null}. Solo JSON, sin markdown.`,
+          content: `Completa JSON compacto. Campos cortos obligatorios:
+n=name, id=matchedExerciseId, cr=shouldCreate,
+ed=exerciseData {n,m1,m2,c,eq,cardio},
+s=sets [{reps,rir,w,d,rp,t,ts}]
+Omite null/empty. Solo JSON, 0 markdown.`,
         },
         { role: "user", content: prompt },
       ],
@@ -387,6 +392,68 @@ async function callDeepSeek(prompt) {
   return parsed;
 }
 
+// ── Chunking ────────────────────────────────────────────────
+
+function chunkSplit(split) {
+  const total = split.workouts.reduce((s, w) => s + (w.exercises || []).length, 0);
+  if (total <= MAX_EXERCISES_PER_SPLIT) return [split];
+
+  const chunks = [];
+  let current = { name: split.name, workouts: [] };
+  let count = 0;
+
+  for (const workout of split.workouts) {
+    const n = (workout.exercises || []).length;
+    if (count + n > MAX_EXERCISES_PER_SPLIT && count > 0) {
+      chunks.push(current);
+      current = { name: split.name, workouts: [] };
+      count = 0;
+    }
+    current.workouts.push(workout);
+    count += n;
+  }
+  if (current.workouts.length > 0) chunks.push(current);
+
+  return chunks;
+}
+
+function normalizeDeepSeekOutput(result) {
+  if (!result || typeof result !== "object") return result;
+  if (result.workouts) {
+    result.workouts = result.workouts.map((wo) => ({
+      name: wo.name || wo.n || "",
+      notes: wo.notes,
+      exercises: (wo.exercises || wo.e || []).map(normalizeExercise),
+    }));
+  }
+  return result;
+}
+
+function normalizeExercise(ex) {
+  if (!ex) return ex;
+  return {
+    name: ex.n || ex.name || "",
+    matchedExerciseId: ex.id !== undefined ? ex.id : (ex.matchedExerciseId || null),
+    shouldCreate: ex.cr !== undefined ? ex.cr : (ex.shouldCreate !== undefined ? ex.shouldCreate : false),
+    exerciseData: ex.ed || ex.exerciseData || undefined,
+    notes: ex.notes,
+    sets: (ex.s || ex.sets || []).map(normalizeSet),
+  };
+}
+
+function normalizeSet(s) {
+  if (!s) return s;
+  return {
+    expectedReps: s.reps || s.expectedReps || [],
+    expectedRir: s.rir || s.expectedRir || [],
+    weight: s.w !== undefined ? s.w : s.weight,
+    drop: s.d !== undefined ? s.d : s.drop,
+    restPause: s.rp !== undefined ? s.rp : s.restPause,
+    expectedMin: s.t !== undefined ? s.t : s.expectedMin,
+    expectedSec: s.ts !== undefined ? s.ts : s.expectedSec,
+  };
+}
+
 // ── Main ───────────────────────────────────────────────────
 
 async function interpretExcel(sheets, fileName) {
@@ -406,28 +473,45 @@ async function interpretExcel(sheets, fileName) {
       return { name: tableName, splits: [] };
     }
 
-    // Process each split in parallel
-    const splitPromises = preview.map((split) => {
-      const prompt = buildSplitPrompt(split, tableName, fileName, exerciseContext);
-      console.log(`[aiImport]   → Calling DeepSeek for "${split.name}": ${split.workouts.reduce((s, w) => s + w.exercises.length, 0)} exercises, prompt ${(prompt.length / 1024).toFixed(1)}KB`);
+    // Flatten splits into chunks of MAX_EXERCISES_PER_SPLIT
+    const allChunks = [];
+    const chunkMap = [];
+    for (let si = 0; si < preview.length; si++) {
+      const chunks = chunkSplit(preview[si]);
+      for (const chunk of chunks) {
+        allChunks.push(chunk);
+        chunkMap.push(si);
+      }
+    }
+
+    console.log(`[aiImport]   ${preview.length} splits → ${allChunks.length} chunks`);
+
+    // Process each chunk in parallel
+    const chunkPromises = allChunks.map((chunk, ci) => {
+      const exCount = chunk.workouts.reduce((s, w) => s + (w.exercises || []).length, 0);
+      const prompt = buildSplitPrompt(chunk, tableName, fileName, exerciseContext);
+      console.log(`[aiImport]   → Chunk ${ci + 1}/${allChunks.length}: ${exCount} exercises, prompt ${(prompt.length / 1024).toFixed(1)}KB`);
       return callDeepSeek(prompt);
     });
 
-    const splitResults = await Promise.all(splitPromises);
+    const chunkResults = await Promise.all(chunkPromises);
 
-    console.log(`[aiImport] All ${splitResults.length} splits processed successfully`);
+    console.log(`[aiImport] All ${chunkResults.length} chunks processed successfully`);
 
-    // Assemble: use the names from the original preview, data from DeepSeek responses
-    const assembled = preview.map((originalSplit, idx) => {
-      const result = splitResults[idx];
-      // DeepSeek should return the split with completed exercises
-      // If it returned a full response with a "name" field, use it directly
-      if (result && result.name && result.workouts) {
-        return { name: result.name, workouts: result.workouts };
+    // Reassemble: merge normalized chunks back into original splits
+    const splitBuckets = {};
+    for (let ci = 0; ci < chunkResults.length; ci++) {
+      const si = chunkMap[ci];
+      if (!splitBuckets[si]) splitBuckets[si] = { name: preview[si].name, workouts: [] };
+      const result = normalizeDeepSeekOutput(chunkResults[ci]);
+      if (result && result.workouts) {
+        splitBuckets[si].workouts.push(...result.workouts);
+      } else {
+        splitBuckets[si].workouts.push(...allChunks[ci].workouts);
       }
-      // Fallback: use original structure with empty exercises
-      return { name: originalSplit.name, workouts: originalSplit.workouts };
-    });
+    }
+
+    const assembled = Object.values(splitBuckets);
 
     return { name: tableName, splits: assembled };
   } catch (error) {
