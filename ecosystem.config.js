@@ -3,7 +3,9 @@ module.exports = {
     {
       name: "train-fit-back",
       script: "./bin/www",
-      node_args: "--max-old-space-size=350",
-      max_memory_restart: "400M",
+      instances: 1,
+      exec_mode: "fork",
+      node_args: "--max-old-space-size=1600",
+      max_memory_restart: "1500M",
     }]
 }
