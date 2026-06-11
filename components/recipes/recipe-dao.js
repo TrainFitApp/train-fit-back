@@ -521,9 +521,25 @@ module.exports = {
       return toComparableId(left.doc._id).localeCompare(toComparableId(right.doc._id));
     });
 
-    return scoredCandidates
-      .slice(skipValue, skipValue + limitValue)
-      .map((candidate) => candidate.doc);
+    const pagedCandidates = scoredCandidates.slice(
+      skipValue,
+      skipValue + limitValue,
+    );
+    const pagedIds = pagedCandidates.map((candidate) => candidate.doc._id);
+
+    // The ranking queries use lean() for speed, so autopopulate does not run
+    // there. Hydrate only the final page to keep the API shape identical to
+    // the no-search path without populating every candidate.
+    const hydratedDocs = await recipeSchema
+      .find({ _id: { $in: pagedIds } })
+      .exec();
+    const hydratedById = new Map(
+      hydratedDocs.map((doc) => [toComparableId(doc._id), doc]),
+    );
+
+    return pagedIds
+      .map((id) => hydratedById.get(toComparableId(id)))
+      .filter(Boolean);
   },
 
   async composeRecipe(payload, userId) {
