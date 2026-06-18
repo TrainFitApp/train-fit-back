@@ -94,24 +94,65 @@ module.exports = {
 
       const buildLightSearchPipeline = (extraMatch = {}) => [
         { $match: { ...baseMatch, ...extraMatch } },
-        // Solo traer lo esencial para listado
-        { $project: { _id: 1, name: 1, urlImage: 1, splits: 1 } },
+        // Solo traer lo esencial para listado y la estructura del primer microciclo.
+        {
+          $project: {
+            _id: 1,
+            name: 1,
+            type: 1,
+            splits: 1,
+          },
+        },
+        {
+          $addFields: {
+            firstSplitId: { $arrayElemAt: ["$splits", 0] },
+          },
+        },
         {
           $lookup: {
             from: "splits",
-            let: { splitIds: "$splits" },
+            let: { splitId: "$firstSplitId" },
             pipeline: [
-              { $match: { $expr: { $in: ["$_id", "$$splitIds"] } } },
-              { $project: { _id: 1, workoutsCount: { $size: "$workouts" } } },
+              { $match: { $expr: { $eq: ["$_id", "$$splitId"] } } },
+              { $project: { _id: 0, workouts: 1 } },
             ],
-            as: "splitStats",
+            as: "firstSplit",
           },
         },
         {
           $addFields: {
             microcyclesCount: { $size: "$splits" },
-            workoutsCount: {
-              $ifNull: [{ $arrayElemAt: ["$splitStats.workoutsCount", 0] }, 0],
+            firstSplitWorkoutIds: {
+              $ifNull: [{ $arrayElemAt: ["$firstSplit.workouts", 0] }, []],
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "workouts",
+            let: { workoutIds: "$firstSplitWorkoutIds" },
+            pipeline: [
+              { $match: { $expr: { $in: ["$_id", "$$workoutIds"] } } },
+              {
+                $addFields: {
+                  searchOrder: { $indexOfArray: ["$$workoutIds", "$_id"] },
+                },
+              },
+              { $sort: { searchOrder: 1 } },
+              { $project: { _id: 0, name: 1 } },
+            ],
+            as: "workoutStats",
+          },
+        },
+        {
+          $addFields: {
+            workoutsCount: { $size: "$firstSplitWorkoutIds" },
+            workoutNames: {
+              $map: {
+                input: "$workoutStats",
+                as: "workout",
+                in: "$$workout.name",
+              },
             },
           },
         },
@@ -119,9 +160,10 @@ module.exports = {
           $project: {
             _id: 1,
             name: 1,
-            urlImage: 1,
+            type: 1,
             microcyclesCount: 1,
             workoutsCount: 1,
+            workoutNames: 1,
           },
         },
         { $skip: page * limit },
