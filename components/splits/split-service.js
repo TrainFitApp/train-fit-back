@@ -79,4 +79,8 @@ module.exports = {
   async deleteSplit(idTable, idSplit) {
     return splitDao.deleteSplit(idTable, idSplit);
   },
+
+  async deleteSplits(idTable, splitIds, userId, workoutInUse) {
+    return splitDao.deleteSplits(idTable, splitIds, userId, workoutInUse);
+  },
 };

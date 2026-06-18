@@ -36,6 +36,11 @@ router.putAsync(
 );
 router.putAsync("/:id", auth(["admin", "user"]), controller.updateSplit);
 router.deleteAsync(
+  "/:idTable",
+  auth(["admin", "user"]),
+  controller.deleteSplits,
+);
+router.deleteAsync(
   "/:idTable/:idSplit",
   auth(["admin", "user"]),
   controller.deleteSplit,

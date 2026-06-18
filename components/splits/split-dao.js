@@ -11,6 +11,7 @@ const { default: mongoose } = require("mongoose");
 const setSchema = require("../sets/set-schema");
 const { normalizeSetsOrder } = require("../sets/set-order-util");
 const tableSchema = require("../tables/table-schema");
+const userSchema = require("../users/schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -273,6 +274,43 @@ module.exports = {
       const pullSplit = { $pull: { splits: idSplit } };
       await ownTableSchema.findByIdAndUpdate(idTable, pullSplit);
       await splitSchema.deleteOne({ _id: idSplit });
+    } catch (err) {
+      throw err;
+    }
+  },
+
+  async deleteSplits(idTable, splitIds, userId, workoutInUse) {
+    try {
+      const selectedSplits = await splitSchema
+        .find({ _id: { $in: splitIds } })
+        .select("_id workouts");
+
+      const workoutInUseId = workoutInUse?.toString();
+      const clearedWorkoutInUse = Boolean(
+        workoutInUseId &&
+          selectedSplits.some((split) =>
+            (split.workouts || []).some(
+              (workout) =>
+                (workout?._id || workout)?.toString() === workoutInUseId,
+            ),
+          ),
+      );
+
+      await ownTableSchema.findByIdAndUpdate(idTable, {
+        $pull: { splits: { $in: splitIds } },
+      });
+      await splitSchema.deleteMany({ _id: { $in: splitIds } });
+
+      if (clearedWorkoutInUse && userId) {
+        await userSchema.findByIdAndUpdate(userId, {
+          $unset: { workoutInUse: 1 },
+        });
+      }
+
+      return {
+        deletedSplitIds: splitIds.map((id) => id.toString()),
+        clearedWorkoutInUse,
+      };
     } catch (err) {
       throw err;
     }
