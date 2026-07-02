@@ -7,30 +7,20 @@ module.exports = {
     return dietDayDao.findAll(page, limit);
   },
 
-  // TODO: Revisar tema fechas
   async getDietDaysWeightsBetweenDatesByIdDiet(id, startDate, endDate) {
-    const minDate = new Date(startDate);
-    const maxDate = new Date(endDate);
-    minDate.setHours(0, 0, 0, 0);
-    maxDate.setHours(23, 59, 59, 59);
     const dietDays = await dietDayDao.getDietDaysWeightsBetweenDatesByIdDiet(
       id,
-      minDate,
-      maxDate,
+      startDate,
+      endDate,
     );
     return await aggregateService.aggregateFilter(dietDays, "dietDays");
   },
 
-  // TODO: Revisar tema fechas
   async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate) {
-    const minDate = new Date(startDate);
-    const maxDate = new Date(endDate);
-    minDate.setHours(0, 0, 0, 0);
-    maxDate.setHours(23, 59, 59, 59);
     const dietDays = await dietDayDao.getDietDaysBetweenDatesByIdDiet(
       id,
-      minDate,
-      maxDate,
+      startDate,
+      endDate,
     );
     return await aggregateService.aggregateFilter(dietDays, "dietDays");
   },
