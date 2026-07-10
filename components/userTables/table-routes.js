@@ -14,7 +14,7 @@ router.getAsync(
 router.getAsync(
   "/copy/own/:idUser/:idTable",
   auth(["admin", "user"]),
-  controller.copyOwnTable
+  controller.duplicateTable
 );
 // router.getAsync("/:id", controller.getTableById);
 // router.postAsync("/search", controller.getSearchTables);

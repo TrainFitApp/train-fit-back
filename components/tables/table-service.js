@@ -1,11 +1,6 @@
-const setSchema = require("../sets/set-schema");
-const customExerciseSchema = require("../customExercises/custom-exercise-schema");
-const workoutSchema = require("../workouts/workout-schema");
-const splitSchema = require("../splits/split-schema");
-const tableSchema = require("../tables/table-schema");
 const tableDao = require("./table-dao");
 const tableUtil = require("./table-util");
-const { default: mongoose } = require("mongoose");
+
 module.exports = {
   async getTables(page, limit) {
     return tableDao.getTables(page, limit);

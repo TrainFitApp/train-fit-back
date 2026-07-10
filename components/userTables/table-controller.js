@@ -29,8 +29,8 @@ module.exports = {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = Array.isArray(req.user?.ownTables)
-      ? req.user.ownTables.length
+    const routineCount = Array.isArray(req.user?.tables)
+      ? req.user.tables.length
       : 0;
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
@@ -43,13 +43,13 @@ module.exports = {
     return res.send(table);
   },
 
-  async copyOwnTable(req, res) {
+  async duplicateTable(req, res) {
     if (!canActOnUser(req, req.params.idUser)) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = Array.isArray(req.user?.ownTables)
-      ? req.user.ownTables.length
+    const routineCount = Array.isArray(req.user?.tables)
+      ? req.user.tables.length
       : 0;
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
@@ -58,8 +58,8 @@ module.exports = {
       });
     }
 
-    const copyOwnTable = await tableModel.copyOwnTable(req.params.idUser, req.params.idTable);
-    return res.send(copyOwnTable);
+    const duplicatedTable = await tableModel.duplicateTable(req.params.idUser, req.params.idTable);
+    return res.send(duplicatedTable);
   },
 
   async getSearchTables(req, res) {
@@ -89,8 +89,8 @@ module.exports = {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = Array.isArray(req.user?.ownTables)
-      ? req.user.ownTables.length
+    const routineCount = Array.isArray(req.user?.tables)
+      ? req.user.tables.length
       : 0;
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({

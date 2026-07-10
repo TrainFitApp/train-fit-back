@@ -33,8 +33,8 @@ module.exports = {
         });
       }
 
-      const routineCount = Array.isArray(req.user?.ownTables)
-        ? req.user.ownTables.length
+      const routineCount = Array.isArray(req.user?.tables)
+        ? req.user.tables.length
         : 0;
       if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
         return res.status(403).send({

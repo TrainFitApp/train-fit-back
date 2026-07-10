@@ -14,8 +14,8 @@ module.exports = {
     return tableDao.copyTable(idUser, idTable);
   },
 
-  async copyOwnTable(idUser, idTable) {
-    return tableDao.copyOwnTable(idUser, idTable);
+  async duplicateTable(idUser, idTable) {
+    return tableDao.duplicateTable(idUser, idTable);
   },
 
   async getSearchTables(page, limit, search, isOwn) {

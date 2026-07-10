@@ -3,7 +3,7 @@ const bcrypt = require("bcrypt");
 const Schema = mongoose.Schema;
 const dietSchema = require("../diets/diet-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
-const ownTableSchema = require("../ownTables/own-table-schema");
+const tableSchema = require("../tables/table-schema");
 const productSchema = require("../products/product-schema");
 const SALT_WORK_FACTOR = 10;
 
@@ -36,7 +36,7 @@ const UserSchema = new Schema({
   dietInUse: Schema.Types.ObjectId,
   tableInUse: Schema.Types.ObjectId,
   workoutInUse: Schema.Types.ObjectId,
-  ownTables: { type: [Schema.Types.ObjectId], default: [] },
+  tables: { type: [Schema.Types.ObjectId], default: [] },
   archivedDiets: { type: [Schema.Types.ObjectId], default: [] },
   archivedProducts: { type: [Schema.Types.ObjectId], default: [] },
   archivedRecipes: { type: [Schema.Types.ObjectId], default: [] },
@@ -106,10 +106,14 @@ UserSchema.pre("deleteOne", async function (next) {
     const user = await this.model.findOne(query);
 
     if (user) {
-      // TODO: en el futuro habrá lista de ownDiets como en las ownTables
       if (user.dietInUse) await dietSchema.deleteOne({ _id: user.dietInUse });
-      if (user.ownTables)
-        await ownTableSchema.deleteMany({ _id: { $in: user.ownTables } });
+      if (user.tables)
+        await tableSchema.deleteMany({
+          $or: [
+            { _id: { $in: user.tables } },
+            { userId: user._id },
+          ],
+        });
 
       const ownExercises = await exerciseSchema
         .find({ userId: user._id })

@@ -1,4 +1,3 @@
-const ownTableSchema = require("./own-table-schema");
 const tableSchema = require("../tables/table-schema");
 const userSchema = require("../users/schema");
 const splitSchema = require("../splits/split-schema");
@@ -57,15 +56,18 @@ module.exports = {
       await splitSchema.insertMany(splits);
 
       delete tableDoc._id;
-      return await ownTableSchema.create(tableDoc);
+      return await tableSchema.create({
+        ...tableDoc,
+        userId: idUser,
+      });
     } catch (e) {
       throw e;
     }
   },
 
-  async copyOwnTable(idUser, idTable) {
+  async duplicateTable(idUser, idTable) {
     try {
-      const tableD = await ownTableSchema.findById(idTable);
+      const tableD = await tableSchema.findById(idTable);
       const tableDoc = tableD.toObject();
 
       const splits = [];
@@ -96,11 +98,14 @@ module.exports = {
       await splitSchema.insertMany(splits);
 
       delete tableDoc._id;
-      const ownTableDoc = await ownTableSchema.create(tableDoc);
+      const tableDocCreated = await tableSchema.create({
+        ...tableDoc,
+        userId: idUser,
+      });
 
-      const addOwnTableToUser = { $push: { ownTables: ownTableDoc._id } };
-      await userSchema.findByIdAndUpdate(idUser, addOwnTableToUser);
-      return ownTableDoc;
+      const addTableToUser = { $push: { tables: tableDocCreated._id } };
+      await userSchema.findByIdAndUpdate(idUser, addTableToUser);
+      return tableDocCreated;
     } catch (e) {
       throw e;
     }
@@ -165,10 +170,13 @@ module.exports = {
 
   async createTableToUser(idUser, standardTable) {
     try {
-      const tableDoc = await ownTableSchema.create(standardTable);
+      const tableDoc = await tableSchema.create({
+        ...standardTable,
+        userId: idUser,
+      });
       const addTableToUser = {
         $set: { tableInUse: tableDoc._id },
-        $push: { ownTables: tableDoc._id },
+        $push: { tables: tableDoc._id },
       };
       await userSchema.findByIdAndUpdate(idUser, addTableToUser);
       return tableDoc;
@@ -195,9 +203,9 @@ module.exports = {
 
   async deleteTable(idUser, idTable) {
     try {
-      const pullTableFromUser = { $pull: { ownTables: idTable } };
+      const pullTableFromUser = { $pull: { tables: idTable } };
       await userSchema.findByIdAndUpdate(idUser, pullTableFromUser);
-      return await ownTableSchema.deleteOne({ _id: idTable });
+      return await tableSchema.deleteOne({ _id: idTable, userId: idUser });
     } catch (e) {
       throw e;
     }

@@ -1,6 +1,5 @@
-const tableSchema = require("./table-schema");
 const userSchema = require("../users/schema");
-const ownTableSchema = require("../ownTables/own-table-schema");
+const tableSchema = require("./table-schema");
 const { default: mongoose } = require("mongoose");
 const splitSchema = require("../splits/split-schema");
 const setSchema = require("../sets/set-schema");
@@ -10,25 +9,15 @@ const serverDomain = process.env.SERVER_DOMAIN;
 
 module.exports = {
   async getTables(page, limit) {
-    return new Promise((resolve, reject) =>
-      tableSchema
-        .find({})
-        .skip(page * limit)
-        .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        })
-    );
+    return tableSchema
+      .find({ userId: null })
+      .skip(page * limit)
+      .limit(limit)
+      .exec();
   },
 
   async getTableById(id) {
-    return new Promise((resolve, reject) =>
-      ownTableSchema.findById(id, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      })
-    );
+    return tableSchema.findById(id).exec();
   },
 
   async copySharedTable(idUser, idTable) {
@@ -38,7 +27,7 @@ module.exports = {
         customExercises = [],
         sets = [];
 
-      let sharedTable = await ownTableSchema.findById(idTable);
+      let sharedTable = await tableSchema.findById(idTable);
       sharedTable = sharedTable.toObject();
 
       sharedTable.splits.forEach((sTemp) => {
@@ -62,9 +51,14 @@ module.exports = {
       await customExerciseSchema.insertMany(customExercises);
       await workoutSchema.insertMany(workouts);
       await splitSchema.insertMany(splits);
-      sharedTable = await tableSchema.create(sharedTable);
 
-      const addTableToUserQuery = { $push: { ownTables: sharedTable._id } };
+      delete sharedTable._id;
+      sharedTable = await tableSchema.create({
+        ...sharedTable,
+        userId: null,
+      });
+
+      const addTableToUserQuery = { $push: { tables: sharedTable._id } };
 
       await userSchema.findByIdAndUpdate(idUser, addTableToUserQuery, {
         new: true,
@@ -72,7 +66,7 @@ module.exports = {
 
       return `${serverDomain}/api/tables/share/${idUser}/${idTable}`;
     } catch (e) {
-      throw err;
+      throw e;
     }
   },
 
@@ -94,7 +88,6 @@ module.exports = {
 
       const buildLightSearchPipeline = (extraMatch = {}) => [
         { $match: { ...baseMatch, ...extraMatch } },
-        // Solo traer lo esencial para listado
         { $project: { _id: 1, name: 1, urlImage: 1, splits: 1 } },
         {
           $lookup: {
@@ -130,42 +123,42 @@ module.exports = {
 
       if (isOwn) {
         const userId = mongoose.Types.ObjectId(idUser);
-        const user = await userSchema.findById(userId).select("ownTables").lean();
+        const user = await userSchema.findById(userId).select("tables").lean();
 
-        if (!user?.ownTables?.length) {
+        if (!user?.tables?.length) {
           return [];
         }
 
-        const tableIds = user.ownTables.map((tableId) =>
+        const tableIds = user.tables.map((tableId) =>
           typeof tableId === "object" && tableId?._id ? tableId._id : tableId
         );
 
-        return await ownTableSchema.aggregate(
+        return await tableSchema.aggregate(
           buildLightSearchPipeline({ _id: { $in: tableIds } })
         );
       }
 
-      return await tableSchema.aggregate(buildLightSearchPipeline());
+      return await tableSchema.aggregate(
+        buildLightSearchPipeline({ userId: null })
+      );
     } catch (e) {
       throw e;
     }
   },
 
   async createTable(table) {
-    return new Promise((resolve, reject) =>
-      tableSchema.create(table, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      })
-    );
+    return tableSchema.create({ ...table, userId: null });
   },
 
   async createTableToUser(idUser, standardTable) {
     try {
-      const tableDoc = await tableSchema.create(standardTable);
-      const addTableToUser = { 
+      const tableDoc = await tableSchema.create({
+        ...standardTable,
+        userId: idUser,
+      });
+      const addTableToUser = {
         $set: { tableInUse: tableDoc._id },
-        $unset: { workoutInUse: "" }
+        $unset: { workoutInUse: "" },
       };
       await userSchema.findByIdAndUpdate(idUser, addTableToUser);
       return tableDoc;
@@ -177,7 +170,7 @@ module.exports = {
   async updateTable(id, name) {
     const update = { $set: { name: name } };
     try {
-      const docTable = await ownTableSchema.findByIdAndUpdate(id, update, {
+      const docTable = await tableSchema.findByIdAndUpdate(id, update, {
         new: true,
       });
       return { name: docTable.name };
@@ -187,12 +180,7 @@ module.exports = {
   },
 
   async deleteTable(id) {
-    return new Promise((resolve, reject) =>
-      tableSchema.deleteOne({ _id: id }, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
+    return tableSchema.deleteOne({ _id: id, userId: null }).exec();
   },
 
   async deleteTableSplit(idTable, idSplit) {
@@ -200,11 +188,6 @@ module.exports = {
       $pull: { splits: idSplit },
     };
 
-    return new Promise((resolve, reject) =>
-      tableSchema.findByIdAndUpdate(idTable, deleteSplit, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
+    return tableSchema.findByIdAndUpdate(idTable, deleteSplit, {}).exec();
   },
 };

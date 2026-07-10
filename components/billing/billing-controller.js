@@ -57,7 +57,7 @@ module.exports = {
       }
     }
 
-    const routines = Array.isArray(user?.ownTables) ? user.ownTables.length : 0;
+    const routines = Array.isArray(user?.tables) ? user.tables.length : 0;
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
 
@@ -84,8 +84,8 @@ module.exports = {
     }
 
     const refreshedUser = await userSchema.findById(user._id);
-    const routines = Array.isArray(refreshedUser?.ownTables)
-      ? refreshedUser.ownTables.length
+    const routines = Array.isArray(refreshedUser?.tables)
+      ? refreshedUser.tables.length
       : 0;
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);

@@ -40,6 +40,7 @@ module.exports = {
     const table = await tableModel.createTable({
       name: req.body.name,
       type: req.body.type,
+      userId: req.user?.id || null,
       splits: req.body.splits,
     });
 
