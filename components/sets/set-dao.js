@@ -54,16 +54,29 @@ module.exports = {
 
   async updateSet(set) {
     try {
-      const doc = await setSchema.findById(set._id);
-      if (!doc) return null;
+      const updateOperation = {};
+      const unsetOperation = {};
 
-      // Actualizar con los datos recibidos
       for (const key in set) {
         if (key === "_id") continue;
-        doc[key] = set[key];
+        const value = set[key];
+        const isEmptyArray = Array.isArray(value) && value.length === 0;
+        if (value === null || value === undefined || isEmptyArray) {
+          unsetOperation[key] = "";
+        } else {
+          updateOperation[key] = value;
+        }
       }
 
-      return await doc.save();
+      const update = {};
+      if (Object.keys(updateOperation).length > 0) update.$set = updateOperation;
+      if (Object.keys(unsetOperation).length > 0) update.$unset = unsetOperation;
+
+      if (Object.keys(update).length === 0) {
+        return await setSchema.findById(set._id);
+      }
+
+      return await setSchema.findByIdAndUpdate(set._id, update, { new: true });
     } catch (err) {
       throw err;
     }
