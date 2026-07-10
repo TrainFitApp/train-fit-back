@@ -50,4 +50,8 @@ module.exports = {
   async deleteTableSplit(idSplit, idTable) {
     return tableDao.deleteTableSplit(idSplit, idTable);
   },
+
+  async countUserTables(userId) {
+    return tableDao.countUserTables(userId);
+  },
 };

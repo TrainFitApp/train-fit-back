@@ -26,13 +26,13 @@ module.exports = {
     return res.send(table);
   },
 
-  async copyTable(req, res) {
+async copyTable(req, res) {
     const idUser = req.body.idUser || req.params.idUser;
     if (!canActOnUser(req, idUser)) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = Array.isArray(req.user?.tables) ? req.user.tables.length : 0;
+    const routineCount = await tableModel.countUserTables(idUser);
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",
@@ -50,7 +50,25 @@ module.exports = {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = Array.isArray(req.user?.tables) ? req.user.tables.length : 0;
+    const routineCount = await tableModel.countUserTables(idUser);
+    if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
+      return res.status(403).send({
+        code: "PREMIUM_LIMIT_ROUTINES",
+        message: "L\u00edmite Free alcanzado. Solo puedes tener 1 rutina.",
+      });
+    }
+
+    const duplicatedTable = await tableModel.duplicateTable(idUser, req.params.idTable);
+    return res.send(duplicatedTable);
+  },
+
+  async duplicateTable(req, res) {
+    const idUser = req.body.idUser || req.params.idUser;
+    if (!canActOnUser(req, idUser)) {
+      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
+    }
+
+    const routineCount = await tableModel.countUserTables(idUser);
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",

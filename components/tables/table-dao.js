@@ -42,9 +42,22 @@ async function copyHierarchy(tableDoc) {
 }
 
 module.exports = {
-  async getTables(page, limit) {
+  async getTables(page, limit, own = false, idUser = null) {
+    if (own && idUser) {
+      return tableSchema
+        .find({ userId: mongoose.Types.ObjectId(idUser) })
+        .skip(page * limit)
+        .limit(limit)
+        .exec();
+    }
+    // All routines: user's own + public templates
     return tableSchema
-      .find({ userId: null })
+      .find({
+        $or: [
+          { userId: mongoose.Types.ObjectId(idUser) },
+          { userId: null }
+        ]
+      })
       .skip(page * limit)
       .limit(limit)
       .exec();
@@ -83,14 +96,10 @@ module.exports = {
       await copyHierarchy(tableDoc);
 
       delete tableDoc._id;
-      const tableDocCreated = await tableSchema.create({
+      return await tableSchema.create({
         ...tableDoc,
         userId: idUser,
       });
-
-      const addTableToUser = { $push: { tables: tableDocCreated._id } };
-      await userSchema.findByIdAndUpdate(idUser, addTableToUser);
-      return tableDocCreated;
     } catch (e) {
       throw e;
     }
@@ -132,12 +141,6 @@ module.exports = {
       sharedTable = await tableSchema.create({
         ...sharedTable,
         userId: null,
-      });
-
-      const addTableToUserQuery = { $push: { tables: sharedTable._id } };
-
-      await userSchema.findByIdAndUpdate(idUser, addTableToUserQuery, {
-        new: true,
       });
 
       return `${serverDomain}/api/tables/share/${idUser}/${idTable}`;
@@ -198,24 +201,19 @@ module.exports = {
       ];
 
       if (isOwn) {
-        const userId = mongoose.Types.ObjectId(idUser);
-        const user = await userSchema.findById(userId).select("tables").lean();
-
-        if (!user?.tables?.length) {
-          return [];
-        }
-
-        const tableIds = user.tables.map((tableId) =>
-          typeof tableId === "object" && tableId?._id ? tableId._id : tableId
-        );
-
         return await tableSchema.aggregate(
-          buildLightSearchPipeline({ _id: { $in: tableIds } })
+          buildLightSearchPipeline({ userId: mongoose.Types.ObjectId(idUser) })
         );
       }
 
+      // All routines: user's own + public templates
       return await tableSchema.aggregate(
-        buildLightSearchPipeline({ userId: null })
+        buildLightSearchPipeline({
+          $or: [
+            { userId: mongoose.Types.ObjectId(idUser) },
+            { userId: null }
+          ]
+        })
       );
     } catch (e) {
       throw e;
@@ -259,8 +257,6 @@ module.exports = {
 
   async deleteTable(idUser, idTable) {
     try {
-      const pullTableFromUser = { $pull: { tables: idTable } };
-      await userSchema.findByIdAndUpdate(idUser, pullTableFromUser);
       return await tableSchema.deleteOne({ _id: idTable, userId: idUser }).exec();
     } catch (e) {
       throw e;
@@ -273,5 +269,9 @@ module.exports = {
     };
 
     return tableSchema.findByIdAndUpdate(idTable, deleteSplit, {}).exec();
+  },
+
+  async countUserTables(userId) {
+    return tableSchema.countDocuments({ userId }).exec();
   },
 };

@@ -36,7 +36,6 @@ const UserSchema = new Schema({
   dietInUse: Schema.Types.ObjectId,
   tableInUse: Schema.Types.ObjectId,
   workoutInUse: Schema.Types.ObjectId,
-  tables: { type: [Schema.Types.ObjectId], default: [] },
   archivedDiets: { type: [Schema.Types.ObjectId], default: [] },
   archivedProducts: { type: [Schema.Types.ObjectId], default: [] },
   archivedRecipes: { type: [Schema.Types.ObjectId], default: [] },
@@ -107,13 +106,7 @@ UserSchema.pre("deleteOne", async function (next) {
 
     if (user) {
       if (user.dietInUse) await dietSchema.deleteOne({ _id: user.dietInUse });
-      if (user.tables)
-        await tableSchema.deleteMany({
-          $or: [
-            { _id: { $in: user.tables } },
-            { userId: user._id },
-          ],
-        });
+      await tableSchema.deleteMany({ userId: user._id });
 
       const ownExercises = await exerciseSchema
         .find({ userId: user._id })

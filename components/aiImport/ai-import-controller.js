@@ -1,6 +1,7 @@
 const aiImportService = require("./ai-import-service");
 const aiImportUtil = require("./ai-import-util");
 const featureAccessService = require("../billing/feature-access-service");
+const tableService = require("../tables/table-service");
 
 module.exports = {
   async interpretExcel(req, res) {
@@ -33,9 +34,7 @@ module.exports = {
         });
       }
 
-      const routineCount = Array.isArray(req.user?.tables)
-        ? req.user.tables.length
-        : 0;
+      const routineCount = await tableService.countUserTables(req.user.id);
       if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
         return res.status(403).send({
           code: "PREMIUM_LIMIT_ROUTINES",
