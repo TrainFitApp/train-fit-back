@@ -69,6 +69,7 @@ const UserSchema = new Schema({
     impersonatedFromSessionId: { type: String, default: null },
   },
   provider: String,
+  lang: { type: String, default: 'es' },
 });
 
 UserSchema.plugin(require("mongoose-autopopulate"));
