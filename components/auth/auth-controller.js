@@ -662,12 +662,6 @@ module.exports = {
           roles: ["user"],
           provider,
         });
-        mail.notifyUserRegistered(user, {
-          source: "auth.registerSocial",
-          provider,
-          ip: req.ip,
-          userAgent: req.headers?.["user-agent"],
-        });
       } else if (provider === "apple" && identity.appleId && !user.appleId) {
         user = await userSchema.findByIdAndUpdate(
           user._id,
@@ -701,6 +695,13 @@ module.exports = {
       } else {
         updatedUser = await userModel.updateGoogleUser(profile, new Date());
       }
+
+      mail.notifyUserRegistered(updatedUser, {
+        source: "auth.completeSocial",
+        provider: updatedUser.provider,
+        ip: req.ip,
+        userAgent: req.headers?.["user-agent"],
+      });
 
       return res.send({
         user: await userDto.single(updatedUser),
