@@ -2,12 +2,23 @@ const tableDao = require("./table-dao");
 const tableUtil = require("./table-util");
 
 module.exports = {
-  async getTables(page, limit) {
+  async getTables(page, limit, own = false, idUser = null) {
+    if (own && idUser) {
+      return tableDao.getSearchTables(page, limit, "", true, idUser);
+    }
     return tableDao.getTables(page, limit);
   },
 
   async getTableById(id) {
     return tableDao.getTableById(id);
+  },
+
+  async copyTable(idUser, idTable) {
+    return tableDao.copyTable(idUser, idTable);
+  },
+
+  async duplicateTable(idUser, idTable) {
+    return tableDao.duplicateTable(idUser, idTable);
   },
 
   async copySharedTable(idUser, idTable) {
@@ -28,12 +39,12 @@ module.exports = {
     return tableDao.createTableToUser(idUser, standardTable);
   },
 
-  async updateTable(id, name) {
-    return await tableDao.updateTable(id, name);
+  async updateTable(id, name, userId) {
+    return tableDao.updateTable(id, name, userId);
   },
 
-  async deleteTable(id) {
-    return tableDao.deleteTable(id);
+  async deleteTable(idUser, idTable) {
+    return tableDao.deleteTable(idUser, idTable);
   },
 
   async deleteTableSplit(idSplit, idTable) {

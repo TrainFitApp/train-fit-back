@@ -10,7 +10,6 @@ const customRecipes = require("../components/customRecipes/custom-recipe-routes"
 const customExercises = require("../components/customExercises/custom-exercise-routes");
 const workouts = require("../components/workouts/workout-routes");
 const tables = require("../components/tables/table-routes");
-const userTables = require("../components/userTables/table-routes");
 const splits = require("../components/splits/split-routes");
 const exercises = require("../components/exercises/exercise-routes");
 const sets = require("../components/sets/set-routes");
@@ -36,7 +35,6 @@ router.use("/recipes", recipes);
 router.use("/customrecipes", customRecipes);
 router.use("/customexercises", customExercises);
 router.use("/tables", tables);
-router.use("/tables/user", userTables);
 router.use("/splits", splits);
 router.use("/workouts", workouts);
 router.use("/exercises", exercises);

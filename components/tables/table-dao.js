@@ -7,6 +7,40 @@ const customExerciseSchema = require("../customExercises/custom-exercise-schema"
 const workoutSchema = require("../workouts/workout-schema");
 const serverDomain = process.env.SERVER_DOMAIN;
 
+function normalizeSetForTemplateCopy(setTemp) {
+  delete setTemp.doned;
+}
+
+async function copyHierarchy(tableDoc) {
+  const splits = [];
+  const workouts = [];
+  const customExercises = [];
+  const sets = [];
+
+  tableDoc.splits.forEach((splitTemp) => {
+    splitTemp._id = new mongoose.Types.ObjectId();
+    splits.push(splitTemp);
+    splitTemp.workouts.forEach((workoutTemp) => {
+      workoutTemp._id = new mongoose.Types.ObjectId();
+      workouts.push(workoutTemp);
+      workoutTemp.exercises.forEach((customExerciseTemp) => {
+        customExerciseTemp._id = new mongoose.Types.ObjectId();
+        customExercises.push(customExerciseTemp);
+        customExerciseTemp.sets.forEach((setTemp) => {
+          setTemp._id = new mongoose.Types.ObjectId();
+          normalizeSetForTemplateCopy(setTemp);
+          sets.push(setTemp);
+        });
+      });
+    });
+  });
+
+  await setSchema.insertMany(sets);
+  await customExerciseSchema.insertMany(customExercises);
+  await workoutSchema.insertMany(workouts);
+  await splitSchema.insertMany(splits);
+}
+
 module.exports = {
   async getTables(page, limit) {
     return tableSchema
@@ -20,12 +54,54 @@ module.exports = {
     return tableSchema.findById(id).exec();
   },
 
+  async copyTable(idUser, idTable) {
+    try {
+      const tableD = await tableSchema.findById(idTable);
+      if (!tableD) throw new Error("Table not found");
+      const tableDoc = tableD.toObject();
+
+      await copyHierarchy(tableDoc);
+
+      delete tableDoc._id;
+      return await tableSchema.create({
+        ...tableDoc,
+        userId: idUser,
+      });
+    } catch (e) {
+      throw e;
+    }
+  },
+
+  async duplicateTable(idUser, idTable) {
+    try {
+      const tableD = await tableSchema.findById(idTable);
+      if (!tableD) throw new Error("Table not found");
+      const tableDoc = tableD.toObject();
+
+      tableDoc.name = tableDoc.name + " copia";
+
+      await copyHierarchy(tableDoc);
+
+      delete tableDoc._id;
+      const tableDocCreated = await tableSchema.create({
+        ...tableDoc,
+        userId: idUser,
+      });
+
+      const addTableToUser = { $push: { tables: tableDocCreated._id } };
+      await userSchema.findByIdAndUpdate(idUser, addTableToUser);
+      return tableDocCreated;
+    } catch (e) {
+      throw e;
+    }
+  },
+
   async copySharedTable(idUser, idTable) {
     try {
-      const splits = [],
-        workouts = [],
-        customExercises = [],
-        sets = [];
+      const splits = [];
+      const workouts = [];
+      const customExercises = [];
+      const sets = [];
 
       let sharedTable = await tableSchema.findById(idTable);
       sharedTable = sharedTable.toObject();
@@ -167,20 +243,28 @@ module.exports = {
     }
   },
 
-  async updateTable(id, name) {
+  async updateTable(id, name, userId) {
     const update = { $set: { name: name } };
     try {
-      const docTable = await tableSchema.findByIdAndUpdate(id, update, {
+      const query = userId ? { _id: id, userId: userId } : { _id: id };
+      const docTable = await tableSchema.findOneAndUpdate(query, update, {
         new: true,
       });
+      if (!docTable) throw new Error("Table not found or access denied");
       return { name: docTable.name };
     } catch (err) {
       throw err;
     }
   },
 
-  async deleteTable(id) {
-    return tableSchema.deleteOne({ _id: id, userId: null }).exec();
+  async deleteTable(idUser, idTable) {
+    try {
+      const pullTableFromUser = { $pull: { tables: idTable } };
+      await userSchema.findByIdAndUpdate(idUser, pullTableFromUser);
+      return await tableSchema.deleteOne({ _id: idTable, userId: idUser }).exec();
+    } catch (e) {
+      throw e;
+    }
   },
 
   async deleteTableSplit(idTable, idSplit) {
