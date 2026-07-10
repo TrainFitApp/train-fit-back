@@ -156,6 +156,7 @@ module.exports = {
         workoutTemp._id = new mongoose.Types.ObjectId();
         // Se mantienen las notes del workout al duplicar
         delete workoutTemp.date;
+        delete workoutTemp.startedAt;
         newWorkouts.push(workoutTemp);
         workoutTemp.exercises.forEach((exerciseTemp) => {
           exerciseTemp._id = new mongoose.Types.ObjectId();
