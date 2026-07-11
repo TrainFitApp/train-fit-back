@@ -20,6 +20,7 @@ router.putAsync(
   controller.addDietUser
 );
 router.patchAsync("/:id", auth(["admin", "user"]), controller.updateDiet);
+router.patchAsync("/:id/pinned-note", auth(["admin", "user"]), controller.updatePinnedNote);
 router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteDiet);
 router.deleteAsync(
   "/:iddiet/:iddietday",

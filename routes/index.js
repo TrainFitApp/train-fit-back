@@ -21,6 +21,7 @@ const envManager = require("../components/envManager/env-manager-routes");
 const serverManager = require("../components/serverManager/server-manager-routes");
 const gitManager = require("../components/gitManager/git-manager-routes");
 const aiImport = require("../components/aiImport/ai-import-routes");
+const pinnedExerciseNotes = require("../components/pinnedExerciseNotes/pinned-exercise-note-routes");
 
 const router = express.Router();
 
@@ -41,6 +42,7 @@ router.use("/exercises", exercises);
 router.use("/sets", sets);
 router.use("/logs", logs);
 router.use("/billing", billing);
+router.use("/pinned-exercise-notes", pinnedExerciseNotes);
 router.use("/app", appVersion);
 router.use("/env", envManager);
 router.use("/server", serverManager);
