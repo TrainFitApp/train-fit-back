@@ -1,3 +1,4 @@
+const anthropometryModel = require("../anthropometry/anthropometry-service");
 const dietDayModel = require("./diet-days-service");
 
 const controller = {
@@ -23,6 +24,7 @@ const controller = {
       req.params.id,
       req.body.minDate,
       req.body.maxDate,
+      req.user.id
     );
     return res.send(dietDays);
   },
@@ -32,12 +34,18 @@ const controller = {
       req.params.id,
       req.body.date,
     );
-    return res.send(dietDay);
+    
+    // Also fetch anthropometry for this date
+    const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(
+      req.user.id,
+      req.body.date
+    );
+    
+    return res.send({ dietDay, anthropometry: anthropometry || null });
   },
 
   async createDietDay(req, res) {
     const dietDay = await dietDayModel.createDietDay({
-      weight: req.body.weight,
       date: req.body.date,
       meals: req.body.meals,
     });
@@ -46,12 +54,21 @@ const controller = {
   },
 
   async createDayWeightOnNewDietDay(req, res) {
+    const userId = req.user.id;
     const dietDay = await dietDayModel.createDayWeightOnNewDietDay(
       req.body.dayWeight,
       req.params.dietInUseId,
       req.body.currentDate,
+      userId
     );
-    return res.send(dietDay);
+    
+    // Also fetch the anthropometry that was just created
+    const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(
+      userId,
+      req.body.currentDate
+    );
+    
+    return res.send({ dietDay, anthropometry });
   },
 
   async createCustomProductOnNewDietDay(req, res) {
@@ -98,16 +115,8 @@ const controller = {
   },
 
   async updateDietDay(req, res) {
-    // if (!req.body.weight) return res.sendStatus(400);
-    // if (!req.body.date) return res.sendStatus(400);
-    // if (!req.body.meals) return res.sendStatus(400);
-
-    // const dietDay = await dietDayModel.updateDietDay(req.params.id);
-    // if (!dietDay) return res.sendStatus(404);
-
     const dietDay = await dietDayModel.updateDietDay(req.params.id, {
       notes: req.body.notes,
-      weight: req.body.weight,
       date: req.body.date,
       meals: req.body.meals,
     });

@@ -5,6 +5,7 @@ const dietSchema = require("../diets/diet-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
 const tableSchema = require("../tables/table-schema");
 const productSchema = require("../products/product-schema");
+const anthropometrySchema = require("../anthropometry/anthropometry-schema");
 const SALT_WORK_FACTOR = 10;
 
 const UserSchema = new Schema({
@@ -107,6 +108,7 @@ UserSchema.pre("deleteOne", async function (next) {
     if (user) {
       if (user.dietInUse) await dietSchema.deleteOne({ _id: user.dietInUse });
       await tableSchema.deleteMany({ userId: user._id });
+      await anthropometrySchema.deleteMany({ userId: user._id });
 
       const ownExercises = await exerciseSchema
         .find({ userId: user._id })
