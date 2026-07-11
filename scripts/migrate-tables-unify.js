@@ -19,24 +19,29 @@ async function main() {
   const db = mongoose.connection.db;
 
   // 1. Add userId: null to all existing "tables" docs (professional templates)
-  log("step 1/6 — adding userId: null to all docs in 'tables' collection...");
+  log("step 1/7 — adding userId: null to all docs in 'tables' collection...");
   const tablesResult = await db
     .collection("tables")
     .updateMany({ userId: { $exists: false } }, { $set: { userId: null } });
   ok(`tables: ${tablesResult.modifiedCount} docs updated`);
 
-  // 2. Add urlImage: "" to all existing "owntables" docs missing it
-  log("step 2/6 — adding urlImage to 'owntables' docs missing it...");
-  const ownTablesResult = await db
-    .collection("owntables")
-    .updateMany(
-      { urlImage: { $exists: false } },
-      { $set: { urlImage: "" } }
-    );
-  ok(`owntables: ${ownTablesResult.modifiedCount} docs updated`);
+  // 2. Add urlImage: "" to all existing "owntables" docs missing it (if collection exists)
+  log("step 2/7 — adding urlImage to 'owntables' docs missing it...");
+  const collections = await db.listCollections({ name: "owntables" }).toArray();
+  if (collections.length > 0) {
+    const ownTablesResult = await db
+      .collection("owntables")
+      .updateMany(
+        { urlImage: { $exists: false } },
+        { $set: { urlImage: "" } }
+      );
+    ok(`owntables: ${ownTablesResult.modifiedCount} docs updated`);
+  } else {
+    ok("owntables collection does not exist, skipping");
+  }
 
   // 3. Backfill userId on existing "owntables" docs from User.ownTables[]
-  log("step 3/6 — backfilling userId on 'owntables' from owners...");
+  log("step 3/7 — backfilling userId on 'owntables' from owners...");
   const userCursor = db
     .collection("users")
     .find(
@@ -55,27 +60,37 @@ async function main() {
   }
   ok(`owntables: ${backfilledCount} docs backfilled with userId`);
 
-  // 4. Merge "owntables" docs into "tables" collection
-  log("step 4/6 — merging 'owntables' into 'tables' collection...");
-  const mergeResult = await db
-    .collection("owntables")
-    .aggregate([
-      { $match: {} },
-      {
-        $merge: {
-          into: "tables",
-          whenMatched: "merge",
-          whenNotMatched: "insert",
+  // 4. Merge "owntables" docs into "tables" collection (if collection exists)
+  log("step 4/7 — merging 'owntables' into 'tables' collection...");
+  const collectionsAfterBackfill = await db.listCollections({ name: "owntables" }).toArray();
+  if (collectionsAfterBackfill.length > 0) {
+    const mergeResult = await db
+      .collection("owntables")
+      .aggregate([
+        { $match: {} },
+        {
+          $merge: {
+            into: "tables",
+            whenMatched: "merge",
+            whenNotMatched: "insert",
+          },
         },
-      },
-    ])
-    .toArray();
-  ok(`owntables merged into tables`);
+      ])
+      .toArray();
+    ok(`owntables merged into tables`);
+  } else {
+    ok("owntables collection does not exist, skipping merge");
+  }
 
-  // 5. Drop "owntables" collection
+  // 5. Drop "owntables" collection (if exists)
   log("step 5/7 — dropping 'owntables' collection...");
-  await db.collection("owntables").drop();
-  ok("owntables collection dropped");
+  const collectionsBeforeDrop = await db.listCollections({ name: "owntables" }).toArray();
+  if (collectionsBeforeDrop.length > 0) {
+    await db.collection("owntables").drop();
+    ok("owntables collection dropped");
+  } else {
+    ok("owntables collection does not exist, skipping drop");
+  }
 
   // 6. Rename field ownTables → tables on User documents
   log("step 6/7 — renaming 'ownTables' → 'tables' on User docs...");
