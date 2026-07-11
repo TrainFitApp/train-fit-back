@@ -6,6 +6,7 @@ const productSchema = require("../products/product-schema");
 const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
+const anthropometrySchema = require("../anthropometry/anthropometry-schema");
 const { default: mongoose } = require("mongoose");
 const dietModel = require("../diets/diet-model");
 const userSchema = require("../users/schema");
@@ -56,51 +57,24 @@ module.exports = {
   },
 
   async getDietDaysWeightsBetweenDatesByIdDiet(id, startDate, endDate) {
-    const agg = [
-      {
-        $match: {
-          _id: new mongoose.Types.ObjectId(id),
-        },
-      },
-      {
-        $lookup: {
-          from: "dietdays",
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    {
-                      $gte: ["$date", startDate],
-                    },
-                    {
-                      $lte: ["$date", endDate],
-                    },
-                  ],
-                },
-                weight: { $exists: true, $ne: null },
-              },
-            },
-            {
-              $sort: {
-                date: 1,
-              },
-            },
-            {
-              $project: {
-                _id: 0,
-                weight: 1,
-              },
-            },
-          ],
-          localField: "dietsDay",
-          foreignField: "_id",
-          as: "dietDays",
-        },
-      },
-    ];
+    const Anthropometry = mongoose.model("Anthropometry", anthropometrySchema);
+    
+    // First get the userId from the diet
+    const diet = await dietSchema.findById(id).lean();
+    if (!diet || !diet.userId) {
+      return [];
+    }
 
-    return await dietSchema.aggregate(agg);
+    const anthropometries = await Anthropometry.find({
+      userId: diet.userId,
+      date: { $gte: startDate, $lte: endDate },
+      weight: { $exists: true, $ne: null },
+    })
+      .sort({ date: 1 })
+      .select("weight date")
+      .lean();
+
+    return anthropometries.map((a) => ({ weight: a.weight }));
   },
 
   async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate) {
@@ -146,7 +120,6 @@ module.exports = {
                 _id: 1,
                 name: 1,
                 date: 1,
-                weight: 1,
                 notes: 1,
                 meals: {
                   _id: 1,
@@ -163,12 +136,17 @@ module.exports = {
       },
       {
         $project: {
-          _id: 0,
-          name: 0,
-          __v: 0,
-          dietsDay: 0,
-        },
-      },
+                _id: 1,
+                name: 1,
+                date: 1,
+                notes: 1,
+                meals: {
+                  _id: 1,
+                  name: 1,
+                  notes: 1,
+                },
+              },
+},
     ];
 
     return await dietSchema.aggregate(agg);
@@ -212,10 +190,9 @@ module.exports = {
     // );
   },
 
-  // Crea dietDay con meals y añade dayWeight
-  async createDayWeightOnNewDietDay(dayWeight, dietInUseId, dietDay) {
+  // Crea dietDay con meals
+  async createDietDayOnNew(dietInUseId, dietDay) {
     try {
-      dietDay.weight = dayWeight;
       // Creación dietDay
       const dietDayDoc = await this.createDietDay(dietDay);
       const dietDayId = dietDayDoc._id.toString();
@@ -417,10 +394,10 @@ module.exports = {
     );
   },
 
-  async updateDietDay(id, { name, weight, date, meals, notes }) {
-    const dietDay = { name, weight, date, meals, notes };
+  async updateDietDay(id, { name, date, meals, notes }) {
+    const dietDay = { name, date, meals, notes };
 
-    const update = { $set: { name, weight, date, meals } };
+    const update = { $set: { name, date, meals } };
 
     if (!dietDay.notes || dietDay.notes?.trim() === "")
       update.$unset = { notes: "" };
@@ -537,12 +514,7 @@ module.exports = {
 
       const newDietDay = { ...dietDayClipboard };
       delete newDietDay._id;
-      // Conditionally set weight based on dietDayToPaste.weight
-      if (dietDayToPaste.weight) {
-        newDietDay.weight = dietDayToPaste.weight;
-      } else {
-        delete newDietDay.weight;
-      }
+      delete newDietDay.weight;
       newDietDay.meals = mealsToCreate;
       newDietDay.date = dietDayToPaste.date;
 

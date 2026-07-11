@@ -1,6 +1,7 @@
 const dietDayDao = require("./diet-days-dao");
 const dietDayUtil = require("./diet-days-util");
 const aggregateService = require("../util/aggregate-service");
+const anthropometryModel = require("../anthropometry/anthropometry-service");
 
 module.exports = {
   async getDietDays(page, limit) {
@@ -8,21 +9,63 @@ module.exports = {
   },
 
   async getDietDaysWeightsBetweenDatesByIdDiet(id, startDate, endDate) {
-    const dietDays = await dietDayDao.getDietDaysWeightsBetweenDatesByIdDiet(
+    // Now uses anthropometry collection
+    return anthropometryModel.getAnthropometriesByUserIdBetweenDates(
       id,
       startDate,
-      endDate,
+      endDate
     );
-    return await aggregateService.aggregateFilter(dietDays, "dietDays");
   },
 
-  async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate) {
+  async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate, userId) {
     const dietDays = await dietDayDao.getDietDaysBetweenDatesByIdDiet(
       id,
       startDate,
       endDate,
     );
-    return await aggregateService.aggregateFilter(dietDays, "dietDays");
+    const aggregatedDietDays = await aggregateService.aggregateFilter(dietDays, "dietDays");
+    
+    // Also fetch anthropometry weights for this date range (using userId)
+    const anthropometries = await anthropometryModel.getAnthropometriesByUserIdBetweenDates(
+      userId,
+      startDate,
+      endDate
+    );
+    
+    // Merge weights into existing dietDays and create virtual entries for anthropometry-only dates
+    const anthropometryDateSet = new Set();
+    anthropometries.forEach(a => {
+      if (a.weight !== undefined) {
+        anthropometryDateSet.add(a.date);
+      }
+    });
+    
+    const mergedDietDays = aggregatedDietDays.map(dietDay => {
+      const weight = anthropometries.find(a => a.date === dietDay.date)?.weight;
+      return {
+        ...dietDay,
+        weight: weight !== undefined ? weight : (dietDay.weight ?? null)
+      };
+    });
+    
+    // Add virtual diet days for anthropometry entries that don't have a diet day
+    const dietDayDateSet = new Set(aggregatedDietDays.map(d => d.date));
+    anthropometries.forEach(a => {
+      if (a.weight !== undefined && !dietDayDateSet.has(a.date)) {
+        mergedDietDays.push({
+          _id: a._id,
+          date: a.date,
+          weight: a.weight,
+          meals: [],
+          notes: a.notes || '',
+        });
+      }
+    });
+    
+    // Sort by date descending to match original order
+    mergedDietDays.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    
+    return mergedDietDays;
   },
 
   async findByIdDietAndDate(id, date) {
@@ -33,17 +76,16 @@ module.exports = {
     return dietDayDao.createDietDay(dietDay);
   },
 
-  async createDietDay(dietDay) {
-    return dietDayDao.createDietDay(dietDay);
-  },
+  async createDayWeightOnNewDietDay(dayWeight, dietInUseId, currentDate, userId) {
+    const standardDietDay = dietDayUtil.getStandardDietDay(currentDate);
+    const dietDay = await dietDayDao.createDietDayOnNew(dietInUseId, standardDietDay);
 
-  async createDayWeightOnNewDietDay(dayWeight, dietInUseId, currentDate) {
-    let standarDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    return dietDayDao.createDayWeightOnNewDietDay(
-      dayWeight,
-      dietInUseId,
-      standarDietDay,
-    );
+    if (dayWeight && userId) {
+      await anthropometryModel.upsertAnthropometry(userId, currentDate, { weight: dayWeight });
+      dietDay.weight = dayWeight;
+    }
+
+    return dietDay;
   },
 
   async createCustomProductOnNewDietDay(
@@ -97,8 +139,8 @@ module.exports = {
     return dietDayDao.addDietDayMeal(idDietDay, idMeal);
   },
 
-  async updateDietDay(id, { name, weight, date, meals, notes }) {
-    return dietDayDao.updateDietDay(id, { name, weight, date, meals, notes });
+  async updateDietDay(id, { name, date, meals, notes }) {
+    return dietDayDao.updateDietDay(id, { name, date, meals, notes });
   },
 
   async pasteDietDayByIdDiet(id, dietDayClipboard, dietDayToPaste) {
