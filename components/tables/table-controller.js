@@ -14,9 +14,10 @@ module.exports = {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 5).toString(), 10);
     const own = req.query.own === "true";
-    const idUser = own ? req.user?.id : null;
+    const defaultOnly = req.query.defaultOnly === "true";
+    const idUser = (own || defaultOnly) ? req.user?.id : null;
 
-    const tables = await tableModel.getTables(page, limit, own, idUser);
+    const tables = await tableModel.getTables(page, limit, own, idUser, defaultOnly);
 
     return res.send(tables);
   },
@@ -91,8 +92,8 @@ async copyTable(req, res) {
   async getSearchTables(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 5).toString(), 10);
-    const { search, isOwn, idUser } = req.body;
-    const tables = await tableModel.getSearchTables(page, limit, search, isOwn, idUser);
+    const { search, isOwn, idUser, defaultOnly } = req.body;
+    const tables = await tableModel.getSearchTables(page, limit, search, isOwn, idUser, defaultOnly);
     return res.send(tables);
   },
 

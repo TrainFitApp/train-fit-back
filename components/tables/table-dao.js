@@ -42,10 +42,17 @@ async function copyHierarchy(tableDoc) {
 }
 
 module.exports = {
-  async getTables(page, limit, own = false, idUser = null) {
+  async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
     if (own && idUser) {
       return tableSchema
         .find({ userId: mongoose.Types.ObjectId(idUser) })
+        .skip(page * limit)
+        .limit(limit)
+        .exec();
+    }
+    if (defaultOnly && idUser) {
+      return tableSchema
+        .find({ userId: null })
         .skip(page * limit)
         .limit(limit)
         .exec();
@@ -149,7 +156,7 @@ module.exports = {
     }
   },
 
-  async getSearchTables(page, limit, search, isOwn, idUser) {
+  async getSearchTables(page, limit, search, isOwn, idUser, defaultOnly = false) {
     try {
       const normalizedSearch = (search || "").trim();
       const searchTerms = normalizedSearch
@@ -203,6 +210,13 @@ module.exports = {
       if (isOwn) {
         return await tableSchema.aggregate(
           buildLightSearchPipeline({ userId: mongoose.Types.ObjectId(idUser) })
+        );
+      }
+
+      if (defaultOnly) {
+        // Predeterminadas: solo plantillas públicas (userId: null)
+        return await tableSchema.aggregate(
+          buildLightSearchPipeline({ userId: null })
         );
       }
 
