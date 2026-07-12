@@ -869,6 +869,43 @@ module.exports = {
     }
   },
 
+  async verifyPassword(req, res) {
+    try {
+      const { password } = req.body || {};
+      if (!password) {
+        return res.status(400).send({ message: "Contraseña requerida" });
+      }
+
+      // Siempre sobre el usuario autenticado (del token), nunca sobre un id
+      // arbitrario del body/params, para que no se pueda usar para tantear
+      // la contraseña de otra cuenta.
+      const user = await userModel.getUserById(req.user.id);
+      if (!user) {
+        return res.status(404).send({ message: "Usuario no encontrado" });
+      }
+
+      if (!user.password) {
+        // Cuenta social (Google/Apple) sin contraseña propia: nada que verificar.
+        return res.status(400).send({
+          message: "Esta cuenta no tiene contraseña configurada",
+          code: "NO_PASSWORD_SET",
+        });
+      }
+
+      const isMatch = bcrypt.comparePasswords(password, user.password);
+      if (!isMatch) {
+        return res.status(401).send({ message: "Contraseña incorrecta" });
+      }
+
+      return res.status(200).send({ valid: true });
+    } catch (error) {
+      console.error("Error al verificar la contraseña:", error);
+      return res
+        .status(500)
+        .send({ message: "Error al verificar la contraseña" });
+    }
+  },
+
   async deleteUser(req, res) {
     await userModel.deleteUser(req.params.id);
     res.sendStatus(204);

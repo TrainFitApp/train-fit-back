@@ -18,7 +18,7 @@ const single = async (resource, authUser) => ({
   workoutInUse: resource.workoutInUse,
   dietInUse: resource.dietInUse,
   tableInUse: resource.tableInUse,
-  ownTables: resource.ownTables,
+  tables: resource.tables,
   archivedProducts: resource.archivedProducts,
   archivedExercises: resource.archivedExercises,
   archivedRecipes: resource.archivedRecipes,

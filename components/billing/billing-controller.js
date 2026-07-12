@@ -5,6 +5,7 @@ const exerciseModel = require("../exercises/exercise-model");
 const recipeModel = require("../recipes/recipe-model");
 const userSchema = require("../users/schema");
 const userDto = require("../users/dto");
+const tableService = require("../tables/table-service");
 
 function sendBillingAdminError(res, error) {
   const status = error?.status || error?.response?.status || 500;
@@ -57,7 +58,7 @@ module.exports = {
       }
     }
 
-    const routines = Array.isArray(user?.ownTables) ? user.ownTables.length : 0;
+    const routines = await tableService.countUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
 
@@ -84,9 +85,7 @@ module.exports = {
     }
 
     const refreshedUser = await userSchema.findById(user._id);
-    const routines = Array.isArray(refreshedUser?.ownTables)
-      ? refreshedUser.ownTables.length
-      : 0;
+    const routines = await tableService.countUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
 

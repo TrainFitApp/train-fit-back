@@ -195,7 +195,10 @@ module.exports = {
           agg.push({
             $match: {
               $and: regexTerms.map((term) => ({
-                name: { $regex: term, $options: "i" },
+                $or: [
+                  { name: { $regex: term, $options: "i" } },
+                  { keywords: { $regex: term, $options: "i" } },
+                ],
               })),
             },
           });

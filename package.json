@@ -7,7 +7,8 @@
     "serve": "node --watch bin/www",
     "rebuild:search-indexes": "node scripts/rebuild-search-indexes.js",
     "migrate:dietday-dates": "node scripts/migrate-dietday-dates.js",
-    "migrate:dietday-dates:dry-run": "node scripts/migrate-dietday-dates.js --dry-run"
+    "migrate:dietday-dates:dry-run": "node scripts/migrate-dietday-dates.js --dry-run",
+    "migrate:tables": "node scripts/migrate-tables-unify.js"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",

@@ -3,7 +3,7 @@ const setSchema = require("../sets/set-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const workoutSchema = require("../workouts/workout-schema");
 const splitSchema = require("../splits/split-schema");
-const ownTableSchema = require("../ownTables/own-table-schema");
+const tableSchema = require("../tables/table-schema");
 const exerciseModel = require("../exercises/exercise-model");
 const userSchema = require("../users/schema");
 
@@ -96,19 +96,20 @@ async function createFullHierarchy(tableData, userId) {
     createdTable.splits.push(splitDoc);
   }
 
-  const tableDoc = await ownTableSchema.create({
+  const tableDoc = await tableSchema.create({
     name: createdTable.name,
     type: "",
+    userId: userId,
     splits: createdTable.splits.map((s) => s._id),
   });
 
   const addTableToUser = {
     $set: { tableInUse: tableDoc._id },
-    $push: { ownTables: tableDoc._id },
+    $push: { tables: tableDoc._id },
   };
   await userSchema.findByIdAndUpdate(userId, addTableToUser);
 
-  const populatedTable = await ownTableSchema.findById(tableDoc._id);
+  const populatedTable = await tableSchema.findById(tableDoc._id);
 
   return populatedTable;
 }

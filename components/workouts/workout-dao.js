@@ -1,4 +1,4 @@
-const ownTableSchema = require("../ownTables/own-table-schema");
+const tableSchema = require("../tables/table-schema");
 const splitSchema = require("../splits/split-schema");
 const workoutSchema = require("./workout-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
@@ -7,7 +7,6 @@ const setSchema = require("../sets/set-schema");
 const Workout = require("./workout-class");
 const { default: mongoose } = require("mongoose");
 const customExerciseDao = require("../customExercises/custom-exercise-dao");
-const tableSchema = require("../tables/table-schema");
 const userSchema = require("../users/schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
@@ -41,7 +40,7 @@ module.exports = {
       const minDate = new Date(d).setHours(0, 0, 0, 0);
       const maxDate = new Date(d).setHours(23, 59, 59, 999);
 
-      const workout = await ownTableSchema.aggregate([
+      const workout = await tableSchema.aggregate([
         // Etapa de filtro para obtener la tabla por su ID
         { $match: { _id: new mongoose.Types.ObjectId(id) } },
 
@@ -224,7 +223,7 @@ module.exports = {
   async addWorkoutsToSplits(idTable, workout) {
     const promises = [];
     const workoutsToAdd = [];
-    const tableDoc = await ownTableSchema.findById(idTable);
+    const tableDoc = await tableSchema.findById(idTable);
 
     for (let i = 0; i < tableDoc.splits.length; i++) {
       const newWorkout = new Workout(workout);
@@ -303,7 +302,7 @@ module.exports = {
 
   async addWorkoutsExercises(idTable, idExercise, workoutOrder) {
     return new Promise((resolve, reject) =>
-      ownTableSchema.findById(idTable, {}, (err, tableDoc) => {
+      tableSchema.findById(idTable, {}, (err, tableDoc) => {
         if (err) return reject(err);
 
         // tableDoc.splits.forEach((splitTemp) => {
@@ -327,7 +326,7 @@ module.exports = {
         //   });
         // });
 
-        // ownTableSchema.findById(idTable, {}, (err, tableDoc) => {
+        // tableSchema.findById(idTable, {}, (err, tableDoc) => {
         //   if (err) return reject(err);
         //   return resolve(tableDoc);
         // });
@@ -464,7 +463,7 @@ module.exports = {
 
   async updateWorkoutsOrder(idWorkout, idTable, newOrder) {
     try {
-      const tableDoc = await ownTableSchema.findById(idTable);
+      const tableDoc = await tableSchema.findById(idTable);
 
       let indexWorkout;
 
@@ -509,7 +508,7 @@ module.exports = {
     idCustomExercise,
     idExercise,
   ) {
-    const tableDoc = await ownTableSchema.findById(idTable);
+    const tableDoc = await tableSchema.findById(idTable);
     const exerciseDoc = await exerciseSchema.findById(idExercise);
 
     let indexWorkout;
@@ -552,12 +551,12 @@ module.exports = {
     }));
     await customExerciseSchema.bulkWrite(updateOperations);
 
-    return await ownTableSchema.findById(idTable);
+    return await tableSchema.findById(idTable);
   },
 
   async updateWorkoutsName(idTable, idWorkout, workoutsName) {
     try {
-      const tableDoc = await ownTableSchema.findById(idTable);
+      const tableDoc = await tableSchema.findById(idTable);
 
       let indexS;
       tableDoc.splits.forEach((splitTemp, indexSplit) => {
