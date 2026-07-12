@@ -6,6 +6,7 @@ const dietDaySchema = require('../dietDays/diet-days-schema');
 
 const DietSchema = Schema({
   name: String,
+  pinnedNote: String,
   dietsDay: [
     {
       type: Schema.Types.ObjectId,

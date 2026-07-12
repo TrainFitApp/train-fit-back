@@ -30,6 +30,10 @@ module.exports = {
     return dietDao.updateUser(id, { name, dietDays });
   },
 
+  async updatePinnedNote(id, notes) {
+    return dietDao.updatePinnedNote(id, notes);
+  },
+
   async deleteDiet(id) {
     return dietDao.deleteDiet(id);
   },

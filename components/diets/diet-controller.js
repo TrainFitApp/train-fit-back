@@ -84,4 +84,16 @@ module.exports = {
     return res.send(diet);
   },
 
+  async updatePinnedNote(req, res) {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    if (typeof notes !== "string") {
+      return res.status(400).json({ success: false, message: "Notes must be a string" });
+    }
+
+    const diet = await dietModel.updatePinnedNote(id, notes.trim());
+    return res.send(diet);
+  },
+
 };
