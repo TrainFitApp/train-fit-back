@@ -25,6 +25,15 @@ module.exports = {
     return res.send(workout);
   },
 
+  async duplicateWorkoutRow(req, res) {
+    const splits = await workoutModel.duplicateWorkoutRow(
+      req.params.idTable,
+      req.params.idWorkout,
+      req.body?.nameSuffix,
+    );
+    return res.send(splits);
+  },
+
   async createWorkout(req, res) {
     const workout = await workoutModel.createWorkout({
       name: req.body.name,
