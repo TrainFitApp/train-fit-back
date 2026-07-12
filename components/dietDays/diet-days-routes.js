@@ -23,6 +23,11 @@ router.postAsync(
 );
 router.postAsync("/", auth(["admin", "user"]), controller.createDietDay);
 router.postAsync(
+  "/create/on/new/:dietInUseId",
+  auth(["admin", "user"]),
+  controller.createDayWeightOnNewDietDay,
+);
+router.postAsync(
   "/:dietInUseId",
   auth(["admin", "user"]),
   controller.createCustomProductOnNewDietDay,
@@ -36,12 +41,6 @@ router.postAsync(
   "/recipe/own/:idUser",
   auth(["admin", "user"]),
   controller.createOwnCustomRecipeOnNewDietDay,
-);
-
-router.postAsync(
-  "/create/on/new/:dietInUseId",
-  auth(["admin", "user"]),
-  controller.createDayWeightOnNewDietDay,
 );
 router.putAsync("/:id", auth(["admin", "user"]), controller.updateDietDay);
 router.putAsync(

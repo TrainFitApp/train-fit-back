@@ -88,6 +88,19 @@ module.exports = {
     );
   },
 
+  async updatePinnedNote(id, notes) {
+    const update = notes
+      ? { $set: { pinnedNote: notes } }
+      : { $unset: { pinnedNote: "" } };
+
+    return new Promise((resolve, reject) =>
+      dietSchema.findByIdAndUpdate(id, update, { new: true }, (err, doc) => {
+        if (err) return reject(err);
+        return resolve(doc);
+      })
+    );
+  },
+
   async deleteUser(id) {
     return new Promise((resolve, reject) =>
       dietSchema.deleteOne({ _id: id }, (err, docs) => {

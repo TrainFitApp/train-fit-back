@@ -1,6 +1,5 @@
-const tableSchema = require("./table-schema");
 const userSchema = require("../users/schema");
-const ownTableSchema = require("../ownTables/own-table-schema");
+const tableSchema = require("./table-schema");
 const { default: mongoose } = require("mongoose");
 const splitSchema = require("../splits/split-schema");
 const setSchema = require("../sets/set-schema");
@@ -8,37 +7,119 @@ const customExerciseSchema = require("../customExercises/custom-exercise-schema"
 const workoutSchema = require("../workouts/workout-schema");
 const serverDomain = process.env.SERVER_DOMAIN;
 
+function normalizeSetForTemplateCopy(setTemp) {
+  delete setTemp.doned;
+}
+
+async function copyHierarchy(tableDoc) {
+  const splits = [];
+  const workouts = [];
+  const customExercises = [];
+  const sets = [];
+
+  tableDoc.splits.forEach((splitTemp) => {
+    splitTemp._id = new mongoose.Types.ObjectId();
+    splits.push(splitTemp);
+    splitTemp.workouts.forEach((workoutTemp) => {
+      workoutTemp._id = new mongoose.Types.ObjectId();
+      workouts.push(workoutTemp);
+      workoutTemp.exercises.forEach((customExerciseTemp) => {
+        customExerciseTemp._id = new mongoose.Types.ObjectId();
+        customExercises.push(customExerciseTemp);
+        customExerciseTemp.sets.forEach((setTemp) => {
+          setTemp._id = new mongoose.Types.ObjectId();
+          normalizeSetForTemplateCopy(setTemp);
+          sets.push(setTemp);
+        });
+      });
+    });
+  });
+
+  await setSchema.insertMany(sets);
+  await customExerciseSchema.insertMany(customExercises);
+  await workoutSchema.insertMany(workouts);
+  await splitSchema.insertMany(splits);
+}
+
 module.exports = {
-  async getTables(page, limit) {
-    return new Promise((resolve, reject) =>
-      tableSchema
-        .find({})
+  async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
+    if (own && idUser) {
+      return tableSchema
+        .find({ userId: mongoose.Types.ObjectId(idUser) })
         .skip(page * limit)
         .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        })
-    );
+        .exec();
+    }
+    if (defaultOnly && idUser) {
+      return tableSchema
+        .find({ userId: null })
+        .skip(page * limit)
+        .limit(limit)
+        .exec();
+    }
+    // All routines: user's own + public templates
+    return tableSchema
+      .find({
+        $or: [
+          { userId: mongoose.Types.ObjectId(idUser) },
+          { userId: null }
+        ]
+      })
+      .skip(page * limit)
+      .limit(limit)
+      .exec();
   },
 
   async getTableById(id) {
-    return new Promise((resolve, reject) =>
-      ownTableSchema.findById(id, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      })
-    );
+    return tableSchema.findById(id).exec();
+  },
+
+  async copyTable(idUser, idTable) {
+    try {
+      const tableD = await tableSchema.findById(idTable);
+      if (!tableD) throw new Error("Table not found");
+      const tableDoc = tableD.toObject();
+
+      await copyHierarchy(tableDoc);
+
+      delete tableDoc._id;
+      return await tableSchema.create({
+        ...tableDoc,
+        userId: idUser,
+      });
+    } catch (e) {
+      throw e;
+    }
+  },
+
+  async duplicateTable(idUser, idTable) {
+    try {
+      const tableD = await tableSchema.findById(idTable);
+      if (!tableD) throw new Error("Table not found");
+      const tableDoc = tableD.toObject();
+
+      tableDoc.name = tableDoc.name + " copia";
+
+      await copyHierarchy(tableDoc);
+
+      delete tableDoc._id;
+      return await tableSchema.create({
+        ...tableDoc,
+        userId: idUser,
+      });
+    } catch (e) {
+      throw e;
+    }
   },
 
   async copySharedTable(idUser, idTable) {
     try {
-      const splits = [],
-        workouts = [],
-        customExercises = [],
-        sets = [];
+      const splits = [];
+      const workouts = [];
+      const customExercises = [];
+      const sets = [];
 
-      let sharedTable = await ownTableSchema.findById(idTable);
+      let sharedTable = await tableSchema.findById(idTable);
       sharedTable = sharedTable.toObject();
 
       sharedTable.splits.forEach((sTemp) => {
@@ -62,21 +143,20 @@ module.exports = {
       await customExerciseSchema.insertMany(customExercises);
       await workoutSchema.insertMany(workouts);
       await splitSchema.insertMany(splits);
-      sharedTable = await tableSchema.create(sharedTable);
 
-      const addTableToUserQuery = { $push: { ownTables: sharedTable._id } };
-
-      await userSchema.findByIdAndUpdate(idUser, addTableToUserQuery, {
-        new: true,
+      delete sharedTable._id;
+      sharedTable = await tableSchema.create({
+        ...sharedTable,
+        userId: null,
       });
 
       return `${serverDomain}/api/tables/share/${idUser}/${idTable}`;
     } catch (e) {
-      throw err;
+      throw e;
     }
   },
 
-  async getSearchTables(page, limit, search, isOwn, idUser) {
+  async getSearchTables(page, limit, search, isOwn, idUser, defaultOnly = false) {
     try {
       const normalizedSearch = (search || "").trim();
       const searchTerms = normalizedSearch
@@ -94,7 +174,6 @@ module.exports = {
 
       const buildLightSearchPipeline = (extraMatch = {}) => [
         { $match: { ...baseMatch, ...extraMatch } },
-        // Solo traer lo esencial para listado
         { $project: { _id: 1, name: 1, urlImage: 1, splits: 1 } },
         {
           $lookup: {
@@ -129,43 +208,45 @@ module.exports = {
       ];
 
       if (isOwn) {
-        const userId = mongoose.Types.ObjectId(idUser);
-        const user = await userSchema.findById(userId).select("ownTables").lean();
-
-        if (!user?.ownTables?.length) {
-          return [];
-        }
-
-        const tableIds = user.ownTables.map((tableId) =>
-          typeof tableId === "object" && tableId?._id ? tableId._id : tableId
-        );
-
-        return await ownTableSchema.aggregate(
-          buildLightSearchPipeline({ _id: { $in: tableIds } })
+        return await tableSchema.aggregate(
+          buildLightSearchPipeline({ userId: mongoose.Types.ObjectId(idUser) })
         );
       }
 
-      return await tableSchema.aggregate(buildLightSearchPipeline());
+      if (defaultOnly) {
+        // Predeterminadas: solo plantillas públicas (userId: null)
+        return await tableSchema.aggregate(
+          buildLightSearchPipeline({ userId: null })
+        );
+      }
+
+      // All routines: user's own + public templates
+      return await tableSchema.aggregate(
+        buildLightSearchPipeline({
+          $or: [
+            { userId: mongoose.Types.ObjectId(idUser) },
+            { userId: null }
+          ]
+        })
+      );
     } catch (e) {
       throw e;
     }
   },
 
   async createTable(table) {
-    return new Promise((resolve, reject) =>
-      tableSchema.create(table, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      })
-    );
+    return tableSchema.create({ ...table, userId: null });
   },
 
   async createTableToUser(idUser, standardTable) {
     try {
-      const tableDoc = await tableSchema.create(standardTable);
-      const addTableToUser = { 
+      const tableDoc = await tableSchema.create({
+        ...standardTable,
+        userId: idUser,
+      });
+      const addTableToUser = {
         $set: { tableInUse: tableDoc._id },
-        $unset: { workoutInUse: "" }
+        $unset: { workoutInUse: "" },
       };
       await userSchema.findByIdAndUpdate(idUser, addTableToUser);
       return tableDoc;
@@ -174,25 +255,26 @@ module.exports = {
     }
   },
 
-  async updateTable(id, name) {
+  async updateTable(id, name, userId) {
     const update = { $set: { name: name } };
     try {
-      const docTable = await ownTableSchema.findByIdAndUpdate(id, update, {
+      const query = userId ? { _id: id, userId: userId } : { _id: id };
+      const docTable = await tableSchema.findOneAndUpdate(query, update, {
         new: true,
       });
+      if (!docTable) throw new Error("Table not found or access denied");
       return { name: docTable.name };
     } catch (err) {
       throw err;
     }
   },
 
-  async deleteTable(id) {
-    return new Promise((resolve, reject) =>
-      tableSchema.deleteOne({ _id: id }, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
+  async deleteTable(idUser, idTable) {
+    try {
+      return await tableSchema.deleteOne({ _id: idTable, userId: idUser }).exec();
+    } catch (e) {
+      throw e;
+    }
   },
 
   async deleteTableSplit(idTable, idSplit) {
@@ -200,11 +282,10 @@ module.exports = {
       $pull: { splits: idSplit },
     };
 
-    return new Promise((resolve, reject) =>
-      tableSchema.findByIdAndUpdate(idTable, deleteSplit, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
+    return tableSchema.findByIdAndUpdate(idTable, deleteSplit, {}).exec();
+  },
+
+  async countUserTables(userId) {
+    return tableSchema.countDocuments({ userId }).exec();
   },
 };

@@ -82,7 +82,7 @@ module.exports = {
     user.dietInUse = createdDiet._id;
     user.theme = "dark";
 
-    user.ownTables = [];
+    user.tables = [];
     user.archivedDiets = [];
     user.archivedProducts = [];
     user.archivedRecipes = [];
@@ -103,7 +103,7 @@ module.exports = {
     user.dietInUse = createdDiet._id;
     user.theme = "dark";
 
-    user.ownTables = [];
+    user.tables = [];
     user.archivedDiets = [];
     user.archivedProducts = [];
     user.archivedRecipes = [];

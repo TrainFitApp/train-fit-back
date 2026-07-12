@@ -30,7 +30,7 @@ SplitSchema.pre("deleteMany", async function (next) {
   try {
     // Obtén el filtro utilizado en la operación deleteMany
     const filter = this.getFilter();
-    // Busca los documentos de OwnTable que cumplen con el filtro y obtén los _id de las divisiones
+    // Busca los documentos de Table que cumplen con el filtro y obtén los _id de las divisiones
     const splitsToDelete = await this.model.find(filter, "workouts");
     // Obtén un arreglo de _id de divisiones de todos los documentos
     const workoutIds = splitsToDelete.flatMap((split) => split.workouts);

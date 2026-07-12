@@ -10,7 +10,6 @@ const customRecipes = require("../components/customRecipes/custom-recipe-routes"
 const customExercises = require("../components/customExercises/custom-exercise-routes");
 const workouts = require("../components/workouts/workout-routes");
 const tables = require("../components/tables/table-routes");
-const owntables = require("../components/ownTables/table-routes");
 const splits = require("../components/splits/split-routes");
 const exercises = require("../components/exercises/exercise-routes");
 const sets = require("../components/sets/set-routes");
@@ -22,6 +21,8 @@ const envManager = require("../components/envManager/env-manager-routes");
 const serverManager = require("../components/serverManager/server-manager-routes");
 const gitManager = require("../components/gitManager/git-manager-routes");
 const aiImport = require("../components/aiImport/ai-import-routes");
+const pinnedExerciseNotes = require("../components/pinnedExerciseNotes/pinned-exercise-note-routes");
+const anthropometry = require("../components/anthropometry/anthropometry-routes");
 
 const router = express.Router();
 
@@ -36,17 +37,18 @@ router.use("/recipes", recipes);
 router.use("/customrecipes", customRecipes);
 router.use("/customexercises", customExercises);
 router.use("/tables", tables);
-router.use("/owntables", owntables);
 router.use("/splits", splits);
 router.use("/workouts", workouts);
 router.use("/exercises", exercises);
 router.use("/sets", sets);
 router.use("/logs", logs);
 router.use("/billing", billing);
+router.use("/pinned-exercise-notes", pinnedExerciseNotes);
 router.use("/app", appVersion);
 router.use("/env", envManager);
 router.use("/server", serverManager);
 router.use("/git", gitManager);
 router.use("/ai", aiImport);
+router.use("/anthropometry", anthropometry);
 
 module.exports = router;

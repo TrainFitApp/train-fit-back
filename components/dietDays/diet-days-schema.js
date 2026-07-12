@@ -4,7 +4,6 @@ const Schema = mongoose.Schema;
 const mealSchema = require("../meals/meal-schema");
 
 const DietDaySchema = Schema({
-  weight: Number,
   date: String,
   notes: String,
   steps: Number,
