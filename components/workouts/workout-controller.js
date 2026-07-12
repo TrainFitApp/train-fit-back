@@ -34,6 +34,14 @@ module.exports = {
     return res.send(splits);
   },
 
+  async reorderWorkoutRows(req, res) {
+    const splits = await workoutModel.reorderWorkoutRows(
+      req.params.idTable,
+      req.body?.workoutIdsOrder,
+    );
+    return res.send(splits);
+  },
+
   async createWorkout(req, res) {
     const workout = await workoutModel.createWorkout({
       name: req.body.name,

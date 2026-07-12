@@ -39,6 +39,11 @@ router.putAsync(
   controller.updateWorkoutsName,
 );
 router.putAsync(
+  "/rows/order/:idTable",
+  auth(["admin", "user"]),
+  controller.reorderWorkoutRows,
+);
+router.putAsync(
   "/:idTable/:idExercise/:workoutOrder",
   auth(["admin", "user"]),
   controller.addWorkoutsExercises,

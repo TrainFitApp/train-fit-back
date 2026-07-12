@@ -317,6 +317,60 @@ module.exports = {
     }
   },
 
+  async reorderWorkoutRows(idTable, workoutIdsOrder) {
+    try {
+      const tableDoc = await tableSchema.findById(idTable);
+      if (!tableDoc) throw new Error("Table not found");
+
+      if (
+        !Array.isArray(workoutIdsOrder) ||
+        workoutIdsOrder.length !== tableDoc.splits[0]?.workouts?.length
+      ) {
+        throw new Error("Invalid workout order");
+      }
+
+      const referenceSplit = tableDoc.splits.find((splitTemp) =>
+        workoutIdsOrder.every((idWorkout) =>
+          splitTemp.workouts.some(
+            (workoutTemp) => workoutTemp._id.toString() === idWorkout,
+          ),
+        ),
+      );
+
+      if (!referenceSplit) throw new Error("Workout order does not match table");
+
+      const referenceIndexes = workoutIdsOrder.map((idWorkout) =>
+        referenceSplit.workouts.findIndex(
+          (workoutTemp) => workoutTemp._id.toString() === idWorkout,
+        ),
+      );
+
+      if (referenceIndexes.some((index) => index < 0)) {
+        throw new Error("Workout order does not match table");
+      }
+
+      const splitUpdates = tableDoc.splits.map((splitTemp) => ({
+        updateOne: {
+          filter: { _id: splitTemp._id },
+          update: {
+            $set: {
+              workouts: referenceIndexes.map(
+                (workoutIndex) => splitTemp.workouts[workoutIndex]._id,
+              ),
+            },
+          },
+        },
+      }));
+
+      await splitSchema.bulkWrite(splitUpdates);
+
+      const updatedTable = await tableSchema.findById(idTable);
+      return updatedTable.splits;
+    } catch (error) {
+      throw error;
+    }
+  },
+
   async createWorkout(workout) {
     let exercises = workout.exercises;
 
