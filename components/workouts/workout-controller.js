@@ -100,6 +100,18 @@ module.exports = {
     return res.send(result);
   },
 
+  async skipWorkout(req, res) {
+    const result = await workoutModel.skipWorkout(
+      req.body.workoutId,
+      req.user?.id,
+      req.body.rest,
+    );
+    if (!result?.workout) {
+      return res.status(404).send({ message: "Workout not found" });
+    }
+    return res.send(result);
+  },
+
   async updateWorkout(req, res) {
     const workout = await workoutModel.updateWorkout(
       req.body.workout,

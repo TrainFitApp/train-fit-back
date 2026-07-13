@@ -439,6 +439,31 @@ module.exports = {
     };
   },
 
+  async skipWorkout(workoutId, userId, rest) {
+    const update = rest
+      ? { $set: { rest: true }, $unset: { date: 1, paused: 1 } }
+      : { $unset: { rest: 1 } };
+
+    const workoutDoc = await workoutSchema.findByIdAndUpdate(workoutId, update, {
+      new: true,
+    });
+
+    let userUpdated = false;
+    if (rest) {
+      const userDoc = await userSchema.findByIdAndUpdate(
+        userId,
+        { $unset: { workoutInUse: 1 } },
+        { new: true },
+      );
+      userUpdated = !!userDoc;
+    }
+
+    return {
+      workout: workoutDoc,
+      userUpdated,
+    };
+  },
+
   async updateWorkout(workout, customExercise) {
     return new Promise((resolve, reject) =>
       customExerciseSchema.create(customExercise, (err, customExerciseDoc) => {

@@ -11,6 +11,7 @@ const WorkoutSchema = Schema({
   cronometer: Number,
   date: Date,
   paused: Boolean,
+  rest: Boolean,
   exercises: [
     {
       type: Schema.Types.ObjectId,

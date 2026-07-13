@@ -44,6 +44,10 @@ module.exports = {
     return workoutDao.finishWorkout(workoutId, userId, date);
   },
 
+  async skipWorkout(workoutId, userId, rest) {
+    return workoutDao.skipWorkout(workoutId, userId, rest);
+  },
+
   async updateWorkout(workout, customExercise) {
     return workoutDao.updateWorkout(workout, customExercise);
   },
