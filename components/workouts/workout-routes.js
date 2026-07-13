@@ -54,6 +54,7 @@ router.putAsync(
   controller.modifyWorkout,
 );
 router.putAsync("/finish", auth(["admin", "user"]), controller.finishWorkout);
+router.putAsync("/skip", auth(["admin", "user"]), controller.skipWorkout);
 router.putAsync("/", auth(["admin", "user"]), controller.updateWorkout);
 router.putAsync(
   "/:idTable/:idWorkout/:idCustomExercise/:idExercise",

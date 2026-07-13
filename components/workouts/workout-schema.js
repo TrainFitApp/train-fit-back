@@ -14,6 +14,7 @@ const WorkoutSchema = Schema({
   // Timestamp of the first "play" of this workout instance. Elapsed time is
   // always derived as (date ?? now) - startedAt, never accumulated server-side.
   startedAt: Date,
+  rest: Boolean,
   exercises: [
     {
       type: Schema.Types.ObjectId,
