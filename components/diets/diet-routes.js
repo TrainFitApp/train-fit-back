@@ -6,6 +6,16 @@ const ROLES = require("../users/util/roles");
 const router = express.Router();
 
 router.getAsync("/", auth(["admin", "user"]), controller.getDiets);
+router.getAsync(
+  "/:id/recent-products",
+  auth(["admin", "user"]),
+  controller.getRecentMealProducts
+);
+router.getAsync(
+  "/:id/recent-recipes",
+  auth(["admin", "user"]),
+  controller.getRecentMealRecipes
+);
 router.getAsync("/:id", auth(["admin", "user"]), controller.getDietById);
 router.postAsync("/search", auth(["admin", "user"]), controller.getSearchDiets);
 router.postAsync("/", auth(["admin", "user"]), controller.createDiet);
