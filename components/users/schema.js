@@ -6,6 +6,7 @@ const exerciseSchema = require("../exercises/exercise-schema");
 const tableSchema = require("../tables/table-schema");
 const productSchema = require("../products/product-schema");
 const anthropometrySchema = require("../anthropometry/anthropometry-schema");
+const nutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
 const SALT_WORK_FACTOR = 10;
 
 const UserSchema = new Schema({
@@ -25,10 +26,10 @@ const UserSchema = new Schema({
   stepGoal: Number,
   training: Number,
   birth: Date,
-  kcalTotal: Number,
-  proteinsGTotal: Number,
-  carbohydratesGTotal: Number,
-  fatGTotal: Number,
+  goalInUse: {
+    type: Schema.Types.ObjectId,
+    ref: "NutritionalGoal",
+  },
   hash: String,
   restoreCodeExpiresAt: Date,
   restoreFailedAttempts: { type: Number, default: 0 },
@@ -120,6 +121,7 @@ UserSchema.pre("deleteOne", async function (next) {
       }
 
       await productSchema.deleteMany({ userId: user._id });
+      await nutritionalGoalSchema.deleteMany({ userId: user._id });
     }
     next();
   } catch (e) {
