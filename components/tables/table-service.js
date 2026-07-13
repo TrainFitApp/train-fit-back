@@ -4,10 +4,10 @@ const tableUtil = require("./table-util");
 module.exports = {
   async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
     if (own && idUser) {
-      return tableDao.getSearchTables(page, limit, "", true, idUser);
+      return tableDao.getTables(page, limit, true, idUser);
     }
     if (defaultOnly && idUser) {
-      return tableDao.getSearchTables(page, limit, "", false, idUser, true);
+      return tableDao.getTables(page, limit, false, idUser, true);
     }
     return tableDao.getTables(page, limit);
   },
