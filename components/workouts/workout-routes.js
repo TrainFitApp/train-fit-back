@@ -19,6 +19,11 @@ router.postAsync(
   controller.addExerciseToWorkouts,
 );
 router.postAsync(
+  "/duplicate-row/:idTable/:idWorkout",
+  auth(["admin", "user"]),
+  controller.duplicateWorkoutRow,
+);
+router.postAsync(
   "/multiple/:idTable",
   auth(["admin", "user"]),
   controller.addWorkoutsToSplits,
@@ -32,6 +37,11 @@ router.putAsync(
   "/names/:idTable/:idWorkout",
   auth(["admin", "user"]),
   controller.updateWorkoutsName,
+);
+router.putAsync(
+  "/rows/order/:idTable",
+  auth(["admin", "user"]),
+  controller.reorderWorkoutRows,
 );
 router.putAsync(
   "/:idTable/:idExercise/:workoutOrder",

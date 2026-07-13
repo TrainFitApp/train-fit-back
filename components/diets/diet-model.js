@@ -10,6 +10,14 @@ module.exports = {
     return dietDao.getDietById(id);
   },
 
+  async getRecentMealProducts(id, options) {
+    return dietDao.getRecentMealProducts(id, options);
+  },
+
+  async getRecentMealRecipes(id, options) {
+    return dietDao.getRecentMealRecipes(id, options);
+  },
+
   async getSearchDiets(page, limit, search) {
     return dietDao.getSearchDiets(page, limit, search);
   },

@@ -16,6 +16,14 @@ module.exports = {
     return workoutDao.pasteWorkout(workoutClipboard, workoutToPaste);
   },
 
+  async duplicateWorkoutRow(idTable, idWorkout, nameSuffix) {
+    return workoutDao.duplicateWorkoutRow(idTable, idWorkout, nameSuffix);
+  },
+
+  async reorderWorkoutRows(idTable, workoutIdsOrder) {
+    return workoutDao.reorderWorkoutRows(idTable, workoutIdsOrder);
+  },
+
   async createWorkout(workout) {
     return workoutDao.createWorkout(workout);
   },

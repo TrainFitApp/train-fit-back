@@ -13,6 +13,63 @@ function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
 }
 
+function cloneSetForTemplateCopy(setTemp) {
+  const clonedSet =
+    typeof setTemp.toObject === "function" ? setTemp.toObject() : { ...setTemp };
+  clonedSet._id = new mongoose.Types.ObjectId();
+  normalizeSetForTemplateCopy(clonedSet);
+  return clonedSet;
+}
+
+function cloneCustomExerciseForTemplateCopy(exerciseTemp, setsToCreate) {
+  const clonedExercise =
+    typeof exerciseTemp.toObject === "function"
+      ? exerciseTemp.toObject()
+      : { ...exerciseTemp };
+
+  clonedExercise._id = new mongoose.Types.ObjectId();
+  clonedExercise.sets = (exerciseTemp.sets || []).map((setTemp) => {
+    const clonedSet = cloneSetForTemplateCopy(setTemp);
+    setsToCreate.push(clonedSet);
+    return clonedSet._id;
+  });
+
+  return clonedExercise;
+}
+
+function cloneWorkoutForTemplateCopy(workoutTemp, options = {}) {
+  const setsToCreate = [];
+  const customExercisesToCreate = [];
+  const clonedWorkout =
+    typeof workoutTemp.toObject === "function"
+      ? workoutTemp.toObject()
+      : { ...workoutTemp };
+
+  clonedWorkout._id = new mongoose.Types.ObjectId();
+  delete clonedWorkout.date;
+  delete clonedWorkout.paused;
+  delete clonedWorkout.cronometer;
+
+  if (options.nameSuffix) {
+    clonedWorkout.name = `${clonedWorkout.name || ""} ${options.nameSuffix}`.trim();
+  }
+
+  clonedWorkout.exercises = (workoutTemp.exercises || []).map((exerciseTemp) => {
+    const clonedExercise = cloneCustomExerciseForTemplateCopy(
+      exerciseTemp,
+      setsToCreate,
+    );
+    customExercisesToCreate.push(clonedExercise);
+    return clonedExercise._id;
+  });
+
+  return {
+    workout: clonedWorkout,
+    customExercises: customExercisesToCreate,
+    sets: setsToCreate,
+  };
+}
+
 module.exports = {
   async getWorkouts(page, limit) {
     return new Promise((resolve, reject) =>
@@ -160,17 +217,16 @@ module.exports = {
       const setsToCreate = [];
 
       workoutClipboard.exercises.forEach((exerciseTemp) => {
-        exerciseTemp._id = new mongoose.Types.ObjectId();
-        exerciseTemp.sets.forEach((setTep) => {
-          setTep._id = new mongoose.Types.ObjectId();
-          normalizeSetForTemplateCopy(setTep);
-          setsToCreate.push(setTep);
-        });
-
-        exercisesToCreate.push(exerciseTemp);
+        const clonedExercise = cloneCustomExerciseForTemplateCopy(
+          exerciseTemp,
+          setsToCreate,
+        );
+        exercisesToCreate.push(clonedExercise);
       });
 
-      workoutToPaste.exercises = workoutClipboard.exercises;
+      workoutToPaste.exercises = exercisesToCreate.map(
+        (exerciseTemp) => exerciseTemp._id,
+      );
       // Copiar las notas del workout copiado
       workoutToPaste.notes = workoutClipboard.notes;
 
@@ -186,6 +242,130 @@ module.exports = {
       );
 
       return updatedWorkout;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  async duplicateWorkoutRow(idTable, idWorkout, nameSuffix = "Copy") {
+    try {
+      const tableDoc = await tableSchema.findById(idTable);
+      if (!tableDoc) throw new Error("Table not found");
+
+      let workoutIndex = -1;
+      tableDoc.splits.some((splitTemp) => {
+        const foundIndex = splitTemp.workouts.findIndex(
+          (workoutTemp) => workoutTemp._id.toString() === idWorkout,
+        );
+
+        if (foundIndex >= 0) {
+          workoutIndex = foundIndex;
+          return true;
+        }
+
+        return false;
+      });
+
+      if (workoutIndex < 0) throw new Error("Workout not found in table");
+
+      const workoutsToCreate = [];
+      const customExercisesToCreate = [];
+      const setsToCreate = [];
+      const splitUpdates = [];
+
+      tableDoc.splits.forEach((splitTemp) => {
+        const workoutToCopy = splitTemp.workouts[workoutIndex];
+        if (!workoutToCopy) {
+          throw new Error("Workout row is not complete in all splits");
+        }
+
+        const cloned = cloneWorkoutForTemplateCopy(workoutToCopy, {
+          nameSuffix,
+        });
+
+        workoutsToCreate.push(cloned.workout);
+        customExercisesToCreate.push(...cloned.customExercises);
+        setsToCreate.push(...cloned.sets);
+        splitUpdates.push({
+          updateOne: {
+            filter: { _id: splitTemp._id },
+            update: {
+              $push: {
+                workouts: {
+                  $each: [cloned.workout._id],
+                  $position: workoutIndex + 1,
+                },
+              },
+            },
+          },
+        });
+      });
+
+      if (setsToCreate.length > 0) await setSchema.insertMany(setsToCreate);
+      if (customExercisesToCreate.length > 0) {
+        await customExerciseSchema.insertMany(customExercisesToCreate);
+      }
+      if (workoutsToCreate.length > 0) {
+        await workoutSchema.insertMany(workoutsToCreate);
+      }
+      if (splitUpdates.length > 0) await splitSchema.bulkWrite(splitUpdates);
+
+      const updatedTable = await tableSchema.findById(idTable);
+      return updatedTable.splits;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  async reorderWorkoutRows(idTable, workoutIdsOrder) {
+    try {
+      const tableDoc = await tableSchema.findById(idTable);
+      if (!tableDoc) throw new Error("Table not found");
+
+      if (
+        !Array.isArray(workoutIdsOrder) ||
+        workoutIdsOrder.length !== tableDoc.splits[0]?.workouts?.length
+      ) {
+        throw new Error("Invalid workout order");
+      }
+
+      const referenceSplit = tableDoc.splits.find((splitTemp) =>
+        workoutIdsOrder.every((idWorkout) =>
+          splitTemp.workouts.some(
+            (workoutTemp) => workoutTemp._id.toString() === idWorkout,
+          ),
+        ),
+      );
+
+      if (!referenceSplit) throw new Error("Workout order does not match table");
+
+      const referenceIndexes = workoutIdsOrder.map((idWorkout) =>
+        referenceSplit.workouts.findIndex(
+          (workoutTemp) => workoutTemp._id.toString() === idWorkout,
+        ),
+      );
+
+      if (referenceIndexes.some((index) => index < 0)) {
+        throw new Error("Workout order does not match table");
+      }
+
+      const splitUpdates = tableDoc.splits.map((splitTemp) => ({
+        updateOne: {
+          filter: { _id: splitTemp._id },
+          update: {
+            $set: {
+              workouts: referenceIndexes.map(
+                (workoutIndex) => splitTemp.workouts[workoutIndex]._id,
+              ),
+            },
+          },
+        },
+      }));
+
+      await splitSchema.bulkWrite(splitUpdates);
+
+      const updatedTable = await tableSchema.findById(idTable);
+      return updatedTable.splits;
     } catch (error) {
       throw error;
     }
