@@ -296,7 +296,7 @@ module.exports = {
           ),
       );
 
-      await ownTableSchema.findByIdAndUpdate(idTable, {
+      await tableSchema.findByIdAndUpdate(idTable, {
         $pull: { splits: { $in: splitIds } },
       });
       await splitSchema.deleteMany({ _id: { $in: splitIds } });

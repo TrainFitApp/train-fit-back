@@ -162,7 +162,7 @@ module.exports = {
       });
     }
 
-    const table = await ownTableSchema
+    const table = await tableSchema
       .findById(req.params.idTable)
       .select("_id splits");
 
