@@ -27,23 +27,7 @@ module.exports = {
   },
 
   datesAreOnSameDay(first, second) {
-    // Handle null or undefined values
-    if (!first || !second) {
-      return false;
-    }
-
-    const firstDate = new Date(first);
-    const secondDate = new Date(second);
-
-    // Check if dates are valid
-    if (isNaN(firstDate.getTime()) || isNaN(secondDate.getTime())) {
-      return false;
-    }
-
-    return (
-      firstDate.getFullYear() === secondDate.getFullYear() &&
-      firstDate.getMonth() === secondDate.getMonth() &&
-      firstDate.getDate() === secondDate.getDate()
-    );
+    if (!first || !second) return false;
+    return first === second;
   },
 };

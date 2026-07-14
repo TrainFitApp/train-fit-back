@@ -5,7 +5,12 @@
   "scripts": {
     "start": "node ./bin/www",
     "serve": "node --watch bin/www",
-    "rebuild:search-indexes": "node scripts/rebuild-search-indexes.js"
+    "rebuild:search-indexes": "node scripts/rebuild-search-indexes.js",
+    "migrate:dietday-dates": "node scripts/migrate-dietday-dates.js",
+    "migrate:dietday-dates:dry-run": "node scripts/migrate-dietday-dates.js --dry-run",
+    "migrate:tables": "node scripts/migrate-tables-unify.js",
+    "migrate:nutritional-goals": "node scripts/migrate-nutritional-goals.js",
+    "migrate:nutritional-goals:dry-run": "node scripts/migrate-nutritional-goals.js --dry-run"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",

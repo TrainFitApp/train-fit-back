@@ -499,6 +499,27 @@ module.exports = {
         });
       }
 
+      if (user.hash) {
+        const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
+        await userModel.updateVerificationHash(user._id, hashTemp);
+
+        const header1 = `Hola ${user.name}, verifique su cuenta`;
+        const description =
+          "Introduce el siguiente código en la aplicación para finalizar el registro.";
+        const htmlMail = mail.generateHashMail(header1, description, hashTemp);
+        await mail.sendMailSES(
+          user.email,
+          "Verificación de cuenta - TrainFit",
+          htmlMail
+        );
+
+        return res.status(403).send({
+          error: "ACCOUNT_NOT_VERIFIED",
+          message: "Cuenta no verificada. Se ha enviado un nuevo código.",
+          email: user.email,
+        });
+      }
+
       return res.status(200).send(await issueSession(user, req, res));
     } catch (error) {
       console.error("Error en auth/social/google/verify:", error);
@@ -549,6 +570,27 @@ module.exports = {
         );
       }
 
+      if (user.hash) {
+        const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
+        await userModel.updateVerificationHash(user._id, hashTemp);
+
+        const header1 = `Hola ${user.name}, verifique su cuenta`;
+        const description =
+          "Introduce el siguiente código en la aplicación para finalizar el registro.";
+        const htmlMail = mail.generateHashMail(header1, description, hashTemp);
+        await mail.sendMailSES(
+          user.email,
+          "Verificación de cuenta - TrainFit",
+          htmlMail
+        );
+
+        return res.status(403).send({
+          error: "ACCOUNT_NOT_VERIFIED",
+          message: "Cuenta no verificada. Se ha enviado un nuevo código.",
+          email: user.email,
+        });
+      }
+
       return res.status(200).send(await issueSession(user, req, res));
     } catch (error) {
       console.error("Error en auth/social/apple/verify:", error);
@@ -589,10 +631,18 @@ module.exports = {
         user = await userModel.getUserByEmail(identity.email);
       }
 
-      if (user && user.name) {
+      if (user && user.name && !user.hash) {
         return res
           .status(409)
           .send({ message: "Este usuario ya está registrado" });
+      }
+
+      if (user && user.hash) {
+        return res.status(403).send({
+          error: "ACCOUNT_NOT_VERIFIED",
+          message: "Cuenta no verificada. Verifica tu email antes de continuar.",
+          email: user.email,
+        });
       }
 
       if (
@@ -611,12 +661,6 @@ module.exports = {
           appleId: identity.appleId || undefined,
           roles: ["user"],
           provider,
-        });
-        mail.notifyUserRegistered(user, {
-          source: "auth.registerSocial",
-          provider,
-          ip: req.ip,
-          userAgent: req.headers?.["user-agent"],
         });
       } else if (provider === "apple" && identity.appleId && !user.appleId) {
         user = await userSchema.findByIdAndUpdate(
@@ -651,6 +695,13 @@ module.exports = {
       } else {
         updatedUser = await userModel.updateGoogleUser(profile, new Date());
       }
+
+      mail.notifyUserRegistered(updatedUser, {
+        source: "auth.completeSocial",
+        provider: updatedUser.provider,
+        ip: req.ip,
+        userAgent: req.headers?.["user-agent"],
+      });
 
       return res.send({
         user: await userDto.single(updatedUser),

@@ -1,0 +1,48 @@
+const mongoose = require("mongoose");
+const Schema = mongoose.Schema;
+
+const PinnedExerciseNoteSchema = Schema({
+  tableId: {
+    type: Schema.Types.ObjectId,
+    ref: "Table",
+    required: true,
+    index: true,
+  },
+  workoutIndex: {
+    type: Number,
+    required: true,
+  },
+  exerciseIndex: {
+    type: Number,
+    required: true,
+  },
+  notes: {
+    type: String,
+    required: true,
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
+PinnedExerciseNoteSchema.index(
+  { tableId: 1, workoutIndex: 1, exerciseIndex: 1 },
+  { unique: true }
+);
+
+PinnedExerciseNoteSchema.pre("save", function (next) {
+  this.updatedAt = new Date();
+  next();
+});
+
+PinnedExerciseNoteSchema.pre("findOneAndUpdate", function (next) {
+  this.set({ updatedAt: new Date() });
+  next();
+});
+
+module.exports = mongoose.model("PinnedExerciseNote", PinnedExerciseNoteSchema);

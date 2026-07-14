@@ -25,6 +25,23 @@ module.exports = {
     return res.send(workout);
   },
 
+  async duplicateWorkoutRow(req, res) {
+    const splits = await workoutModel.duplicateWorkoutRow(
+      req.params.idTable,
+      req.params.idWorkout,
+      req.body?.nameSuffix,
+    );
+    return res.send(splits);
+  },
+
+  async reorderWorkoutRows(req, res) {
+    const splits = await workoutModel.reorderWorkoutRows(
+      req.params.idTable,
+      req.body?.workoutIdsOrder,
+    );
+    return res.send(splits);
+  },
+
   async createWorkout(req, res) {
     const workout = await workoutModel.createWorkout({
       name: req.body.name,
@@ -93,6 +110,18 @@ module.exports = {
       req.body.workoutId,
       req.user?.id,
       req.body.date,
+    );
+    if (!result?.workout) {
+      return res.status(404).send({ message: "Workout not found" });
+    }
+    return res.send(result);
+  },
+
+  async skipWorkout(req, res) {
+    const result = await workoutModel.skipWorkout(
+      req.body.workoutId,
+      req.user?.id,
+      req.body.rest,
     );
     if (!result?.workout) {
       return res.status(404).send({ message: "Workout not found" });

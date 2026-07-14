@@ -521,9 +521,15 @@ module.exports = {
       return toComparableId(left.doc._id).localeCompare(toComparableId(right.doc._id));
     });
 
-    return scoredCandidates
+    // Las etapas anteriores usan .lean() (necesario para poder fusionar/puntuar
+    // candidatas de 5 queries distintas), lo que se salta el autopopulate de
+    // customProducts. Solo se puebla la página final que realmente se devuelve,
+    // no las ~1000 candidatas descartadas por las demás páginas.
+    const paginatedDocs = scoredCandidates
       .slice(skipValue, skipValue + limitValue)
       .map((candidate) => candidate.doc);
+
+    return recipeSchema.populate(paginatedDocs, { path: "customProducts" });
   },
 
   async composeRecipe(payload, userId) {

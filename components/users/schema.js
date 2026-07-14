@@ -3,8 +3,10 @@ const bcrypt = require("bcrypt");
 const Schema = mongoose.Schema;
 const dietSchema = require("../diets/diet-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
-const ownTableSchema = require("../ownTables/own-table-schema");
+const tableSchema = require("../tables/table-schema");
 const productSchema = require("../products/product-schema");
+const anthropometrySchema = require("../anthropometry/anthropometry-schema");
+const nutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
 const SALT_WORK_FACTOR = 10;
 
 const UserSchema = new Schema({
@@ -24,10 +26,10 @@ const UserSchema = new Schema({
   stepGoal: Number,
   training: Number,
   birth: Date,
-  kcalTotal: Number,
-  proteinsGTotal: Number,
-  carbohydratesGTotal: Number,
-  fatGTotal: Number,
+  goalInUse: {
+    type: Schema.Types.ObjectId,
+    ref: "NutritionalGoal",
+  },
   hash: String,
   restoreCodeExpiresAt: Date,
   restoreFailedAttempts: { type: Number, default: 0 },
@@ -36,7 +38,6 @@ const UserSchema = new Schema({
   dietInUse: Schema.Types.ObjectId,
   tableInUse: Schema.Types.ObjectId,
   workoutInUse: Schema.Types.ObjectId,
-  ownTables: { type: [Schema.Types.ObjectId], default: [] },
   archivedDiets: { type: [Schema.Types.ObjectId], default: [] },
   archivedProducts: { type: [Schema.Types.ObjectId], default: [] },
   archivedRecipes: { type: [Schema.Types.ObjectId], default: [] },
@@ -69,6 +70,7 @@ const UserSchema = new Schema({
     impersonatedFromSessionId: { type: String, default: null },
   },
   provider: String,
+  lang: { type: String, default: 'es' },
 });
 
 UserSchema.plugin(require("mongoose-autopopulate"));
@@ -105,10 +107,9 @@ UserSchema.pre("deleteOne", async function (next) {
     const user = await this.model.findOne(query);
 
     if (user) {
-      // TODO: en el futuro habrá lista de ownDiets como en las ownTables
       if (user.dietInUse) await dietSchema.deleteOne({ _id: user.dietInUse });
-      if (user.ownTables)
-        await ownTableSchema.deleteMany({ _id: { $in: user.ownTables } });
+      await tableSchema.deleteMany({ userId: user._id });
+      await anthropometrySchema.deleteMany({ userId: user._id });
 
       const ownExercises = await exerciseSchema
         .find({ userId: user._id })
@@ -120,6 +121,7 @@ UserSchema.pre("deleteOne", async function (next) {
       }
 
       await productSchema.deleteMany({ userId: user._id });
+      await nutritionalGoalSchema.deleteMany({ userId: user._id });
     }
     next();
   } catch (e) {

@@ -88,6 +88,11 @@ router.putAsync(
   controller.addFavoriteRecipe,
 );
 router.putAsync("/restore", legacyAuthGone);
+router.postAsync(
+  "/verify-password",
+  auth(["admin", "user"]),
+  controller.verifyPassword,
+);
 router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteUser);
 router.putAsync("/roles/:id", auth(["admin"]), controller.updateRoles);
 

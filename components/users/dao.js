@@ -471,7 +471,7 @@ module.exports = {
       });
 
       const update = { $set: safeInput, $unset: {} };
-      ["tableInUse", "workoutInUse", "dietInUse"].forEach((field) => {
+      ["tableInUse", "workoutInUse", "dietInUse", "goalInUse"].forEach((field) => {
         if (safeInput[field] === null || safeInput[field] === undefined) {
           update.$unset[field] = 1;
           delete update.$set[field];

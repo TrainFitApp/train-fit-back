@@ -1,7 +1,7 @@
 const splitSchema = require("./split-schema");
 const splitService = require("./split-service");
 const splitUtil = require("./split-util");
-const ownTableSchema = require("../ownTables/own-table-schema");
+const tableSchema = require("../tables/table-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const workoutSchema = require("../workouts/workout-schema");
@@ -10,7 +10,6 @@ const workoutService = require("../workouts/workout-service");
 const { default: mongoose } = require("mongoose");
 const setSchema = require("../sets/set-schema");
 const { normalizeSetsOrder } = require("../sets/set-order-util");
-const tableSchema = require("../tables/table-schema");
 const userSchema = require("../users/schema");
 
 function normalizeSetForTemplateCopy(setTemp) {
@@ -111,7 +110,7 @@ module.exports = {
       splitSchema.create(currentSplit, (err, splitDoc) => {
         if (err) return reject(err);
         const addSplit = { $push: { splits: splitDoc._id } };
-        ownTableSchema.findByIdAndUpdate(
+        tableSchema.findByIdAndUpdate(
           idTable,
           addSplit,
           {},
@@ -121,7 +120,7 @@ module.exports = {
               if (err3) return reject(err3);
               customExerciseSchema.insertMany(exercisesFinal, (err4, doc2) => {
                 if (err4) return reject(err4);
-                ownTableSchema.findById(tableDoc._id, (err5, doc) => {
+                tableSchema.findById(tableDoc._id, (err5, doc) => {
                   if (err5) reject(err5);
                   return resolve(doc);
                 });
@@ -135,7 +134,7 @@ module.exports = {
 
   async addSplitToTable(idTable, idSplit, withSets) {
     try {
-      let tableDoc = await ownTableSchema.findById(idTable);
+      let tableDoc = await tableSchema.findById(idTable);
       tableDoc = tableDoc.toObject();
 
       let splitIndex = 0;
@@ -157,6 +156,7 @@ module.exports = {
         workoutTemp._id = new mongoose.Types.ObjectId();
         // Se mantienen las notes del workout al duplicar
         delete workoutTemp.date;
+        delete workoutTemp.startedAt;
         newWorkouts.push(workoutTemp);
         workoutTemp.exercises.forEach((exerciseTemp) => {
           exerciseTemp._id = new mongoose.Types.ObjectId();
@@ -187,7 +187,7 @@ module.exports = {
           },
         },
       };
-      await ownTableSchema.findByIdAndUpdate(idTable, addSplitQuery);
+      await tableSchema.findByIdAndUpdate(idTable, addSplitQuery);
 
       return newSplit;
     } catch (err) {
@@ -197,7 +197,7 @@ module.exports = {
 
   // async addSplitToTable(idTable) {
   //   try {
-  //     const tableDoc = await ownTableSchema.findById(idTable);
+  //     const tableDoc = await tableSchema.findById(idTable);
   //     let firstSplit = tableDoc.splits[0];
 
   //     if (firstSplit) {
@@ -236,7 +236,7 @@ module.exports = {
   //       $push: { splits: firstSplit._id },
   //     };
 
-  //     await ownTableSchema.findByIdAndUpdate(idTable, addSplit);
+  //     await tableSchema.findByIdAndUpdate(idTable, addSplit);
 
   //     return firstSplit;
   //   } catch (err) {
@@ -272,7 +272,7 @@ module.exports = {
   async deleteSplit(idTable, idSplit) {
     try {
       const pullSplit = { $pull: { splits: idSplit } };
-      await ownTableSchema.findByIdAndUpdate(idTable, pullSplit);
+      await tableSchema.findByIdAndUpdate(idTable, pullSplit);
       await splitSchema.deleteOne({ _id: idSplit });
     } catch (err) {
       throw err;

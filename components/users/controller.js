@@ -6,6 +6,14 @@ const mail = require("./../util/mail");
 const jwt = require("jsonwebtoken");
 const serverDomain = process.env.SERVER_DOMAIN;
 
+const PASSWORD_RESET_REQUEST_RESPONSE = {
+  message:
+    "Si existe una cuenta con ese correo, enviaremos un codigo de verificacion.",
+};
+const PASSWORD_RESET_INVALID_CODE_RESPONSE = {
+  message: "Codigo invalido o expirado",
+};
+
 async function generateAndSetTokens(user, res) {
   throw new Error("Auth endpoint moved to /api/auth");
 }
@@ -819,12 +827,14 @@ module.exports = {
 
   async sendMailCode(req, res) {
     try {
-      const response = await userModel.sendMailCode(req.params.email);
-      return res.send(response);
+      await userModel.sendMailCode(req.params.email);
     } catch (error) {
-      console.error("Error in sendMailCode:", error.message);
-      return res.status(404).send({ message: error.message });
+      console.warn("[AUTH] password_reset_code_request_not_completed", {
+        reason: error?.message || "unknown",
+      });
     }
+
+    return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
   },
 
   async checkRestoreCode(req, res) {
@@ -839,8 +849,10 @@ module.exports = {
       }
       return res.send(response);
     } catch (error) {
-      console.error("Error in checkRestoreCode:", error.message);
-      return res.status(404).send({ message: error.message });
+      console.warn("[AUTH] password_reset_code_rejected", {
+        reason: error?.message || "unknown",
+      });
+      return res.status(400).send(PASSWORD_RESET_INVALID_CODE_RESPONSE);
     }
   },
 
@@ -854,6 +866,43 @@ module.exports = {
         message: "No se pudo enviar el correo de sugerencia. Verifica la configuración SMTP.",
         error: error.message,
       });
+    }
+  },
+
+  async verifyPassword(req, res) {
+    try {
+      const { password } = req.body || {};
+      if (!password) {
+        return res.status(400).send({ message: "Contraseña requerida" });
+      }
+
+      // Siempre sobre el usuario autenticado (del token), nunca sobre un id
+      // arbitrario del body/params, para que no se pueda usar para tantear
+      // la contraseña de otra cuenta.
+      const user = await userModel.getUserById(req.user.id);
+      if (!user) {
+        return res.status(404).send({ message: "Usuario no encontrado" });
+      }
+
+      if (!user.password) {
+        // Cuenta social (Google/Apple) sin contraseña propia: nada que verificar.
+        return res.status(400).send({
+          message: "Esta cuenta no tiene contraseña configurada",
+          code: "NO_PASSWORD_SET",
+        });
+      }
+
+      const isMatch = bcrypt.comparePasswords(password, user.password);
+      if (!isMatch) {
+        return res.status(401).send({ message: "Contraseña incorrecta" });
+      }
+
+      return res.status(200).send({ valid: true });
+    } catch (error) {
+      console.error("Error al verificar la contraseña:", error);
+      return res
+        .status(500)
+        .send({ message: "Error al verificar la contraseña" });
     }
   },
 

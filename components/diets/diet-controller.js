@@ -18,6 +18,38 @@ module.exports = {
     return res.send(diet);
   },
 
+  async getRecentMealProducts(req, res) {
+    const mealIndex = parseInt((req.query.mealIndex || "").toString(), 10);
+    const limit = parseInt((req.query.limit || 15).toString(), 10);
+
+    if (!Number.isInteger(mealIndex) || mealIndex < 0) {
+      return res.status(400).send({ message: "mealIndex must be a non-negative integer" });
+    }
+
+    const products = await dietModel.getRecentMealProducts(req.params.id, {
+      mealIndex,
+      limit,
+    });
+
+    return res.send(products);
+  },
+
+  async getRecentMealRecipes(req, res) {
+    const mealIndex = parseInt((req.query.mealIndex || "").toString(), 10);
+    const limit = parseInt((req.query.limit || 15).toString(), 10);
+
+    if (!Number.isInteger(mealIndex) || mealIndex < 0) {
+      return res.status(400).send({ message: "mealIndex must be a non-negative integer" });
+    }
+
+    const recipes = await dietModel.getRecentMealRecipes(req.params.id, {
+      mealIndex,
+      limit,
+    });
+
+    return res.send(recipes);
+  },
+
   async getSearchDiets(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 10).toString(), 10);
@@ -81,6 +113,18 @@ module.exports = {
       req.params.iddietday
     );
 
+    return res.send(diet);
+  },
+
+  async updatePinnedNote(req, res) {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    if (typeof notes !== "string") {
+      return res.status(400).json({ success: false, message: "Notes must be a string" });
+    }
+
+    const diet = await dietModel.updatePinnedNote(id, notes.trim());
     return res.send(diet);
   },
 
