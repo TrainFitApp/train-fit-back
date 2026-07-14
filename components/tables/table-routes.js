@@ -17,7 +17,7 @@ router.postAsync("/search", auth(["admin", "user"]), controller.getSearchTables)
 router.postAsync("/", auth(["admin"]), controller.createTable);
 
 // Crear tabla propia del usuario
-router.postAsync("/user", auth(["admin", "user"]), controller.createTableToUser);
+router.postAsync("/user/:idUser", auth(["admin", "user"]), controller.createTableToUser);
 
 // Copiar plantilla pública -> usuario
 router.postAsync("/copy/:idTable", auth(["admin", "user"]), controller.copyTable);
