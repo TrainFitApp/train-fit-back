@@ -23,6 +23,7 @@ const gitManager = require("../components/gitManager/git-manager-routes");
 const aiImport = require("../components/aiImport/ai-import-routes");
 const pinnedExerciseNotes = require("../components/pinnedExerciseNotes/pinned-exercise-note-routes");
 const anthropometry = require("../components/anthropometry/anthropometry-routes");
+const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goal-routes");
 
 const router = express.Router();
 
@@ -50,5 +51,6 @@ router.use("/server", serverManager);
 router.use("/git", gitManager);
 router.use("/ai", aiImport);
 router.use("/anthropometry", anthropometry);
+router.use("/nutritionalgoals", nutritionalGoals);
 
 module.exports = router;

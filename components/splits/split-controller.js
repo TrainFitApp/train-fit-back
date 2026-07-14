@@ -2,6 +2,7 @@ const splitService = require("./split-service");
 const splitDTO = require("./split-dto");
 const tableSchema = require("../tables/table-schema");
 const featureAccessService = require("../billing/feature-access-service");
+const mongoose = require("mongoose");
 
 function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
@@ -135,5 +136,62 @@ module.exports = {
 
     await splitService.deleteSplit(req.params.idTable, req.params.idSplit);
     res.sendStatus(204);
+  },
+
+  async deleteSplits(req, res) {
+    if (!mongoose.isValidObjectId(req.params.idTable)) {
+      return res.status(400).send({
+        message: "La rutina indicada no es valida",
+      });
+    }
+
+    const splitIds = Array.from(
+      new Set(
+        (Array.isArray(req.body?.splitIds) ? req.body.splitIds : [])
+          .map((id) => id?.toString())
+          .filter(Boolean),
+      ),
+    );
+
+    if (
+      splitIds.length === 0 ||
+      splitIds.some((id) => !mongoose.isValidObjectId(id))
+    ) {
+      return res.status(400).send({
+        message: "Debes seleccionar micro-ciclos validos",
+      });
+    }
+
+    const table = await tableSchema
+      .findById(req.params.idTable)
+      .select("_id splits");
+
+    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!userOwnsTable(req, table._id)) {
+      return res.status(403).send({
+        message: "No tienes permiso para esta rutina",
+      });
+    }
+
+    const tableSplitIds = new Set(
+      (table.splits || []).map((split) =>
+        (split?._id || split)?.toString(),
+      ),
+    );
+
+    if (splitIds.some((id) => !tableSplitIds.has(id))) {
+      return res.status(400).send({
+        message: "Uno o mas micro-ciclos no pertenecen a esta rutina",
+      });
+    }
+
+    const result = await splitService.deleteSplits(
+      table._id,
+      splitIds,
+      req.user?._id,
+      req.user?.workoutInUse,
+    );
+
+    return res.send(result);
   },
 };
