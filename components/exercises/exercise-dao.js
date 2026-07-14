@@ -167,6 +167,14 @@ module.exports = {
         });
       }
 
+      if (searchExercisesFilterGroup.isIsometric === true) {
+        agg.push({
+          $match: {
+            isIsometric: true,
+          },
+        });
+      }
+
       // Añade una etapa $match para la búsqueda de texto si existe en 'searchExercisesFilterGroup'.
       if (searchExercisesFilterGroup.search) {
         const searchText = searchExercisesFilterGroup.search.trim();
@@ -262,8 +270,15 @@ module.exports = {
       update.$set = cleanedExercise;
     }
 
+    update.$unset = update.$unset || {};
     if (exercise?.isCardio !== true) {
-      update.$unset = { isCardio: "" };
+      update.$unset.isCardio = "";
+    }
+    if (exercise?.isIsometric !== true) {
+      update.$unset.isIsometric = "";
+    }
+    if (Object.keys(update.$unset).length === 0) {
+      delete update.$unset;
     }
 
     if (Object.keys(update).length === 0) {
