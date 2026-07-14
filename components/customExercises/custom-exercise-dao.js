@@ -13,11 +13,18 @@ const SET_UPDATE_FIELDS = [
   "drop",
   "restPause",
   "doned",
+  // DEPRECATED: reemplazados por time/expectedTime. Mantenidos temporalmente
+  // (rollout en fases, hay apps viejas instaladas) — quitar junto con los
+  // campos del schema en la release de limpieza posterior.
   "timeMin",
   "timeSec",
-  "velocity",
   "expectedMin",
   "expectedSec",
+  "time",
+  "expectedTime",
+  "distance",
+  "expectedDistance",
+  "velocity",
   "order",
 ];
 

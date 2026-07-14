@@ -10,7 +10,9 @@
     "migrate:dietday-dates:dry-run": "node scripts/migrate-dietday-dates.js --dry-run",
     "migrate:tables": "node scripts/migrate-tables-unify.js",
     "migrate:nutritional-goals": "node scripts/migrate-nutritional-goals.js",
-    "migrate:nutritional-goals:dry-run": "node scripts/migrate-nutritional-goals.js --dry-run"
+    "migrate:nutritional-goals:dry-run": "node scripts/migrate-nutritional-goals.js --dry-run",
+    "migrate:sets-cardio-fields": "node scripts/migrate-sets-cardio-fields.js",
+    "migrate:sets-cardio-fields:dry-run": "node scripts/migrate-sets-cardio-fields.js --dry-run"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",

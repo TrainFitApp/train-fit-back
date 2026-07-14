@@ -18,6 +18,7 @@ async function createExercisesIfNeeded(exercises, userId) {
         category: ex.exerciseData.category || [],
         equipment: ex.exerciseData.equipment || [],
         isCardio: ex.exerciseData.isCardio || false,
+        isIsometric: ex.exerciseData.isIsometric || false,
         userId: userId,
       });
       createdMap[ex.name] = doc._id.toString();
@@ -59,8 +60,7 @@ async function createFullHierarchy(tableData, userId) {
             weight: setData.weight || undefined,
             drop: setData.drop || undefined,
             restPause: setData.restPause || undefined,
-            expectedMin: setData.expectedMin || undefined,
-            expectedSec: setData.expectedSec || undefined,
+            expectedTime: setData.expectedTime || undefined,
             order: index,
           })
         );

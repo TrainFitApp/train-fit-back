@@ -12,6 +12,7 @@ const ExerciseSchema = Schema({
   equipment: [String],
   keywords: [String],
   isCardio: Boolean,
+  isIsometric: Boolean,
   userId: {
     type: Schema.Types.ObjectId,
     ref: "User",

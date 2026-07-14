@@ -477,7 +477,7 @@ PARSE raw text → "s" array (one entry per set):
 MATCH each exercise by NAME to the Exercises list:
 - If name matches (case-insensitive, partial OK), set id:match._id and create:false.
 - Same exercise in MULTIPLE workouts → use SAME id for all occurrences.
-- If name is NOT in the list at all → set id:null, create:true AND ALWAYS include ed:{n:(exact name), m1:[muscle groups], m2:[], c:[category], eq:[equipment], cardio:false}.
+- If name is NOT in the list at all → set id:null, create:true AND ALWAYS include ed:{n:(exact name), m1:[muscle groups], m2:[], c:[category], eq:[equipment], cardio:false, isometric:false}.
   INFER muscle groups and category from the name using these patterns:
     CURL / BICEP / BÍCEPS → m1:["Bíceps"] c:["Curl"]
     PRESS / PECTORAL / PECHO → m1:["Pectoral","Deltoides anterior","Tríceps"] c:["Empuje horizontal"]
@@ -520,6 +520,7 @@ function remapExercise(ex) {
       category: ex.ed.c || ex.ed.category || [],
       equipment: ex.ed.eq || ex.ed.equipment || [],
       isCardio: ex.ed.cardio || false,
+      isIsometric: ex.ed.isometric || false,
     } : undefined,
     sets: (ex.s || ex.sets || []).map((set) => ({
       expectedReps: set.reps,
@@ -527,8 +528,11 @@ function remapExercise(ex) {
       weight: typeof set.w === "number" ? set.w : undefined,
       drop: set.d === true || set.d === "true" || false,
       restPause: set.rp ?? null,
-      expectedMin: set.min ?? null,
-      expectedSec: set.sec ?? null,
+      // Mantener sincronizado con formatSecondsAsTime (shared-ui/utils)
+      expectedTime:
+        set.min != null || set.sec != null
+          ? `${set.min ?? 0}:${String(set.sec ?? 0).padStart(2, "0")}`
+          : null,
     })),
   };
 }

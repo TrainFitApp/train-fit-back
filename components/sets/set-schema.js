@@ -13,10 +13,18 @@ const SetSchema = Schema(
     cronometer: Number,
     doned: Boolean,
     order: Number,
+    // DEPRECATED: reemplazados por expectedTime/time (string "M:SS").
+    // Se mantienen en el schema temporalmente (rollout en fases, hay
+    // usuarios con apps viejas instaladas) — quitar en una release de
+    // limpieza posterior una vez la adopción de la app vieja caiga a ~0.
     expectedMin: Number,
     expectedSec: Number,
     timeMin: Number,
     timeSec: Number,
+    expectedTime: String,
+    time: String,
+    expectedDistance: Number,
+    distance: Number,
     velocity: Number,
   },
   { versionKey: false },
@@ -34,6 +42,7 @@ SetSchema.pre("save", function (next) {
       value === null ||
       value === undefined ||
       value === false ||
+      value === "" ||
       (Array.isArray(value) && value.length === 0)
     ) {
       doc[path] = undefined;
