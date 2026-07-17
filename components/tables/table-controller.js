@@ -109,12 +109,12 @@ async copyTable(req, res) {
   },
 
   async createTableToUser(req, res) {
-    const idUser = req.params.idUser;
+    const idUser = req.params.idUser || req.body.idUser;
     if (!canActOnUser(req, idUser)) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = Array.isArray(req.user?.tables) ? req.user.tables.length : 0;
+    const routineCount = await tableModel.countUserTables(idUser);
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",

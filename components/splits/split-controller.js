@@ -8,10 +8,9 @@ function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
 }
 
-function userOwnsTable(req, tableId) {
+function userOwnsTable(req, table) {
   if (isAdmin(req)) return true;
-    const userTables = Array.isArray(req.user?.tables) ? req.user.tables : [];
-    return userTables.some((id) => id?.toString() === tableId?.toString());
+  return table?.userId?.toString() === req.user?.id?.toString();
 }
 
 module.exports = {
@@ -51,9 +50,9 @@ module.exports = {
   async createSplitAndAddToTable(req, res) {
     const table = await tableSchema
       .findById(req.params.tableInUseId)
-      .select("_id splits");
+      .select("_id userId splits");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table._id)) {
+    if (!userOwnsTable(req, table)) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
@@ -72,9 +71,9 @@ module.exports = {
   },
 
   async addSplitToTable(req, res) {
-    const table = await tableSchema.findById(req.body.idTable).select("_id splits");
+    const table = await tableSchema.findById(req.body.idTable).select("_id userId splits");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table._id)) {
+    if (!userOwnsTable(req, table)) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
@@ -95,9 +94,9 @@ module.exports = {
   },
 
   async addTableSplit(req, res) {
-    const tableDoc = await tableSchema.findById(req.params.idTable).select("_id");
+    const tableDoc = await tableSchema.findById(req.params.idTable).select("_id userId");
     if (!tableDoc) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, tableDoc._id)) {
+    if (!userOwnsTable(req, tableDoc)) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
 
@@ -128,9 +127,9 @@ module.exports = {
   },
 
   async deleteSplit(req, res) {
-    const table = await tableSchema.findById(req.params.idTable).select("_id");
+    const table = await tableSchema.findById(req.params.idTable).select("_id userId");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table._id)) {
+    if (!userOwnsTable(req, table)) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
 
@@ -164,10 +163,10 @@ module.exports = {
 
     const table = await tableSchema
       .findById(req.params.idTable)
-      .select("_id splits");
+      .select("_id userId splits");
 
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table._id)) {
+    if (!userOwnsTable(req, table)) {
       return res.status(403).send({
         message: "No tienes permiso para esta rutina",
       });
