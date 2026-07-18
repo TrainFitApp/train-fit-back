@@ -98,10 +98,11 @@ async copyTable(req, res) {
   },
 
   async createTable(req, res) {
+    const userId = req.body.userId || req.user?.id;
     const table = await tableModel.createTable({
       name: req.body.name,
       type: req.body.type,
-      userId: req.body.userId || req.user?.id || null,
+      ...(userId && { userId }),
       splits: req.body.splits,
     });
 

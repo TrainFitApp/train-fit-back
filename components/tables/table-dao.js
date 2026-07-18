@@ -52,7 +52,7 @@ module.exports = {
     }
     if (defaultOnly && idUser) {
       return tableSchema
-        .find({ userId: null })
+        .find({ userId: { $exists: false } })
         .skip(page * limit)
         .limit(limit)
         .exec();
@@ -62,7 +62,7 @@ module.exports = {
       .find({
         $or: [
           { userId: mongoose.Types.ObjectId(idUser) },
-          { userId: null }
+          { userId: { $exists: false } }
         ]
       })
       .skip(page * limit)
@@ -145,10 +145,8 @@ module.exports = {
       await splitSchema.insertMany(splits);
 
       delete sharedTable._id;
-      sharedTable = await tableSchema.create({
-        ...sharedTable,
-        userId: null,
-      });
+      delete sharedTable.userId;
+      sharedTable = await tableSchema.create(sharedTable);
 
       return `${serverDomain}/api/tables/share/${idUser}/${idTable}`;
     } catch (e) {
@@ -214,9 +212,8 @@ module.exports = {
       }
 
       if (defaultOnly) {
-        // Predeterminadas: solo plantillas públicas (userId: null)
         return await tableSchema.aggregate(
-          buildLightSearchPipeline({ userId: null })
+          buildLightSearchPipeline({ userId: { $exists: false } })
         );
       }
 
@@ -225,7 +222,7 @@ module.exports = {
         buildLightSearchPipeline({
           $or: [
             { userId: mongoose.Types.ObjectId(idUser) },
-            { userId: null }
+            { userId: { $exists: false } }
           ]
         })
       );
@@ -235,7 +232,7 @@ module.exports = {
   },
 
   async createTable(table) {
-    return tableSchema.create({ ...table, userId: null });
+    return tableSchema.create(table);
   },
 
   async createTableToUser(idUser, standardTable) {
