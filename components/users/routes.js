@@ -1,6 +1,7 @@
 const express = require("@awaitjs/express");
 const controller = require("./controller");
 const { auth } = require("../../middleware/validateAuth");
+const rateLimiter = require("../util/rate-limiter");
 
 const router = express.Router();
 
@@ -26,10 +27,6 @@ router.postAsync("/refresh-token", legacyAuthGone);
 router.postAsync("/logout", legacyAuthGone);
 router.postAsync("/auth/verify-google", legacyAuthGone);
 router.postAsync("/auth/verify-apple", legacyAuthGone);
-router.getAsync(
-  "/auth/pass/:email/:password",
-  legacyAuthGone,
-);
 router.postAsync("/", controller.createUser);
 router.postAsync("/social", legacyAuthGone);
 // router.postAsync("/google", controller.createSocialUser); // Mantener por compatibilidad si es necesario, o eliminar
@@ -50,7 +47,7 @@ router.postAsync(
 );
 router.getAsync("/hash/:id/:hash", controller.checkHash);
 router.deleteAsync("/hash/:id", auth(["admin", "user"]), controller.clearUserHash);
-router.getAsync("/send/mail/code/:email", controller.sendMailCode);
+router.getAsync("/send/mail/code/:email", rateLimiter, controller.sendMailCode);
 router.postAsync("/send/mail/code", controller.checkRestoreCode);
 router.postAsync("/activate", legacyAuthGone);
 router.putAsync(
@@ -87,7 +84,7 @@ router.putAsync(
   auth(["admin", "user"]),
   controller.addFavoriteRecipe,
 );
-router.putAsync("/restore", legacyAuthGone);
+
 router.postAsync(
   "/verify-password",
   auth(["admin", "user"]),
