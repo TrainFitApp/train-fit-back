@@ -6,6 +6,7 @@ const recipeModel = require("../recipes/recipe-model");
 const userSchema = require("../users/schema");
 const userDto = require("../users/dto");
 const tableService = require("../tables/table-service");
+const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 
 function sendBillingAdminError(res, error) {
   const status = error?.status || error?.response?.status || 500;
@@ -61,12 +62,14 @@ module.exports = {
     const routines = await tableService.countUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
+    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
 
     return res.send(
       featureAccessService.buildEntitlements(user, {
         routines,
         customExercises,
         recipes,
+        nutritionalGoals,
       }),
     );
   },
@@ -88,12 +91,14 @@ module.exports = {
     const routines = await tableService.countUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
+    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
 
     return res.send(
       featureAccessService.buildEntitlements(refreshedUser, {
         routines,
         customExercises,
         recipes,
+        nutritionalGoals,
       }),
     );
   },

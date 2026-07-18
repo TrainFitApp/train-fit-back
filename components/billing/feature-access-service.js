@@ -3,6 +3,7 @@ const FREE_LIMITS = {
   microcyclesPerRoutine: 4,
   customExercises: 2,
   recipes: 2,
+  nutritionalGoals: 1,
 };
 
 const PREMIUM_LIMITS = {
@@ -10,6 +11,7 @@ const PREMIUM_LIMITS = {
   microcyclesPerRoutine: 21,
   customExercises: Number.MAX_SAFE_INTEGER,
   recipes: Number.MAX_SAFE_INTEGER,
+  nutritionalGoals: 10,
 };
 
 function isPremiumUser(user) {
@@ -40,6 +42,11 @@ function canCreateRecipe(user, recipeCount) {
   return recipeCount < limits.recipes;
 }
 
+function canCreateNutritionalGoal(user, nutritionalGoalCount) {
+  const limits = getLimits(user);
+  return nutritionalGoalCount < limits.nutritionalGoals;
+}
+
 function canSeeAds(user) {
   return !isPremiumUser(user);
 }
@@ -61,6 +68,13 @@ function normalizePlan(plan) {
 function buildEntitlements(user, usage) {
   const limits = getLimits(user);
   const normalizedPlan = normalizePlan(user?.premium?.plan);
+  const normalizedUsage = {
+    routines: usage.routines || 0,
+    customExercises: usage.customExercises || 0,
+    recipes: usage.recipes || 0,
+    nutritionalGoals: usage.nutritionalGoals || 0,
+  };
+
   return {
     isPremium: isPremiumUser(user),
     source: user?.premium?.source || "legacy",
@@ -74,16 +88,28 @@ function buildEntitlements(user, usage) {
           ? null
           : limits.customExercises,
       recipes: limits.recipes === Number.MAX_SAFE_INTEGER ? null : limits.recipes,
+      nutritionalGoals:
+        limits.nutritionalGoals === Number.MAX_SAFE_INTEGER
+          ? null
+          : limits.nutritionalGoals,
     },
     usage: {
-      routines: usage.routines,
-      customExercises: usage.customExercises,
-      recipes: usage.recipes,
+      routines: normalizedUsage.routines,
+      customExercises: normalizedUsage.customExercises,
+      recipes: normalizedUsage.recipes,
+      nutritionalGoals: normalizedUsage.nutritionalGoals,
     },
     remaining: {
-      routines: getRemaining(limits.routines, usage.routines),
-      customExercises: getRemaining(limits.customExercises, usage.customExercises),
-      recipes: getRemaining(limits.recipes, usage.recipes),
+      routines: getRemaining(limits.routines, normalizedUsage.routines),
+      customExercises: getRemaining(
+        limits.customExercises,
+        normalizedUsage.customExercises,
+      ),
+      recipes: getRemaining(limits.recipes, normalizedUsage.recipes),
+      nutritionalGoals: getRemaining(
+        limits.nutritionalGoals,
+        normalizedUsage.nutritionalGoals,
+      ),
     },
     adsEnabled: canSeeAds(user),
   };
@@ -98,6 +124,7 @@ module.exports = {
   canAddMicrocycle,
   canCreateExercise,
   canCreateRecipe,
+  canCreateNutritionalGoal,
   canSeeAds,
   buildEntitlements,
 };
