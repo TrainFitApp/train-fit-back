@@ -129,17 +129,12 @@ module.exports = {
     return userDao.addFavoriteRecipe(idUser, idRecipe, isOwn, recipeExist);
   },
 
-  async restorePassword(email, newPassword) {
-    return userDao.restorePassword(email, newPassword);
-  },
-
   async updatePassword(email, password) {
     return userDao.updatePassword(email, password);
   },
 
   async sendMailCode(email) {
-    const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
-    const code = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    const code = Math.random().toString(36).substring(2, 10);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     return userDao.sendMailCode(email, code, expiresAt);

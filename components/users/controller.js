@@ -4,7 +4,6 @@ const userSchema = require("../users/schema");
 const bcrypt = require("../util/bcrypt");
 const mail = require("./../util/mail");
 const jwt = require("jsonwebtoken");
-const serverDomain = process.env.SERVER_DOMAIN;
 
 const PASSWORD_RESET_REQUEST_RESPONSE = {
   message:
@@ -792,27 +791,6 @@ module.exports = {
         ? "Recipe added to favorites"
         : "Recipe removed from favorites",
     });
-  },
-
-  // TODO: mejorar seguridad de contraseña viajando en el GET wtf
-  // Vía web token no es mala idea
-  async restorePassword(req, res) {
-    const url = `${serverDomain}/api/users/auth/pass/${req.body.email}/${req.body.password}`;
-
-    const header1 = `Hola ${req.body.email}`;
-    const description =
-      "Pulsa en el botón de abajo para confirmar el cambio de contraseña.";
-    const linkContent = "Actualizar contraseña";
-
-    const htmlMail = mail.generateMail(header1, description, url, linkContent);
-
-    await mail.sendMailSES(
-      req.body.email,
-      "Actualización contraseña",
-      htmlMail,
-    );
-
-    return res.send(204);
   },
 
   async updatePassword(req, res) {

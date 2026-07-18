@@ -537,13 +537,6 @@ module.exports = {
     return doc;
   },
 
-  async restorePassword(email, password) {
-    return await userSchema.findOneAndUpdate(
-      { email: email },
-      { $set: { password: password } },
-    );
-  },
-
   async updatePassword(email, password) {
     const user = await userSchema.findOne({ email: email });
     if (!user) throw new Error("User not found.");
@@ -572,12 +565,25 @@ module.exports = {
         throw new Error("Espera 60 segundos antes de solicitar un nuevo código");
       }
 
+      // Daily limit: max 3 códigos por día por email
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const lastReset = user.restoreCodeDate || new Date(0);
+      const isNewDay = lastReset.getTime() < today.getTime();
+      const currentCount = isNewDay ? 0 : (user.restoreCodeDailyCount || 0);
+
+      if (currentCount >= 3) {
+        throw new Error("Has alcanzado el límite diario de códigos. Intenta de nuevo mañana.");
+      }
+
       const updatedUser = await userSchema.findByIdAndUpdate(user._id, {
         $set: {
-          hash,
+          restoreCode: hash,
           restoreCodeExpiresAt: expiresAt,
           restoreFailedAttempts: 0,
           lastRestoreCodeSentAt: new Date(),
+          restoreCodeDate: today,
+          restoreCodeDailyCount: currentCount + 1,
         },
       }, { new: true });
       if (!updatedUser) {
@@ -608,14 +614,14 @@ module.exports = {
         throw new Error("Código expirado. Solicita uno nuevo.");
       }
 
-      if (user.hash !== hash) {
+      if (user.restoreCode !== hash) {
         await userSchema.findByIdAndUpdate(user._id, {
           $inc: { restoreFailedAttempts: 1 },
         });
         throw new Error("Código incorrecto");
       }
 
-      user.hash = undefined;
+      user.restoreCode = undefined;
       user.restoreCodeExpiresAt = undefined;
       user.restoreFailedAttempts = 0;
       user.lastRestoreCodeSentAt = undefined;
