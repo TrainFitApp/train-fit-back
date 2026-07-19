@@ -10,8 +10,20 @@ module.exports = {
     return NutritionalGoal.findById(id).lean();
   },
 
+  async findByIdAndUserId(id, userId) {
+    return NutritionalGoal.findOne({ _id: id, userId }).lean();
+  },
+
   async findByUserId(userId) {
     return NutritionalGoal.find({ userId }).sort({ createdAt: -1 }).lean();
+  },
+
+  async findLatestByUserId(userId) {
+    return NutritionalGoal.findOne({ userId }).sort({ createdAt: -1 }).lean();
+  },
+
+  async countByUserId(userId) {
+    return NutritionalGoal.countDocuments({ userId });
   },
 
   async update(id, data) {
@@ -22,8 +34,20 @@ module.exports = {
     ).lean();
   },
 
+  async updateByUserId(id, userId, data) {
+    return NutritionalGoal.findOneAndUpdate(
+      { _id: id, userId },
+      { ...data, updatedAt: new Date() },
+      { new: true }
+    ).lean();
+  },
+
   async delete(id) {
     return NutritionalGoal.findByIdAndDelete(id);
+  },
+
+  async deleteByIdAndUserId(id, userId) {
+    return NutritionalGoal.findOneAndDelete({ _id: id, userId }).lean();
   },
 
   async deleteByUserId(userId) {

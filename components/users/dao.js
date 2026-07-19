@@ -457,6 +457,7 @@ module.exports = {
         "tokenRotationTimestamp",
         "hash",
         "appleId",
+        "goalInUse",
       ]);
 
       const safeInput = {};
