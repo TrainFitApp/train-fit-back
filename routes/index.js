@@ -20,7 +20,6 @@ const appVersion = require("../components/appVersion/app-version-routes");
 const envManager = require("../components/envManager/env-manager-routes");
 const serverManager = require("../components/serverManager/server-manager-routes");
 const gitManager = require("../components/gitManager/git-manager-routes");
-const aiImport = require("../components/aiImport/ai-import-routes");
 const pinnedExerciseNotes = require("../components/pinnedExerciseNotes/pinned-exercise-note-routes");
 const anthropometry = require("../components/anthropometry/anthropometry-routes");
 const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goal-routes");
@@ -49,7 +48,6 @@ router.use("/app", appVersion);
 router.use("/env", envManager);
 router.use("/server", serverManager);
 router.use("/git", gitManager);
-router.use("/ai", aiImport);
 router.use("/anthropometry", anthropometry);
 router.use("/nutritionalgoals", nutritionalGoals);
 
