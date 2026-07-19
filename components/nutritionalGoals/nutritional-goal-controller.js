@@ -147,16 +147,22 @@ const controller = {
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
 
+    const ownerId = currentGoal.userId;
+    const goalCount = await nutritionalGoalService.countByUserId(ownerId);
+    if (goalCount <= 1) {
+      return res.status(409).send({
+        message: "Debes tener al menos un objetivo nutricional",
+        code: "NUTRITIONAL_GOALS_MINIMUM_ONE",
+      });
+    }
+
     const deletedGoal = isAdmin(req)
       ? await nutritionalGoalService.remove(req.params.id)
       : await nutritionalGoalService.removeByUserId(req.params.id, req.user.id);
 
     if (!deletedGoal) return res.sendStatus(404);
 
-    const goalInUse = await syncActiveGoalAfterDelete(
-      currentGoal.userId,
-      currentGoal._id,
-    );
+    const goalInUse = await syncActiveGoalAfterDelete(ownerId, currentGoal._id);
 
     return res.send({ goalInUse });
   },
