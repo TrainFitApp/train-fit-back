@@ -24,6 +24,38 @@ function sanitizeGoalInput(body) {
   };
 }
 
+function sendLockedGoal(res) {
+  return res.status(403).send({
+    message: "Este objetivo nutricional esta bloqueado en el modo Free",
+    code: "NUTRITIONAL_GOAL_LOCKED",
+  });
+}
+
+function getGoalId(goal) {
+  return String(goal?._id || "");
+}
+
+function getFreeUnlockedGoalId(user, goals) {
+  if (!Array.isArray(goals) || goals.length === 0) return "";
+
+  const activeGoalId = String(user?.goalInUse || "");
+  const activeGoal = goals.find((goal) => getGoalId(goal) === activeGoalId);
+  return getGoalId(activeGoal || goals[0]);
+}
+
+async function isGoalLockedForPlan(req, goal) {
+  if (isAdmin(req) || featureAccessService.isPremiumUser(req.user)) {
+    return false;
+  }
+
+  const goals = await nutritionalGoalService.getByUserId(req.user.id);
+  const limit = featureAccessService.getLimits(req.user).nutritionalGoals;
+  if (goals.length <= limit) return false;
+
+  const unlockedGoalId = getFreeUnlockedGoalId(req.user, goals);
+  return getGoalId(goal) !== unlockedGoalId;
+}
+
 async function syncActiveGoalAfterDelete(userId, deletedGoalId) {
   const user = await userSchema.findById(userId).select("goalInUse");
   const isDeletedGoalActive =
@@ -83,6 +115,7 @@ const controller = {
     const goal = await nutritionalGoalService.getById(req.params.id);
     if (!goal) return res.sendStatus(404);
     if (!canAccessGoal(req, goal)) return res.sendStatus(404);
+    if (await isGoalLockedForPlan(req, goal)) return sendLockedGoal(res);
     return res.send(goal);
   },
 
@@ -95,6 +128,7 @@ const controller = {
     const currentGoal = await nutritionalGoalService.getById(req.params.id);
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
+    if (await isGoalLockedForPlan(req, currentGoal)) return sendLockedGoal(res);
 
     const goal = isAdmin(req)
       ? await nutritionalGoalService.update(req.params.id, sanitizeGoalInput(req.body))
@@ -131,6 +165,7 @@ const controller = {
     const goal = await nutritionalGoalService.getById(req.params.id);
     if (!goal) return res.sendStatus(404);
     if (!canAccessGoal(req, goal)) return res.sendStatus(404);
+    if (await isGoalLockedForPlan(req, goal)) return sendLockedGoal(res);
 
     await userSchema.findByIdAndUpdate(goal.userId, {
       $set: { goalInUse: goal._id },
