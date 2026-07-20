@@ -12,7 +12,8 @@
     "migrate:nutritional-goals": "node scripts/migrate-nutritional-goals.js",
     "migrate:nutritional-goals:dry-run": "node scripts/migrate-nutritional-goals.js --dry-run",
     "migrate:sets-cardio-fields": "node scripts/migrate-sets-cardio-fields.js",
-    "migrate:sets-cardio-fields:dry-run": "node scripts/migrate-sets-cardio-fields.js --dry-run"
+    "migrate:sets-cardio-fields:dry-run": "node scripts/migrate-sets-cardio-fields.js --dry-run",
+    "test": "node --test components/remoteConfig/remote-config-service.test.js"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",
@@ -32,7 +33,8 @@
     "mongoose-autopopulate": "^0.16.1",
     "morgan": "~1.9.1",
     "node-cron": "^3.0.0",
-    "nodemailer": "^6.7.5"
+    "nodemailer": "^6.7.5",
+    "semver": "^7.8.5"
   },
   "devDependencies": {
     "debug": "~2.6.9"
