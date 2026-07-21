@@ -52,11 +52,7 @@ module.exports = {
   },
 
   async addWorkoutsToSplits(req, res) {
-    const table = await workoutModel.addWorkoutsToSplits(req.params.idTable, {
-      name: req.body.name,
-      date: req.body.date,
-      exercises: req.body.exercises,
-    });
+    const table = await workoutModel.addWorkoutsToSplits(req.params.idTable, req.body);
     return res.send(table);
   },
 

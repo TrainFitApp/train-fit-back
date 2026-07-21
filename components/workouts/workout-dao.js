@@ -400,27 +400,29 @@ module.exports = {
     );
   },
 
-  async addWorkoutsToSplits(idTable, workout) {
+  async addWorkoutsToSplits(idTable, workouts) {
     const promises = [];
-    const workoutsToAdd = [];
+    const allWorkoutsToAdd = [];
     const tableDoc = await tableSchema.findById(idTable);
 
     for (let i = 0; i < tableDoc.splits.length; i++) {
-      const newWorkout = new Workout(workout);
-      newWorkout._id = new mongoose.Types.ObjectId();
-
-      tableDoc.splits[i].workouts.push(newWorkout);
+      const splitWorkouts = [];
+      for (const workoutData of workouts) {
+        const newWorkout = new Workout(workoutData);
+        newWorkout._id = new mongoose.Types.ObjectId();
+        splitWorkouts.push(newWorkout);
+      }
+      tableDoc.splits[i].workouts.push(...splitWorkouts);
+      allWorkoutsToAdd.push(...splitWorkouts);
 
       const promise = splitSchema.updateOne(
         { _id: tableDoc.splits[i]._id },
-        { $push: { workouts: newWorkout._id } },
+        { $push: { workouts: { $each: splitWorkouts.map((w) => w._id) } } },
       );
-
-      workoutsToAdd.push(newWorkout);
       promises.push(promise);
     }
 
-    await workoutSchema.insertMany(workoutsToAdd);
+    await workoutSchema.insertMany(allWorkoutsToAdd);
     await Promise.all(promises);
 
     return tableDoc.splits;
