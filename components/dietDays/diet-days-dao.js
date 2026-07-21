@@ -6,7 +6,6 @@ const productSchema = require("../products/product-schema");
 const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
-const anthropometrySchema = require("../anthropometry/anthropometry-schema");
 const { default: mongoose } = require("mongoose");
 const dietModel = require("../diets/diet-model");
 const userSchema = require("../users/schema");
@@ -54,27 +53,6 @@ module.exports = {
         return resolve(foundDietDay);
       }),
     );
-  },
-
-  async getDietDaysWeightsBetweenDatesByIdDiet(id, startDate, endDate) {
-    const Anthropometry = mongoose.model("Anthropometry", anthropometrySchema);
-    
-    // First get the userId from the diet
-    const diet = await dietSchema.findById(id).lean();
-    if (!diet || !diet.userId) {
-      return [];
-    }
-
-    const anthropometries = await Anthropometry.find({
-      userId: diet.userId,
-      date: { $gte: startDate, $lte: endDate },
-      weight: { $exists: true, $ne: null },
-    })
-      .sort({ date: 1 })
-      .select("weight date")
-      .lean();
-
-    return anthropometries.map((a) => ({ weight: a.weight }));
   },
 
   async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate) {

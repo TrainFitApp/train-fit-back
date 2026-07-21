@@ -9,16 +9,6 @@ const controller = {
     return res.send(dietDays);
   },
 
-  async getDietDaysWeightsBetweenDatesByIdDiet(req, res) {
-    const dietDaysWeight =
-      await dietDayModel.getDietDaysWeightsBetweenDatesByIdDiet(
-        req.params.id,
-        req.body.minDate,
-        req.body.maxDate,
-      );
-    return res.send(dietDaysWeight.map((temp) => temp.weight));
-  },
-
   async getDietDaysBetweenDatesByIdDiet(req, res) {
     const dietDays = await dietDayModel.getDietDaysBetweenDatesByIdDiet(
       req.params.id,

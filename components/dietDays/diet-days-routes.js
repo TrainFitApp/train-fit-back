@@ -7,11 +7,6 @@ const router = express.Router();
 
 router.getAsync("/", auth(["admin", "user"]), controller.getDietDays);
 router.postAsync(
-  "/weights/between/:id",
-  auth(["admin", "user"]),
-  controller.getDietDaysWeightsBetweenDatesByIdDiet,
-);
-router.postAsync(
   "/between/:id",
   auth(["admin", "user"]),
   controller.getDietDaysBetweenDatesByIdDiet,
