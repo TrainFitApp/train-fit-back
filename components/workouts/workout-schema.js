@@ -4,8 +4,8 @@ const customExerciseSchema = require("../customExercises/custom-exercise-schema"
 
 
 const WorkoutSchema = Schema({
-  name: String,
-  notes: String,
+  name: { type: String, trim: true, maxlength: 100 },
+  notes: { type: String, trim: true, maxlength: 500 },
   date: Date,
   order: Number,
   cronometer: Number,

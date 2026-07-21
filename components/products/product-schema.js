@@ -2,71 +2,83 @@ const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
 const ProductSchema = Schema({
-  code: String,
-  name: String,
-  brand: String,
+  code: { type: String, trim: true, maxlength: 100 },
+  name: { type: String, trim: true, maxlength: 200 },
+  brand: { type: String, trim: true, maxlength: 200 },
   nameNormalized: String,
   brandNormalized: String,
   namePrefixes: [String],
   brandPrefixes: [String],
 
-  // Basic macronutrients
-  calcium100g: Number,
-  carbohydrates100g: Number,
-  cholesterol100g: Number,
-  energyKcal100g: Number,
-  fat100g: Number,
-  fiber100g: Number,
-  iron100g: Number,
-  protein100g: Number,
-  salt100g: Number,
-  saturatedFat100g: Number,
-  sodium100g: Number,
-  sugars100g: Number,
-  transFat100g: Number,
-  vitaminA100g: Number,
-  vitaminC100g: Number,
+  // Basic macronutrients (min/max: techo genérico de seguridad, no específico por nutriente)
+  calcium100g: { type: Number, min: 0, max: 100000 },
+  carbohydrates100g: { type: Number, min: 0, max: 100000 },
+  cholesterol100g: { type: Number, min: 0, max: 100000 },
+  energyKcal100g: { type: Number, min: 0, max: 100000 },
+  fat100g: { type: Number, min: 0, max: 100000 },
+  fiber100g: { type: Number, min: 0, max: 100000 },
+  iron100g: { type: Number, min: 0, max: 100000 },
+  protein100g: { type: Number, min: 0, max: 100000 },
+  salt100g: { type: Number, min: 0, max: 100000 },
+  saturatedFat100g: { type: Number, min: 0, max: 100000 },
+  sodium100g: { type: Number, min: 0, max: 100000 },
+  sugars100g: { type: Number, min: 0, max: 100000 },
+  transFat100g: { type: Number, min: 0, max: 100000 },
+  vitaminA100g: { type: Number, min: 0, max: 100000 },
+  vitaminC100g: { type: Number, min: 0, max: 100000 },
 
   // Additional minerals (stored in grams, displayed in mg/µg)
-  magnesium100g: Number,
-  phosphorus100g: Number,
-  potassium100g: Number,
-  zinc100g: Number,
-  copper100g: Number,
-  manganese100g: Number,
-  selenium100g: Number,
-  iodine100g: Number,
+  magnesium100g: { type: Number, min: 0, max: 100000 },
+  phosphorus100g: { type: Number, min: 0, max: 100000 },
+  potassium100g: { type: Number, min: 0, max: 100000 },
+  zinc100g: { type: Number, min: 0, max: 100000 },
+  copper100g: { type: Number, min: 0, max: 100000 },
+  manganese100g: { type: Number, min: 0, max: 100000 },
+  selenium100g: { type: Number, min: 0, max: 100000 },
+  iodine100g: { type: Number, min: 0, max: 100000 },
 
   // Additional vitamins (stored in grams, displayed in mg/µg)
-  vitaminB1100g: Number, // Thiamin
-  vitaminB2100g: Number, // Riboflavin
-  vitaminB3100g: Number, // Niacin
-  vitaminB5100g: Number, // Pantothenic acid
-  vitaminB6100g: Number,
-  vitaminB9100g: Number, // Folate
-  vitaminB12100g: Number,
-  vitaminD100g: Number,
-  vitaminE100g: Number,
-  vitaminK100g: Number,
-  biotin100g: Number, // Vitamin B7
+  vitaminB1100g: { type: Number, min: 0, max: 100000 }, // Thiamin
+  vitaminB2100g: { type: Number, min: 0, max: 100000 }, // Riboflavin
+  vitaminB3100g: { type: Number, min: 0, max: 100000 }, // Niacin
+  vitaminB5100g: { type: Number, min: 0, max: 100000 }, // Pantothenic acid
+  vitaminB6100g: { type: Number, min: 0, max: 100000 },
+  vitaminB9100g: { type: Number, min: 0, max: 100000 }, // Folate
+  vitaminB12100g: { type: Number, min: 0, max: 100000 },
+  vitaminD100g: { type: Number, min: 0, max: 100000 },
+  vitaminE100g: { type: Number, min: 0, max: 100000 },
+  vitaminK100g: { type: Number, min: 0, max: 100000 },
+  biotin100g: { type: Number, min: 0, max: 100000 }, // Vitamin B7
 
   // Fatty acids (in grams)
-  omega3100g: Number,
-  omega6100g: Number,
-  omega9100g: Number,
+  omega3100g: { type: Number, min: 0, max: 100000 },
+  omega6100g: { type: Number, min: 0, max: 100000 },
+  omega9100g: { type: Number, min: 0, max: 100000 },
 
   // Other nutrients
-  caffeine100g: Number,
-  taurine100g: Number,
-  alcohol100g: Number,
+  caffeine100g: { type: Number, min: 0, max: 100000 },
+  taurine100g: { type: Number, min: 0, max: 100000 },
+  alcohol100g: { type: Number, min: 0, max: 100000 },
 
   // Product information
   servingUnit: String,
-  ingredients: String,
+  ingredients: { type: String, trim: true, maxlength: 2000 },
 
   // Allergens and dietary characteristics
-  allergens: [String],
-  traces: [String],
+  allergens: {
+    type: [String],
+    validate: {
+      validator: (arr) => !arr || arr.every((s) => (s || "").trim().length <= 200),
+      message: "Cada alérgeno debe tener 200 caracteres o menos",
+    },
+  },
+  traces: {
+    type: [String],
+    validate: {
+      validator: (arr) => !arr || arr.every((s) => (s || "").trim().length <= 200),
+      message: "Cada traza debe tener 200 caracteres o menos",
+    },
+  },
   vegan: Boolean,
   vegetarian: Boolean,
   lactoseFree: Boolean,

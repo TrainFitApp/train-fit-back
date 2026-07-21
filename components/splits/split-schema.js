@@ -3,7 +3,7 @@ const Schema = mongoose.Schema;
 const workoutSchema = require("../workouts/workout-schema");
 
 const SplitSchema = Schema({
-  name: String,
+  name: { type: String, trim: true, maxlength: 100 },
   workouts: [
     {
       type: Schema.Types.ObjectId,

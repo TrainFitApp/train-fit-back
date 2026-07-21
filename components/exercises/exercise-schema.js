@@ -3,9 +3,9 @@ const Schema = mongoose.Schema;
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 
 const ExerciseSchema = Schema({
-  name: String,
+  name: { type: String, trim: true, maxlength: 100 },
   videoUrl: String,
-  description: String,
+  description: { type: String, trim: true, maxlength: 6500 },
   muscleGroups1: [String],
   muscleGroups2: [String],
   category: [String],

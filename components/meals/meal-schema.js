@@ -5,8 +5,8 @@ const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 
 const MealSchema = Schema({
-  name: String,
-  notes: String,
+  name: { type: String, trim: true, maxlength: 100 },
+  notes: { type: String, trim: true, maxlength: 500 },
   customProducts: [
     {
       type: Schema.Types.ObjectId,

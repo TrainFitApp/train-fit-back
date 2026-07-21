@@ -12,6 +12,8 @@ const NutritionalGoalSchema = new Schema({
     type: String,
     required: true,
     default: "Default",
+    trim: true,
+    maxlength: 100,
   },
   kcalTotal: { type: Number, default: 0 },
   proteinsGTotal: { type: Number, default: 0 },

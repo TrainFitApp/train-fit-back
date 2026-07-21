@@ -3,13 +3,13 @@ const Schema = mongoose.Schema;
 
 const SetSchema = Schema(
   {
-    reps: Number,
-    weight: Number,
-    rir: [Number],
-    expectedRir: [Number],
-    expectedReps: [Number],
+    reps: { type: Number, min: 0, max: 999 },
+    weight: { type: Number, min: 0, max: 2000 },
+    rir: [{ type: Number, min: 0, max: 20 }],
+    expectedRir: [{ type: Number, min: 0, max: 20 }],
+    expectedReps: [{ type: Number, min: 0, max: 999 }],
     drop: Boolean,
-    restPause: Number,
+    restPause: { type: Number, min: 0, max: 600 },
     cronometer: Number,
     doned: Boolean,
     order: Number,
@@ -23,9 +23,9 @@ const SetSchema = Schema(
     timeSec: Number,
     expectedTime: String,
     time: String,
-    expectedDistance: Number,
-    distance: Number,
-    velocity: Number,
+    expectedDistance: { type: Number, min: 0, max: 100000 },
+    distance: { type: Number, min: 0, max: 100000 },
+    velocity: { type: Number, min: 0, max: 50 },
   },
   { versionKey: false },
 );

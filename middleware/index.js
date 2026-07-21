@@ -21,6 +21,7 @@ const TECHNICAL_ERROR_PATTERN =
   /(\/api\/|https?:\/\/|stack|trace|TypeError|ReferenceError|SyntaxError|AxiosError|Mongo|CastError|ECONN|ETIMEDOUT|ENOTFOUND|Cannot\s)/i;
 
 function getStatusCode(err) {
+  if (err?.name === "ValidationError") return 400;
   const status = Number(err?.status || err?.statusCode || 500);
   return status >= 400 && status < 600 ? status : 500;
 }
