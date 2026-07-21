@@ -8,15 +8,6 @@ module.exports = {
     return dietDayDao.findAll(page, limit);
   },
 
-  async getDietDaysWeightsBetweenDatesByIdDiet(id, startDate, endDate) {
-    // Now uses anthropometry collection
-    return anthropometryModel.getAnthropometriesByUserIdBetweenDates(
-      id,
-      startDate,
-      endDate
-    );
-  },
-
   async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate, userId) {
     const dietDays = await dietDayDao.getDietDaysBetweenDatesByIdDiet(
       id,
