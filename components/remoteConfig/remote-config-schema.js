@@ -13,6 +13,7 @@ const AppConfigSchema = new Schema({
   forceUpdate: {
     minVersionIos: { type: String, default: "" },
     minVersionAndroid: { type: String, default: "" },
+    minVersionWeb: { type: String, default: "" },
     message: { type: String, default: "" },
   },
   updatedBy: { type: String, default: "" },

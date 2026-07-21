@@ -91,6 +91,7 @@ test("calculateForceUpdate", async (t) => {
   const forceUpdate = {
     minVersionIos: "2.0.0",
     minVersionAndroid: "2.1.0",
+    minVersionWeb: "2.2.0",
     message: "please update",
   };
 
@@ -118,8 +119,18 @@ test("calculateForceUpdate", async (t) => {
     assert.equal(aboveIos.required, false);
   });
 
+  await t.test("web: client version below minimum -> required", () => {
+    const result = calculateForceUpdate(forceUpdate, "2.1.9", "web");
+    assert.equal(result.required, true);
+  });
+
+  await t.test("web: client version at or above minimum -> not required", () => {
+    const result = calculateForceUpdate(forceUpdate, "2.2.0", "web");
+    assert.equal(result.required, false);
+  });
+
   await t.test("unknown platform -> fail-open, not required", () => {
-    const result = calculateForceUpdate(forceUpdate, "1.0.0", "web");
+    const result = calculateForceUpdate(forceUpdate, "1.0.0", "desktop");
     assert.equal(result.required, false);
   });
 
@@ -183,6 +194,13 @@ test("validateConfigPatch", async (t) => {
   await t.test("invalid semver min version -> error", () => {
     const errors = validateConfigPatch({
       forceUpdate: { minVersionIos: "not-a-version" },
+    });
+    assert.ok(errors.length > 0);
+  });
+
+  await t.test("invalid semver min version for web -> error", () => {
+    const errors = validateConfigPatch({
+      forceUpdate: { minVersionWeb: "not-a-version" },
     });
     assert.ok(errors.length > 0);
   });

@@ -59,6 +59,7 @@ function getMinVersionForPlatform(forceUpdate, platform) {
   if (!forceUpdate) return "";
   if (platform === "ios") return forceUpdate.minVersionIos || "";
   if (platform === "android") return forceUpdate.minVersionAndroid || "";
+  if (platform === "web") return forceUpdate.minVersionWeb || "";
   return "";
 }
 
@@ -132,6 +133,9 @@ function validateConfigPatch(patch) {
     !semver.valid(forceUpdate.minVersionAndroid)
   ) {
     errors.push("minVersionAndroid no es una versión semver válida");
+  }
+  if (forceUpdate.minVersionWeb && !semver.valid(forceUpdate.minVersionWeb)) {
+    errors.push("minVersionWeb no es una versión semver válida");
   }
 
   return errors;
