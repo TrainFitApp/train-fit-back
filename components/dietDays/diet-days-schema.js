@@ -5,7 +5,7 @@ const mealSchema = require("../meals/meal-schema");
 
 const DietDaySchema = Schema({
   date: String,
-  notes: String,
+  notes: { type: String, trim: true, maxlength: 500 },
   steps: Number,
   meals: [
     {

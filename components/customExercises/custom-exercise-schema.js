@@ -16,7 +16,7 @@ const CustomExerciseSchema = Schema({
     ref: "Exercise",
     autopopulate: true,
   },
-  notes: String,
+  notes: { type: String, trim: true, maxlength: 500 },
   // workoutId: {
   //   type: Schema.Types.ObjectId,
   //   ref: "Workout",

@@ -19,6 +19,8 @@ const PinnedExerciseNoteSchema = Schema({
   notes: {
     type: String,
     required: true,
+    trim: true,
+    maxlength: 500,
   },
   createdAt: {
     type: Date,

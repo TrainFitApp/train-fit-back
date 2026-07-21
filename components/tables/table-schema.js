@@ -4,7 +4,7 @@ const splitSchema = require("../splits/split-schema");
 
 const TableSchema = Schema(
   {
-    name: String,
+    name: { type: String, trim: true, maxlength: 100 },
     type: String,
     userId: {
       type: Schema.Types.ObjectId,
