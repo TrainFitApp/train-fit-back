@@ -5,6 +5,7 @@ const routes = require("./routes");
 const billingController = require("./components/billing/billing-controller");
 const { error404Handler, errorHandler } = require("./middleware");
 const logger = require("./middleware/logger");
+const maintenanceCheck = require("./middleware/maintenance");
 const app = express();
 
 app.use(express.json({ limit: "50mb" }));
@@ -49,6 +50,7 @@ app.options("*", cors(corsOptions));
 
 app.set("trust proxy", 1);
 app.use(logger);
+app.use(maintenanceCheck);
 
 // Compatibilidad: algunos paneles externos se configuran sin prefijo /api.
 app.post("/billing/webhooks/revenuecat", billingController.revenueCatWebhook);
