@@ -45,4 +45,11 @@ router.deleteAsync(
   controller.deleteTableSplit
 );
 
+// All-time exercise history stats
+router.getAsync(
+  "/exercise-history/stats",
+  auth(["admin", "user"]),
+  controller.getExerciseHistoryStats
+);
+
 module.exports = router;

@@ -285,4 +285,114 @@ module.exports = {
   async countUserTables(userId) {
     return tableSchema.countDocuments({ userId }).exec();
   },
+
+  async getExerciseHistoryStats(userId, exerciseId, exerciseName) {
+    const { ObjectId } = require("mongoose").Types;
+
+    function parseTimeToSeconds(timeStr) {
+      if (!timeStr) return 0;
+      const parts = String(timeStr).split(":");
+      if (parts.length === 2) {
+        return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+      }
+      return parseInt(parts[0], 10) || 0;
+    }
+
+    const matchExercise = exerciseId
+      ? { "exerciseInfo._id": ObjectId(exerciseId) }
+      : { "exerciseInfo.name": exerciseName };
+
+    const pipeline = [
+      { $match: { userId: ObjectId(userId) } },
+      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splits" } },
+      { $unwind: { path: "$splits", preserveNullAndEmptyArrays: false } },
+      { $lookup: { from: "workouts", localField: "splits.workouts", foreignField: "_id", as: "workouts" } },
+      { $unwind: { path: "$workouts", preserveNullAndEmptyArrays: false } },
+      { $match: { $or: [{ "workouts.rest": { $ne: true } }, { "workouts.rest": { $exists: false } }] } },
+      { $lookup: { from: "customexercises", localField: "workouts.exercises", foreignField: "_id", as: "customExercises" } },
+      { $unwind: { path: "$customExercises", preserveNullAndEmptyArrays: false } },
+      { $lookup: { from: "exercises", localField: "customExercises.exercise", foreignField: "_id", as: "exerciseInfo" } },
+      { $unwind: { path: "$exerciseInfo", preserveNullAndEmptyArrays: true } },
+      { $match: matchExercise },
+      {
+        $addFields: {
+          exerciseType: {
+            $cond: [{ $ifNull: ["$exerciseInfo.isIsometric", false] }, "isometric",
+              { $cond: [{ $ifNull: ["$exerciseInfo.isCardio", false] }, "cardio", "strength"] }
+            ]
+          }
+        }
+      },
+      { $lookup: { from: "sets", localField: "customExercises.sets", foreignField: "_id", as: "sets" } },
+      { $unwind: { path: "$sets", preserveNullAndEmptyArrays: false } },
+      { $match: { "sets.doned": true } },
+      {
+        $group: {
+          _id: "$exerciseType",
+          allSets: { $push: "$$ROOT" },
+        }
+      },
+    ];
+
+    const results = await tableSchema.aggregate(pipeline);
+
+    if (results.length === 0) {
+      return { exerciseId, exerciseName, exerciseType: "strength", bestSet: null, maxWeightEver: 0, bestVelocityEver: null, bestTimeEver: null, bestTimeSecondsEver: 0 };
+    }
+
+    const r = results[0];
+    const exerciseType = r._id;
+
+    let bestSet = null;
+    let bestVolume = 0;
+    let maxWeightEver = 0;
+    let bestTimeSeconds = 0;
+    let bestTimeStr = null;
+    let bestVelocity = 0;
+
+    for (const doc of r.allSets) {
+      const s = doc.sets;
+      if (exerciseType === "strength") {
+        const candidates = [
+          { weight: s.weight || 0, reps: s.reps || 0 },
+          ...(s.dropSetSeries || []).map((cs) => ({
+            weight: cs.weight || 0,
+            reps: cs.reps || 0,
+          })),
+          ...(s.restPauseSeries || []).map((cs) => ({
+            weight: cs.weight || 0,
+            reps: cs.reps || 0,
+          })),
+        ];
+        candidates.forEach((c) => {
+          const volume = c.weight * c.reps;
+          if (volume > bestVolume) {
+            bestSet = { weight: c.weight, reps: c.reps };
+            bestVolume = volume;
+          }
+          if (c.weight > maxWeightEver) maxWeightEver = c.weight;
+        });
+      } else if (exerciseType === "cardio") {
+        const vel = s.velocity || 0;
+        if (vel > bestVelocity) bestVelocity = vel;
+      } else if (exerciseType === "isometric") {
+        const secs = parseTimeToSeconds(s.time);
+        if (secs > bestTimeSeconds) {
+          bestTimeSeconds = secs;
+          bestTimeStr = s.time || null;
+        }
+      }
+    }
+
+    return {
+      exerciseId,
+      exerciseName,
+      exerciseType,
+      bestSet,
+      maxWeightEver,
+      bestVelocityEver: exerciseType === "cardio" ? (bestVelocity || null) : null,
+      bestTimeEver: exerciseType === "isometric" ? bestTimeStr : null,
+      bestTimeSecondsEver: exerciseType === "isometric" ? bestTimeSeconds : 0,
+    };
+  },
 };

@@ -57,4 +57,8 @@ module.exports = {
   async countUserTables(userId) {
     return tableDao.countUserTables(userId);
   },
+
+  async getExerciseHistoryStats(userId, exerciseId, exerciseName) {
+    return tableDao.getExerciseHistoryStats(userId, exerciseId, exerciseName);
+  },
 };

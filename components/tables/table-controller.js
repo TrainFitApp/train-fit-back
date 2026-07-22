@@ -156,4 +156,22 @@ async copyTable(req, res) {
 
     return res.send(table);
   },
+
+  async getExerciseHistoryStats(req, res) {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).send({ message: "No autorizado" });
+
+    const exerciseId = req.query.exerciseId || null;
+    const exerciseName = req.query.exerciseName || "";
+    if (!exerciseId && !exerciseName) {
+      return res.status(400).send({ message: "exerciseId o exerciseName requerido" });
+    }
+
+    const stats = await tableModel.getExerciseHistoryStats(
+      userId,
+      exerciseId,
+      exerciseName
+    );
+    return res.send(stats);
+  },
 };
