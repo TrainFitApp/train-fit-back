@@ -5,7 +5,13 @@ const dietSchema = require("../diets/diet-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
 const tableSchema = require("../tables/table-schema");
 const productSchema = require("../products/product-schema");
-const anthropometrySchema = require("../anthropometry/anthropometry-schema");
+const anthropometrySchemaDef = require("../anthropometry/anthropometry-schema");
+// anthropometry-schema.js exporta el Schema crudo a propósito (cada
+// consumidor lo compila); aquí hace falta el modelo compilado para poder
+// usar .deleteMany(), no el Schema en sí.
+const anthropometrySchema =
+  mongoose.models.Anthropometry ||
+  mongoose.model("Anthropometry", anthropometrySchemaDef);
 const nutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
 const SALT_WORK_FACTOR = 10;
 

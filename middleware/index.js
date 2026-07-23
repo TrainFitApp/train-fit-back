@@ -45,6 +45,10 @@ module.exports.errorHandler = (err, req, res, _next) => {
   const status = getStatusCode(err);
   const message = getPublicErrorMessage(err, status);
 
+  if (status >= 500) {
+    console.error(`[ERROR] ${req.method} ${req.originalUrl}:`, err);
+  }
+
   // set locals, only providing error in development
   res.locals.message = message;
   res.locals.error = ["dev", "development"].includes(req.app.get("env"))

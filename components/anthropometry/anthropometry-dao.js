@@ -1,7 +1,9 @@
 const mongoose = require("mongoose");
 const anthropometrySchema = require("./anthropometry-schema");
 
-const Anthropometry = mongoose.model("Anthropometry", anthropometrySchema);
+const Anthropometry =
+  mongoose.models.Anthropometry ||
+  mongoose.model("Anthropometry", anthropometrySchema);
 
 module.exports = {
   async createAnthropometry(data) {
