@@ -13,6 +13,8 @@
     "migrate:nutritional-goals:dry-run": "node scripts/migrate-nutritional-goals.js --dry-run",
     "migrate:sets-cardio-fields": "node scripts/migrate-sets-cardio-fields.js",
     "migrate:sets-cardio-fields:dry-run": "node scripts/migrate-sets-cardio-fields.js --dry-run",
+    "migrate:exercise-description-steps": "node scripts/migrate-exercise-description-steps.js",
+    "migrate:exercise-description-steps:dry-run": "node scripts/migrate-exercise-description-steps.js --dry-run",
     "test": "node --test components/remoteConfig/remote-config-service.test.js"
   },
   "dependencies": {
