@@ -554,11 +554,18 @@ module.exports = {
       const hasDate = Object.prototype.hasOwnProperty.call(workout, "date");
       const hasPaused = Object.prototype.hasOwnProperty.call(workout, "paused");
       const hasNotes = Object.prototype.hasOwnProperty.call(workout, "notes");
+      const hasStartedAt = Object.prototype.hasOwnProperty.call(workout, "startedAt");
 
       // Only unset date when it is explicitly sent as null
       if (hasDate && workout.date === null) {
         delete update.$set.date;
         unset.date = 1;
+      }
+
+      // Only unset startedAt when it is explicitly sent as null
+      if (hasStartedAt && workout.startedAt === null) {
+        delete update.$set.startedAt;
+        unset.startedAt = 1;
       }
 
       // Only unset paused when it is explicitly sent as null/undefined/false
