@@ -5,8 +5,10 @@ const SetSchema = Schema(
   {
     reps: { type: Number, min: 0, max: 999 },
     weight: { type: Number, min: 0, max: 2000 },
-    rir: [{ type: Number, min: 0, max: 20 }],
-    expectedRir: [{ type: Number, min: 0, max: 20 }],
+    // min: -1 porque -1 es el centinela de "FALLO" usado en toda la app
+    // (ver set.component.ts), no un valor de RIR real.
+    rir: [{ type: Number, min: -1, max: 20 }],
+    expectedRir: [{ type: Number, min: -1, max: 20 }],
     expectedReps: [{ type: Number, min: 0, max: 999 }],
     drop: Boolean,
     restPause: { type: Number, min: 0, max: 600 },
