@@ -5,6 +5,8 @@ const dietModel = require("../diets/diet-model");
 const dietDayModel = require("../dietDays/diet-days-service");
 const dietDayUtil = require("../dietDays/diet-days-util");
 const mail = require("../util/mail");
+const userSchema = require("./schema");
+const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const suggestionsEmailUser = process.env.SUGGESTIONS_MAIL_SENDER_USER;
 const restorePassEmail = process.env.REGISTER_MAIL_SENDER_USER;
 const jwt = require("jsonwebtoken");
@@ -89,7 +91,22 @@ module.exports = {
     user.archivedTables = [];
     user.archivedExercises = [];
 
-    return await userDao.updateGoogleUser(user);
+    const updatedUser = await userDao.updateGoogleUser(user);
+
+    if (updatedUser && (user.kcalTotal || user.proteinsGTotal || user.carbohydratesGTotal || user.fatGTotal)) {
+      const goal = await nutritionalGoalService.create({
+        userId: updatedUser._id,
+        name: 'Default',
+        kcalTotal: user.kcalTotal || 0,
+        proteinsGTotal: user.proteinsGTotal || 0,
+        carbohydratesGTotal: user.carbohydratesGTotal || 0,
+        fatGTotal: user.fatGTotal || 0,
+      });
+      await userSchema.findByIdAndUpdate(updatedUser._id, { $set: { goalInUse: goal._id } });
+      updatedUser.goalInUse = goal._id;
+    }
+
+    return updatedUser;
   },
 
   async updateAppleUser(user, date) {
@@ -110,7 +127,22 @@ module.exports = {
     user.archivedTables = [];
     user.archivedExercises = [];
 
-    return await userDao.updateAppleUser(user);
+    const updatedUser = await userDao.updateAppleUser(user);
+
+    if (updatedUser && (user.kcalTotal || user.proteinsGTotal || user.carbohydratesGTotal || user.fatGTotal)) {
+      const goal = await nutritionalGoalService.create({
+        userId: updatedUser._id,
+        name: 'Default',
+        kcalTotal: user.kcalTotal || 0,
+        proteinsGTotal: user.proteinsGTotal || 0,
+        carbohydratesGTotal: user.carbohydratesGTotal || 0,
+        fatGTotal: user.fatGTotal || 0,
+      });
+      await userSchema.findByIdAndUpdate(updatedUser._id, { $set: { goalInUse: goal._id } });
+      updatedUser.goalInUse = goal._id;
+    }
+
+    return updatedUser;
   },
 
   async createUserApple(user, date) {

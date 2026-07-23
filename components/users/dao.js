@@ -7,6 +7,7 @@ const aggregateService = require("../util/aggregate-service");
 const mail = require("../util/mail");
 const recipeSchema = require("../recipes/recipe-schema");
 const recipeModel = require("../recipes/recipe-model");
+const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 
 module.exports = {
   async getUserById(id) {
@@ -262,6 +263,19 @@ module.exports = {
         } else {
           userDoc = await userSchema.create(user);
         }
+      }
+
+      if (userDoc && (user.kcalTotal || user.proteinsGTotal || user.carbohydratesGTotal || user.fatGTotal)) {
+        const goal = await nutritionalGoalService.create({
+          userId: userDoc._id,
+          name: 'Default',
+          kcalTotal: user.kcalTotal || 0,
+          proteinsGTotal: user.proteinsGTotal || 0,
+          carbohydratesGTotal: user.carbohydratesGTotal || 0,
+          fatGTotal: user.fatGTotal || 0,
+        });
+        userDoc.goalInUse = goal._id;
+        await userDoc.save();
       }
 
       return userDoc;
