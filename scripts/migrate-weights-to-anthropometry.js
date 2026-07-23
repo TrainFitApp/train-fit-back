@@ -1,91 +1,144 @@
+const path = require("path");
+
+require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+
 const mongoose = require("mongoose");
-require("dotenv").config({ path: "../.env" });
+const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
 
-const DietDay = require("./components/dietDays/diet-days-schema");
-const Anthropometry = require("./components/anthropometry/anthropometry-schema");
-const User = require("./components/users/schema");
+const hasFlag = (flag) => process.argv.includes(flag);
+const DRY_RUN = hasFlag("--dry-run");
 
-async function migrate() {
-  const mongoUri = process.env.MONGO_URI || "mongodb://localhost:27017/trainfit";
+const LOG_PREFIX = "[migrate-weights-to-anthropometry]";
+const log = (...args) => console.log(LOG_PREFIX, ...args);
+const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
+
+const BATCH_SIZE = 500;
+
+async function main() {
+  const mongoUri = buildMongoUri();
+  log(`connecting ${redactMongoUri(mongoUri)}`);
+  log(`flags dryRun=${DRY_RUN}`);
+
   await mongoose.connect(mongoUri);
-  console.log("Connected to MongoDB");
+  ok("connected");
 
-  const anthropometryModel = mongoose.model("Anthropometry", Anthropometry);
-  const dietDayModel = mongoose.model("DietDay", DietDay);
+  const db = mongoose.connection.db;
 
-  const dietDaysWithWeight = await dietDayModel.find({ weight: { $ne: null, $exists: true } }).lean();
-  console.log(`Found ${dietDaysWithWeight.length} diet days with weight`);
+  const dietDayCol = db.collection("dietdays");
+  const dietCol = db.collection("diets");
+  const userCol = db.collection("users");
+  const anthropometryCol = db.collection("anthropometries");
 
+  const cursor = dietDayCol.find(
+    { weight: { $exists: true } },
+    { projection: { _id: 1, date: 1, weight: 1 } },
+  );
+
+  let scanned = 0;
   let created = 0;
+  let cleaned = 0;
   let skipped = 0;
   let errors = 0;
 
-  for (const dietDay of dietDaysWithWeight) {
+  const anthropometryOps = [];
+  const cleanOps = [];
+
+  for await (const dietDay of cursor) {
+    scanned++;
+
     try {
-      if (!dietDay.date || !dietDay.weight) {
+      if (!dietDay.date || dietDay.weight == null) {
         skipped++;
         continue;
       }
 
-      // Need to find which user this diet day belongs to
-      // Diet days are referenced by diet, so we need to find the diet and then the user
-      const Diet = require("./components/diets/diet-schema");
-      const DietModel = mongoose.model("Diet", Diet);
-      const diet = await DietModel.findOne({ dietsDay: dietDay._id }).lean();
-
+      const diet = await dietCol.findOne(
+        { dietsDay: dietDay._id },
+        { projection: { _id: 1 } },
+      );
       if (!diet) {
-        console.log(`No diet found for dietDay ${dietDay._id}, skipping`);
         skipped++;
         continue;
       }
 
-      const user = await User.findOne({ dietInUse: diet._id }).lean();
+      const user = await userCol.findOne(
+        { $or: [{ dietInUse: diet._id }, { archivedDiets: diet._id }] },
+        { projection: { _id: 1 } },
+      );
       if (!user) {
-        // Try archived diets
-        const userWithArchived = await User.findOne({ archivedDiets: diet._id }).lean();
-        if (!userWithArchived) {
-          console.log(`No user found for diet ${diet._id}, skipping`);
-          skipped++;
-          continue;
-        }
-      }
-
-      const userId = user ? user._id : userWithArchived._id;
-
-      // Check if anthropometry already exists for this user/date
-      const existing = await anthropometryModel.findOne({ userId, date: dietDay.date });
-      if (existing) {
-        console.log(`Anthropometry already exists for user ${userId} on ${dietDay.date}, skipping`);
         skipped++;
         continue;
       }
 
-      await anthropometryModel.create({
-        userId,
-        date: dietDay.date,
-        weight: dietDay.weight,
+      anthropometryOps.push({
+        updateOne: {
+          filter: { userId: user._id, date: dietDay.date },
+          update: {
+            $setOnInsert: {
+              userId: user._id,
+              date: dietDay.date,
+              weight: dietDay.weight,
+            },
+          },
+          upsert: true,
+        },
       });
 
-      created++;
-      if (created % 100 === 0) {
-        console.log(`Created ${created} anthropometry records...`);
+      cleanOps.push({
+        updateOne: {
+          filter: { _id: dietDay._id },
+          update: { $unset: { weight: "" } },
+        },
+      });
+
+      if (anthropometryOps.length >= BATCH_SIZE) {
+        if (!DRY_RUN) {
+          const r1 = await anthropometryCol.bulkWrite(anthropometryOps, {
+            ordered: false,
+          });
+          created += (r1.upsertedCount || 0) + (r1.modifiedCount || 0);
+          const r2 = await dietDayCol.bulkWrite(cleanOps, { ordered: false });
+          cleaned += r2.modifiedCount || 0;
+        } else {
+          created += anthropometryOps.length;
+          cleaned += cleanOps.length;
+        }
+        log(
+          `batch: scanned=${scanned} anthropometryOps=${anthropometryOps.length} cleanOps=${cleanOps.length}`,
+        );
+        anthropometryOps.length = 0;
+        cleanOps.length = 0;
       }
     } catch (err) {
-      console.error(`Error migrating dietDay ${dietDay._id}:`, err.message);
+      log(`error processing dietDay ${dietDay._id}: ${err.message}`);
       errors++;
     }
   }
 
-  console.log("\nMigration complete:");
-  console.log(`Created: ${created}`);
-  console.log(`Skipped: ${skipped}`);
-  console.log(`Errors: ${errors}`);
+  if (anthropometryOps.length > 0) {
+    if (!DRY_RUN) {
+      const r1 = await anthropometryCol.bulkWrite(anthropometryOps, {
+        ordered: false,
+      });
+      created += (r1.upsertedCount || 0) + (r1.modifiedCount || 0);
+      const r2 = await dietDayCol.bulkWrite(cleanOps, { ordered: false });
+      cleaned += r2.modifiedCount || 0;
+    } else {
+      created += anthropometryOps.length;
+      cleaned += cleanOps.length;
+    }
+  }
 
   await mongoose.disconnect();
-  console.log("Disconnected from MongoDB");
+  ok(
+    `done: scanned=${scanned} anthropometryCreated=${created} weightCleaned=${cleaned} skipped=${skipped} errors=${errors}`,
+  );
 }
 
-migrate().catch((err) => {
-  console.error("Migration failed:", err);
-  process.exit(1);
+main().catch(async (error) => {
+  console.error(LOG_PREFIX, "fatal", error);
+  try {
+    await mongoose.disconnect();
+  } catch (_) {}
+  process.exitCode = 1;
 });

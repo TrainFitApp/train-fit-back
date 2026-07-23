@@ -15,6 +15,8 @@
     "migrate:sets-cardio-fields:dry-run": "node scripts/migrate-sets-cardio-fields.js --dry-run",
     "migrate:exercise-description-steps": "node scripts/migrate-exercise-description-steps.js",
     "migrate:exercise-description-steps:dry-run": "node scripts/migrate-exercise-description-steps.js --dry-run",
+    "migrate:weights-to-anthropometry": "node scripts/migrate-weights-to-anthropometry.js",
+    "migrate:weights-to-anthropometry:dry-run": "node scripts/migrate-weights-to-anthropometry.js --dry-run",
     "test": "node --test components/remoteConfig/remote-config-service.test.js"
   },
   "dependencies": {
