@@ -7,6 +7,10 @@ function toBoolean(value) {
   return !!value;
 }
 
+function isAdmin(req) {
+  return Boolean(req.userData?.roles?.includes("admin"));
+}
+
 const controller = {
   async getRecipeById(req, res, next) {
     try {
@@ -93,20 +97,23 @@ const controller = {
 
   async createRecipe(req, res, next) {
     try {
-      const ownRecipesCount = await recipeModel.countByUserId(req.user.id);
-      if (!featureAccessService.canCreateRecipe(req.user, ownRecipesCount)) {
-        return res.status(403).json({
-          code: "PREMIUM_LIMIT_RECIPES",
-          message: "L\u00edmite Free alcanzado. Solo puedes crear 2 recetas propias.",
-        });
+      if (!isAdmin(req)) {
+        const ownRecipesCount = await recipeModel.countByUserId(req.user.id);
+        if (!featureAccessService.canCreateRecipe(req.user, ownRecipesCount)) {
+          return res.status(403).json({
+            code: "PREMIUM_LIMIT_RECIPES",
+            message: "L\u00edmite Free alcanzado. Solo puedes crear 2 recetas propias.",
+          });
+        }
       }
 
+      const isDefault = isAdmin(req) && req.body.verified === true;
       const recipe = await recipeModel.createRecipe({
         name: req.body.name,
         description: req.body.description,
         customProducts: req.body.customProducts || [],
-        userId: req.user.id,
-        verified: false,
+        userId: isDefault ? undefined : req.user.id,
+        verified: isDefault ? true : false,
       });
       return res.status(201).json(recipe);
     } catch (error) {
@@ -117,7 +124,7 @@ const controller = {
   async composeRecipe(req, res, next) {
     try {
       const isCreatingNewRecipe = !req.body?.recipeId && !!req.body?.recipe;
-      if (isCreatingNewRecipe) {
+      if (isCreatingNewRecipe && !isAdmin(req)) {
         const ownRecipesCount = await recipeModel.countByUserId(req.user.id);
         if (!featureAccessService.canCreateRecipe(req.user, ownRecipesCount)) {
           return res.status(403).json({
@@ -128,7 +135,7 @@ const controller = {
         }
       }
 
-      const result = await recipeModel.composeRecipe(req.body, req.user.id);
+      const result = await recipeModel.composeRecipe(req.body, req.user.id, isAdmin(req));
       return res.status(201).json(result);
     } catch (error) {
       next(error);
@@ -137,12 +144,11 @@ const controller = {
 
   async updateRecipe(req, res, next) {
     try {
-      // Verify ownership
       const existing = await recipeModel.getRecipeById(req.params.id);
       if (!existing) {
         return res.status(404).json({ message: "Recipe not found" });
       }
-      if (existing.userId?.toString() !== req.user.id) {
+      if (!isAdmin(req) && existing.userId?.toString() !== req.user.id) {
         return res
           .status(403)
           .json({ message: "Cannot edit recipes you don't own" });
@@ -164,12 +170,11 @@ const controller = {
 
   async deleteRecipe(req, res, next) {
     try {
-      // Verify ownership
       const existing = await recipeModel.getRecipeById(req.params.id);
       if (!existing) {
         return res.status(404).json({ message: "Recipe not found" });
       }
-      if (existing.userId?.toString() !== req.user.id) {
+      if (!isAdmin(req) && existing.userId?.toString() !== req.user.id) {
         return res
           .status(403)
           .json({ message: "Cannot delete recipes you don't own" });

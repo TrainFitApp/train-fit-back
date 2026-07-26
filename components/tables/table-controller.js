@@ -136,7 +136,7 @@ async copyTable(req, res) {
     if (!req.body._id) return res.sendStatus(400);
     if (!req.body.name) return res.sendStatus(400);
 
-    const tableName = await tableModel.updateTable(req.body._id, req.body.name, req.user?.id);
+    const tableName = await tableModel.updateTable(req.body._id, req.body.name, req.user?.id, isAdmin(req));
     return res.send(tableName);
   },
 
@@ -146,7 +146,7 @@ async copyTable(req, res) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const result = await tableModel.deleteTable(idUser, req.params.idTable);
+    const result = await tableModel.deleteTable(idUser, req.params.idTable, isAdmin(req));
     if (result.deletedCount === 0) {
       return res.status(404).send({ message: "Tabla no encontrada o sin permiso" });
     }

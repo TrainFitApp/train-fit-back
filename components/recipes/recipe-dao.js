@@ -532,7 +532,7 @@ module.exports = {
     return recipeSchema.populate(paginatedDocs, { path: "customProducts" });
   },
 
-  async composeRecipe(payload, userId) {
+  async composeRecipe(payload, userId, isAdmin = false) {
     try {
       const { recipe, recipeId, customRecipe, context, mode } = payload || {};
 
@@ -550,7 +550,7 @@ module.exports = {
           isEditMode &&
           recipe &&
           recipe.name &&
-          recipeDoc.userId?.toString() === userId
+          (isAdmin || recipeDoc.userId?.toString() === userId)
         ) {
           const updateData = {
             name: recipe.name,
@@ -562,12 +562,13 @@ module.exports = {
           throw new Error("Cannot edit recipes you don't own");
         }
       } else if (recipe) {
+        const isDefault = isAdmin && recipe.verified === true;
         recipeDoc = await this.createRecipe({
           name: recipe.name,
           description: recipe.description,
           customProducts: recipe.customProducts || [],
-          userId,
-          verified: false,
+          userId: isDefault ? undefined : userId,
+          verified: isDefault ? true : false,
         });
       }
 

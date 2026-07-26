@@ -48,12 +48,12 @@ module.exports = {
     return tableDao.createTableToUser(idUser, standardTable);
   },
 
-  async updateTable(id, name, userId) {
-    return tableDao.updateTable(id, name, userId);
+  async updateTable(id, name, userId, adminMode = false) {
+    return tableDao.updateTable(id, name, userId, adminMode);
   },
 
-  async deleteTable(idUser, idTable) {
-    return tableDao.deleteTable(idUser, idTable);
+  async deleteTable(idUser, idTable, adminMode = false) {
+    return tableDao.deleteTable(idUser, idTable, adminMode);
   },
 
   async deleteTableSplit(idSplit, idTable) {

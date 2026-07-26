@@ -252,10 +252,10 @@ module.exports = {
     }
   },
 
-  async updateTable(id, name, userId) {
+  async updateTable(id, name, userId, adminMode = false) {
     const update = { $set: { name: name } };
     try {
-      const query = userId ? { _id: id, userId: userId } : { _id: id };
+      const query = adminMode ? { _id: id } : { _id: id, userId: userId };
       const docTable = await tableSchema.findOneAndUpdate(query, update, {
         new: true,
       });
@@ -266,9 +266,10 @@ module.exports = {
     }
   },
 
-  async deleteTable(idUser, idTable) {
+  async deleteTable(idUser, idTable, adminMode = false) {
     try {
-      return await tableSchema.deleteOne({ _id: idTable, userId: idUser }).exec();
+      const query = adminMode ? { _id: idTable } : { _id: idTable, userId: idUser };
+      return await tableSchema.deleteOne(query).exec();
     } catch (e) {
       throw e;
     }
