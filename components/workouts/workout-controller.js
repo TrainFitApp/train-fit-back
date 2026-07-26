@@ -187,6 +187,16 @@ module.exports = {
     return res.send(workout);
   },
 
+  async pasteExercises(req, res) {
+    const result = await workoutModel.pasteExercises(
+      req.body.tableId,
+      req.body.sourceWorkoutId,
+      req.body.targetWorkoutId,
+      req.body.exercises,
+    );
+    return res.send(result);
+  },
+
   async deleteWorkoutCustomExercises(req, res) {
     await workoutModel.deleteWorkoutCustomExercises(req.params.id);
     res.sendStatus(204);

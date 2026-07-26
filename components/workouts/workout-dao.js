@@ -798,6 +798,39 @@ module.exports = {
     }
   },
 
+  async pasteExercises(tableId, sourceWorkoutId, targetWorkoutId, exercises) {
+    try {
+      const setsToCreate = [];
+      const customExercisesToCreate = [];
+
+      exercises.forEach((exerciseTemp) => {
+        const clonedExercise = cloneCustomExerciseForTemplateCopy(
+          exerciseTemp,
+          setsToCreate,
+        );
+        customExercisesToCreate.push(clonedExercise);
+      });
+
+      await setSchema.insertMany(setsToCreate);
+      await customExerciseSchema.insertMany(customExercisesToCreate);
+
+      const newExerciseIds = customExercisesToCreate.map(
+        (ce) => ce._id,
+      );
+
+      await workoutSchema.findByIdAndUpdate(
+        targetWorkoutId,
+        { $push: { exercises: { $each: newExerciseIds } } },
+        { new: true },
+      );
+
+      const updatedTable = await tableSchema.findById(tableId);
+      return { tableInUse: updatedTable };
+    } catch (error) {
+      throw error;
+    }
+  },
+
   async deleteWorkoutCustomExercises(id) {
     return new Promise((resolve, reject) =>
       workoutSchema.findById(id, (err, doc) => {

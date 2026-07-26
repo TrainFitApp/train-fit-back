@@ -102,6 +102,10 @@ module.exports = {
     return workoutDao.deleteWorkoutExercise(idWorkout, idExercise);
   },
 
+  async pasteExercises(tableId, sourceWorkoutId, targetWorkoutId, exercises) {
+    return workoutDao.pasteExercises(tableId, sourceWorkoutId, targetWorkoutId, exercises);
+  },
+
   async deleteWorkoutCustomExercises(idWorkout) {
     return workoutDao.deleteWorkoutCustomExercises(idWorkout);
   },

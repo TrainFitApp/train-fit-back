@@ -68,6 +68,7 @@ router.putAsync(
 );
 router.putAsync("/deletes", auth(["admin", "user"]), controller.deleteWorkouts);
 router.putAsync("/paste", auth(["admin", "user"]), controller.pasteWorkout);
+router.putAsync("/paste-exercises", auth(["admin", "user"]), controller.pasteExercises);
 router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteWorkout);
 router.deleteAsync(
   "/:idWorkout/:idExercise",
