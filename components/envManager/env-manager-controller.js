@@ -86,16 +86,14 @@ async function switchDb(req, res) {
       return res.status(400).json(result);
     }
 
-    // Fire-and-forget restart after DB switch
     const { exec } = require("child_process");
-    const path = require("path");
-    const backendRoot = path.resolve(__dirname, "../..");
-    const ecosystemFile = path.join(backendRoot, "ecosystem.config.js");
-    exec(`sudo pm2 kill && sudo systemctl restart nginx && pm2 start ${ecosystemFile}`, { cwd: backendRoot }, (err) => {
-      if (err) console.error("[env-manager] Restart after DB switch error:", err.message);
+    exec(`pm2 restart train-fit-back`, (err) => {
+      if (err) {
+        console.error("[env-manager] Restart after DB switch error:", err.message);
+        return res.status(500).json({ success: false, message: `Error al reiniciar: ${err.message}` });
+      }
+      res.json({ success: true, message: `Switched to "${name}". Servidor reiniciado.` });
     });
-
-    res.json({ success: true, message: `Switched to "${name}". Servidor reiniciándose.` });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
