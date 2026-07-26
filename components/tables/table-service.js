@@ -36,6 +36,12 @@ module.exports = {
     return tableDao.createTable(table);
   },
 
+  async createDefaultTable(name) {
+    const standardTable = tableUtil.getStandardTable();
+    standardTable.name = name;
+    return tableDao.createTable(standardTable);
+  },
+
   async createTableToUser(idUser, name) {
     const standardTable = tableUtil.getStandardTable();
     standardTable.name = name;

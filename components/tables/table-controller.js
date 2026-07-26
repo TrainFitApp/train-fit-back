@@ -127,6 +127,11 @@ async copyTable(req, res) {
     return res.send(table);
   },
 
+  async createDefaultTable(req, res) {
+    const table = await tableModel.createDefaultTable(req.body.name);
+    return res.send(table);
+  },
+
   async updateTable(req, res) {
     if (!req.body._id) return res.sendStatus(400);
     if (!req.body.name) return res.sendStatus(400);
