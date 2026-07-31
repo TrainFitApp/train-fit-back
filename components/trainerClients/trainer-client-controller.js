@@ -98,6 +98,39 @@ const controller = {
     return res.send(trainerClientDto.multipleAggregated(aggregated));
   },
 
+  async getClientTables(req, res) {
+    const page = Math.max(parseInt(req.query.page || "0", 10) || 0, 0);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10) || 20, 1), 100);
+    const result = await trainerClientService.getClientTables(req.params.clientId, page, limit);
+    return res.send(result);
+  },
+
+  async getClientAnthropometries(req, res) {
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "12", 10) || 12, 1), 100);
+    const result = await trainerClientService.getClientAnthropometries(req.params.clientId, limit);
+    return res.send(result);
+  },
+
+  async getClientWorkoutHistory(req, res) {
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "20", 10) || 20, 1), 100);
+    const result = await trainerClientService.getClientWorkoutHistory(req.params.clientId, limit);
+    return res.send(result);
+  },
+
+  async getClientDiet(req, res) {
+    const date = String(req.query.date || new Date().toISOString().slice(0, 10));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).send({ message: "date debe tener formato YYYY-MM-DD" });
+    }
+    const result = await trainerClientService.getClientDiet(req.params.clientId, date);
+    return res.send(result);
+  },
+
+  async getClientNutritionalGoals(req, res) {
+    const result = await trainerClientService.getClientNutritionalGoals(req.params.clientId);
+    return res.send(result);
+  },
+
   // DELETE /trainer/clients/:clientId?scope=training|nutrition
   async revokeByTrainer(req, res) {
     const { scope } = req.query;

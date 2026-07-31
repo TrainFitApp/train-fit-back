@@ -1,4 +1,5 @@
 const trainerClientDao = require("./trainer-client-dao");
+const mongoose = require("mongoose");
 
 /**
  * Middleware de autorización — la ÚNICA comprobación de "¿tiene este profesional
@@ -16,6 +17,10 @@ function requireActiveClient(requiredScope) {
     try {
       const trainerId = req.auth.userId;
       const clientId = req.params.clientId;
+
+      if (!mongoose.isValidObjectId(clientId)) {
+        return res.sendStatus(404);
+      }
 
       const relation = await trainerClientDao.findActiveByTrainerAndClient(
         trainerId,

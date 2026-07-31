@@ -1,6 +1,10 @@
 const trainerClientDao = require("./trainer-client-dao");
 const userSchema = require("../users/schema");
 const mail = require("../util/mail");
+const tableService = require("../tables/table-service");
+const anthropometryService = require("../anthropometry/anthropometry-service");
+const dietDayService = require("../dietDays/diet-days-service");
+const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 
 const VALID_SCOPES = ["training", "nutrition"];
 
@@ -170,6 +174,74 @@ module.exports = {
   async listActiveClientsForTrainer(trainerId) {
     const relations = await trainerClientDao.findAllByTrainer(trainerId, { status: "active" });
     return aggregateByOtherParty(relations, "clientId");
+  },
+
+  async getClientTables(clientId, page = 0, limit = 20) {
+    const client = await userSchema.findById(clientId).select("tableInUse").lean();
+    const [tables, activeTableDocument] = await Promise.all([
+      tableService.getTables(page, limit, true, clientId),
+      client?.tableInUse ? tableService.getTableById(client.tableInUse) : null,
+    ]);
+    const activeTable =
+      activeTableDocument && String(activeTableDocument.userId) === String(clientId)
+        ? activeTableDocument
+        : null;
+
+    return {
+      tableInUse: client?.tableInUse || null,
+      activeTable,
+      tables,
+    };
+  },
+
+  async getClientAnthropometries(clientId, limit = 12) {
+    const anthropometries = await anthropometryService.getAllAnthropometriesByUserId(clientId);
+    return anthropometries.slice(0, limit);
+  },
+
+  async getClientWorkoutHistory(clientId, limit = 20) {
+    const tables = await tableService.getTables(0, 100, true, clientId);
+    const completed = [];
+
+    for (const tableDocument of tables) {
+      const table = tableDocument.toObject ? tableDocument.toObject() : tableDocument;
+      for (const split of table.splits || []) {
+        for (const workout of split.workouts || []) {
+          if (!workout.date) continue;
+          completed.push({
+            ...workout,
+            table: { _id: table._id, name: table.name },
+            split: { _id: split._id, name: split.name },
+          });
+        }
+      }
+    }
+
+    return completed
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, limit);
+  },
+
+  async getClientDiet(clientId, date) {
+    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+    if (!client?.dietInUse) {
+      return { dietInUse: null, dietDay: null };
+    }
+
+    const dietDay = await dietDayService.findByIdDietAndDate(client.dietInUse, date);
+    return { dietInUse: client.dietInUse, dietDay: dietDay || null };
+  },
+
+  async getClientNutritionalGoals(clientId) {
+    const [client, goals] = await Promise.all([
+      userSchema.findById(clientId).select("goalInUse").lean(),
+      nutritionalGoalService.getByUserId(clientId),
+    ]);
+
+    return {
+      goalInUse: client?.goalInUse || null,
+      goals,
+    };
   },
 
   /**

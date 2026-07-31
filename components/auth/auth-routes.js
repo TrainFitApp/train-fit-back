@@ -7,7 +7,7 @@ const router = express.Router();
 router.postAsync("/login", controller.login);
 router.postAsync("/refresh", controller.refresh);
 router.postAsync("/logout", controller.logout);
-router.getAsync("/me", auth(["admin", "user"]), controller.me);
+router.getAsync("/me", auth(["admin", "user", "trainer"]), controller.me);
 router.postAsync("/activate", controller.activate);
 router.postAsync("/social/google/verify", controller.verifyGoogle);
 router.postAsync("/social/apple/verify", controller.verifyApple);
