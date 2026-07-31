@@ -26,6 +26,12 @@ module.exports = {
     return NutritionalGoal.countDocuments({ userId });
   },
 
+  // MVP-trainers D10: solo objetivos SIN assignedByTrainerId — ver
+  // nutritional-goal-service.js#countEffectiveUserGoals.
+  async countOwnByUserId(userId) {
+    return NutritionalGoal.countDocuments({ userId, assignedByTrainerId: null });
+  },
+
   async update(id, data) {
     return NutritionalGoal.findByIdAndUpdate(
       id,

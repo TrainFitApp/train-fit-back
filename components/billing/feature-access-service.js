@@ -27,8 +27,11 @@ function canCreateRoutine(user, routineCount) {
   return routineCount < limits.routines;
 }
 
-function canAddMicrocycle(user, microcycleCount) {
-  const limits = getLimits(user);
+// isExempt: true si la rutina concreta tiene assignedByTrainerId Y el cliente
+// tiene ahora relación "training" activa (MVP-trainers D10/F14) — el caller
+// (split-controller.js) calcula esto, no depende solo de isPremiumUser.
+function canAddMicrocycle(user, microcycleCount, isExempt = false) {
+  const limits = isPremiumUser(user) || isExempt ? PREMIUM_LIMITS : FREE_LIMITS;
   return microcycleCount < limits.microcyclesPerRoutine;
 }
 
@@ -47,8 +50,11 @@ function canCreateNutritionalGoal(user, nutritionalGoalCount) {
   return nutritionalGoalCount < limits.nutritionalGoals;
 }
 
-function canSeeAds(user) {
-  return !isPremiumUser(user);
+// hasActiveTrainerRelation: MVP-trainers D10/F14 — un cliente FREE con
+// relación activa (cualquier scope) con un profesional no ve anuncios,
+// mientras dure la relación (sin periodo de gracia al terminar).
+function canSeeAds(user, hasActiveTrainerRelation = false) {
+  return !isPremiumUser(user) && !hasActiveTrainerRelation;
 }
 
 function getRemaining(limit, used) {
@@ -65,7 +71,7 @@ function normalizePlan(plan) {
   return null;
 }
 
-function buildEntitlements(user, usage) {
+function buildEntitlements(user, usage, hasActiveTrainerRelation = false) {
   const limits = getLimits(user);
   const normalizedPlan = normalizePlan(user?.premium?.plan);
   const normalizedUsage = {
@@ -111,7 +117,7 @@ function buildEntitlements(user, usage) {
         normalizedUsage.nutritionalGoals,
       ),
     },
-    adsEnabled: canSeeAds(user),
+    adsEnabled: canSeeAds(user, hasActiveTrainerRelation),
   };
 }
 

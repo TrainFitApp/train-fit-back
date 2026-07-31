@@ -12,6 +12,12 @@ const TableSchema = Schema(
       index: true,
     },
     urlImage: String,
+    // MVP-trainers F11/F14/D10: presente si un profesional asignó esta rutina
+    // a este cliente. Permanente (trazabilidad/badge F15) — NO se borra al
+    // revocar la relación. La exención de límite FREE que habilita SÍ depende
+    // de si hay relación activa AHORA, no de este campo por sí solo (ver
+    // table-service.js#countEffectiveUserTables).
+    assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
     splits: [
       {
         type: Schema.Types.ObjectId,

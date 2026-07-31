@@ -33,7 +33,7 @@ async copyTable(req, res) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = await tableModel.countUserTables(idUser);
+    const routineCount = await tableModel.countEffectiveUserTables(idUser);
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",
@@ -51,7 +51,7 @@ async copyTable(req, res) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = await tableModel.countUserTables(idUser);
+    const routineCount = await tableModel.countEffectiveUserTables(idUser);
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",
@@ -69,7 +69,7 @@ async copyTable(req, res) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = await tableModel.countUserTables(idUser);
+    const routineCount = await tableModel.countEffectiveUserTables(idUser);
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",
@@ -115,7 +115,7 @@ async copyTable(req, res) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = await tableModel.countUserTables(idUser);
+    const routineCount = await tableModel.countEffectiveUserTables(idUser);
     if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",

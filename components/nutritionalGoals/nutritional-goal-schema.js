@@ -19,6 +19,10 @@ const NutritionalGoalSchema = new Schema({
   proteinsGTotal: { type: Number, default: 0 },
   carbohydratesGTotal: { type: Number, default: 0 },
   fatGTotal: { type: Number, default: 0 },
+  // MVP-trainers F13/F14/D10: presente si un nutricionista asignó este
+  // objetivo. Mismo criterio que Table.assignedByTrainerId — permanente,
+  // exención de límite depende de relación activa, no de este campo solo.
+  assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

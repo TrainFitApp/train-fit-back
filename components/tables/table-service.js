@@ -1,5 +1,6 @@
 const tableDao = require("./table-dao");
 const tableUtil = require("./table-util");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 module.exports = {
   async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
@@ -62,6 +63,18 @@ module.exports = {
 
   async countUserTables(userId) {
     return tableDao.countUserTables(userId);
+  },
+
+  // MVP-trainers D10: cuenta EFECTIVA a usar contra el límite FREE de
+  // rutinas propias. Si el cliente tiene AHORA una relación "training"
+  // activa, excluye las asignadas por el profesional (exentas mientras dure
+  // la relación); si no, cuenta todas (la exención revierte de inmediato al
+  // terminar la relación, sin periodo de gracia — ver F14, F08).
+  async countEffectiveUserTables(userId) {
+    const hasActiveTraining = await trainerClientDao.hasActiveRelation(userId, "training");
+    return hasActiveTraining
+      ? tableDao.countOwnUserTables(userId)
+      : tableDao.countUserTables(userId);
   },
 
   async getExerciseHistoryStats(userId, exerciseId, exerciseName) {

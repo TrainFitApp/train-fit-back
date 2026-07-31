@@ -2,7 +2,16 @@ const splitService = require("./split-service");
 const splitDTO = require("./split-dto");
 const tableSchema = require("../tables/table-schema");
 const featureAccessService = require("../billing/feature-access-service");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const mongoose = require("mongoose");
+
+// MVP-trainers D10/F14: hasta 21 microciclos (no 4) SOLO si la rutina fue
+// asignada por un profesional Y el cliente tiene AHORA relación "training"
+// activa — no depende solo del campo, revierte al terminar la relación.
+async function isMicrocycleExempt(table, req) {
+  if (!table.assignedByTrainerId) return false;
+  return trainerClientDao.hasActiveRelation(req.user.id, "training");
+}
 
 function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
@@ -50,12 +59,13 @@ module.exports = {
   async createSplitAndAddToTable(req, res) {
     const table = await tableSchema
       .findById(req.params.tableInUseId)
-      .select("_id userId splits");
+      .select("_id userId splits assignedByTrainerId");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
     if (!userOwnsTable(req, table)) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
-    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
+    const isExempt = await isMicrocycleExempt(table, req);
+    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length, isExempt)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
         message:
@@ -71,12 +81,15 @@ module.exports = {
   },
 
   async addSplitToTable(req, res) {
-    const table = await tableSchema.findById(req.body.idTable).select("_id userId splits");
+    const table = await tableSchema
+      .findById(req.body.idTable)
+      .select("_id userId splits assignedByTrainerId");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
     if (!userOwnsTable(req, table)) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
-    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
+    const isExempt = await isMicrocycleExempt(table, req);
+    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length, isExempt)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
         message:

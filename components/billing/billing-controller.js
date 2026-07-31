@@ -7,6 +7,7 @@ const userSchema = require("../users/schema");
 const userDto = require("../users/dto");
 const tableService = require("../tables/table-service");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 function sendBillingAdminError(res, error) {
   const status = error?.status || error?.response?.status || 500;
@@ -59,18 +60,18 @@ module.exports = {
       }
     }
 
-    const routines = await tableService.countUserTables(user._id);
+    const routines = await tableService.countEffectiveUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
-    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
+    const nutritionalGoals = await nutritionalGoalService.countEffectiveUserGoals(user.id);
+    const hasActiveTrainerRelation = await trainerClientDao.hasActiveRelation(user._id);
 
     return res.send(
-      featureAccessService.buildEntitlements(user, {
-        routines,
-        customExercises,
-        recipes,
-        nutritionalGoals,
-      }),
+      featureAccessService.buildEntitlements(
+        user,
+        { routines, customExercises, recipes, nutritionalGoals },
+        hasActiveTrainerRelation,
+      ),
     );
   },
 
@@ -88,18 +89,18 @@ module.exports = {
     }
 
     const refreshedUser = await userSchema.findById(user._id);
-    const routines = await tableService.countUserTables(user._id);
+    const routines = await tableService.countEffectiveUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
-    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
+    const nutritionalGoals = await nutritionalGoalService.countEffectiveUserGoals(user.id);
+    const hasActiveTrainerRelation = await trainerClientDao.hasActiveRelation(user._id);
 
     return res.send(
-      featureAccessService.buildEntitlements(refreshedUser, {
-        routines,
-        customExercises,
-        recipes,
-        nutritionalGoals,
-      }),
+      featureAccessService.buildEntitlements(
+        refreshedUser,
+        { routines, customExercises, recipes, nutritionalGoals },
+        hasActiveTrainerRelation,
+      ),
     );
   },
 

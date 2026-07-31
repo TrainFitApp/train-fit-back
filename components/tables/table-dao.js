@@ -287,6 +287,14 @@ module.exports = {
     return tableSchema.countDocuments({ userId }).exec();
   },
 
+  // MVP-trainers D10: cuenta solo las rutinas SIN assignedByTrainerId — las
+  // asignadas por un profesional no deben contar contra el límite FREE propio
+  // del cliente. Ver table-service.js#countEffectiveUserTables para cuándo se
+  // usa esta función vs. countUserTables (depende de si hay relación activa).
+  async countOwnUserTables(userId) {
+    return tableSchema.countDocuments({ userId, assignedByTrainerId: null }).exec();
+  },
+
   async getExerciseHistoryStats(userId, exerciseId, exerciseName) {
     const { ObjectId } = require("mongoose").Types;
 

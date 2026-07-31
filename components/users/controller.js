@@ -216,6 +216,68 @@ module.exports = {
   },
 
   /**
+   * Registro de profesional (TrainFit: Entrenadores) — F01. A propósito NO
+   * reutiliza userModel.createUser/userDao.createUser: esa función crea
+   * automáticamente una Diet/DietDay por defecto (comportamiento correcto para
+   * un cliente consumidor, pero incorrecto aquí — un profesional no es
+   * necesariamente cliente de TrainFit). Sigue el mismo patrón limpio que ya
+   * usa el registro social (userSchema.create directo, sin efectos
+   * secundarios de dominio de consumidor).
+   *
+   * POST /api/users/professional
+   * Body: { name, lastname, email, password }
+   */
+  async createProfessionalUser(req, res) {
+    try {
+      const { name, lastname, email: emailRaw, password } = req.body || {};
+      const email = String(emailRaw || "").trim().toLowerCase();
+
+      if (!name || !lastname || !email || !password) {
+        return res.status(400).send({ message: "Nombre, apellidos, email y contraseña son obligatorios" });
+      }
+
+      const emailExists = await mail.validateEmailExists(email);
+      if (!emailExists) {
+        return res.status(400).send({ message: "El correo no existe" });
+      }
+
+      const userExist = await userModel.getUserByEmail(email);
+      if (userExist && userExist.name) {
+        return res.status(409).send({ message: "Este usuario ya está registrado" });
+      }
+
+      const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      const user = await userSchema.create({
+        name,
+        lastname,
+        email,
+        password,
+        roles: ["trainer"],
+        hash: hashTemp,
+      });
+
+      notifyUserRegistered(user, req, "users.createProfessionalUser", "email");
+
+      const header1 = `Hola ${name}, verifica tu cuenta`;
+      const description = "Introduce el siguiente código en la aplicación para finalizar el registro.";
+      const htmlMail = mail.generateHashMail(header1, description, hashTemp);
+      await mail.sendMailSES(user.email, "Verificación de cuenta - TrainFit Entrenadores", htmlMail);
+
+      return res.status(201).send(await userDto.single(user, req.user));
+    } catch (err) {
+      const isDup =
+        err?.code === 11000 ||
+        (typeof err?.message === "string" && err.message.toLowerCase().includes("duplicate key"));
+      if (isDup) {
+        return res.status(409).send({ message: "Este usuario ya está registrado" });
+      }
+      console.error("Error al crear usuario profesional:", err);
+      return res.status(500).send({ message: "No se pudo crear el usuario" });
+    }
+  },
+
+  /**
    * Crea un usuario nuevo desde Google Sign-In
    * Solo se crea con email, los demás datos se completan después en updateGoogleUser
    *

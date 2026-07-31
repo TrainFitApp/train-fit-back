@@ -48,11 +48,16 @@ async function isGoalLockedForPlan(req, goal) {
     return false;
   }
 
-  const goals = await nutritionalGoalService.getByUserId(req.user.id);
-  const limit = featureAccessService.getLimits(req.user).nutritionalGoals;
-  if (goals.length <= limit) return false;
+  // MVP-trainers D10/F14: un objetivo asignado por el nutricionista nunca se
+  // bloquea mientras la relación "nutrition" siga activa — ni cuenta contra
+  // el límite propio del cliente para bloquear los DEMÁS objetivos.
+  const { hasActiveNutrition, relevantGoals } = await nutritionalGoalService.getGoalsForLockCheck(req.user.id);
+  if (goal.assignedByTrainerId && hasActiveNutrition) return false;
 
-  const unlockedGoalId = getFreeUnlockedGoalId(req.user, goals);
+  const limit = featureAccessService.getLimits(req.user).nutritionalGoals;
+  if (relevantGoals.length <= limit) return false;
+
+  const unlockedGoalId = getFreeUnlockedGoalId(req.user, relevantGoals);
   return getGoalId(goal) !== unlockedGoalId;
 }
 
@@ -79,7 +84,7 @@ async function syncActiveGoalAfterDelete(userId, deletedGoalId) {
 
 const controller = {
   async create(req, res) {
-    const used = await nutritionalGoalService.countByUserId(req.user.id);
+    const used = await nutritionalGoalService.countEffectiveUserGoals(req.user.id);
     const limits = featureAccessService.getLimits(req.user);
     const limit = limits.nutritionalGoals;
 
