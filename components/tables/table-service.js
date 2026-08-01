@@ -80,4 +80,35 @@ module.exports = {
   async getExerciseHistoryStats(userId, exerciseId, exerciseName) {
     return tableDao.getExerciseHistoryStats(userId, exerciseId, exerciseName);
   },
+
+  // MVP-trainers F11 — Flujo A: crear rutina nueva para el cliente.
+  async assignNewRoutineToClient(clientId, name, trainerId) {
+    const standardTable = tableUtil.getStandardTable();
+    standardTable.name = name;
+    return tableDao.createTableForClient(clientId, standardTable, trainerId);
+  },
+
+  // MVP-trainers F11 — Flujo B: duplicar una plantilla hacia el cliente.
+  // La plantilla origen debe ser pública (sin userId) o propia del
+  // profesional — nunca de otro cliente suyo (ver F11 punto 9-10).
+  async assignTemplateToClient(clientId, sourceTableId, trainerId) {
+    const sourceTable = await tableDao.getTableById(sourceTableId);
+    if (!sourceTable) {
+      const err = new Error("La plantilla de origen no existe");
+      err.code = "TEMPLATE_NOT_FOUND";
+      throw err;
+    }
+
+    const isPublicTemplate = !sourceTable.userId;
+    const isOwnTemplate = String(sourceTable.userId) === String(trainerId);
+    if (!isPublicTemplate && !isOwnTemplate) {
+      const err = new Error(
+        "Solo puedes asignar plantillas públicas o rutinas propias"
+      );
+      err.code = "TEMPLATE_FORBIDDEN";
+      throw err;
+    }
+
+    return tableDao.copyTableForClient(clientId, sourceTableId, trainerId);
+  },
 };

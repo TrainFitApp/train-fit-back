@@ -13,6 +13,16 @@ const single = (resource) => ({
 
 const multiple = (resources) => resources.map(single);
 
+// F04: como `single`, pero conserva `trainer` (nombre/apellidos/email) cuando
+// el service lo adjuntó (ver trainer-client-service.js#attachTrainerInfo) —
+// el cliente necesita saber QUIÉN le invitó, no solo el trainerId en bruto.
+const singleWithTrainer = (resource) => ({
+  ...single(resource),
+  trainer: resource.trainer || null,
+});
+
+const multipleWithTrainer = (resources) => resources.map(singleWithTrainer);
+
 // Para F05/F07: una entrada agregada por "otra parte" (cliente visto desde el
 // profesional, o profesional visto desde el cliente), con sus scopes combinados.
 const aggregated = (entry) => ({
@@ -31,4 +41,11 @@ const aggregated = (entry) => ({
 
 const multipleAggregated = (entries) => entries.map(aggregated);
 
-module.exports = { single, multiple, aggregated, multipleAggregated };
+module.exports = {
+  single,
+  multiple,
+  singleWithTrainer,
+  multipleWithTrainer,
+  aggregated,
+  multipleAggregated,
+};

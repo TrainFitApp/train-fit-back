@@ -15,6 +15,8 @@ router.getAsync(
   auth(["admin"]),
   controller.getSubscriptionStatus,
 );
+router.getAsync("/trainer/entitlements/me", auth(["trainer"]), controller.getTrainerEntitlements);
+router.postAsync("/trainer/restore", auth(["trainer"]), controller.restoreTrainer);
 router.postAsync("/webhooks/revenuecat", controller.revenueCatWebhook);
 
 module.exports = router;

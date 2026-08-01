@@ -104,6 +104,37 @@ module.exports = {
     );
   },
 
+  // MVP-trainers F02 — equivalentes de getEntitlements/restore para el
+  // profesional, leyendo User.professionalPremium y el nº de clientes
+  // ACTIVOS (no invitaciones pendientes) en vez de los límites de consumidor.
+  async getTrainerEntitlements(req, res) {
+    disableCache(res);
+    const user = req.user;
+    const activeClients = await trainerClientDao.findAllByTrainer(user._id, { status: "active" });
+    const distinctClientIds = new Set(activeClients.map((r) => String(r.clientId)));
+    return res.send(featureAccessService.buildTrainerEntitlements(user, distinctClientIds.size));
+  },
+
+  async restoreTrainer(req, res) {
+    const user = req.user;
+    const customerInfo = req.body?.customerInfo || null;
+    const rawPlan = req.body?.plan || null;
+    const explicitPlan = rawPlan === "monthly" || rawPlan === "annual" ? rawPlan : null;
+
+    if (customerInfo) {
+      await billingService.syncTrainerFromCustomerInfo(user, customerInfo, explicitPlan);
+    } else {
+      await billingService.restoreTrainerFromRevenueCat(user, req.body?.appUserId);
+    }
+
+    const refreshedUser = await userSchema.findById(user._id);
+    const activeClients = await trainerClientDao.findAllByTrainer(user._id, { status: "active" });
+    const distinctClientIds = new Set(activeClients.map((r) => String(r.clientId)));
+    return res.send(
+      featureAccessService.buildTrainerEntitlements(refreshedUser, distinctClientIds.size)
+    );
+  },
+
   async revenueCatWebhook(req, res) {
     const isAuthorized = billingService.validateWebhookAuth(req);
     if (!isAuthorized) {

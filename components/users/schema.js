@@ -61,6 +61,20 @@ const UserSchema = new Schema({
     source: String,
     lastSyncAt: Date,
   },
+  // MVP-trainers F02: entitlement de `TrainFit: Entrenadores`, separado de
+  // `premium` (consumidor) a propósito — un mismo User puede en teoría ser
+  // profesional Y cliente (ver F27), y cada suscripción es independiente.
+  // Misma forma que `premium` para reutilizar la misma lógica de sync.
+  professionalPremium: {
+    entitled: { type: Boolean, default: false },
+    plan: String,
+    // "trainer_pro" | "trainer_unlimited" — determina el límite de clientes
+    // aplicable (ver feature-access-service.js#getTrainerLimits).
+    tier: String,
+    expiresAt: Date,
+    source: String,
+    lastSyncAt: Date,
+  },
   passwordVersion: { type: Number, default: 0 },
   lastPasswordChangeAt: Date,
   auth: {

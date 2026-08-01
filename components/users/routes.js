@@ -22,7 +22,7 @@ function legacyAuthGone(req, res) {
 router.getAsync("/", auth(["admin", "user"]), controller.countUsers);
 // Público: comprobar si existe un email sin requerir auth
 router.getAsync("/check/:email", controller.checkEmail);
-router.getAsync("/:email", auth(["admin", "user"]), controller.getUserByEmail);
+router.getAsync("/:email", auth(["admin", "user", "trainer"]), controller.getUserByEmail);
 router.postAsync("/refresh-token", legacyAuthGone);
 router.postAsync("/logout", legacyAuthGone);
 router.postAsync("/auth/verify-google", legacyAuthGone);

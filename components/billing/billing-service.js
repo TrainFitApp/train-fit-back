@@ -7,6 +7,31 @@ const billingEventSchema = require("./billing-event-schema");
 const REVENUECAT_API_BASE = "https://api.revenuecat.com/v1";
 const ENTITLEMENT_ID =
   process.env.REVENUECAT_ENTITLEMENT_ID || "no_adds_and_features";
+// MVP-trainers F02: entitlements de `TrainFit: Entrenadores`, distintos del
+// de consumidor. Mismo proyecto de RevenueCat, entitlements adicionales.
+const TRAINER_PRO_ENTITLEMENT_ID =
+  process.env.REVENUECAT_TRAINER_PRO_ENTITLEMENT_ID || "trainer_pro";
+const TRAINER_UNLIMITED_ENTITLEMENT_ID =
+  process.env.REVENUECAT_TRAINER_UNLIMITED_ENTITLEMENT_ID || "trainer_unlimited";
+const TRAINER_ENTITLEMENT_IDS = [
+  TRAINER_PRO_ENTITLEMENT_ID,
+  TRAINER_UNLIMITED_ENTITLEMENT_ID,
+];
+
+// Decide a qué campo del User corresponde un entitlement_id dado — "premium"
+// (consumidor, por defecto) o "professionalPremium" (profesional). Un mismo
+// User puede tener ambos de forma independiente (ver F27); el webhook de
+// RevenueCat ya indica qué entitlement disparó cada evento, así que basta con
+// enrutar por ese id en vez de asumir un único ENTITLEMENT_ID global.
+function resolveTargetField(entitlementId) {
+  return TRAINER_ENTITLEMENT_IDS.includes(entitlementId)
+    ? "professionalPremium"
+    : "premium";
+}
+
+function resolveTrainerEntitlementId(active) {
+  return TRAINER_ENTITLEMENT_IDS.find((id) => active?.[id]) || null;
+}
 const WEBHOOK_AUTH =
   process.env.REVENUECAT_WEBHOOK_AUTH ||
   process.env.REVENUECAT_WEBHOOK_SECRET ||
@@ -164,10 +189,10 @@ function resolveSubscriberProductId(subscriber) {
   return winner;
 }
 
-function parseSDKCustomerInfo(customerInfo) {
+function parseSDKCustomerInfoWithPreferredId(customerInfo, preferredId) {
   const active = customerInfo?.entitlements?.active || {};
   const selectedEntitlement =
-    active[ENTITLEMENT_ID] || Object.values(active || {})[0] || null;
+    active[preferredId] || Object.values(active || {})[0] || null;
 
   const expiresAt = toDateOrNull(selectedEntitlement?.expirationDate);
   const entitled = Boolean(selectedEntitlement?.isActive);
@@ -186,13 +211,27 @@ function parseSDKCustomerInfo(customerInfo) {
     productId: selectedEntitlement?.productIdentifier || null,
     store: selectedEntitlement?.store || null,
     willRenew: Boolean(selectedEntitlement?.willRenew),
-    activeEntitlement: selectedEntitlement?.identifier || ENTITLEMENT_ID,
+    activeEntitlement: selectedEntitlement?.identifier || preferredId,
   };
 }
 
-function parseRCSubscriberPayload(subscriber) {
+function parseSDKCustomerInfo(customerInfo) {
+  return parseSDKCustomerInfoWithPreferredId(customerInfo, ENTITLEMENT_ID);
+}
+
+// MVP-trainers F02: variante para la app de profesionales — prioriza
+// cualquiera de los entitlements de profesional presentes en el customerInfo
+// del SDK (el proyecto de RevenueCat es el mismo, pero cada app solo debería
+// ver sus propios entitlements activos).
+function parseTrainerSDKCustomerInfo(customerInfo) {
+  const active = customerInfo?.entitlements?.active || {};
+  const matchedId = resolveTrainerEntitlementId(active) || TRAINER_PRO_ENTITLEMENT_ID;
+  return parseSDKCustomerInfoWithPreferredId(customerInfo, matchedId);
+}
+
+function parseRCSubscriberPayloadForId(subscriber, entitlementId) {
   const active = subscriber?.entitlements || {};
-  const entitlement = active?.[ENTITLEMENT_ID];
+  const entitlement = active?.[entitlementId];
   const activeSubscription = resolveActiveSubscriptionEntry(subscriber);
   const resolvedProductId =
     activeSubscription?.productId ||
@@ -227,10 +266,23 @@ function parseRCSubscriberPayload(subscriber) {
     productId: resolvedProductId || null,
     store,
     willRenew,
-    activeEntitlement: entitlement || entitled ? ENTITLEMENT_ID : null,
+    activeEntitlement: entitlement || entitled ? entitlementId : null,
   };
 }
-async function updateUserPremium(userId, premiumState) {
+
+function parseRCSubscriberPayload(subscriber) {
+  return parseRCSubscriberPayloadForId(subscriber, ENTITLEMENT_ID);
+}
+
+// MVP-trainers F02: variante para la app de profesionales — comprueba
+// ambos entitlements de profesional (PRO/UNLIMITED) y usa el que esté activo;
+// si ninguno lo está, cae al de PRO para reportar "no activo" de forma estable.
+function parseTrainerRCSubscriberPayload(subscriber) {
+  const active = subscriber?.entitlements || {};
+  const matchedId = resolveTrainerEntitlementId(active) || TRAINER_PRO_ENTITLEMENT_ID;
+  return parseRCSubscriberPayloadForId(subscriber, matchedId);
+}
+async function updateUserPremium(userId, premiumState, field = "premium") {
   if (!userId) return null;
   const normalizedPlan =
     premiumState?.plan === "monthly" ||
@@ -242,19 +294,28 @@ async function updateUserPremium(userId, premiumState) {
   const normalizedSource =
     !isEntitled ? null : premiumState?.source === "manual" ? "manual" : "revenuecat";
 
-  const update = {
-    premium: {
-      entitled: isEntitled,
-      plan: normalizedPlan,
-      expiresAt: premiumState?.expiresAt || null,
-      source: normalizedSource,
-      lastSyncAt: new Date(),
-    },
+  const fieldUpdate = {
+    entitled: isEntitled,
+    plan: normalizedPlan,
+    expiresAt: premiumState?.expiresAt || null,
+    source: normalizedSource,
+    lastSyncAt: new Date(),
   };
+
+  if (field === "professionalPremium") {
+    fieldUpdate.tier = isEntitled
+      ? TRAINER_ENTITLEMENT_IDS.includes(premiumState?.activeEntitlement)
+        ? premiumState.activeEntitlement
+        : null
+      : null;
+  }
+
+  const update = { [field]: fieldUpdate };
+  const unset = field === "premium" ? { isPremium: 1 } : {};
 
   return userSchema.findByIdAndUpdate(
     userId,
-    { $set: update, $unset: { isPremium: 1 } },
+    { $set: update, $unset: unset },
     { new: true },
   );
 }
@@ -717,6 +778,105 @@ module.exports = {
     return premiumState;
   },
 
+  // --- MVP-trainers F02: variantes para `TrainFit: Entrenadores`, escriben
+  // en User.professionalPremium en vez de User.premium (ver nota en el schema
+  // y en resolveTargetField/processWebhook). Mismo flujo que sus equivalentes
+  // de consumidor, sin tocarlos.
+  async syncTrainerFromCustomerInfo(user, customerInfo, explicitPlan) {
+    const premiumState = parseTrainerSDKCustomerInfo(customerInfo);
+
+    if (
+      premiumState.plan === "unknown" &&
+      (explicitPlan === "monthly" || explicitPlan === "annual")
+    ) {
+      premiumState.plan = explicitPlan;
+    }
+
+    if (
+      premiumState.plan === "unknown" &&
+      (user?.professionalPremium?.plan === "monthly" ||
+        user?.professionalPremium?.plan === "annual")
+    ) {
+      premiumState.plan = user.professionalPremium.plan;
+    }
+
+    const appUserId = user?._id?.toString();
+
+    await Promise.all([
+      updateUserPremium(user._id, premiumState, "professionalPremium"),
+      upsertBillingCustomer({
+        userId: user._id,
+        appUserId,
+        originalAppUserId: appUserId,
+        activeEntitlement: premiumState.activeEntitlement,
+        store: premiumState.store,
+        productId: premiumState.productId,
+        expiresAt: premiumState.expiresAt,
+        willRenew: premiumState.willRenew,
+        lastEventAt: new Date(),
+      }),
+    ]);
+
+    return premiumState;
+  },
+
+  async restoreTrainerFromRevenueCat(user, appUserId) {
+    const resolvedAppUserId = appUserId || user?._id?.toString();
+    const subscriber = await getRevenueCatSubscriber(resolvedAppUserId);
+    if (!subscriber) {
+      return null;
+    }
+
+    const premiumState = parseTrainerRCSubscriberPayload(subscriber);
+
+    if (
+      premiumState.plan === "unknown" &&
+      (user?.professionalPremium?.plan === "monthly" ||
+        user?.professionalPremium?.plan === "annual")
+    ) {
+      premiumState.plan = user.professionalPremium.plan;
+    }
+
+    await Promise.all([
+      updateUserPremium(user._id, premiumState, "professionalPremium"),
+      upsertBillingCustomer({
+        userId: user._id,
+        appUserId: resolvedAppUserId,
+        originalAppUserId: subscriber?.original_app_user_id || resolvedAppUserId,
+        activeEntitlement: premiumState.activeEntitlement,
+        store: premiumState.store,
+        productId: premiumState.productId,
+        expiresAt: premiumState.expiresAt,
+        willRenew: premiumState.willRenew,
+        lastEventAt: new Date(),
+      }),
+    ]);
+
+    return premiumState;
+  },
+
+  async getTrainerAdminSubscriptionStatus(userId) {
+    const user = await userSchema.findById(userId);
+    if (!user) {
+      const error = new Error("Usuario no encontrado");
+      error.status = 404;
+      throw error;
+    }
+
+    const appUserId = user._id.toString();
+    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+    return {
+      userId: appUserId,
+      isPremium: Boolean(user?.professionalPremium?.entitled),
+      source: user?.professionalPremium?.source || null,
+      plan: user?.professionalPremium?.plan || null,
+      expiresAt: user?.professionalPremium?.expiresAt || null,
+      store: billingCustomer?.store || null,
+      productId: billingCustomer?.productId || null,
+      willRenew: Boolean(billingCustomer?.willRenew),
+    };
+  },
+
   async getAdminSubscriptionStatus(userId) {
     const user = await userSchema.findById(userId);
     if (!user) {
@@ -905,7 +1065,8 @@ module.exports = {
     }
 
     if (user && event.applyEntitlementUpdate) {
-      await updateUserPremium(user._id, event);
+      const targetField = resolveTargetField(event.activeEntitlement);
+      await updateUserPremium(user._id, event, targetField);
       await billingEventSchema.updateOne(
         { eventId: event.eventId },
         { $set: { userId: user._id } },

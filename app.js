@@ -20,7 +20,11 @@ const allowedOrigins = [
   "http://localhost",
   "http://localhost:8100",
   // para probar
-  "http://localhost:8101"
+  "http://localhost:8101",
+  "http://localhost:8391",
+  "http://localhost:8492",
+  "http://localhost:8493"
+
 ];
 const useCredentials = true;
 

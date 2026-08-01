@@ -54,8 +54,8 @@ const controller = {
 
   // GET /trainer/invites/mine
   async listInvitesMine(req, res) {
-    const invites = await trainerClientService.listPendingForClientEmail(req.auth.email);
-    return res.send(trainerClientDto.multiple(invites));
+    const invites = await trainerClientService.listPendingForClientEmailEnriched(req.auth.email);
+    return res.send(trainerClientDto.multipleWithTrainer(invites));
   },
 
   // POST /trainer/invites/:id/accept
@@ -86,10 +86,13 @@ const controller = {
     }
   },
 
-  // GET /trainer/info — profesionales activos del cliente autenticado
+  // GET /trainer/info — profesionales activos del cliente autenticado,
+  // agregados por profesional (mismo patrón que F05 del lado trainer).
   async listMyProfessionals(req, res) {
-    const relations = await trainerClientService.listActiveForClient(req.auth.userId);
-    return res.send(trainerClientDto.multiple(relations));
+    const aggregatedProfessionals = await trainerClientService.listActiveProfessionalsForClient(
+      req.auth.userId
+    );
+    return res.send(trainerClientDto.multipleAggregated(aggregatedProfessionals));
   },
 
   // GET /trainer/clients — clientes activos del profesional, agregados por cliente

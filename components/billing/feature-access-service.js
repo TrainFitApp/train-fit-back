@@ -121,6 +121,50 @@ function buildEntitlements(user, usage, hasActiveTrainerRelation = false) {
   };
 }
 
+// MVP-trainers F02 — límites de clientes del PROFESIONAL (no confundir con
+// los límites de arriba, que son del CLIENTE). Independiente de isPremiumUser
+// (que lee User.premium, el entitlement de consumidor) — lee
+// User.professionalPremium en su lugar.
+const TRAINER_CLIENT_LIMITS = {
+  free: 3,
+  trainer_pro: 15,
+  trainer_unlimited: Number.MAX_SAFE_INTEGER,
+};
+
+function isPremiumTrainer(user) {
+  return Boolean(user?.professionalPremium?.entitled);
+}
+
+function getTrainerLimits(user) {
+  if (!isPremiumTrainer(user)) return { clients: TRAINER_CLIENT_LIMITS.free, tier: "free" };
+  const tier = user?.professionalPremium?.tier;
+  if (tier === "trainer_unlimited") {
+    return { clients: TRAINER_CLIENT_LIMITS.trainer_unlimited, tier };
+  }
+  // Cualquier entitlement de profesional activo sin tier UNLIMITED reconocido
+  // se trata como PRO — evita bloquear al profesional por un valor de tier
+  // inesperado mientras sí paga.
+  return { clients: TRAINER_CLIENT_LIMITS.trainer_pro, tier: tier || "trainer_pro" };
+}
+
+function canInviteClient(user, activeClientCount) {
+  const { clients } = getTrainerLimits(user);
+  return activeClientCount < clients;
+}
+
+function buildTrainerEntitlements(user, activeClientCount) {
+  const { clients, tier } = getTrainerLimits(user);
+  return {
+    isPremium: isPremiumTrainer(user),
+    tier,
+    plan: user?.professionalPremium?.plan || null,
+    expiresAt: user?.professionalPremium?.expiresAt || null,
+    limits: { clients: clients === Number.MAX_SAFE_INTEGER ? null : clients },
+    usage: { clients: activeClientCount || 0 },
+    remaining: { clients: getRemaining(clients, activeClientCount || 0) },
+  };
+}
+
 module.exports = {
   FREE_LIMITS,
   PREMIUM_LIMITS,
@@ -133,4 +177,8 @@ module.exports = {
   canCreateNutritionalGoal,
   canSeeAds,
   buildEntitlements,
+  isPremiumTrainer,
+  getTrainerLimits,
+  canInviteClient,
+  buildTrainerEntitlements,
 };

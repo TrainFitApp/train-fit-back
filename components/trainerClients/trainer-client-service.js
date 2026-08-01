@@ -127,6 +127,23 @@ module.exports = {
     return trainerClientDao.findPendingByEmail(normalizeEmail(email));
   },
 
+  // MVP-trainers F04: invitaciones pendientes con los datos del profesional
+  // adjuntos (nombre/apellidos/email) — sin esto, la UI del cliente solo
+  // tendría un trainerId en bruto y no podría mostrar quién le invitó.
+  // A diferencia de F05 (que agrupa varios scopes del mismo cliente en una
+  // tarjeta), aquí cada invitación pendiente es su PROPIA tarjeta aunque
+  // comparta profesional (ver F04 punto 17: "si invitó a ambos, son 2
+  // invitaciones independientes").
+  async listPendingForClientEmailEnriched(email) {
+    const invites = await trainerClientDao.findPendingByEmail(normalizeEmail(email));
+    return attachTrainerInfo(invites);
+  },
+
+  async listActiveProfessionalsForClient(clientId) {
+    const relations = await trainerClientDao.findActiveByClient(clientId);
+    return aggregateByOtherParty(relations, "trainerId");
+  },
+
   /**
    * decision: "accept" | "decline". clientUser es el User autenticado que responde.
    */
@@ -203,12 +220,36 @@ module.exports = {
   },
 };
 
+// F04: adjunta {trainer: {name, lastname, email}} a cada invitación SIN
+// agrupar — cada documento sigue siendo su propia tarjeta.
+async function attachTrainerInfo(invites) {
+  const trainerIds = [
+    ...new Set(invites.filter((i) => i.trainerId).map((i) => String(i.trainerId))),
+  ];
+  const trainers = await userSchema
+    .find({ _id: { $in: trainerIds } })
+    .select("name lastname email")
+    .lean();
+  const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
+
+  return invites.map((invite) => ({
+    ...(invite.toObject ? invite.toObject() : invite),
+    trainer: trainersById.get(String(invite.trainerId)) || null,
+  }));
+}
+
 // Agrupa relaciones activas por la "otra parte" (clientId visto desde el
 // trainer, o trainerId visto desde el cliente), combinando varios scopes de la
 // misma persona en una sola entrada — F05/F07 nunca deben ver duplicados.
 async function aggregateByOtherParty(relations, otherPartyField) {
   const byOtherParty = new Map();
   for (const relation of relations) {
+    // Defensivo: una relación "active" SIEMPRE debería tener este campo
+    // relleno (respondToInvite lo fija al aceptar), pero si algún dato
+    // quedó en un estado inconsistente (p. ej. manipulado a mano, o de una
+    // versión anterior del código), saltarla en vez de reventar toda la
+    // petición con un CastError de Mongo al convertir "undefined" en ObjectId.
+    if (!relation[otherPartyField]) continue;
     const key = String(relation[otherPartyField]);
     if (!byOtherParty.has(key)) byOtherParty.set(key, []);
     byOtherParty.get(key).push(relation);

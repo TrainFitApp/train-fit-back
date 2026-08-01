@@ -92,6 +92,29 @@ module.exports = {
     }
   },
 
+  // MVP-trainers F11: copia una plantilla HACIA un cliente (asignada por su
+  // profesional). A diferencia de copyTable, escribe assignedByTrainerId y,
+  // deliberadamente, NO toca tableInUse/workoutInUse del cliente — asignar
+  // una rutina no la activa sola (ver F11 punto 7.7).
+  async copyTableForClient(clientId, idTable, trainerId) {
+    try {
+      const tableD = await tableSchema.findById(idTable);
+      if (!tableD) throw new Error("Table not found");
+      const tableDoc = tableD.toObject();
+
+      await copyHierarchy(tableDoc);
+
+      delete tableDoc._id;
+      return await tableSchema.create({
+        ...tableDoc,
+        userId: clientId,
+        assignedByTrainerId: trainerId,
+      });
+    } catch (e) {
+      throw e;
+    }
+  },
+
   async duplicateTable(idUser, idTable) {
     try {
       const tableD = await tableSchema.findById(idTable);
@@ -172,7 +195,7 @@ module.exports = {
 
       const buildLightSearchPipeline = (extraMatch = {}) => [
         { $match: { ...baseMatch, ...extraMatch } },
-        { $project: { _id: 1, name: 1, urlImage: 1, splits: 1 } },
+        { $project: { _id: 1, name: 1, urlImage: 1, splits: 1, assignedByTrainerId: 1 } },
         {
           $lookup: {
             from: "splits",
@@ -199,6 +222,7 @@ module.exports = {
             urlImage: 1,
             microcyclesCount: 1,
             workoutsCount: 1,
+            assignedByTrainerId: 1,
           },
         },
         { $skip: page * limit },
@@ -250,6 +274,17 @@ module.exports = {
     } catch (err) {
       throw err;
     }
+  },
+
+  // MVP-trainers F11: crea una rutina NUEVA directamente para un cliente,
+  // asignada por su profesional. A diferencia de createTableToUser, NO
+  // activa la rutina (no toca tableInUse/workoutInUse) — ver F11 punto 7.7.
+  async createTableForClient(clientId, standardTable, trainerId) {
+    return tableSchema.create({
+      ...standardTable,
+      userId: clientId,
+      assignedByTrainerId: trainerId,
+    });
   },
 
   async updateTable(id, name, userId, adminMode = false) {
