@@ -68,4 +68,12 @@ router.deleteAsync(
   controller.deleteMealCustomRecipesRef,
 );
 
+// TAREA 1 (coach-tab) — marcar/desmarcar cumplimiento, nunca protegido por
+// assertMealEditable (ver meal-controller.js#setMealCompleted).
+router.patchAsync(
+  "/:id/completed",
+  auth(["admin", "user"]),
+  controller.setMealCompleted,
+);
+
 module.exports = router;

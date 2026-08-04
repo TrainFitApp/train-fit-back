@@ -6,15 +6,19 @@ const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-router.getAsync("/", auth(["admin", "user"]), controller.getExercises);
+// Replanteamiento MVP (rutinas) — catálogo global de ejercicios, sin dueño
+// (a diferencia de Table/Split/Workout/...), igual que ya ocurría con
+// ProductAPIService.searchProduct para el buscador de alimentos del
+// entrenador: no hace falta comprobación de relación, solo estar autenticado.
+router.getAsync("/", auth(["admin", "user", "trainer"]), controller.getExercises);
 router.getAsync(
   "/code/:barcode",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.getExerciseByCode
 );
 router.postAsync(
   "/:search",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.getSearchExercise
 );
 router.postAsync("/", auth(["admin", "user"]), controller.createExercise);

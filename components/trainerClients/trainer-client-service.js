@@ -1,6 +1,10 @@
 const trainerClientDao = require("./trainer-client-dao");
 const userSchema = require("../users/schema");
 const mail = require("../util/mail");
+const featureAccessService = require("../billing/feature-access-service");
+const clientIntakeDao = require("../clientIntake/client-intake-dao");
+const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
+const notificationDao = require("../notifications/notification-dao");
 
 const VALID_SCOPES = ["training", "nutrition"];
 
@@ -24,6 +28,14 @@ class DuplicateInviteError extends Error {
     super(`Ya existe una invitación pendiente para este email en el ámbito "${scope}"`);
     this.code = "DUPLICATE_INVITE";
     this.scope = scope;
+  }
+}
+
+// MVP-trainers F21 — límite de clientes por plan del profesional.
+class TrainerLimitReachedError extends Error {
+  constructor() {
+    super("Has alcanzado el límite de clientes de tu plan");
+    this.code = "TRAINER_LIMIT_REACHED";
   }
 }
 
@@ -54,6 +66,7 @@ module.exports = {
   OverlapError,
   NonUserAccountError,
   DuplicateInviteError,
+  TrainerLimitReachedError,
 
   /**
    * Invita a un cliente para uno o varios scopes a la vez. Crea UN documento
@@ -66,6 +79,21 @@ module.exports = {
 
     if (normalizeEmail(trainerUser.email) === clientEmail) {
       throw new Error("No puedes invitarte a ti mismo");
+    }
+
+    // MVP-trainers F21 — "un único contador total de clientes, independientemente
+    // del scope" (no por documento de relación): un cliente con training+nutrition
+    // del mismo trainer cuenta como 1, no 2. Cuenta pending+active (no solo active)
+    // para que no se pueda evadir el límite acumulando invitaciones sin responder.
+    const relations = await trainerClientDao.findAllByTrainer(trainerId, {
+      status: ["pending", "active"],
+    });
+    const distinctClients = new Set(
+      relations.map((r) => String(r.clientId || r.clientEmail))
+    );
+    const { clients: clientLimit } = featureAccessService.getTrainerLimits(trainerUser);
+    if (!distinctClients.has(clientEmail) && distinctClients.size >= clientLimit) {
+      throw new TrainerLimitReachedError();
     }
 
     const uniqueScopes = [...new Set(scopes)].filter((s) => VALID_SCOPES.includes(s));
@@ -174,10 +202,101 @@ module.exports = {
     });
     if (overlapping) throw new OverlapError(invitation.scope);
 
-    return trainerClientDao.updateStatus(invitation._id, "active", {
+    // TAREA 3 — si el cliente YA tiene una relación activa con ESTE MISMO
+    // profesional (p.ej. aceptó "training" hace tiempo y ahora acepta
+    // "nutrition" del mismo profesional), el cuestionario inicial ya se hizo
+    // y ya fue confirmado — no tiene sentido repetir el ciclo completo.
+    // Pasa directo a "active", igual que el comportamiento anterior.
+    const alreadyActiveWithTrainer = await trainerClientDao.findActiveByTrainerAndClient(
+      invitation.trainerId,
+      clientUser._id
+    );
+    const nextStatus = alreadyActiveWithTrainer ? "active" : "cuestionario_pendiente";
+
+    return trainerClientDao.updateStatus(invitation._id, nextStatus, {
       clientId: clientUser._id,
       respondedAt: new Date(),
     });
+  },
+
+  /**
+   * TAREA 3 — el cliente envía el cuestionario inicial. Transiciona TODAS sus
+   * relaciones "cuestionario_pendiente" con este profesional a "en_revision"
+   * a la vez (el cuestionario es uno por par profesional-cliente, no por
+   * scope). Reutiliza ClientNutritionPreferences (F29) para alergias/
+   * preferencias — no se duplica ese dato en un schema aparte.
+   */
+  async submitIntake(trainerId, clientId, intakeData) {
+    const pendingRelations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
+      "cuestionario_pendiente",
+    ]);
+    if (!pendingRelations.length) {
+      const err = new Error("No tienes ningún cuestionario pendiente con este profesional");
+      err.code = "NO_INTAKE_PENDING";
+      throw err;
+    }
+
+    const intake = await clientIntakeDao.upsert(trainerId, clientId, intakeData);
+    await nutritionPreferencesDao.upsertOwnResponse(clientId, {
+      allergies: intakeData.allergies,
+      favoriteFoods: intakeData.favoriteFoods,
+      dislikedFoods: intakeData.dislikedFoods,
+      cooksAtHome: intakeData.cooksAtHome,
+    });
+    await trainerClientDao.updateManyStatus(trainerId, clientId, "cuestionario_pendiente", "en_revision");
+    await notificationDao.create(clientId, trainerId, "intake_submitted", {});
+
+    return intake;
+  },
+
+  /**
+   * TAREA 3 — el profesional confirma explícitamente al cliente tras revisar
+   * su cuestionario. Transiciona TODAS las relaciones "en_revision" de este
+   * par a "active" a la vez.
+   */
+  async confirmClient(trainerId, clientId) {
+    const inReview = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
+      "en_revision",
+    ]);
+    if (!inReview.length) {
+      const err = new Error("Este cliente no tiene ningún cuestionario en revisión");
+      err.code = "NO_INTAKE_IN_REVIEW";
+      throw err;
+    }
+
+    await trainerClientDao.updateManyStatus(trainerId, clientId, "en_revision", "active");
+    await notificationDao.create(clientId, trainerId, "client_confirmed", {});
+    return trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, ["active"]);
+  },
+
+  /**
+   * TAREA 3 — ¿debe el cliente ver la pantalla de estado (cuestionario/en
+   * revisión) en vez del resto de la app? Solo si NO tiene ninguna relación
+   * activa con NADIE todavía Y tiene al menos una relación en curso de alta
+   * (cuestionario_pendiente/en_revision) — un cliente con al menos un
+   * profesional ya activo nunca vuelve a quedar bloqueado por una alta nueva
+   * con otro profesional distinto.
+   */
+  async getOnboardingStatus(clientId) {
+    const [active, onboarding] = await Promise.all([
+      trainerClientDao.findActiveByClient(clientId),
+      trainerClientDao.findAllByClient(clientId, { status: ["cuestionario_pendiente", "en_revision"] }),
+    ]);
+
+    if (active.length || !onboarding.length) {
+      return { blocked: false, relations: [] };
+    }
+
+    const enriched = await attachTrainerInfo(onboarding);
+    return {
+      blocked: true,
+      relations: enriched.map((r) => ({
+        trainerId: r.trainerId,
+        scope: r.scope,
+        status: r.status,
+        trainer: r.trainer,
+      })),
+    };
   },
 
   async listActiveForClient(clientId) {
@@ -215,8 +334,13 @@ module.exports = {
     return trainerClientDao.findAllByTrainer(trainerId, { status: ["revoked", "declined"] });
   },
 
+  // F22 — historial del lado cliente, con el nombre del profesional adjunto
+  // (mismo criterio que F04: sin esto la UI solo tendría un trainerId en bruto).
   async listHistoryByClient(clientId) {
-    return trainerClientDao.findAllByClient(clientId, { status: ["revoked", "declined"] });
+    const relations = await trainerClientDao.findAllByClient(clientId, {
+      status: ["revoked", "declined"],
+    });
+    return attachTrainerInfo(relations);
   },
 };
 

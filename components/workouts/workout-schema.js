@@ -15,6 +15,11 @@ const WorkoutSchema = Schema({
   // always derived as (date ?? now) - startedAt, never accumulated server-side.
   startedAt: Date,
   rest: Boolean,
+  // MVP-trainers F18 — pulso de readiness/esfuerzo por sesión, opcionales, no
+  // configurables (a diferencia del catálogo togglable de F17). Visibles para
+  // el profesional junto al historial de entrenamientos del cliente (F09).
+  readinessPre: { type: Number, min: 1, max: 5, default: null },
+  perceivedEffortPost: { type: Number, min: 1, max: 5, default: null },
   exercises: [
     {
       type: Schema.Types.ObjectId,

@@ -1,9 +1,14 @@
 const trainerClientService = require("./trainer-client-service");
 const trainerClientDto = require("./trainer-client-dto");
+const trainerClientDao = require("./trainer-client-dao");
+const clientIntakeDao = require("../clientIntake/client-intake-dao");
 
 function handleKnownError(res, e) {
   if (e.code === "OVERLAP" || e.code === "DUPLICATE_INVITE" || e.code === "NOT_A_USER_ACCOUNT") {
     return res.status(400).send({ message: e.message, code: e.code });
+  }
+  if (e.code === "TRAINER_LIMIT_REACHED") {
+    return res.status(403).send({ message: e.message, code: e.code });
   }
   if (e.code === "FORBIDDEN") {
     return res.status(403).send({ message: e.message });
@@ -119,10 +124,74 @@ const controller = {
 
   // GET /trainer/history (profesional) o ?asClient=1 (cliente) — historial revoked/declined
   async listHistory(req, res) {
-    const relations = req.query.asClient
-      ? await trainerClientService.listHistoryByClient(req.auth.userId)
-      : await trainerClientService.listHistoryByTrainer(req.auth.userId);
+    if (req.query.asClient) {
+      const relations = await trainerClientService.listHistoryByClient(req.auth.userId);
+      return res.send(trainerClientDto.multipleWithTrainer(relations));
+    }
+    const relations = await trainerClientService.listHistoryByTrainer(req.auth.userId);
     return res.send(trainerClientDto.multiple(relations));
+  },
+
+  // --- TAREA 3: cuestionario inicial + confirmación ---
+
+  // GET /trainer/onboarding-status — cliente: ¿debe ver la pantalla de estado
+  // (cuestionario/en revisión) en vez del resto de la app?
+  async getOnboardingStatus(req, res) {
+    const status = await trainerClientService.getOnboardingStatus(req.auth.userId);
+    return res.send(status);
+  },
+
+  // POST /trainer/intake — cliente envía su cuestionario inicial para un
+  // profesional concreto. body: { trainerId, goals, healthConditions,
+  // experienceLevel, availability, equipment, allergies, favoriteFoods,
+  // dislikedFoods, cooksAtHome }
+  async submitIntake(req, res) {
+    try {
+      const { trainerId, ...intakeData } = req.body || {};
+      if (!trainerId) return res.status(400).send({ message: "trainerId es obligatorio" });
+      const intake = await trainerClientService.submitIntake(trainerId, req.auth.userId, intakeData);
+      return res.status(201).send(intake);
+    } catch (e) {
+      if (e.code === "NO_INTAKE_PENDING") {
+        return res.status(400).send({ message: e.message, code: e.code });
+      }
+      console.error("Error en submitIntake:", e.message);
+      return res.status(500).send({ message: "Internal Server Error" });
+    }
+  },
+
+  // GET /trainer/clients/:clientId/intake — el profesional revisa el
+  // cuestionario. NO usa requireActiveClient a propósito: la relación está
+  // en "en_revision" (aún no "active") justo cuando hace falta revisarla.
+  async getClientIntake(req, res) {
+    const trainerId = req.auth.userId;
+    const clientId = req.params.clientId;
+    const relations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
+      "en_revision",
+      "active",
+    ]);
+    if (!relations.length) {
+      return res.status(403).send({
+        message: "No tienes una relación con este cliente que permita ver su cuestionario",
+      });
+    }
+    const intake = await clientIntakeDao.getByTrainerAndClient(trainerId, clientId);
+    return res.send(intake);
+  },
+
+  // POST /trainer/clients/:clientId/confirm — el profesional confirma
+  // explícitamente al cliente tras revisar su cuestionario.
+  async confirmClient(req, res) {
+    try {
+      const result = await trainerClientService.confirmClient(req.auth.userId, req.params.clientId);
+      return res.send(trainerClientDto.multiple(result));
+    } catch (e) {
+      if (e.code === "NO_INTAKE_IN_REVIEW") {
+        return res.status(400).send({ message: e.message, code: e.code });
+      }
+      console.error("Error en confirmClient:", e.message);
+      return res.status(500).send({ message: "Internal Server Error" });
+    }
   },
 };
 

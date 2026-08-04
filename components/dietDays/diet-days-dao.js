@@ -86,10 +86,28 @@ module.exports = {
               },
             },
             {
+              // MVP-trainers F20 (2026-08-01) — pipeline-lookup (en vez del
+              // localField/foreignField anterior) para poder resolver un
+              // nivel más de profundidad: cada meal.customProducts sigue
+              // siendo un array de ObjectId hasta que se resuelve aquí. Sin
+              // esto, el consumidor de este endpoint (calendario de dieta del
+              // cliente, o el cálculo de adherencia de F20) recibía comidas
+              // sin ningún contenido nutricional, aunque el cliente sí las
+              // tuviera registradas.
               $lookup: {
                 from: "meals",
-                localField: "meals",
-                foreignField: "_id",
+                let: { mealIds: "$meals" },
+                pipeline: [
+                  { $match: { $expr: { $in: ["$_id", "$$mealIds"] } } },
+                  {
+                    $lookup: {
+                      from: "customproducts",
+                      localField: "customProducts",
+                      foreignField: "_id",
+                      as: "customProducts",
+                    },
+                  },
+                ],
                 as: "meals",
               },
             },
@@ -103,6 +121,13 @@ module.exports = {
                   _id: 1,
                   name: 1,
                   notes: 1,
+                  customProducts: {
+                    quantity: 1,
+                    energyKcal100g: 1,
+                    protein100g: 1,
+                    carbohydrates100g: 1,
+                    fat100g: 1,
+                  },
                 },
               },
             },
@@ -113,18 +138,16 @@ module.exports = {
         },
       },
       {
+        // Corregido (2026-08-01): este $project no incluía `dietDays` (el
+        // campo que el $lookup de arriba acaba de añadir), así que lo
+        // eliminaba del resultado — el endpoint devolvía el propio documento
+        // `Diet` disfrazado de "día" en vez de la lista real de días. Bug
+        // preexistente confirmado con datos reales antes de corregirlo (ver
+        // MVP-trainers/funcionalidades/F20-adherencia-nutricional.md, sección 15).
         $project: {
-                _id: 1,
-                name: 1,
-                date: 1,
-                notes: 1,
-                meals: {
-                  _id: 1,
-                  name: 1,
-                  notes: 1,
-                },
-              },
-},
+          dietDays: 1,
+        },
+      },
     ];
 
     return await dietSchema.aggregate(agg);

@@ -13,9 +13,21 @@ const TrainerClientSchema = new Schema(
       enum: ["training", "nutrition"],
       required: true,
     },
+    // TAREA 3 (coach-tab) — "active" se mantiene como valor literal a
+    // propósito: es el único gate que ya comprueban ~15 archivos existentes
+    // (requireActiveClient, hasActiveRelation, coach-dashboard, billing F14/
+    // F21) y renombrarlo obligaría a tocarlos todos sin necesidad real.
+    // Los 2 estados nuevos son intermedios entre "pending" (invitación sin
+    // responder) y "active" (coaching desbloqueado): al aceptar, el cliente
+    // pasa a "cuestionario_pendiente"; al enviar el cuestionario inicial,
+    // pasa a "en_revision"; solo cuando el profesional lo confirma
+    // explícitamente pasa a "active". No existe "pausado" (rompería la
+    // regla ya documentada de que revoked es terminal, sin deshacer — F08)
+    // ni "finalizado" (redundante con revoked/declined, que ya cubren
+    // "relación terminada").
     status: {
       type: String,
-      enum: ["pending", "active", "revoked", "declined"],
+      enum: ["pending", "cuestionario_pendiente", "en_revision", "active", "revoked", "declined"],
       default: "pending",
       index: true,
     },
@@ -30,10 +42,16 @@ const TrainerClientSchema = new Schema(
 );
 
 // Evita invitaciones duplicadas del mismo profesional al mismo email para el mismo
-// ámbito MIENTRAS estén pendientes o activas — permite reinvitar tras un revoked/declined.
+// ámbito MIENTRAS estén pendientes, en curso de alta o activas — permite
+// reinvitar tras un revoked/declined.
 TrainerClientSchema.index(
   { trainerId: 1, clientEmail: 1, scope: 1 },
-  { unique: true, partialFilterExpression: { status: { $in: ["pending", "active"] } } }
+  {
+    unique: true,
+    partialFilterExpression: {
+      status: { $in: ["pending", "cuestionario_pendiente", "en_revision", "active"] },
+    },
+  }
 );
 
 // Acelera la consulta más frecuente de todas (requireActiveClient).

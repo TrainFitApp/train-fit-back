@@ -75,4 +75,22 @@ module.exports = {
     if (status) query.status = Array.isArray(status) ? { $in: status } : status;
     return TrainerClient.countDocuments(query);
   },
+
+  // TAREA 3 (coach-tab) — relaciones de un (trainerId, clientId) en cualquiera
+  // de los estados dados, sin filtrar por scope. Usado por el flujo de
+  // cuestionario inicial (que es UNO por par trainer-cliente, no por scope).
+  async findByTrainerAndClientInStatuses(trainerId, clientId, statuses) {
+    return TrainerClient.find({ trainerId, clientId, status: { $in: statuses } });
+  },
+
+  // Transiciona TODAS las relaciones de un par (trainerId, clientId) que
+  // estén en `fromStatus` a `toStatus` a la vez — el cuestionario/confirmación
+  // es una única acción que afecta a todos los scopes del mismo profesional
+  // simultáneamente, nunca uno a uno.
+  async updateManyStatus(trainerId, clientId, fromStatus, toStatus, extra = {}) {
+    return TrainerClient.updateMany(
+      { trainerId, clientId, status: fromStatus },
+      { $set: { status: toStatus, ...extra } }
+    );
+  },
 };

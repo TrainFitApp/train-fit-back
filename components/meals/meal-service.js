@@ -1,6 +1,26 @@
 const mealDao = require("./meal-dao");
 
+// TAREA 1 (coach-tab) — única comprobación de "¿puede el cliente editar
+// libremente esta comida?" en todo el módulo. Una comida pautada por un
+// profesional (assignedByTrainerId) solo puede cambiar de composición por
+// una vía controlada por ese profesional (prescribeMeal/MealProposal), nunca
+// por edición directa del cliente sobre sus productos/recetas.
+class MealProtectedError extends Error {
+  constructor() {
+    super("Esta comida fue pautada por tu profesional. Pídele un cambio en vez de editarla directamente.");
+    this.code = "MEAL_PROTECTED";
+  }
+}
+
+function assertMealEditable(meal) {
+  if (meal?.assignedByTrainerId) {
+    throw new MealProtectedError();
+  }
+}
+
 module.exports = {
+  MealProtectedError,
+  assertMealEditable,
   async findAll(page, limit) {
     return mealDao.findAll(page, limit);
   },
@@ -88,5 +108,18 @@ module.exports = {
 
   async deleteMealCustomRecipes(id) {
     return mealDao.deleteMealCustomRecipes(id);
+  },
+
+  // TAREA 1 — marcar/desmarcar cumplimiento. Nunca bloqueado por
+  // assertMealEditable: seguimiento y composición son conceptos distintos.
+  async setCompleted(id, completed) {
+    return mealDao.setCompleted(id, completed);
+  },
+
+  // TAREA 1 — marca esta comida como pautada por el profesional, tras
+  // pasteMeal (prescribeMeal). Permanente, mismo criterio que
+  // Table/NutritionalGoal.assignedByTrainerId — no se borra al revocar.
+  async markAssignedByTrainer(id, trainerId) {
+    return mealDao.markAssignedByTrainer(id, trainerId);
   },
 };

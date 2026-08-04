@@ -25,6 +25,13 @@ const anthropometry = require("../components/anthropometry/anthropometry-routes"
 const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goal-routes");
 const remoteConfig = require("../components/remoteConfig/remote-config-routes");
 const trainerClients = require("../components/trainerClients/trainer-client-routes");
+const trainerCheckins = require("../components/trainerCheckins/checkin-routes");
+const mealProposalClientRoutes = require("../components/mealProposals/meal-proposal-client-routes");
+const nutritionPreferencesClientRoutes = require("../components/nutritionPreferences/nutrition-preferences-client-routes");
+const coachDashboardRoutes = require("../components/coachDashboard/coach-dashboard-routes");
+const notificationRoutes = require("../components/notifications/notification-routes");
+const trainerTaskRoutes = require("../components/trainerTasks/trainer-task-routes");
+const dietTemplateRoutes = require("../components/dietTemplates/diet-template-routes");
 
 const router = express.Router();
 
@@ -33,6 +40,12 @@ router.use("/products", products);
 router.use("/users", users);
 router.use("/diets", diets);
 router.use("/dietdays", dietDays);
+router.use("/diets", mealProposalClientRoutes);
+router.use(nutritionPreferencesClientRoutes);
+router.use(coachDashboardRoutes);
+router.use(notificationRoutes);
+router.use(trainerTaskRoutes);
+router.use(dietTemplateRoutes);
 router.use("/meals", meals);
 router.use("/customproducts", customProducts);
 router.use("/recipes", recipes);
@@ -54,5 +67,6 @@ router.use("/anthropometry", anthropometry);
 router.use("/nutritionalgoals", nutritionalGoals);
 router.use("/config", remoteConfig);
 router.use("/trainer", trainerClients);
+router.use("/trainer", trainerCheckins);
 
 module.exports = router;

@@ -46,6 +46,15 @@ module.exports = {
     );
   },
 
+  // TAREA 1 — marcar/desmarcar cumplimiento, nunca protegido por assertMealEditable.
+  async setCompleted(id, completed) {
+    return mealSchema.findByIdAndUpdate(id, { $set: { completed: Boolean(completed) } }, { new: true });
+  },
+
+  async markAssignedByTrainer(id, trainerId) {
+    return mealSchema.findByIdAndUpdate(id, { $set: { assignedByTrainerId: trainerId } }, { new: true });
+  },
+
   async createMeal(meal) {
     return new Promise((resolve, reject) =>
       mealSchema.create(meal, (err, doc) => {

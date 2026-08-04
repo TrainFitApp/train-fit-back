@@ -1,13 +1,6 @@
 const tableModel = require("./table-service");
+const tableAccess = require("./table-access");
 const featureAccessService = require("../billing/feature-access-service");
-
-function isAdmin(req) {
-  return Boolean(req.userData?.roles?.includes("admin"));
-}
-
-function canActOnUser(req, targetUserId) {
-  return isAdmin(req) || String(req.user?.id) === String(targetUserId);
-}
 
 module.exports = {
   async getTables(req, res) {
@@ -22,14 +15,21 @@ module.exports = {
     return res.send(tables);
   },
 
+  // Replanteamiento MVP (rutinas): antes sin ninguna comprobaci\u00f3n de
+  // propiedad \u2014 cualquier "user"/"admin" autenticado pod\u00eda leer CUALQUIER
+  // tabla por ID. Se cierra al abrir el m\u00f3dulo a "trainer".
   async getTableById(req, res) {
     const table = await tableModel.getTableById(req.params.id);
+    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
     return res.send(table);
   },
 
 async copyTable(req, res) {
     const idUser = req.body.idUser || req.params.idUser;
-    if (!canActOnUser(req, idUser)) {
+    if (!(await tableAccess.canAccessUserTable(req, idUser))) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
@@ -47,7 +47,7 @@ async copyTable(req, res) {
 
   async duplicateTable(req, res) {
     const idUser = req.body.idUser || req.params.idUser;
-    if (!canActOnUser(req, idUser)) {
+    if (!(await tableAccess.canAccessUserTable(req, idUser))) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
@@ -65,7 +65,7 @@ async copyTable(req, res) {
 
   async duplicateTable(req, res) {
     const idUser = req.body.idUser || req.params.idUser;
-    if (!canActOnUser(req, idUser)) {
+    if (!(await tableAccess.canAccessUserTable(req, idUser))) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
@@ -111,7 +111,7 @@ async copyTable(req, res) {
 
   async createTableToUser(req, res) {
     const idUser = req.params.idUser || req.body.idUser;
-    if (!canActOnUser(req, idUser)) {
+    if (!(await tableAccess.canAccessUserTable(req, idUser))) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
@@ -132,28 +132,50 @@ async copyTable(req, res) {
     return res.send(table);
   },
 
+  // Antes escrib\u00eda siempre { _id, userId: req.user?.id } \u2014 si quien llama es
+  // un profesional editando la tabla de SU CLIENTE, req.user?.id es el id del
+  // profesional, no el due\u00f1o real, y el update no encontraba coincidencia
+  // (fallaba en silencio, no era un hueco de seguridad pero s\u00ed romp\u00eda la
+  // funci\u00f3n para "trainer"). Ahora se resuelve la tabla primero, se comprueba
+  // acceso con el mismo criterio que el resto del m\u00f3dulo, y se actualiza en
+  // modo admin (bypass del filtro por userId) porque el acceso ya est\u00e1
+  // verificado aqu\u00ed.
   async updateTable(req, res) {
     if (!req.body._id) return res.sendStatus(400);
     if (!req.body.name) return res.sendStatus(400);
 
-    const tableName = await tableModel.updateTable(req.body._id, req.body.name, req.user?.id, isAdmin(req));
+    const table = await tableModel.getTableById(req.body._id);
+    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
+
+    const tableName = await tableModel.updateTable(req.body._id, req.body.name, table.userId, true);
     return res.send(tableName);
   },
 
   async deleteTable(req, res) {
     const idUser = req.params.idUser;
-    if (!canActOnUser(req, idUser)) {
+    if (!(await tableAccess.canAccessUserTable(req, idUser))) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const result = await tableModel.deleteTable(idUser, req.params.idTable, isAdmin(req));
+    const result = await tableModel.deleteTable(idUser, req.params.idTable, true);
     if (result.deletedCount === 0) {
       return res.status(404).send({ message: "Tabla no encontrada o sin permiso" });
     }
     res.sendStatus(204);
   },
 
+  // Replanteamiento MVP (rutinas): sin comprobaci\u00f3n de propiedad antes de
+  // este cambio (bug preexistente, cerrado de paso).
   async deleteTableSplit(req, res) {
+    const tableDoc = await tableModel.getTableById(req.params.idTable);
+    if (!tableDoc) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!(await tableAccess.canAccessUserTable(req, tableDoc.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
+
     const table = await tableModel.deleteTableSplit(
       req.params.idTable,
       req.params.idSplit

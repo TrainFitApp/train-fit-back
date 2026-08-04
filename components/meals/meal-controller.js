@@ -1,4 +1,19 @@
 const mealService = require("./meal-service");
+const { resolveOwnedMealById } = require("../dietDays/diet-day-resolver");
+
+// Auditoría de seguridad — respuesta uniforme para los dos rechazos posibles
+// al operar sobre una comida: no pertenece al usuario autenticado (IDOR, ver
+// resolveOwnedMealById) o pertenece pero está protegida por un profesional
+// (TAREA 1, assertMealEditable).
+function handleMealError(res, e) {
+  if (e.code === "MEAL_NOT_FOUND") {
+    return res.status(400).send({ message: e.message, code: e.code });
+  }
+  if (e.code === "MEAL_PROTECTED") {
+    return res.status(403).send({ message: e.message, code: e.code });
+  }
+  return null;
+}
 
 module.exports = {
   async getMeals(req, res) {
@@ -8,10 +23,18 @@ module.exports = {
     return res.send(meals);
   },
 
+  // Auditoría de seguridad — antes aceptaba cualquier :id sin comprobar que
+  // perteneciera al usuario autenticado (IDOR de lectura). Ahora se resuelve
+  // contra el dietInUse real del usuario, igual que el resto del módulo.
   async getMeal(req, res) {
-    const meal = await mealService.findById(req.params.id);
-    if (!meal) return res.sendStatus(404);
-    return res.send(meal);
+    try {
+      const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async createMeal(req, res) {
@@ -43,12 +66,19 @@ module.exports = {
   },
 
   async addMealProduct(req, res) {
-    const meal = await mealService.addMealProduct(
-      req.params.idMeal,
-      req.params.idProduct,
-    );
-
-    return res.send(meal);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
+      mealService.assertMealEditable(existing);
+      const meal = await mealService.addMealProduct(
+        existing._id,
+        req.params.idProduct,
+      );
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   // async addMealCustomRecipe(req, res) {
@@ -58,30 +88,58 @@ module.exports = {
   // },
 
   async updateMeal(req, res) {
-    // if (!req.body.name) return res.sendStatus(400);
-    // if (!req.body.products) return res.sendStatus(400);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.body._id);
+      mealService.assertMealEditable(existing);
 
-    // const meal = await mealService.findById(req.params._id);
-    // if (!meal) return res.sendStatus(404);
+      const meal = await mealService.updateMeal({
+        id: existing._id,
+        name: req.body.name,
+        products: req.body.customProducts,
+        notes: req.body.notes,
+      });
 
-    const meal = await mealService.updateMeal({
-      id: req.body._id,
-      name: req.body.name,
-      products: req.body.customProducts,
-      notes: req.body.notes,
-    });
-
-    return res.send(meal);
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
+  // Corrige un IDOR real: `mealToPaste` (y sus `customProducts`/`customRecipes`)
+  // venía tal cual del body del cliente y se usaba directamente para
+  // sobrescribir/borrar documentos por `_id`, sin comprobar que pertenecieran
+  // al usuario autenticado (ver MVP-trainers/funcionalidades/F12-pautar-comida.md
+  // §15). Ahora se resuelve el `_id` recibido contra el `dietInUse` real del
+  // usuario y se usa el `Meal` auténtico de BD — nunca el objeto del cliente —
+  // como destino real de la operación.
   async pasteMeal(req, res) {
-    const meal = await mealService.pasteMeal(
-      req.body.meals.mealClipboard,
-      req.body.meals.mealToPaste,
-      req.body.merge,
-    );
+    try {
+      const mealToPasteId = req.body?.meals?.mealToPaste?._id;
+      if (!mealToPasteId) {
+        return res.status(400).send({ message: "meals.mealToPaste._id es obligatorio" });
+      }
 
-    return res.send(meal);
+      const ownedMealToPaste = await resolveOwnedMealById(req.auth.userId, mealToPasteId);
+      mealService.assertMealEditable(ownedMealToPaste);
+
+      const meal = await mealService.pasteMeal(
+        req.body.meals.mealClipboard,
+        ownedMealToPaste,
+        req.body.merge,
+      );
+
+      return res.send(meal);
+    } catch (e) {
+      if (e.code === "MEAL_NOT_FOUND") {
+        return res.status(400).send({ message: e.message });
+      }
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      console.error("Error en pasteMeal:", e.message);
+      return res.status(500).send({ message: "Internal Server Error" });
+    }
   },
 
   async modifyMeal(req, res) {
@@ -90,71 +148,138 @@ module.exports = {
     return res.send(meal);
   },
 
+  // Auditoría de seguridad — corrige dos bugs a la vez: `req.param.id` (sin
+  // "s", typo preexistente que hacía que este endpoint fallara siempre) y la
+  // falta de verificación de propiedad (borraba cualquier :id sin comprobar
+  // que perteneciera al usuario autenticado).
   async deleteMeal(req, res) {
-    await mealService.deleteMeal(req.param.id);
-    res.sendStatus(204);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.id);
+      mealService.assertMealEditable(existing);
+      await mealService.deleteMeal(existing._id);
+      return res.sendStatus(204);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async deleteMealProduct(req, res) {
-    const meal = await mealService.deleteMealProduct(
-      req.params.idmeal,
-      req.params.idproduct,
-    );
-
-    return res.send(meal);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idmeal);
+      mealService.assertMealEditable(existing);
+      const meal = await mealService.deleteMealProduct(
+        existing._id,
+        req.params.idproduct,
+      );
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async deleteMealCustomRecipe(req, res) {
-    const meal = await mealService.deleteMealCustomRecipe(
-      req.params.idmeal,
-      req.params.idCustomRecipe,
-    );
-
-    return res.send(meal);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idmeal);
+      mealService.assertMealEditable(existing);
+      const meal = await mealService.deleteMealCustomRecipe(
+        existing._id,
+        req.params.idCustomRecipe,
+      );
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async deleteMealCustomProducts(req, res) {
-    const meal = await mealService.deleteMealCustomProducts(req.params.id);
-
-    return res.send(meal);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.id);
+      mealService.assertMealEditable(existing);
+      const meal = await mealService.deleteMealCustomProducts(existing._id);
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async deleteMealCustomRecipes(req, res) {
-    const meal = await mealService.deleteMealCustomRecipes(req.params.id);
-
-    return res.send(meal);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.id);
+      mealService.assertMealEditable(existing);
+      const meal = await mealService.deleteMealCustomRecipes(existing._id);
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async addMealCustomRecipe(req, res) {
     try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
+      mealService.assertMealEditable(existing);
       const meal = await mealService.addMealCustomRecipe(
-        req.params.idMeal,
+        existing._id,
         req.params.idCustomRecipe,
       );
       return res.json(meal);
-    } catch (error) {
-      return res.status(500).json({ message: error.message });
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      return res.status(500).json({ message: e.message });
     }
   },
 
   async deleteMealCustomRecipeRef(req, res) {
     try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
+      mealService.assertMealEditable(existing);
       const meal = await mealService.deleteMealCustomRecipe(
-        req.params.idMeal,
+        existing._id,
         req.params.idCustomRecipe,
       );
       return res.json(meal);
-    } catch (error) {
-      return res.status(500).json({ message: error.message });
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      return res.status(500).json({ message: e.message });
     }
   },
 
   async deleteMealCustomRecipesRef(req, res) {
     try {
-      const meal = await mealService.deleteMealCustomRecipes(req.params.id);
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.id);
+      mealService.assertMealEditable(existing);
+      const meal = await mealService.deleteMealCustomRecipes(existing._id);
       return res.json(meal);
-    } catch (error) {
-      return res.status(500).json({ message: error.message });
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      return res.status(500).json({ message: e.message });
+    }
+  },
+
+  // TAREA 1 — marcar/desmarcar cumplimiento. Nunca protegido por
+  // assertMealEditable (seguimiento y composición son conceptos distintos),
+  // pero SÍ verifica propiedad (mismo IDOR que el resto del módulo).
+  async setMealCompleted(req, res) {
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.id);
+      const meal = await mealService.setCompleted(existing._id, req.body?.completed !== false);
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
     }
   },
 };

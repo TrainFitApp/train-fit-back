@@ -7,6 +7,16 @@ const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const MealSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
   notes: { type: String, trim: true, maxlength: 500 },
+  // TAREA 1 (coach-tab) — presente si un profesional pautó esta comida
+  // (prescribeMeal). Mismo criterio que Table/NutritionalGoal.assignedByTrainerId:
+  // permanente, protege de edición directa del cliente (ver
+  // meal-service.js#assertMealEditable) — la única vía controlada para
+  // cambiarla es una MealProposal nueva del propio profesional.
+  assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  // El cliente la marca como comida cuando la ha tomado — no bloqueado por
+  // assignedByTrainerId (marcar cumplimiento siempre está permitido, solo se
+  // protege la COMPOSICIÓN de la comida, no su registro de seguimiento).
+  completed: { type: Boolean, default: false },
   customProducts: [
     {
       type: Schema.Types.ObjectId,

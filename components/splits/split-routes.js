@@ -5,44 +5,44 @@ const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-router.getAsync("/", auth(["admin", "user"]), controller.getSplits);
+router.getAsync("/", auth(["admin", "user", "trainer"]), controller.getSplits);
 router.getAsync(
   "/code/:barcode",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.getSplitByCode,
 );
-router.getAsync("/count", auth(["admin", "user"]), controller.getSplitsCount);
-router.getAsync("/:search", auth(["admin", "user"]), controller.getSearchSplit);
-router.postAsync("/", auth(["admin", "user"]), controller.createSplit);
+router.getAsync("/count", auth(["admin", "user", "trainer"]), controller.getSplitsCount);
+router.getAsync("/:search", auth(["admin", "user", "trainer"]), controller.getSearchSplit);
+router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createSplit);
 router.postAsync(
   "/:tableInUseId",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.createSplitAndAddToTable,
 );
 router.putAsync(
   "/add/to/table",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.addSplitToTable,
 );
 router.putAsync(
   "/split/:idTable/:idSplit",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.addTableSplit,
 );
 router.putAsync(
   "/:idSplit/:idWorkout",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.addWorkoutsSplit,
 );
-router.putAsync("/:id", auth(["admin", "user"]), controller.updateSplit);
+router.putAsync("/:id", auth(["admin", "user", "trainer"]), controller.updateSplit);
 router.deleteAsync(
   "/:idTable",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.deleteSplits,
 );
 router.deleteAsync(
   "/:idTable/:idSplit",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.deleteSplit,
 );
 

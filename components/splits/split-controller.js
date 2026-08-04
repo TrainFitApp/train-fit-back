@@ -3,23 +3,20 @@ const splitDTO = require("./split-dto");
 const tableSchema = require("../tables/table-schema");
 const featureAccessService = require("../billing/feature-access-service");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const tableAccess = require("../tables/table-access");
 const mongoose = require("mongoose");
 
 // MVP-trainers D10/F14: hasta 21 microciclos (no 4) SOLO si la rutina fue
 // asignada por un profesional Y el cliente tiene AHORA relación "training"
 // activa — no depende solo del campo, revierte al terminar la relación.
-async function isMicrocycleExempt(table, req) {
+// Comprueba la relación del DUEÑO de la tabla (table.userId), no la de quien
+// hace la petición — antes se comprobaba req.user.id, que coincidía por
+// casualidad mientras solo el propio cliente podía llegar aquí; ahora que un
+// profesional también puede mutar la tabla de su cliente, eran valores
+// distintos y la exención quedaba mal calculada.
+async function isMicrocycleExempt(table) {
   if (!table.assignedByTrainerId) return false;
-  return trainerClientDao.hasActiveRelation(req.user.id, "training");
-}
-
-function isAdmin(req) {
-  return Boolean(req.userData?.roles?.includes("admin"));
-}
-
-function userOwnsTable(req, table) {
-  if (isAdmin(req)) return true;
-  return table?.userId?.toString() === req.user?.id?.toString();
+  return trainerClientDao.hasActiveRelation(table.userId, "training");
 }
 
 module.exports = {
@@ -61,10 +58,10 @@ module.exports = {
       .findById(req.params.tableInUseId)
       .select("_id userId splits assignedByTrainerId");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table)) {
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
-    const isExempt = await isMicrocycleExempt(table, req);
+    const isExempt = await isMicrocycleExempt(table);
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length, isExempt)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
@@ -85,10 +82,10 @@ module.exports = {
       .findById(req.body.idTable)
       .select("_id userId splits assignedByTrainerId");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table)) {
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
-    const isExempt = await isMicrocycleExempt(table, req);
+    const isExempt = await isMicrocycleExempt(table);
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length, isExempt)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
@@ -109,7 +106,7 @@ module.exports = {
   async addTableSplit(req, res) {
     const tableDoc = await tableSchema.findById(req.params.idTable).select("_id userId");
     if (!tableDoc) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, tableDoc)) {
+    if (!(await tableAccess.canAccessUserTable(req, tableDoc.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
 
@@ -121,7 +118,15 @@ module.exports = {
     return res.send(table);
   },
 
+  // No comprobaba propiedad antes de este cambio (bug preexistente, cerrado
+  // de paso al abrir este módulo a "trainer").
   async addWorkoutsSplit(req, res) {
+    const table = await tableAccess.findTableOwningSplit(req.params.idSplit);
+    if (!table) return res.status(404).send({ message: "Micro-ciclo no encontrado" });
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
+
     const split = await splitService.addWorkoutsSplit(
       req.params.idSplit,
       req.params.idWorkout,
@@ -130,9 +135,17 @@ module.exports = {
     return res.send(split);
   },
 
+  // No comprobaba propiedad antes de este cambio (bug preexistente, cerrado
+  // de paso al abrir este módulo a "trainer").
   async updateSplit(req, res) {
     const split = await splitService.getSplit(req.params.id);
     if (!split) return res.sendStatus(404);
+
+    const table = await tableAccess.findTableOwningSplit(req.params.id);
+    if (!table) return res.sendStatus(404);
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
 
     await splitService.updateSplit(req.params.id, req.body);
 
@@ -142,7 +155,7 @@ module.exports = {
   async deleteSplit(req, res) {
     const table = await tableSchema.findById(req.params.idTable).select("_id userId");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table)) {
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
 
@@ -179,7 +192,7 @@ module.exports = {
       .select("_id userId splits");
 
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-    if (!userOwnsTable(req, table)) {
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({
         message: "No tienes permiso para esta rutina",
       });
