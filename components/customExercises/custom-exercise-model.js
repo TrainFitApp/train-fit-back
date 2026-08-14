@@ -27,6 +27,10 @@ module.exports = {
     return customExerciseDao.copySetOnCustomExercise(order, customExdercise);
   },
 
+  async setCustomExerciseBlock(id, blockId) {
+    return customExerciseDao.setCustomExerciseBlock(id, blockId);
+  },
+
   async deleteCustomExercise(id) {
     return customExerciseDao.deleteCustomExercise(id);
   },

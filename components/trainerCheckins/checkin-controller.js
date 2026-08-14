@@ -116,6 +116,37 @@ module.exports = {
     return res.send(responses);
   },
 
+  // GET /trainer/checkins/responses — TASK-002 ("Reportes"): histórico de
+  // check-ins de TODOS los clientes de este entrenador, no solo uno.
+  // trainerId ya escopea correctamente (a diferencia de listMyHistory, no
+  // hace falta iterar por cliente). clientId viene populado con
+  // name/lastname/email — se aplana a `client` para que el frontend no
+  // tenga que distinguir entre el campo crudo y el objeto poblado.
+  async getMyCheckinResponses(req, res) {
+    const responses = await checkinDao.listResponsesForTrainer(req.auth.userId);
+    return res.send(
+      responses.map(({ clientId, ...rest }) => ({
+        ...rest,
+        client: clientId && typeof clientId === "object" ? clientId : null,
+      }))
+    );
+  },
+
+  // GET /trainer/checkins/unseen-count
+  // TASK-024 (MASTER_BACKLOG.md)
+  async getUnseenCount(req, res) {
+    const count = await checkinDao.countUnseenForTrainer(req.auth.userId);
+    return res.send({ count });
+  },
+
+  // POST /trainer/checkins/mark-seen — marca TODAS las respuestas del
+  // trainer como vistas (misma semántica que "abrir la bandeja" en un
+  // cliente de correo: visitar Reportes limpia el contador).
+  async markSeen(req, res) {
+    await checkinDao.markAllSeenForTrainer(req.auth.userId);
+    return res.sendStatus(204);
+  },
+
   // --- Lado cliente ---
   // GET /trainer/checkins/mine — qué campos le piden, por cada profesional con relación activa
   async listMine(req, res) {

@@ -152,6 +152,48 @@ module.exports = {
     return res.sendStatus(204);
   },
 
+  // Planificador visual (Fase C) — reordena columnas dentro de una tabla.
+  async reorderSplits(req, res) {
+    const table = await tableSchema.findById(req.params.idTable).select("_id userId");
+    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
+
+    try {
+      const splits = await splitService.reorderSplits(req.params.idTable, req.body?.splitIdsOrder);
+      return res.send(splits);
+    } catch (e) {
+      if (e.code === "INVALID_SPLIT_ORDER") return res.status(400).send({ message: e.message });
+      if (e.code === "TABLE_NOT_FOUND") return res.status(404).send({ message: e.message });
+      throw e;
+    }
+  },
+
+  // Planificador visual (Fase C) — "Añadir semana" en blanco.
+  async createBlankSplitAndAddToTable(req, res) {
+    const table = await tableSchema.findById(req.params.idTable).select("_id userId");
+    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
+
+    const isExempt = await isMicrocycleExempt(table);
+    const fullTable = await tableSchema.findById(req.params.idTable).select("splits");
+    if (!featureAccessService.canAddMicrocycle(req.user, fullTable.splits.length, isExempt)) {
+      return res.status(403).send({
+        code: "PREMIUM_LIMIT_MICROCYCLES",
+        message: "Límite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
+      });
+    }
+
+    const splits = await splitService.createBlankSplitAndAddToTable(
+      req.params.idTable,
+      req.body?.name,
+    );
+    return res.status(201).send(splits);
+  },
+
   async deleteSplit(req, res) {
     const table = await tableSchema.findById(req.params.idTable).select("_id userId");
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });

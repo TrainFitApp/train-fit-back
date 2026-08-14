@@ -180,7 +180,16 @@ module.exports = {
     }
 
     const dietDay = await dietDaysService.findByIdDietAndDate(client.dietInUse, req.query.date);
-    return res.send(dietDay);
+    if (!dietDay) {
+      return res.send(null);
+    }
+
+    // TAREA5 — el frontend del entrenador necesita el id de la Diet (no solo
+    // el DietDay) para poder pedir productos/recetas recientes de esta
+    // comida vía GET /diets/:id/recent-products|recipes (mismo endpoint que
+    // ya usa el propio consumidor, indexado por dietId+mealIndex).
+    const dietDayObj = typeof dietDay.toObject === "function" ? dietDay.toObject() : dietDay;
+    return res.send({ ...dietDayObj, dietId: client.dietInUse.toString() });
   },
 
   // GET /trainer/clients/:clientId/nutritional-goals — F10, requireActiveClient("nutrition")
@@ -259,6 +268,20 @@ module.exports = {
       console.error("Error en prescribeMeal:", e.message);
       return res.status(500).send({ message: "Internal Server Error" });
     }
+  },
+
+  // GET /trainer/clients/:clientId/previous-relation-cutoff
+  // TASK-062 (MASTER_BACKLOG.md) — antes, si un cliente revocado volvía a
+  // aceptar una invitación, sus notas/tareas de la relación anterior
+  // reaparecían mezcladas con las nuevas sin ninguna indicación de que eran
+  // "de antes". En vez de purgarlas (irreversible, y las notas/tareas
+  // siguen siendo información real del historial de coaching de ese
+  // cliente — ver DECISIONS.md), se expone la fecha de la última revocación
+  // para que el frontend pueda separar visualmente "de una relación
+  // anterior" de "de la relación actual", sin perder ningún dato.
+  async getPreviousRelationCutoff(req, res) {
+    const cutoff = await trainerClientDao.findLatestRevokedForClient(req.auth.userId, req.params.clientId);
+    return res.send({ cutoffDate: cutoff?.revokedAt || null });
   },
 
   // GET /trainer/clients/:clientId/notes — F19, requireActiveClient() sin scope
@@ -478,6 +501,40 @@ module.exports = {
     const { date, mealSlot } = req.params;
     const targetClientIds = req.body?.targetClientIds;
 
+    if (!Array.isArray(targetClientIds) || !targetClientIds.length) {
+      return res.status(400).send({ message: "Debes seleccionar al menos un cliente destino" });
+    }
+
+    const mealClipboard = {
+      customProducts: req.body?.customProducts || [],
+      customRecipes: req.body?.customRecipes || [],
+    };
+    const merge = Boolean(req.body?.merge);
+
+    const results = await applyToTargets(req.auth.userId, targetClientIds, "nutrition", async (targetClientId) => {
+      const dietDay = await resolveOwnedDietDay(targetClientId, date);
+      const targetMeal = (dietDay.meals || []).find((meal) => meal.name === mealSlot);
+      if (!targetMeal) {
+        throw new Error(`No existe la comida "${mealSlot}" para este cliente en esta fecha`);
+      }
+      await mealModel.pasteMeal(mealClipboard, targetMeal, merge);
+      await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
+      await notificationDao.create(targetClientId, req.auth.userId, "meal_prescribed", { date, mealName: targetMeal.name });
+    });
+    return res.send(results);
+  },
+
+  // POST /trainer/meals/apply-to-clients — F30/TAREA5, sin cliente origen en
+  // la URL (ver comentario en trainer-client-routes.js). Misma lógica que
+  // applyMealToClients de arriba, date/mealSlot viajan por el body en vez de
+  // por params porque no hay ruta anidada bajo un cliente concreto.
+  async applyMealToClientsDirect(req, res) {
+    const { date, mealSlot } = req.body || {};
+    const targetClientIds = req.body?.targetClientIds;
+
+    if (!date || !mealSlot) {
+      return res.status(400).send({ message: "date y mealSlot son obligatorios" });
+    }
     if (!Array.isArray(targetClientIds) || !targetClientIds.length) {
       return res.status(400).send({ message: "Debes seleccionar al menos un cliente destino" });
     }

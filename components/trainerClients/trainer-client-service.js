@@ -3,6 +3,7 @@ const userSchema = require("../users/schema");
 const mail = require("../util/mail");
 const featureAccessService = require("../billing/feature-access-service");
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
+const trainerIntakeConfigService = require("../trainerIntakeConfig/trainer-intake-config-service");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
 
@@ -144,11 +145,26 @@ module.exports = {
     return trainerClientDao.findAllByTrainer(trainerId);
   },
 
+  // TASK-035 (MASTER_BACKLOG.md) — antes solo cancelaba invitaciones
+  // "pending" (nunca aceptadas); para "cuestionario_pendiente"/"en_revision"
+  // (el cliente YA aceptó y está en medio del alta) devolvía la invitación
+  // sin tocarla pero con 200 OK, y el frontend mostraba "Invitación
+  // cancelada" como si hubiera funcionado — éxito falso. Ahora esos 2
+  // estados también se pueden cancelar de verdad: como el cliente ya
+  // aceptó, es más "revocar" que "declinar" (mismo estado final que
+  // revokeByTrainer para un cliente activo), así que usa "revoked", no
+  // "declined" (reservado para invitaciones nunca aceptadas).
   async cancelInvite(trainerId, inviteId) {
     const invite = await trainerClientDao.findById(inviteId);
     if (!invite || String(invite.trainerId) !== String(trainerId)) return null;
-    if (invite.status !== "pending") return invite; // idempotente, nada que cancelar
-    return trainerClientDao.updateStatus(inviteId, "declined", { revokedBy: "trainer", revokedAt: new Date() });
+
+    if (invite.status === "pending") {
+      return trainerClientDao.updateStatus(inviteId, "declined", { revokedBy: "trainer", revokedAt: new Date() });
+    }
+    if (["cuestionario_pendiente", "en_revision"].includes(invite.status)) {
+      return trainerClientDao.updateStatus(inviteId, "revoked", { revokedBy: "trainer", revokedAt: new Date() });
+    }
+    return invite; // ya en un estado terminal (active/revoked/declined) — idempotente, nada que cancelar
   },
 
   async listPendingForClientEmail(email) {
@@ -288,6 +304,14 @@ module.exports = {
     }
 
     const enriched = await attachTrainerInfo(onboarding);
+    // TASK-049 — el formulario de cuestionario inicial necesita saber qué
+    // campos activó cada profesional. Un solo $in por los trainerId únicos
+    // (no por relación, ya que enabledFields es por trainer, no por scope),
+    // mismo criterio que attachTrainerInfo un poco más abajo en este mismo
+    // archivo — evita N consultas individuales cuando el cliente tiene
+    // relaciones pendientes con varios trainers a la vez.
+    const trainerIds = [...new Set(enriched.map((r) => String(r.trainerId)))];
+    const enabledFieldsByTrainer = await trainerIntakeConfigService.getEnabledFieldsByTrainers(trainerIds);
     return {
       blocked: true,
       relations: enriched.map((r) => ({
@@ -295,6 +319,7 @@ module.exports = {
         scope: r.scope,
         status: r.status,
         trainer: r.trainer,
+        intakeEnabledFields: enabledFieldsByTrainer.get(String(r.trainerId)),
       })),
     };
   },
@@ -303,9 +328,20 @@ module.exports = {
     return trainerClientDao.findActiveByClient(clientId);
   },
 
+  // TASK-062 (MASTER_BACKLOG.md)
+  async getPreviousRelationCutoff(trainerId, clientId) {
+    const latestRevoked = await trainerClientDao.findLatestRevokedForClient(trainerId, clientId);
+    return latestRevoked?.revokedAt || null;
+  },
+
   async listActiveClientsForTrainer(trainerId) {
     const relations = await trainerClientDao.findAllByTrainer(trainerId, { status: "active" });
     return aggregateByOtherParty(relations, "clientId");
+  },
+
+  // TASK-022 (MASTER_BACKLOG.md)
+  async listActiveClientsForTrainerPaginated(trainerId, { page, limit, search }) {
+    return trainerClientDao.findActiveClientsPaginated(trainerId, { page, limit, search });
   },
 
   /**

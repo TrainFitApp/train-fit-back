@@ -10,7 +10,15 @@ module.exports = {
     if (defaultOnly && idUser) {
       return tableDao.getTables(page, limit, false, idUser, true);
     }
-    return tableDao.getTables(page, limit);
+    // TASK-009 — antes se perdía idUser aquí: el caso "propias + públicas"
+    // (getAvailableTemplates, own=false con idUser real) caía a
+    // tableDao.getTables(page, limit) sin reenviar idUser, así que el $or
+    // de la rama final del DAO evaluaba ObjectId(null) — nunca matchea
+    // ninguna tabla real, el entrenador nunca veía sus propias rutinas como
+    // plantilla disponible. El caso público puro (idUser ya null desde el
+    // controller) sigue comportándose igual: ObjectId(null) tampoco matchea
+    // nada, el $or degrada a solo "públicas", sin cambio de comportamiento.
+    return tableDao.getTables(page, limit, false, idUser);
   },
 
   async getTableById(id) {

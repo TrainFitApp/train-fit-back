@@ -317,6 +317,35 @@ module.exports = {
     }
   },
 
+  // Rediseño de entrenamiento Fase B — asigna/quita el blockId de un
+  // CustomExercise. Valida que el blockId exista de verdad en Workout.blocks[]
+  // del entrenamiento que contiene este ejercicio (nunca confiar en un id
+  // suelto del body, mismo criterio que ya aplica assertCanAccessCustomExerciseId).
+  async setCustomExerciseBlock(id, blockId) {
+    if (blockId) {
+      const workout = await workoutSchema.findOne({ exercises: id }).select("blocks");
+      if (!workout) {
+        const err = new Error("Ejercicio no encontrado");
+        err.code = "CUSTOM_EXERCISE_NOT_FOUND";
+        throw err;
+      }
+      const blockExists = (workout.blocks || []).some(
+        (block) => block._id.toString() === blockId.toString(),
+      );
+      if (!blockExists) {
+        const err = new Error("El bloque no existe en este entrenamiento");
+        err.code = "BLOCK_NOT_FOUND";
+        throw err;
+      }
+    }
+
+    return customExerciseSchema.findByIdAndUpdate(
+      id,
+      { $set: { blockId: blockId || null } },
+      { new: true },
+    );
+  },
+
   async deleteCustomExercise(id) {
     try {
       const customExercise = await customExerciseSchema.findById(id);

@@ -59,4 +59,10 @@ router.deleteAsync(
   controller.deleteDietDayMeal,
 );
 
+// Fase 9 — el cliente elige, para una fecha concreta, cuál de los menús de
+// un plan "mode: choice" le toca (p. ej. Entrenamiento/Descanso). Ownership
+// resuelta contra req.user.id, nunca contra un DietDay._id suelto.
+router.getAsync("/date/:date/day-type", auth(["admin", "user"]), controller.getDayType);
+router.putAsync("/date/:date/day-type", auth(["admin", "user"]), controller.chooseDayType);
+
 module.exports = router;

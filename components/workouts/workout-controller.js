@@ -2,6 +2,35 @@ const workoutModel = require("./workout-service");
 const tableSchema = require("../tables/table-schema");
 const tableAccess = require("../tables/table-access");
 
+const BLOCK_TYPES = new Set(["straight", "superset", "circuit", "warmup", "finisher"]);
+
+function toFiniteOrNull(value) {
+  // Number(null) === 0 y Number("") === 0 — hay que descartar "sin valor"
+  // ANTES de convertir, si no un rounds/restPause ausente se guardaría como 0
+  // (mismo bug evitado en workoutTemplates/workout-template-controller.js).
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+// Rediseño de entrenamiento Fase B — sanitiza blocks[] antes de reemplazar
+// Workout.blocks. Exportada para test. A diferencia de
+// workoutTemplates/workout-template-controller.js#sanitizeBlocks, aquí NO
+// hay exercises[] anidados: las exercises ya son CustomExercise reales,
+// referenciadas por blockId, no contenido embebido en el bloque.
+function sanitizeWorkoutBlocks(blocks) {
+  return (Array.isArray(blocks) ? blocks : []).map((block, index) => ({
+    _id: block?._id,
+    name: (block?.name || "").toString().trim().slice(0, 100),
+    type: BLOCK_TYPES.has(block?.type) ? block.type : "straight",
+    order: Number.isFinite(Number(block?.order)) ? Number(block.order) : index,
+    rounds: toFiniteOrNull(block?.rounds),
+    restBetweenExercises: toFiniteOrNull(block?.restBetweenExercises),
+    restBetweenRounds: toFiniteOrNull(block?.restBetweenRounds),
+    instructions: (block?.instructions || "").toString().trim().slice(0, 500),
+  }));
+}
+
 // Replanteamiento MVP (rutinas) — este módulo no comprobaba propiedad en
 // NINGÚN endpoint (a diferencia de split-controller.js). Se cierra ahora al
 // abrir el módulo a "trainer": mismo criterio en todos los sitios (dueño
@@ -33,6 +62,9 @@ async function assertCanAccessWorkoutId(req, res, idWorkout) {
 }
 
 module.exports = {
+  // Función pura exportada para test (workout-controller.test.js).
+  sanitizeWorkoutBlocks,
+
   async getWorkouts(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 10).toString(), 10);
@@ -141,6 +173,63 @@ module.exports = {
   async modifyWorkout(req, res) {
     if (!(await assertCanAccessWorkoutId(req, res, req.body?._id))) return;
     const workout = await workoutModel.modifyWorkout(req.body);
+    return res.send(workout);
+  },
+
+  // POST /workouts/:idWorkout/copy-to-split/:idSplit — Planificador visual
+  // (Fase C). Copia un workout suelto a otra semana (o a la misma, como
+  // "duplicar en el sitio"). Verifica que el split de destino pertenece a la
+  // MISMA tabla que el workout origen — nunca confiar en un idSplit suelto
+  // del body/params (mismo criterio que el resto de este controller).
+  async copyWorkoutToSplit(req, res) {
+    const sourceTable = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
+    if (!sourceTable) return;
+
+    const targetTable = await tableAccess.findTableOwningSplit(req.params.idSplit);
+    if (!targetTable) return res.status(404).send({ message: "Split de destino no encontrado" });
+    if (targetTable._id.toString() !== sourceTable._id.toString()) {
+      return res.status(403).send({ message: "El split de destino no pertenece a esta rutina" });
+    }
+
+    try {
+      const splits = await workoutModel.copyWorkoutToSplit(req.params.idWorkout, req.params.idSplit);
+      return res.status(201).send(splits);
+    } catch (e) {
+      if (e.code === "WORKOUT_NOT_FOUND" || e.code === "SPLIT_NOT_FOUND") {
+        return res.status(404).send({ message: e.message });
+      }
+      throw e;
+    }
+  },
+
+  // PUT /workouts/split/:idSplit/order — Planificador visual (Fase C).
+  // Reordena las cards DENTRO de una sola columna (a diferencia de
+  // reorderWorkoutRows, que reordena la misma fila en TODOS los splits).
+  async reorderWorkoutsInSplit(req, res) {
+    const table = await tableAccess.findTableOwningSplit(req.params.idSplit);
+    if (!table) return res.status(404).send({ message: "Split no encontrado" });
+    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+    }
+
+    try {
+      const splits = await workoutModel.reorderWorkoutsInSplit(
+        req.params.idSplit,
+        req.body?.workoutIdsOrder,
+      );
+      return res.send(splits);
+    } catch (e) {
+      if (e.code === "INVALID_WORKOUT_ORDER") return res.status(400).send({ message: e.message });
+      if (e.code === "SPLIT_NOT_FOUND") return res.status(404).send({ message: e.message });
+      throw e;
+    }
+  },
+
+  // PUT /workouts/:idWorkout/blocks — reemplaza el array de bloques completo.
+  async updateWorkoutBlocks(req, res) {
+    if (!(await assertCanAccessWorkoutId(req, res, req.params.idWorkout))) return;
+    const blocks = sanitizeWorkoutBlocks(req.body?.blocks);
+    const workout = await workoutModel.updateWorkoutBlocks(req.params.idWorkout, blocks);
     return res.send(workout);
   },
 

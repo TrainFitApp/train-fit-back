@@ -417,6 +417,28 @@ module.exports = {
     );
   },
 
+  // Fase 9 — método angosto y dedicado (a diferencia de updateDietDay de
+  // arriba, que confía en req.params.id sin comprobar propiedad): el llamador
+  // SIEMPRE debe haber resuelto el dietDayId vía resolveOwnedDietDay(userId,
+  // date) antes de llamar a esto, nunca aceptar un id suelto del cliente.
+  async setDayTypeName(dietDayId, dayTypeName) {
+    return dietDaySchema.findByIdAndUpdate(dietDayId, { $set: { dayTypeName } }, { new: true });
+  },
+
+  // TASK-044 (MASTER_BACKLOG.md) — cuenta días de un plan "mode: choice" en
+  // los que el cliente nunca eligió menú (DietDay.dayTypeName sigue null)
+  // dentro de [startDate, endDate]. Mismo patrón que findByIdDietAndDate:
+  // dietSchema.findById ya trae dietsDay autopoblado, se filtra en memoria
+  // en vez de una agregación nueva — coherente con cómo ya se resuelve el
+  // resto de consultas "un día concreto de este Diet" en este archivo.
+  async countDaysWithoutChoice(dietId, startDate, endDate) {
+    const diet = await dietSchema.findById(dietId);
+    if (!diet) return 0;
+    return diet.dietsDay.filter(
+      (dd) => dd.date >= startDate && dd.date <= endDate && !dd.dayTypeName
+    ).length;
+  },
+
   async pasteDietDayByIdDiet(id, dietDayClipboard, dietDayToPaste) {
     const normalizeId = (value) => value?._id || value;
     const toPlainObject = (value) =>

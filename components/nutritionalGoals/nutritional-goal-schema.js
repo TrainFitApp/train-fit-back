@@ -23,6 +23,14 @@ const NutritionalGoalSchema = new Schema({
   // objetivo. Mismo criterio que Table.assignedByTrainerId — permanente,
   // exención de límite depende de relación activa, no de este campo solo.
   assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  // Auditoría de arquitectura (nutrición) — mismo concepto de periodo que
+  // PlanAssignment, opcional y retrocompatible: un objetivo sin estos campos
+  // se sigue comportando exactamente como hoy (el "actual" es el que apunta
+  // User.goalInUse, sin vigencia temporal). Con ellos, un objetivo puede
+  // programarse para una fase futura conocida.
+  startDate: { type: String, default: null },
+  endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null], default: null },
+  endDate: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

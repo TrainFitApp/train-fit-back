@@ -7,6 +7,11 @@ const DietDaySchema = Schema({
   date: String,
   notes: { type: String, trim: true, maxlength: 500 },
   steps: Number,
+  // Fase 9 — qué patrón/menú de un plan "mode: choice" eligió el cliente
+  // para ESTE día concreto (p. ej. "Entrenamiento"/"Descanso"). null en el
+  // 100% de los días sin un plan de este tipo — ver diet-days-controller.js
+  // getDayType/chooseDayType y planAssignments/plan-resolver.js.
+  dayTypeName: { type: String, default: null },
   meals: [
     {
       type: Schema.Types.ObjectId,

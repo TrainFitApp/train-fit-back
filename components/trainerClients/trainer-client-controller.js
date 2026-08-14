@@ -106,6 +106,29 @@ const controller = {
     return res.send(trainerClientDto.multipleAggregated(aggregated));
   },
 
+  // GET /trainer/clients/paginated?page=&limit=&search=
+  // TASK-022 (MASTER_BACKLOG.md) — variante paginada para la lista "Clientes"
+  // del trainer. Ruta nueva y aditiva: no sustituye a listMyClients, que
+  // otros 5 consumidores del frontend (dashboard, select-clients-modal,
+  // client-detail fallback, checkin-templates) siguen usando tal cual
+  // porque genuinamente necesitan la lista completa.
+  async listMyClientsPaginated(req, res) {
+    const page = parseInt((req.query.page || "0").toString(), 10);
+    const limit = parseInt((req.query.limit || "20").toString(), 10);
+    const search = req.query.search || "";
+
+    const result = await trainerClientService.listActiveClientsForTrainerPaginated(req.auth.userId, {
+      page,
+      limit,
+      search,
+    });
+
+    return res.send({
+      clients: trainerClientDto.multipleAggregated(result.clients),
+      total: result.total,
+    });
+  },
+
   // DELETE /trainer/clients/:clientId?scope=training|nutrition
   async revokeByTrainer(req, res) {
     const { scope } = req.query;

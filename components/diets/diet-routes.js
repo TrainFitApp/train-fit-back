@@ -6,14 +6,18 @@ const ROLES = require("../users/util/roles");
 const router = express.Router();
 
 router.getAsync("/", auth(["admin", "user"]), controller.getDiets);
+// TAREA5 — el entrenador necesita ver los productos/recetas más usados en la
+// comida de un cliente (misma pantalla search-foods) para no partir de cero
+// en cada búsqueda. Solo lectura, no expone ni muta datos de otro usuario
+// (dietId/mealIndex van por la URL, sin comprobación de propiedad hoy).
 router.getAsync(
   "/:id/recent-products",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.getRecentMealProducts
 );
 router.getAsync(
   "/:id/recent-recipes",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.getRecentMealRecipes
 );
 router.getAsync("/:id", auth(["admin", "user"]), controller.getDietById);

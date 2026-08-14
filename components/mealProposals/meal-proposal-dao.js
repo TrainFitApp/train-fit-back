@@ -25,4 +25,13 @@ module.exports = {
   async setChosenIndex(id, chosenIndex) {
     return MealProposal.findByIdAndUpdate(id, { $set: { chosenIndex } }, { new: true });
   },
+
+  // Fase 9 — antes de generar una propuesta nueva desde el plan para esta
+  // fecha+comida (p. ej. el cliente cambia de "Entrenamiento" a "Descanso" y
+  // se vuelve a resolver), se retiran las que quedaran pendientes de elegir
+  // para no dejar propuestas huérfanas duplicadas. Una ya elegida
+  // (chosenIndex != null) no se toca — es historial real, no basura.
+  async deletePendingForDateAndSlot(clientId, date, mealSlot) {
+    return MealProposal.deleteMany({ clientId, date, mealSlot, chosenIndex: null });
+  },
 };

@@ -97,6 +97,21 @@ module.exports = {
         .send({ message: "No tienes permiso para borrar este ejercicio." });
     }
 
+    // Nota: las referencias desde CustomExercise (rutinas reales de
+    // clientes) ya las limpia el hook pre('deleteOne') de exercise-schema.js
+    // (cascada: borra los CustomExercise y los desengancha del Workout). Solo
+    // WorkoutTemplate.blocks[].exercises[] queda sin ningún mecanismo de
+    // limpieza — de ahí que el bloqueo se limite a ese caso.
+    const usage = await exerciseModel.getExerciseUsage(req.params.id);
+    if (usage.workoutTemplateCount > 0) {
+      return res.status(409).send({
+        code: "EXERCISE_IN_USE",
+        message:
+          "Este ejercicio está en uso en una o más plantillas de rutina y no se puede borrar. Quítalo de esas plantillas primero.",
+        ...usage,
+      });
+    }
+
     await exerciseModel.deleteExercise(req.params.id);
     return res.sendStatus(204);
   },

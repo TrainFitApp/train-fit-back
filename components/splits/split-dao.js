@@ -12,9 +12,18 @@ const setSchema = require("../sets/set-schema");
 const { normalizeSetsOrder } = require("../sets/set-order-util");
 const userSchema = require("../users/schema");
 
+const { isSamePermutation } = require("../util/permutation-util");
+
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
 }
+
+// Planificador visual (Fase C) — el nuevo orden de columnas debe ser
+// exactamente una permutación de los splits actuales de la tabla: nunca
+// añade ni quita splits, solo reordena. Alias local sobre el util
+// compartido, mantenido para no romper el nombre ya usado en
+// split-dao.test.js.
+const isValidSplitPermutation = isSamePermutation;
 
 module.exports = {
   async getSplits(page, limit) {
@@ -245,13 +254,17 @@ module.exports = {
   //   }
   // },
 
+  // Planificador visual (Fase C) — primer caller real de este método (antes
+  // sin ningún wrapper en el frontend). findByIdAndUpdate sin { new: true }
+  // devuelve el documento ANTERIOR a la actualización — bug preexistente que
+  // habría devuelto el split sin el workout recién añadido; corregido aquí.
   async addWorkoutsSplit(idSplit, idWorkout) {
     const addWorkout = {
       $push: { workouts: idWorkout },
     };
 
     return new Promise((resolve, reject) =>
-      splitSchema.findByIdAndUpdate(idSplit, addWorkout, {}, (err, docs) => {
+      splitSchema.findByIdAndUpdate(idSplit, addWorkout, { new: true }, (err, docs) => {
         if (err) return reject(err);
         return resolve(docs);
       }),
@@ -267,6 +280,66 @@ module.exports = {
         return resolve(docs);
       }),
     );
+  },
+
+  // Función pura exportada para test (split-dao.test.js).
+  isValidSplitPermutation,
+
+  // Planificador visual (Fase C) — reordena las columnas (splits) de una
+  // tabla. Nunca crea/borra splits, solo reescribe table.splits en el orden
+  // pedido — igual de simple que reordenar cualquier otro array de
+  // referencias en este backend, pero a nivel Table en vez de Split.
+  async reorderSplits(idTable, splitIdsOrder) {
+    const tableDoc = await tableSchema.findById(idTable).select("_id splits");
+    if (!tableDoc) {
+      const err = new Error("Table not found");
+      err.code = "TABLE_NOT_FOUND";
+      throw err;
+    }
+
+    // table.splits está autopoblado (mongoose-autopopulate) — cada elemento
+    // es un Split completo, no un ObjectId suelto; hay que extraer el _id
+    // explícitamente (mismo patrón ya usado en split-controller.js#deleteSplits).
+    const currentIds = tableDoc.splits.map((s) => (s._id || s).toString());
+    const requestedIds = (Array.isArray(splitIdsOrder) ? splitIdsOrder : []).map((id) =>
+      (id?._id || id).toString(),
+    );
+
+    if (!isValidSplitPermutation(currentIds, requestedIds)) {
+      const err = new Error("splitIdsOrder debe ser una permutación exacta de los splits actuales");
+      err.code = "INVALID_SPLIT_ORDER";
+      throw err;
+    }
+
+    await tableSchema.findByIdAndUpdate(idTable, { $set: { splits: requestedIds } });
+
+    const updatedTable = await tableSchema.findById(idTable);
+    return updatedTable.splits;
+  },
+
+  // Planificador visual (Fase C) — "Añadir semana" en blanco (a diferencia de
+  // addSplitToTable, que SIEMPRE duplica un split existente). Reutiliza
+  // splitUtil.getStandarSplit() como base (ya devuelve workouts: []) en vez
+  // de reinventar el shape por defecto.
+  async createBlankSplitAndAddToTable(idTable, name) {
+    const tableDoc = await tableSchema.findById(idTable).select("_id splits");
+    if (!tableDoc) {
+      const err = new Error("Table not found");
+      err.code = "TABLE_NOT_FOUND";
+      throw err;
+    }
+
+    const blankSplit = splitUtil.getStandarSplit();
+    if (name) blankSplit.name = name;
+
+    const newSplit = await splitSchema.create(blankSplit);
+
+    await tableSchema.findByIdAndUpdate(idTable, {
+      $push: { splits: newSplit._id },
+    });
+
+    const updatedTable = await tableSchema.findById(idTable);
+    return updatedTable.splits;
   },
 
   async deleteSplit(idTable, idSplit) {

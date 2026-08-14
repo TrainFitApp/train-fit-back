@@ -39,4 +39,12 @@ module.exports = {
   async deleteExercise(id) {
     return exerciseDao.deleteExercise(id);
   },
+
+  async getExerciseUsage(id) {
+    const [customExerciseCount, workoutTemplateCount] = await Promise.all([
+      exerciseDao.countCustomExerciseUsage(id),
+      exerciseDao.countWorkoutTemplateUsage(id),
+    ]);
+    return { customExerciseCount, workoutTemplateCount };
+  },
 };

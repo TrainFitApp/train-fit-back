@@ -32,6 +32,10 @@ const coachDashboardRoutes = require("../components/coachDashboard/coach-dashboa
 const notificationRoutes = require("../components/notifications/notification-routes");
 const trainerTaskRoutes = require("../components/trainerTasks/trainer-task-routes");
 const dietTemplateRoutes = require("../components/dietTemplates/diet-template-routes");
+const mealSnippetRoutes = require("../components/mealSnippets/meal-snippet-routes");
+const planAssignmentRoutes = require("../components/planAssignments/plan-assignment-routes");
+const workoutTemplateRoutes = require("../components/workoutTemplates/workout-template-routes");
+const trainerIntakeConfigRoutes = require("../components/trainerIntakeConfig/trainer-intake-config-routes");
 
 const router = express.Router();
 
@@ -46,6 +50,9 @@ router.use(coachDashboardRoutes);
 router.use(notificationRoutes);
 router.use(trainerTaskRoutes);
 router.use(dietTemplateRoutes);
+router.use(mealSnippetRoutes);
+router.use(planAssignmentRoutes);
+router.use(workoutTemplateRoutes);
 router.use("/meals", meals);
 router.use("/customproducts", customProducts);
 router.use("/recipes", recipes);
@@ -68,5 +75,6 @@ router.use("/nutritionalgoals", nutritionalGoals);
 router.use("/config", remoteConfig);
 router.use("/trainer", trainerClients);
 router.use("/trainer", trainerCheckins);
+router.use("/trainer", trainerIntakeConfigRoutes);
 
 module.exports = router;

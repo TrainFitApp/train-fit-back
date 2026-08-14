@@ -3,6 +3,7 @@ const { auth } = require("../../middleware/validateAuth");
 const controller = require("./trainer-client-controller");
 const dataController = require("./trainer-client-data-controller");
 const { requireActiveClient } = require("./require-active-client");
+const workoutTemplateController = require("../workoutTemplates/workout-template-controller");
 
 const router = express.Router();
 
@@ -11,6 +12,7 @@ router.postAsync("/invites", auth(["trainer"]), controller.inviteClient);
 router.getAsync("/invites", auth(["trainer"]), controller.listInvitesByTrainer);
 router.deleteAsync("/invites/:id", auth(["trainer"]), controller.cancelInvite);
 router.getAsync("/clients", auth(["trainer"]), controller.listMyClients);
+router.getAsync("/clients/paginated", auth(["trainer"]), controller.listMyClientsPaginated);
 router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByTrainer);
 
 // --- TAREA 3: cuestionario inicial — el profesional revisa/confirma ANTES
@@ -43,6 +45,15 @@ router.getAsync(
   requireActiveClient("training"),
   dataController.getClientWorkoutHistory
 );
+// Rediseño de entrenamiento (Fase A) — aplica una WorkoutTemplate real dentro
+// de un split concreto del cliente, materializando exercises/sets ya
+// prescritos (ver workoutTemplates/workout-template-dao.js#applyToSplit).
+router.postAsync(
+  "/clients/:clientId/splits/:splitId/workout-templates/:templateId/apply",
+  auth(["trainer"]),
+  requireActiveClient("training"),
+  workoutTemplateController.applyTemplateToSplit
+);
 router.getAsync(
   "/clients/:clientId/anthropometry",
   auth(["trainer"]),
@@ -72,6 +83,12 @@ router.postAsync(
   auth(["trainer"]),
   requireActiveClient("nutrition"),
   dataController.prescribeMeal
+);
+router.getAsync(
+  "/clients/:clientId/previous-relation-cutoff",
+  auth(["trainer"]),
+  requireActiveClient(),
+  dataController.getPreviousRelationCutoff
 );
 router.getAsync(
   "/clients/:clientId/notes",
@@ -145,6 +162,18 @@ router.postAsync(
   auth(["trainer"]),
   requireActiveClient("nutrition"),
   dataController.applyMealToClients
+);
+// TAREA5 (auditoría UX, Fase D) — mismo reparto en bloque que la ruta de
+// arriba, pero SIN cliente origen: la comida se compone una vez desde un
+// punto de entrada propio ("Componer para varios clientes") y se aplica
+// directo a cada destinatario. requireActiveClient no aplica aquí porque no
+// hay un único cliente fijo en la URL — cada targetClientId se valida por
+// separado dentro de applyToTargets(), igual que ya hacían las otras rutas
+// de aplicar en bloque.
+router.postAsync(
+  "/meals/apply-to-clients",
+  auth(["trainer"]),
+  dataController.applyMealToClientsDirect
 );
 router.postAsync(
   "/clients/:clientId/nutrition-goals/apply-to-clients",

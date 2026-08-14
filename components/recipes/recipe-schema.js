@@ -14,6 +14,12 @@ const RecipeSchema = Schema(
     namePrefixes: [String],
     // Descripción opcional
     description: { type: String, trim: true, maxlength: 2000 },
+    // TASK-046 (MASTER_BACKLOG.md) — categorización libre (tipo de cocina,
+    // dieta, etc.), filtrable en searchRecipes. Sin catálogo cerrado
+    // deliberadamente — mismo criterio que Exercise.category (string libre
+    // por receta, no un enum), para no bloquear al trainer a una taxonomía
+    // fija que no encaje con su forma de organizar recetas.
+    tags: { type: [String], default: [] },
     // Array de CustomProducts (referencias inmutables)
     customProducts: [
       {

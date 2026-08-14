@@ -24,6 +24,14 @@ module.exports = {
     return workoutDao.reorderWorkoutRows(idTable, workoutIdsOrder);
   },
 
+  async copyWorkoutToSplit(workoutId, targetSplitId) {
+    return workoutDao.copyWorkoutToSplit(workoutId, targetSplitId);
+  },
+
+  async reorderWorkoutsInSplit(idSplit, workoutIdsOrder) {
+    return workoutDao.reorderWorkoutsInSplit(idSplit, workoutIdsOrder);
+  },
+
   async createWorkout(workout) {
     return workoutDao.createWorkout(workout);
   },
@@ -46,6 +54,10 @@ module.exports = {
 
   async modifyWorkout(workout) {
     return workoutDao.modifyWorkout(workout);
+  },
+
+  async updateWorkoutBlocks(workoutId, blocks) {
+    return workoutDao.updateWorkoutBlocks(workoutId, blocks);
   },
 
   async finishWorkout(workoutId, userId, date) {

@@ -11,6 +11,13 @@ function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
 }
 
+// TASK-046 — acepta tags como array (?tags=a&tags=b) o CSV (?tags=a,b).
+function parseTags(raw) {
+  if (!raw) return [];
+  const list = Array.isArray(raw) ? raw : String(raw).split(",");
+  return list.map((t) => String(t).trim()).filter(Boolean);
+}
+
 const controller = {
   async getRecipeById(req, res, next) {
     try {
@@ -34,6 +41,7 @@ const controller = {
         ownOnly: toBoolean(req.query.own || req.body.own),
         favoritesOnly: toBoolean(req.query.fav || req.body.fav),
         verifiedOnly: toBoolean(req.query.verified || req.body.verified),
+        tags: parseTags(req.query.tags || req.body.tags),
       };
 
       const recipes = await recipeModel.searchRecipes(
@@ -112,6 +120,7 @@ const controller = {
         name: req.body.name,
         description: req.body.description,
         customProducts: req.body.customProducts || [],
+        tags: parseTags(req.body.tags),
         userId: isDefault ? undefined : req.user.id,
         verified: isDefault ? true : false,
       });
@@ -160,6 +169,7 @@ const controller = {
         updateData.description = req.body.description;
       if (req.body.customProducts !== undefined)
         updateData.customProducts = req.body.customProducts;
+      if (req.body.tags !== undefined) updateData.tags = parseTags(req.body.tags);
 
       const recipe = await recipeModel.updateRecipe(req.params.id, updateData);
       return res.json(recipe);
@@ -187,6 +197,10 @@ const controller = {
     }
   },
 
+  // TAREA5 — favoritos son la biblioteca personal del ENTRENADOR (los
+  // alimentos que suele recomendar), no del cliente que esté viendo en ese
+  // momento — por eso sigue usando req.user.id (el autenticado real) igual
+  // que para el consumidor, solo se amplía el rol permitido en la ruta.
   async toggleArchivedRecipe(req, res, next) {
     try {
       const userId = req.user.id;

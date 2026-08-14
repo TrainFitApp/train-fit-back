@@ -1,5 +1,6 @@
 const exerciseSchema = require("./exercise-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
+const workoutTemplateSchema = require("../workoutTemplates/workout-template-schema");
 const userSchema = require("../users/schema");
 const { Types } = require("mongoose");
 const { cleanObject } = require("../util/clean-data");
@@ -300,5 +301,20 @@ module.exports = {
         return resolve(docs);
       }),
     );
+  },
+
+  // TASK-016 (MASTER_BACKLOG.md) — borrar un Exercise referenciado deja
+  // `exercise: null` tras el autopopulate en CustomExercise (rutinas reales
+  // de clientes) y en WorkoutTemplate.blocks[].exercises[] (plantillas del
+  // entrenador), causando errores en cualquier pantalla que renderice ese
+  // nombre. Se comprueba uso en ambas colecciones antes de permitir borrar.
+  async countCustomExerciseUsage(id) {
+    return customExerciseSchema.countDocuments({ exercise: id });
+  },
+
+  async countWorkoutTemplateUsage(id) {
+    return workoutTemplateSchema.countDocuments({
+      "blocks.exercises.exercise": id,
+    });
   },
 };

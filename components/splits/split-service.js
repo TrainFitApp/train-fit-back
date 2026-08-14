@@ -76,6 +76,14 @@ module.exports = {
     return splitDao.updateSplit(id, split);
   },
 
+  async reorderSplits(idTable, splitIdsOrder) {
+    return splitDao.reorderSplits(idTable, splitIdsOrder);
+  },
+
+  async createBlankSplitAndAddToTable(idTable, name) {
+    return splitDao.createBlankSplitAndAddToTable(idTable, name);
+  },
+
   async deleteSplit(idTable, idSplit) {
     return splitDao.deleteSplit(idTable, idSplit);
   },

@@ -63,6 +63,10 @@ module.exports = {
     return dietDayDao.findByIdDietAndDate(id, date);
   },
 
+  async countDaysWithoutChoice(dietId, startDate, endDate) {
+    return dietDayDao.countDaysWithoutChoice(dietId, startDate, endDate);
+  },
+
   async createDietDay(dietDay) {
     return dietDayDao.createDietDay(dietDay);
   },
@@ -132,6 +136,10 @@ module.exports = {
 
   async updateDietDay(id, { name, date, meals, notes }) {
     return dietDayDao.updateDietDay(id, { name, date, meals, notes });
+  },
+
+  async setDayTypeName(dietDayId, dayTypeName) {
+    return dietDayDao.setDayTypeName(dietDayId, dayTypeName);
   },
 
   async pasteDietDayByIdDiet(id, dietDayClipboard, dietDayToPaste) {

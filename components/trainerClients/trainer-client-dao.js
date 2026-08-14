@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const TrainerClient = require("./trainer-client-schema");
 
 module.exports = {
@@ -41,11 +42,97 @@ module.exports = {
     return TrainerClient.findOne({ clientId, scope, status: "active" });
   },
 
+  // TASK-062 (MASTER_BACKLOG.md) — la relación "revoked" más reciente entre
+  // este trainer y este cliente (cualquier scope). Se usa como corte: notas/
+  // tareas creadas ANTES de ese `revokedAt` son "de una relación anterior"
+  // si el cliente volvió a aceptar una invitación después.
+  async findLatestRevokedForClient(trainerId, clientId) {
+    return TrainerClient.findOne({ trainerId, clientId, status: "revoked" })
+      .sort({ revokedAt: -1 })
+      .select("revokedAt");
+  },
+
   // Todas las relaciones (cualquier estado) de un profesional, agregables por cliente.
   async findAllByTrainer(trainerId, { status } = {}) {
     const query = { trainerId };
     if (status) query.status = Array.isArray(status) ? { $in: status } : status;
     return TrainerClient.find(query).sort({ invitedAt: -1 });
+  },
+
+  // TASK-022 (MASTER_BACKLOG.md) — versión paginada de "clientes activos
+  // agregados por cliente" (mismo resultado conceptual que findAllByTrainer
+  // + aggregateByOtherParty en trainer-client-service.js, pero resuelto en
+  // una sola agregación de Mongo: $group colapsa las N relaciones de scope
+  // de un mismo cliente en un documento por cliente ANTES de paginar, para
+  // que un cliente con 2 scopes no cuente como 2 filas ni quede partido
+  // entre dos páginas). Ruta nueva (`/trainer/clients/paginated`), no
+  // sustituye a `findAllByTrainer` — ese sigue sirviendo a los otros 3
+  // consumidores de aggregateByOtherParty (profesionales, historial
+  // revoked/declined) que no necesitan paginación.
+  async findActiveClientsPaginated(trainerId, { page = 0, limit = 20, search = "" } = {}) {
+    const skipValue = Math.max(0, page) * Math.max(1, limit);
+    const limitValue = Math.max(1, limit);
+    const trimmedSearch = String(search || "").trim();
+
+    const pipeline = [
+      { $match: { trainerId: new mongoose.Types.ObjectId(trainerId), status: "active" } },
+      {
+        $group: {
+          _id: "$clientId",
+          scopes: { $addToSet: "$scope" },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+      { $unwind: "$user" },
+    ];
+
+    if (trimmedSearch) {
+      const escaped = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      pipeline.push({
+        $match: {
+          $or: [
+            { "user.name": regex },
+            { "user.lastname": regex },
+            { "user.email": regex },
+          ],
+        },
+      });
+    }
+
+    pipeline.push(
+      { $sort: { "user.name": 1, "user.lastname": 1 } },
+      {
+        $facet: {
+          data: [{ $skip: skipValue }, { $limit: limitValue }],
+          totalCount: [{ $count: "count" }],
+        },
+      }
+    );
+
+    const [result] = await TrainerClient.aggregate(pipeline);
+    const data = result?.data || [];
+    const total = result?.totalCount?.[0]?.count || 0;
+
+    return {
+      clients: data.map((entry) => ({
+        user: {
+          _id: entry.user._id,
+          name: entry.user.name,
+          lastname: entry.user.lastname,
+          email: entry.user.email,
+        },
+        scopes: entry.scopes,
+      })),
+      total,
+    };
   },
 
   async findAllByClient(clientId, { status } = {}) {

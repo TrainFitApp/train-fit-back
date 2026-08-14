@@ -12,6 +12,11 @@ router.putAsync("/checkin-templates/:id", auth(["trainer"]), controller.updateDe
 router.deleteAsync("/checkin-templates/:id", auth(["trainer"]), controller.deleteDefinition);
 router.postAsync("/checkin-templates/:id/apply", auth(["trainer"]), controller.applyDefinition);
 
+// --- Lado profesional: "Reportes" — histórico agregado de TODOS sus clientes ---
+router.getAsync("/checkins/responses", auth(["trainer"]), controller.getMyCheckinResponses);
+router.getAsync("/checkins/unseen-count", auth(["trainer"]), controller.getUnseenCount);
+router.postAsync("/checkins/mark-seen", auth(["trainer"]), controller.markSeen);
+
 // --- Lado profesional: configuración/histórico de un cliente concreto ---
 router.getAsync(
   "/clients/:clientId/checkin-config",

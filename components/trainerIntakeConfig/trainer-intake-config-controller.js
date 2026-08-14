@@ -1,0 +1,24 @@
+const trainerIntakeConfigService = require("./trainer-intake-config-service");
+const { INTAKE_FIELD_KEYS } = require("./intake-field-catalog");
+
+module.exports = {
+  // GET /trainer/intake-config — el propio profesional consulta su config
+  async getMyConfig(req, res) {
+    const config = await trainerIntakeConfigService.getMyConfig(req.auth.userId);
+    return res.send({ ...config, catalog: INTAKE_FIELD_KEYS });
+  },
+
+  // PUT /trainer/intake-config — body: { enabledFields: [...] }
+  async updateMyConfig(req, res) {
+    const { enabledFields } = req.body || {};
+    try {
+      const config = await trainerIntakeConfigService.updateMyConfig(req.auth.userId, enabledFields || []);
+      return res.send(config);
+    } catch (e) {
+      if (e.code === "INVALID_INTAKE_FIELDS") {
+        return res.status(400).send({ message: e.message, code: e.code });
+      }
+      throw e;
+    }
+  },
+};

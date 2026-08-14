@@ -62,4 +62,28 @@ module.exports = {
   async listResponses(trainerId, clientId) {
     return CheckinResponse.find({ trainerId, clientId }).sort({ respondedAt: -1 }).lean();
   },
+
+  // TASK-002 (MASTER_BACKLOG.md) — "Reportes": a diferencia de listResponses,
+  // trainerId por sí solo ya escopea a TODOS los clientes de este
+  // entrenador (no hace falta iterar cliente a cliente, a diferencia de
+  // listMyHistory en checkin-controller.js que itera por trainerId variable
+  // desde el lado del cliente). populate('clientId') trae nombre/apellido
+  // reales sin una query aparte. Limit acotado (mismo espíritu que TASK-015:
+  // nunca traer histórico completo sin límite).
+  async listResponsesForTrainer(trainerId, { limit = 200 } = {}) {
+    return CheckinResponse.find({ trainerId })
+      .sort({ respondedAt: -1 })
+      .limit(limit)
+      .populate("clientId", "name lastname email")
+      .lean();
+  },
+
+  // TASK-024 (MASTER_BACKLOG.md)
+  async countUnseenForTrainer(trainerId) {
+    return CheckinResponse.countDocuments({ trainerId, seenByTrainer: false });
+  },
+
+  async markAllSeenForTrainer(trainerId) {
+    return CheckinResponse.updateMany({ trainerId, seenByTrainer: false }, { $set: { seenByTrainer: true } });
+  },
 };

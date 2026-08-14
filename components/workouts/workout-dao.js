@@ -8,6 +8,7 @@ const Workout = require("./workout-class");
 const { default: mongoose } = require("mongoose");
 const customExerciseDao = require("../customExercises/custom-exercise-dao");
 const userSchema = require("../users/schema");
+const { isSamePermutation } = require("../util/permutation-util");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -315,6 +316,120 @@ module.exports = {
     } catch (error) {
       throw error;
     }
+  },
+
+  // Rediseño de entrenamiento Fase B — reemplaza Workout.blocks[] completo
+  // (crear/editar/borrar/reordenar bloques en una sola llamada, mismo
+  // patrón "replace-whole-array" que ya usa el frontend para exercises[] en
+  // otros sitios). `blocks` ya viene sanitizado desde el controller
+  // (sanitizeWorkoutBlocks) — aquí solo se resuelven los _id reales.
+  async updateWorkoutBlocks(workoutId, blocks) {
+    const workout = await workoutSchema.findById(workoutId).select("blocks exercises");
+    if (!workout) {
+      const err = new Error("Workout no encontrado");
+      err.code = "WORKOUT_NOT_FOUND";
+      throw err;
+    }
+
+    const previousBlockIds = new Set(
+      (workout.blocks || []).map((block) => block._id.toString()),
+    );
+
+    const normalizedBlocks = (blocks || []).map((block) => ({
+      ...block,
+      _id:
+        block._id && mongoose.Types.ObjectId.isValid(block._id)
+          ? new mongoose.Types.ObjectId(block._id)
+          : new mongoose.Types.ObjectId(),
+    }));
+
+    const nextBlockIds = new Set(normalizedBlocks.map((block) => block._id.toString()));
+    const removedBlockIds = [...previousBlockIds].filter((id) => !nextBlockIds.has(id));
+
+    await workoutSchema.findByIdAndUpdate(workoutId, {
+      $set: { blocks: normalizedBlocks },
+    });
+
+    // Un ejercicio cuyo bloque se borró vuelve a quedar "suelto" — nunca debe
+    // apuntar a un blockId que ya no existe en este Workout.
+    if (removedBlockIds.length > 0) {
+      await customExerciseSchema.updateMany(
+        {
+          _id: { $in: workout.exercises },
+          blockId: { $in: removedBlockIds.map((id) => new mongoose.Types.ObjectId(id)) },
+        },
+        { $set: { blockId: null } },
+      );
+    }
+
+    return workoutSchema.findById(workoutId);
+  },
+
+  // Planificador visual (Fase C) — copia un workout suelto a otra semana
+  // (o a la misma, como "duplicar en el sitio"). Reutiliza
+  // cloneWorkoutForTemplateCopy sobre UN solo workout — misma mecánica de
+  // clonado ya probada en duplicateWorkoutRow/pasteWorkout, aplicada a una
+  // sola columna en vez de barrer todos los splits de la tabla (ese modelo
+  // "fila de workout compartida entre semanas" es justo lo que el
+  // Planificador deja atrás — cada semana es independiente).
+  async copyWorkoutToSplit(workoutId, targetSplitId) {
+    const workoutDoc = await workoutSchema.findById(workoutId);
+    if (!workoutDoc) {
+      const err = new Error("Entrenamiento no encontrado");
+      err.code = "WORKOUT_NOT_FOUND";
+      throw err;
+    }
+
+    const targetSplit = await splitSchema.findById(targetSplitId).select("_id");
+    if (!targetSplit) {
+      const err = new Error("Split de destino no encontrado");
+      err.code = "SPLIT_NOT_FOUND";
+      throw err;
+    }
+
+    const cloned = cloneWorkoutForTemplateCopy(workoutDoc);
+
+    if (cloned.sets.length > 0) await setSchema.insertMany(cloned.sets);
+    if (cloned.customExercises.length > 0) {
+      await customExerciseSchema.insertMany(cloned.customExercises);
+    }
+    await workoutSchema.insertMany([cloned.workout]);
+
+    await splitSchema.updateOne(
+      { _id: targetSplitId },
+      { $push: { workouts: cloned.workout._id } },
+    );
+
+    const updatedTable = await tableSchema.findOne({ splits: targetSplitId });
+    return updatedTable.splits;
+  },
+
+  async reorderWorkoutsInSplit(idSplit, workoutIdsOrder) {
+    const splitDoc = await splitSchema.findById(idSplit).select("_id workouts");
+    if (!splitDoc) {
+      const err = new Error("Split no encontrado");
+      err.code = "SPLIT_NOT_FOUND";
+      throw err;
+    }
+
+    // split.workouts está autopoblado (mongoose-autopopulate) — cada elemento
+    // es un Workout completo, no un ObjectId suelto; hay que extraer el _id
+    // explícitamente (mismo ajuste que en split-dao.js#reorderSplits).
+    const currentIds = splitDoc.workouts.map((w) => (w._id || w).toString());
+    const requestedIds = (Array.isArray(workoutIdsOrder) ? workoutIdsOrder : []).map((id) =>
+      (id?._id || id).toString(),
+    );
+
+    if (!isSamePermutation(currentIds, requestedIds)) {
+      const err = new Error("workoutIdsOrder debe ser una permutación exacta de los workouts actuales");
+      err.code = "INVALID_WORKOUT_ORDER";
+      throw err;
+    }
+
+    await splitSchema.updateOne({ _id: idSplit }, { $set: { workouts: requestedIds } });
+
+    const updatedTable = await tableSchema.findOne({ splits: idSplit });
+    return updatedTable.splits;
   },
 
   async reorderWorkoutRows(idTable, workoutIdsOrder) {

@@ -26,6 +26,11 @@ router.putAsync(
   auth(["admin", "user", "trainer"]),
   controller.copySetOnCustomExercise
 );
+router.putAsync(
+  "/:id/block",
+  auth(["admin", "user", "trainer"]),
+  controller.setCustomExerciseBlock
+);
 router.deleteAsync(
   "/:id",
   auth(["admin", "user", "trainer"]),

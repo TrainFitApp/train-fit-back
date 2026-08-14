@@ -305,6 +305,9 @@ module.exports = {
     const ownOnly = !!filters.ownOnly;
     const favoritesOnly = !!filters.favoritesOnly;
     const verifiedOnly = !!filters.verifiedOnly;
+    const tagsFilter = Array.isArray(filters.tags)
+      ? filters.tags.map((t) => String(t).trim()).filter(Boolean)
+      : [];
     const userObjectId = toObjectId(userId);
     const pageValue = Math.max(0, parseInt((page || 0).toString(), 10));
     const limitValue = Math.max(1, parseInt((limit || 10).toString(), 10));
@@ -355,6 +358,13 @@ module.exports = {
 
     if (favoritesOnly) {
       baseQuery._id = { $in: archivedRecipeIds };
+    }
+
+    // TASK-046 — se añade a baseQuery (no a una rama concreta) para que
+    // aplique de forma consistente tanto al camino sin búsqueda como a las 5
+    // etapas de búsqueda de abajo, todas las cuales parten de `...baseQuery`.
+    if (tagsFilter.length) {
+      baseQuery.tags = { $in: tagsFilter };
     }
 
     if (!hasSearch) {

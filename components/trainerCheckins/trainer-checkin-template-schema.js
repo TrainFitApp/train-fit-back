@@ -24,6 +24,11 @@ const TrainerCheckinTemplateSchema = new Schema({
   // resolver el contenido real, ver modelos-de-datos/03-trainercheckintemplate.md.
   sourceTemplateId: { type: Schema.Types.ObjectId, ref: "CheckinTemplateDefinition", default: null },
   updatedAt: { type: Date, default: Date.now },
+  // TASK-025 (MASTER_BACKLOG.md) — última vez que se envió un recordatorio
+  // por este cadence. Evita reenviar el mismo día si el cron corre más de
+  // una vez, y evita reenviar mientras el cliente sigue "al día" (se compara
+  // contra la fecha en la que volvió a tocar due, no solo "hoy").
+  lastReminderSentAt: { type: Date, default: null },
 }, { collection: "trainercheckintemplates" });
 
 // Un profesional solo tiene UNA configuración aplicada por cliente — aplicar

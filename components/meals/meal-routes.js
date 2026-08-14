@@ -8,9 +8,13 @@ const router = express.Router();
 router.getAsync("/", auth(["admin", "user"]), controller.getMeals);
 router.getAsync("/:id", auth(["admin", "user"]), controller.getMeal);
 router.postAsync("/", auth(["admin", "user"]), controller.createMeal);
+// TAREA5 — el entrenador necesita buscar productos/recetas reales para
+// pautar comida vía search-foods (misma pantalla del consumidor); es
+// búsqueda de solo lectura, no expone ni muta datos de otro usuario (ver
+// meal-controller.js#searchAllWithFilters, que ya recibe userId por body).
 router.postAsync(
   "/search/all",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.searchAllWithFilters,
 );
 // router.putAsync('/add/customrecipe/to/meal', controller.addMealCustomRecipe);

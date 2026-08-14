@@ -43,6 +43,14 @@ router.putAsync(
   auth(["admin", "user", "trainer"]),
   controller.reorderWorkoutRows,
 );
+// Debe declararse ANTES de /:idTable/:idExercise/:workoutOrder (3 segmentos
+// todo-parámetro, más abajo) — si no, esa ruta genérica intercepta cualquier
+// PUT de 3 segmentos, incluida esta, antes de que Express la alcance.
+router.putAsync(
+  "/split/:idSplit/order",
+  auth(["admin", "user", "trainer"]),
+  controller.reorderWorkoutsInSplit,
+);
 router.putAsync(
   "/:idTable/:idExercise/:workoutOrder",
   auth(["admin", "user", "trainer"]),
@@ -52,6 +60,16 @@ router.putAsync(
   "/modify/one/simple/save",
   auth(["admin", "user", "trainer"]),
   controller.modifyWorkout,
+);
+router.putAsync(
+  "/:idWorkout/blocks",
+  auth(["admin", "user", "trainer"]),
+  controller.updateWorkoutBlocks,
+);
+router.postAsync(
+  "/:idWorkout/copy-to-split/:idSplit",
+  auth(["admin", "user", "trainer"]),
+  controller.copyWorkoutToSplit,
 );
 // finish/skip son acciones de "reproducir" el entrenamiento (autoservicio del
 // cliente) — deliberadamente NO se abren a "trainer": un profesional

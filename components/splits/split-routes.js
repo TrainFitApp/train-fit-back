@@ -35,6 +35,16 @@ router.putAsync(
   controller.addWorkoutsSplit,
 );
 router.putAsync("/:id", auth(["admin", "user", "trainer"]), controller.updateSplit);
+router.putAsync(
+  "/rows/order/:idTable",
+  auth(["admin", "user", "trainer"]),
+  controller.reorderSplits,
+);
+router.postAsync(
+  "/blank/:idTable",
+  auth(["admin", "user", "trainer"]),
+  controller.createBlankSplitAndAddToTable,
+);
 router.deleteAsync(
   "/:idTable",
   auth(["admin", "user", "trainer"]),

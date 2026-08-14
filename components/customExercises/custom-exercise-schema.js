@@ -17,6 +17,11 @@ const CustomExerciseSchema = Schema({
     autopopulate: true,
   },
   notes: { type: String, trim: true, maxlength: 500 },
+  // Rediseño de entrenamiento Fase B — apunta al _id de un elemento de
+  // Workout.blocks[] (subdocumento del Workout padre, no una colección
+  // separada, por eso no lleva `ref`). null/ausente = ejercicio suelto, sin
+  // agrupar.
+  blockId: { type: Schema.Types.ObjectId, default: null },
   // workoutId: {
   //   type: Schema.Types.ObjectId,
   //   ref: "Workout",

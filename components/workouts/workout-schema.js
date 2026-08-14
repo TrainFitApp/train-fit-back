@@ -2,6 +2,26 @@ const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 
+// Rediseño de entrenamiento Fase B (sesión 2026-08-09) — bloques/superseries
+// reintroducidos, esta vez consumidos de verdad en current-workout.page.html
+// (cliente real) Y workout.component.html (editor real del entrenador) en la
+// misma pasada. `blocks[]` son solo metadata de agrupación (nombre, tipo,
+// rondas, descansos) — las exercises[] ya existen como CustomExercise
+// independientes; cada una apunta a un bloque vía CustomExercise.blockId
+// (ObjectId de un elemento de este array, NO una colección separada).
+const WorkoutBlockSchema = Schema({
+  name: { type: String, trim: true, maxlength: 100, default: "" },
+  type: {
+    type: String,
+    enum: ["straight", "superset", "circuit", "warmup", "finisher"],
+    default: "straight",
+  },
+  order: { type: Number, default: 0 },
+  rounds: { type: Number, default: null },
+  restBetweenExercises: { type: Number, default: null },
+  restBetweenRounds: { type: Number, default: null },
+  instructions: { type: String, trim: true, maxlength: 500, default: "" },
+});
 
 const WorkoutSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
@@ -20,6 +40,7 @@ const WorkoutSchema = Schema({
   // el profesional junto al historial de entrenamientos del cliente (F09).
   readinessPre: { type: Number, min: 1, max: 5, default: null },
   perceivedEffortPost: { type: Number, min: 1, max: 5, default: null },
+  blocks: { type: [WorkoutBlockSchema], default: [] },
   exercises: [
     {
       type: Schema.Types.ObjectId,

@@ -5,7 +5,10 @@ module.exports = {
     return ClientNutritionPreferences.findOne({ clientId }).lean();
   },
 
-  async upsertOwnResponse(clientId, { allergies, favoriteFoods, dislikedFoods, cooksAtHome }) {
+  async upsertOwnResponse(
+    clientId,
+    { allergies, favoriteFoods, dislikedFoods, cooksAtHome, disabledMealSlots, mealSlotLabels }
+  ) {
     return ClientNutritionPreferences.findOneAndUpdate(
       { clientId },
       {
@@ -14,6 +17,8 @@ module.exports = {
           favoriteFoods: favoriteFoods || "",
           dislikedFoods: dislikedFoods || "",
           cooksAtHome: cooksAtHome || null,
+          disabledMealSlots: disabledMealSlots || [],
+          mealSlotLabels: mealSlotLabels || {},
           respondedAt: new Date(),
           updatedAt: new Date(),
         },

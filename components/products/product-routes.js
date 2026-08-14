@@ -16,16 +16,21 @@ router.getAsync(
 );
 router.getAsync("/count", auth(["admin", "user", "trainer"]), controller.getProductsCount);
 router.postAsync("/search", auth(["admin", "user", "trainer"]), controller.searchProduct);
-router.postAsync("/", auth(["admin", "user"]), controller.createProduct);
+// TAREA5 — el entrenador crea productos reales (no macros a mano) para
+// pautar comida vía search-foods/ProductSearchModalComponent (F12/F28).
+router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createProduct);
 router.putAsync("/", auth(["admin", "user"]), controller.updateProduct);
 router.putAsync(
   "/promote/:id",
   auth(["admin", "user"]),
   controller.promoteToGlobal
 );
+// TAREA5 — favoritos son la biblioteca personal del entrenador (idUser
+// viaja en el body y el frontend del entrenador siempre manda su propio id,
+// nunca el del cliente).
 router.putAsync(
   "/favProduct",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.addFavoriteProduct
 );
 router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteProduct);

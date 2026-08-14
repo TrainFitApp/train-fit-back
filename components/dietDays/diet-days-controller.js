@@ -1,5 +1,12 @@
 const anthropometryModel = require("../anthropometry/anthropometry-service");
 const dietDayModel = require("./diet-days-service");
+const { resolveOwnedDietDay, applyResolvedPlanToDietDay } = require("./diet-day-resolver");
+const planAssignmentService = require("../planAssignments/plan-assignment-service");
+const planResolver = require("../planAssignments/plan-resolver");
+const DietTemplate = require("../dietTemplates/diet-template-schema");
+const userSchema = require("../users/schema");
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const controller = {
   async getDietDays(req, res) {
@@ -136,6 +143,67 @@ const controller = {
     );
 
     return res.send(dietDay);
+  },
+
+  // Fase 9 — GET /dietdays/date/:date/day-type. Sin ningún plan "choice"
+  // activo para esta fecha (la inmensa mayoría de los usuarios, siempre)
+  // devuelve needsChoice:false — el cliente nunca ve ningún prompt.
+  async getDayType(req, res) {
+    const userId = req.user.id;
+    const date = req.params.date;
+    if (!ISO_DATE.test(date || "")) {
+      return res.status(400).send({ message: "Fecha inválida (YYYY-MM-DD)" });
+    }
+
+    const assignment = await planAssignmentService.findCoveringDate(userId, date);
+    if (!assignment) return res.send({ needsChoice: false, selected: null, options: [] });
+
+    const plan = await DietTemplate.findById(assignment.planId).select("mode dayPatterns").lean();
+    if (!plan || plan.mode !== "choice") {
+      return res.send({ needsChoice: false, selected: null, options: [] });
+    }
+
+    const options = (plan.dayPatterns || []).map((p) => p.name);
+    const user = await userSchema.findById(userId).select("dietInUse").lean();
+    const dietDay = await dietDayModel.findByIdDietAndDate(user?.dietInUse, date);
+    const selected = dietDay?.dayTypeName || null;
+    return res.send({ needsChoice: !selected, selected, options });
+  },
+
+  // Fase 9 — PUT /dietdays/date/:date/day-type. Reelegible: volver a llamar
+  // sobrescribe el tipo de día y re-resuelve el plan (merge:false, mismo
+  // criterio que cualquier otro re-pauteo, p.ej. prescribeMeal).
+  async chooseDayType(req, res) {
+    const userId = req.user.id;
+    const date = req.params.date;
+    const patternName = (req.body?.patternName || "").toString();
+    if (!ISO_DATE.test(date || "")) {
+      return res.status(400).send({ message: "Fecha inválida (YYYY-MM-DD)" });
+    }
+    if (!patternName) {
+      return res.status(400).send({ message: "patternName es obligatorio" });
+    }
+
+    const assignment = await planAssignmentService.findCoveringDate(userId, date);
+    if (!assignment) {
+      return res.status(400).send({ message: "No hay ningún plan activo para esta fecha" });
+    }
+    const plan = await DietTemplate.findById(assignment.planId);
+    if (!plan || plan.mode !== "choice" || !(plan.dayPatterns || []).some((p) => p.name === patternName)) {
+      return res.status(400).send({ message: "Ese tipo de día no existe en el plan activo" });
+    }
+
+    const dietDayDoc = await resolveOwnedDietDay(userId, date);
+    await dietDayModel.setDayTypeName(dietDayDoc._id, patternName);
+
+    const result = await planResolver.resolvePlanForDate(userId, date, { chosenPatternName: patternName });
+    if (result) {
+      await applyResolvedPlanToDietDay(dietDayDoc, date, result.resolved, result.trainerId, userId);
+    }
+
+    const user = await require("../users/schema").findById(userId).select("dietInUse").lean();
+    const updatedDietDay = await dietDayModel.findByIdDietAndDate(user?.dietInUse, date);
+    return res.send(updatedDietDay);
   },
 };
 

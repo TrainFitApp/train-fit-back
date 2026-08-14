@@ -45,24 +45,9 @@ async copyTable(req, res) {
     return res.send(table);
   },
 
-  async duplicateTable(req, res) {
-    const idUser = req.body.idUser || req.params.idUser;
-    if (!(await tableAccess.canAccessUserTable(req, idUser))) {
-      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
-    }
-
-    const routineCount = await tableModel.countEffectiveUserTables(idUser);
-    if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
-      return res.status(403).send({
-        code: "PREMIUM_LIMIT_ROUTINES",
-        message: "L\u00edmite Free alcanzado. Solo puedes tener 1 rutina.",
-      });
-    }
-
-    const duplicatedTable = await tableModel.duplicateTable(idUser, req.params.idTable);
-    return res.send(duplicatedTable);
-  },
-
+  // TASK-069 (MASTER_BACKLOG.md) \u2014 antes definida dos veces de forma
+  // id\u00e9ntica en este mismo m\u00f3dulo (la segunda ganaba silenciosamente en
+  // JS, la primera era c\u00f3digo muerto inalcanzable). Se deja una sola copia.
   async duplicateTable(req, res) {
     const idUser = req.body.idUser || req.params.idUser;
     if (!(await tableAccess.canAccessUserTable(req, idUser))) {

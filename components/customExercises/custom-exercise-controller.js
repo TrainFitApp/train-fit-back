@@ -59,6 +59,22 @@ module.exports = {
     return res.send(customExercise);
   },
 
+  // PUT /customexercises/:id/block — body: { blockId: string|null }
+  async setCustomExerciseBlock(req, res) {
+    if (!(await assertCanAccessCustomExerciseId(req, res, req.params.id))) return;
+    try {
+      const customExercise = await customExerciseModel.setCustomExerciseBlock(
+        req.params.id,
+        req.body?.blockId ?? null,
+      );
+      return res.send(customExercise);
+    } catch (e) {
+      if (e.code === "BLOCK_NOT_FOUND") return res.status(400).send({ message: e.message });
+      if (e.code === "CUSTOM_EXERCISE_NOT_FOUND") return res.status(404).send({ message: e.message });
+      throw e;
+    }
+  },
+
   async deleteCustomExercise(req, res) {
     if (!(await assertCanAccessCustomExerciseId(req, res, req.params.id))) return;
     await customExerciseModel.deleteCustomExercise(req.params.id);
