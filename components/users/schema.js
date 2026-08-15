@@ -13,10 +13,22 @@ const anthropometrySchema =
   mongoose.models.Anthropometry ||
   mongoose.model("Anthropometry", anthropometrySchemaDef);
 const nutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
+const { EMAIL_FORMAT_REGEX } = require("../util/normalize-email");
 const SALT_WORK_FACTOR = 10;
 
 const UserSchema = new Schema({
-  email: { type: String, unique: true, required: true },
+  // trim/lowercase son setters de Mongoose: se aplican tanto al guardar
+  // (create/save/update) como al castear condiciones de find/findOne/exists,
+  // así que "David@Gmail.com" y "david@gmail.com" quedan garantizados como el
+  // mismo valor en cualquier operación que pase por este schema.
+  email: {
+    type: String,
+    unique: true,
+    required: true,
+    trim: true,
+    lowercase: true,
+    match: [EMAIL_FORMAT_REGEX, "Formato de email inválido"],
+  },
   appleId: { type: String, unique: true, sparse: true },
   password: String,
   name: { type: String, trim: true, maxlength: 100 },

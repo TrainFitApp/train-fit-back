@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 mongoose.set("strictQuery", true);
 const app = require("../app");
 const { buildMongoUri, redactMongoUri } = require("../scripts/_mongo-uri");
+const billingReconciliationJob = require("../components/billing/billing-reconciliation-job");
 
 // -------------------------------------------------------
 // 🧩 Normalización del puerto
@@ -50,6 +51,7 @@ function connectWithRetry() {
         console.log(`🚀 Server running at port: ${port}`);
       });
       serv.timeout = 300000;
+      billingReconciliationJob.start();
     })
     .catch((err) => {
       console.error("❌ MongoDB error:", err.message);

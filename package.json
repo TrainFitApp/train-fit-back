@@ -17,7 +17,9 @@
     "migrate:exercise-description-steps:dry-run": "node scripts/migrate-exercise-description-steps.js --dry-run",
     "migrate:weights-to-anthropometry": "node scripts/migrate-weights-to-anthropometry.js",
     "migrate:weights-to-anthropometry:dry-run": "node scripts/migrate-weights-to-anthropometry.js --dry-run",
-    "test": "node --test components/remoteConfig/remote-config-service.test.js"
+    "migrate:normalize-emails": "node scripts/migrate-normalize-emails.js",
+    "migrate:normalize-emails:dry-run": "node scripts/migrate-normalize-emails.js --dry-run",
+    "test": "node --test components/remoteConfig/remote-config-service.test.js components/billing/feature-access-service.test.js components/util/normalize-email.test.js components/users/schema.test.js"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",
