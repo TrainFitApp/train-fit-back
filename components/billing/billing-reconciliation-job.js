@@ -4,8 +4,10 @@ const billingService = require("./billing-service");
 // Red de seguridad para usuarios cuyo webhook de expiración de RevenueCat
 // nunca llegó (caída de entrega, secreto mal configurado, timeout, etc.) y
 // que no han vuelto a abrir la app para que el self-heal lazy (dto/reconcileExpiredPremiumIfNeeded)
-// los corrija. Por defecto corre cada hora; configurable via BILLING_RECONCILIATION_CRON.
-const SCHEDULE = process.env.BILLING_RECONCILIATION_CRON || "0 * * * *";
+// los corrija. Por defecto corre una vez al día (04:00); configurable via
+// BILLING_RECONCILIATION_CRON. Es un backstop de un fallo raro, no un
+// mecanismo de tiempo real, así que no necesita más frecuencia que esta.
+const SCHEDULE = process.env.BILLING_RECONCILIATION_CRON || "0 4 * * *";
 
 let task = null;
 
