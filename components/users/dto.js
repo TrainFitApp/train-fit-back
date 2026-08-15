@@ -50,6 +50,7 @@ const single = async (resource, authUser) => ({
   personalAds: resource.personalAds,
   lastLogin: resource.lastLogin,
   premium: resolvePremium(resource),
+  onboarding: resource.onboarding || { pendingTutorials: [] },
   theme: resource.theme,
   provider: resource.provider,
 });

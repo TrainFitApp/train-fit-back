@@ -24,6 +24,8 @@ const pinnedExerciseNotes = require("../components/pinnedExerciseNotes/pinned-ex
 const anthropometry = require("../components/anthropometry/anthropometry-routes");
 const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goal-routes");
 const remoteConfig = require("../components/remoteConfig/remote-config-routes");
+const tutorials = require("../components/tutorials/tutorial-routes");
+const onboarding = require("../components/onboarding/onboarding-routes");
 
 const router = express.Router();
 
@@ -52,5 +54,7 @@ router.use("/git", gitManager);
 router.use("/anthropometry", anthropometry);
 router.use("/nutritionalgoals", nutritionalGoals);
 router.use("/config", remoteConfig);
+router.use("/tutorials", tutorials);
+router.use("/onboarding", onboarding);
 
 module.exports = router;

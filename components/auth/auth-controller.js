@@ -5,6 +5,7 @@ const userSchema = require("../users/schema");
 const TokenService = require("../../services/token.service");
 const mail = require("../util/mail");
 const { normalizeEmail } = require("../util/normalize-email");
+const tutorialService = require("../tutorials/tutorial-service");
 
 const LOGIN_INVALID_RESPONSE = {
   error: "INVALID_CREDENTIALS",
@@ -658,6 +659,7 @@ module.exports = {
           appleId: identity.appleId || undefined,
           roles: ["user"],
           provider,
+          onboarding: { pendingTutorials: await tutorialService.getAllKeysSafe() },
         });
       } else if (provider === "apple" && identity.appleId && !user.appleId) {
         user = await userSchema.findByIdAndUpdate(

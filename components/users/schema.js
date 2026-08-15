@@ -73,6 +73,13 @@ const UserSchema = new Schema({
     source: String,
     lastSyncAt: Date,
   },
+  onboarding: {
+    // Arranca con TODAS las keys de la colección `tutorials` (ver
+    // components/users/dao.js createUser*) y se va vaciando a medida que el
+    // usuario completa/salta cada tutorial (components/onboarding).
+    pendingTutorials: { type: [String], default: [] },
+    lastSyncAt: Date,
+  },
   passwordVersion: { type: Number, default: 0 },
   lastPasswordChangeAt: Date,
   auth: {

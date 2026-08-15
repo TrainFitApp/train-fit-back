@@ -8,6 +8,7 @@ const mail = require("../util/mail");
 const recipeSchema = require("../recipes/recipe-schema");
 const recipeModel = require("../recipes/recipe-model");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
+const tutorialService = require("../tutorials/tutorial-service");
 
 module.exports = {
   async getUserById(id) {
@@ -261,6 +262,7 @@ module.exports = {
           Object.assign(existingUser, user);
           userDoc = await existingUser.save();
         } else {
+          user.onboarding = { pendingTutorials: await tutorialService.getAllKeysSafe() };
           userDoc = await userSchema.create(user);
         }
       }
@@ -294,6 +296,7 @@ module.exports = {
       const createdDiet = await dietModel.createDiet(diet);
 
       user.dietInUse = createdDiet._id;
+      user.onboarding = { pendingTutorials: await tutorialService.getAllKeysSafe() };
 
       const userDoc = await userSchema.create(user);
 
@@ -313,6 +316,7 @@ module.exports = {
       const createdDiet = await dietModel.createDiet(diet);
 
       user.dietInUse = createdDiet._id;
+      user.onboarding = { pendingTutorials: await tutorialService.getAllKeysSafe() };
 
       const userDoc = await userSchema.create(user);
 
