@@ -14,8 +14,17 @@ const PREMIUM_LIMITS = {
   nutritionalGoals: 10,
 };
 
+// Revalida contra expiresAt en vez de confiar ciegamente en el booleano cacheado:
+// si el webhook de EXPIRATION nunca llega, esto sigue degradando al usuario a
+// FREE en cuanto pase la fecha, sin depender de ningún evento externo.
+function isEffectivelyEntitled(premium) {
+  if (!premium?.entitled) return false;
+  if (!premium.expiresAt) return true;
+  return new Date(premium.expiresAt).getTime() > Date.now();
+}
+
 function isPremiumUser(user) {
-  return Boolean(user?.premium?.entitled);
+  return isEffectivelyEntitled(user?.premium);
 }
 
 function getLimits(user) {
@@ -168,6 +177,7 @@ function buildTrainerEntitlements(user, activeClientCount) {
 module.exports = {
   FREE_LIMITS,
   PREMIUM_LIMITS,
+  isEffectivelyEntitled,
   isPremiumUser,
   getLimits,
   canCreateRoutine,

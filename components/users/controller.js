@@ -4,6 +4,7 @@ const userSchema = require("../users/schema");
 const bcrypt = require("../util/bcrypt");
 const mail = require("./../util/mail");
 const jwt = require("jsonwebtoken");
+const { normalizeEmail } = require("../util/normalize-email");
 
 const PASSWORD_RESET_REQUEST_RESPONSE = {
   message:
@@ -101,7 +102,7 @@ module.exports = {
 
   async checkEmail(req, res) {
     try {
-      const email = req.params?.email;
+      const email = normalizeEmail(req.params?.email);
       if (!email) {
         return res.status(400).send({ message: "Email requerido" });
       }
@@ -119,7 +120,7 @@ module.exports = {
 
   async getUserByEmail(req, res) {
     const user = await userDto.single(
-      await userModel.getUserByEmail(req.params.email),
+      await userModel.getUserByEmail(normalizeEmail(req.params.email)),
     );
     return res.send(user);
   },
@@ -136,7 +137,7 @@ module.exports = {
 
   async createUser(req, res) {
     try {
-      const email = req.body?.user?.email;
+      const email = normalizeEmail(req.body?.user?.email);
       if (!email) {
         return res.status(400).send({ message: "Email requerido" });
       }
@@ -867,7 +868,7 @@ module.exports = {
 
   async sendMailCode(req, res) {
     try {
-      await userModel.sendMailCode(req.params.email);
+      await userModel.sendMailCode(normalizeEmail(req.params.email));
     } catch (error) {
       console.warn("[AUTH] password_reset_code_request_not_completed", {
         reason: error?.message || "unknown",
@@ -880,7 +881,7 @@ module.exports = {
   async checkRestoreCode(req, res) {
     try {
       const response = await userModel.checkRestoreCode(
-        req.body.email,
+        normalizeEmail(req.body.email),
         req.body.password,
         req.body.hash,
       );

@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const userSchema = require("../users/schema");
 const billingCustomerSchema = require("./billing-customer-schema");
 const billingEventSchema = require("./billing-event-schema");
+const { isEffectivelyEntitled } = require("./feature-access-service");
 
 const REVENUECAT_API_BASE = "https://api.revenuecat.com/v1";
 const ENTITLEMENT_ID =
@@ -627,6 +628,128 @@ function isRealStorePremium(user, billingCustomer) {
   return user?.premium?.source === "revenuecat" || Boolean(billingCustomer?.store);
 }
 
+// Corrige en BD un premium.entitled=true cuya expiresAt ya pasó, sin esperar
+// a que llegue (o no llegue) el webhook de EXPIRATION. Es best-effort y no
+// bloqueante: si falla, la próxima lectura (o el job de reconciliación) lo
+// reintentará. El filtro por expiresAt en el $match evita pisar una
+// renovación que haya llegado entre medias.
+async function reconcileExpiredPremiumIfNeeded(user) {
+  const premium = user?.premium;
+  if (!premium?.entitled || !premium?.expiresAt) return;
+  if (new Date(premium.expiresAt).getTime() > Date.now()) return;
+
+  try {
+    await userSchema.updateOne(
+      {
+        _id: user._id,
+        "premium.entitled": true,
+        "premium.expiresAt": premium.expiresAt,
+      },
+      { $set: { "premium.entitled": false } },
+    );
+  } catch (error) {
+    console.error(
+      "[Billing] Error auto-corrigiendo premium expirado",
+      user?._id?.toString(),
+      error,
+    );
+  }
+}
+
+// Red de seguridad periódica (cron): corrige usuarios que quedaron con
+// entitled=true tras su expiresAt sin que nadie haya vuelto a abrir la app
+// (nadie disparó reconcileExpiredPremiumIfNeeded) y, cuando es posible,
+// reconsulta RevenueCat en vivo antes de revocar por si el webhook perdido
+// era en realidad una RENEWAL (no una EXPIRATION real).
+async function runExpiredPremiumReconciliation({ batchSize = 200 } = {}) {
+  const now = new Date();
+  const candidates = await userSchema
+    .find({ "premium.entitled": true, "premium.expiresAt": { $lte: now } })
+    .select("_id premium")
+    .limit(batchSize)
+    .lean();
+
+  let reconciled = 0;
+  let selfHealed = 0;
+  let skipped = 0;
+
+  for (const candidate of candidates) {
+    const billingCustomer = await billingCustomerSchema
+      .findOne({ userId: candidate._id })
+      .catch(() => null);
+    const appUserId = billingCustomer?.appUserId || candidate._id.toString();
+
+    // Distinguir "RevenueCat confirmó que no hay entitlement" de "no pudimos
+    // preguntarle a RevenueCat" (caída de red/API, clave no configurada). Un
+    // fallo transitorio de conexión NUNCA debe degradar a un usuario — solo
+    // se reintenta en el siguiente ciclo del cron.
+    let subscriber = null;
+    let rcCallFailed = false;
+
+    if (SECRET_API_KEY) {
+      try {
+        subscriber = await getRevenueCatSubscriber(appUserId);
+      } catch (error) {
+        rcCallFailed = true;
+        console.error(
+          "[BillingReconciliation] Fallo consultando RevenueCat, se reintentará",
+          candidate._id?.toString(),
+          error?.message || error,
+        );
+      }
+    }
+
+    if (rcCallFailed) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      if (subscriber) {
+        // Llamada a RC exitosa: aplicar el estado real (puede ser una
+        // RENEWAL cuyo webhook se perdió, no necesariamente una expiración).
+        const premiumState = parseRCSubscriberPayload(subscriber);
+        await updateUserPremium(candidate._id, premiumState);
+        await upsertBillingCustomer({
+          userId: candidate._id,
+          appUserId,
+          originalAppUserId: subscriber?.original_app_user_id || appUserId,
+          activeEntitlement: premiumState.activeEntitlement,
+          store: premiumState.store,
+          productId: premiumState.productId,
+          expiresAt: premiumState.expiresAt,
+          willRenew: premiumState.willRenew,
+          lastEventAt: new Date(),
+        });
+        reconciled += 1;
+      } else {
+        // O bien RC no está configurado (SECRET_API_KEY ausente) y expiresAt
+        // local es la única fuente disponible, o RC respondió sin datos de
+        // suscriptor: en ambos casos, expiresAt ya pasado es motivo suficiente.
+        await userSchema.updateOne(
+          {
+            _id: candidate._id,
+            "premium.expiresAt": candidate.premium.expiresAt,
+          },
+          { $set: { "premium.entitled": false } },
+        );
+        selfHealed += 1;
+      }
+    } catch (error) {
+      skipped += 1;
+      console.error(
+        "[BillingReconciliation] Error reconciliando usuario",
+        candidate._id?.toString(),
+        error?.message || error,
+      );
+    }
+  }
+
+  const summary = { candidates: candidates.length, reconciled, selfHealed, skipped };
+  console.info("[BillingReconciliation]", JSON.stringify(summary));
+  return summary;
+}
+
 async function syncSubscriberForUser(user, subscriber, appUserId, options = {}) {
   if (!subscriber) {
     const error = new Error("No se pudo sincronizar la suscripcion con RevenueCat");
@@ -660,6 +783,8 @@ module.exports = {
   entitlementId: ENTITLEMENT_ID,
   derivePlan,
   parseRCSubscriberPayload,
+  reconcileExpiredPremiumIfNeeded,
+  runExpiredPremiumReconciliation,
 
   validateWebhookAuth(req) {
     if (!WEBHOOK_AUTH) {
@@ -889,7 +1014,7 @@ module.exports = {
     const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
     return {
       userId: appUserId,
-      isPremium: Boolean(user?.premium?.entitled),
+      isPremium: isEffectivelyEntitled(user?.premium),
       source: user?.premium?.source || null,
       plan: user?.premium?.plan || null,
       expiresAt: user?.premium?.expiresAt || null,

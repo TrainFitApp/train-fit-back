@@ -3,8 +3,7 @@ const mongoose = require("mongoose");
 mongoose.set("strictQuery", true);
 const app = require("../app");
 const { buildMongoUri, redactMongoUri } = require("../scripts/_mongo-uri");
-const { startCheckinReminderCron } = require("../components/trainerCheckins/checkin-reminder-cron");
-const { startInviteReminderCron } = require("../components/trainerClients/invite-reminder-cron");
+const billingReconciliationJob = require("../components/billing/billing-reconciliation-job");
 
 // -------------------------------------------------------
 // 🧩 Normalización del puerto
@@ -52,10 +51,7 @@ function connectWithRetry() {
         console.log(`🚀 Server running at port: ${port}`);
       });
       serv.timeout = 300000;
-      // TASK-025 (MASTER_BACKLOG.md) — tras conectar a Mongo, no antes: el
-      // job del cron consulta la base de datos.
-      startCheckinReminderCron();
-      startInviteReminderCron();
+      billingReconciliationJob.start();
     })
     .catch((err) => {
       console.error("❌ MongoDB error:", err.message);

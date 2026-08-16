@@ -1,5 +1,6 @@
 const nodemailer = require("nodemailer");
 const dns = require("dns").promises;
+const { EMAIL_FORMAT_REGEX } = require("./normalize-email");
 const registerHost = process.env.REGISTER_MAIL_SENDER_HOST;
 const registerPort = process.env.REGISTER_MAIL_SENDER_PORT;
 const registerUser = process.env.REGISTER_MAIL_SENDER_USER;
@@ -73,8 +74,7 @@ Promise.allSettled([
 const validateEmailExists = async (email) => {
   try {
     // Validar formato básico
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!EMAIL_FORMAT_REGEX.test(email)) {
       return false;
     }
 

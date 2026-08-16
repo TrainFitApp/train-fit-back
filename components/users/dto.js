@@ -1,3 +1,28 @@
+const featureAccessService = require("../billing/feature-access-service");
+const billingService = require("../billing/billing-service");
+
+// Cualquier respuesta que serialice un User pasa por aquí (login, refresh de
+// sesión, perfil, panel admin...). Es el único punto que garantiza que
+// "premium.entitled" nunca salga como true una vez pasada expiresAt, aunque
+// el webhook de EXPIRATION de RevenueCat nunca haya llegado al backend.
+function resolvePremium(resource) {
+  const premium = resource?.premium;
+  if (!premium) return premium;
+
+  const effectiveEntitled = featureAccessService.isEffectivelyEntitled(premium);
+  if (premium.entitled && !effectiveEntitled) {
+    void billingService.reconcileExpiredPremiumIfNeeded(resource);
+  }
+
+  return {
+    entitled: effectiveEntitled,
+    plan: premium.plan,
+    expiresAt: premium.expiresAt,
+    source: premium.source,
+    lastSyncAt: premium.lastSyncAt,
+  };
+}
+
 const single = async (resource, authUser) => ({
   _id: resource._id,
   name: resource.name,
@@ -24,7 +49,7 @@ const single = async (resource, authUser) => ({
   archivedTables: resource.archivedTables,
   personalAds: resource.personalAds,
   lastLogin: resource.lastLogin,
-  premium: resource.premium,
+  premium: resolvePremium(resource),
   theme: resource.theme,
   provider: resource.provider,
 });

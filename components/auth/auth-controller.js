@@ -4,6 +4,7 @@ const userModel = require("../users/model");
 const userSchema = require("../users/schema");
 const TokenService = require("../../services/token.service");
 const mail = require("../util/mail");
+const { normalizeEmail } = require("../util/normalize-email");
 
 const LOGIN_INVALID_RESPONSE = {
   error: "INVALID_CREDENTIALS",
@@ -13,10 +14,6 @@ const LOGIN_UNAVAILABLE_RESPONSE = {
   error: "LOGIN_UNAVAILABLE",
   message: "Ha ocurrido un error inesperado",
 };
-
-function normalizeEmail(email) {
-  return typeof email === "string" ? email.trim().toLowerCase() : null;
-}
 
 function sendInvalidLoginResponse(res) {
   return res.status(401).send(LOGIN_INVALID_RESPONSE);
