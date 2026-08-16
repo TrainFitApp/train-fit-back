@@ -6,7 +6,11 @@ const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-router.getAsync("/", auth(["admin", "user"]), controller.getExercises);
+// "trainer" añadido a los dos de solo lectura/búsqueda — necesita listar el
+// catálogo para el picker de "añadir ejercicio" al construir una rutina/
+// plantilla (funcionalidad 5). El resto (crear/editar/archivar/favoritos/
+// borrar) se queda igual, sin acceso de trainer — no es su catálogo.
+router.getAsync("/", auth(["admin", "user", "trainer"]), controller.getExercises);
 router.getAsync(
   "/code/:barcode",
   auth(["admin", "user"]),
@@ -14,7 +18,7 @@ router.getAsync(
 );
 router.postAsync(
   "/:search",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.getSearchExercise
 );
 router.postAsync("/", auth(["admin", "user"]), controller.createExercise);

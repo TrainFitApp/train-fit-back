@@ -53,6 +53,10 @@ module.exports = {
     return userDao.createUser(user, date);
   },
 
+  async createProfessionalUser(user) {
+    return userDao.createProfessionalUser(user);
+  },
+
   async searchArchivedsByFilter(node, archivedNode, search) {
     return userDao.searchArchivedsByFilter(node, archivedNode, search);
   },

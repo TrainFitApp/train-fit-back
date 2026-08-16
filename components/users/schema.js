@@ -73,6 +73,17 @@ const UserSchema = new Schema({
     source: String,
     lastSyncAt: Date,
   },
+  // Funcionalidad 16 — monetización B2B del trainer por capacidad de
+  // clientes gestionables (tiers), separado de `premium` (consumidor).
+  // Placeholder consciente: sin integración de pago real en el MVP.
+  professionalPremium: {
+    entitled: { type: Boolean, default: false },
+    plan: String,
+    tier: { type: String, enum: ["free", "trainer_pro", "trainer_unlimited"], default: "free" },
+    expiresAt: Date,
+    source: String,
+    lastSyncAt: Date,
+  },
   passwordVersion: { type: Number, default: 0 },
   lastPasswordChangeAt: Date,
   auth: {

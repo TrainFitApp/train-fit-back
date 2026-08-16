@@ -11,7 +11,14 @@ router.getAsync(
   controller.getProductByCode
 );
 router.getAsync("/count", auth(["admin", "user"]), controller.getProductsCount);
-router.postAsync("/search", auth(["admin", "user"]), controller.searchProduct);
+// "trainer" añadido — necesita buscar en el catálogo para el picker de
+// "añadir producto" al construir una plantilla de dieta (funcionalidad 6),
+// mismo criterio que exercises/exercise-routes.js (funcionalidad 5).
+router.postAsync(
+  "/search",
+  auth(["admin", "user", "trainer"]),
+  controller.searchProduct
+);
 router.postAsync("/", auth(["admin", "user"]), controller.createProduct);
 router.putAsync("/", auth(["admin", "user"]), controller.updateProduct);
 router.putAsync(

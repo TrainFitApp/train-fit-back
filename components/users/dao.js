@@ -284,6 +284,21 @@ module.exports = {
     }
   },
 
+  // Alta de un usuario profesional (trainer): a diferencia de createUser, NO
+  // crea Diet/DietDay automáticos — un trainer no lleva su propia dieta.
+  async createProfessionalUser(user) {
+    try {
+      let existingUser = await userSchema.findOne({ email: user.email });
+      if (existingUser && !existingUser.name) {
+        Object.assign(existingUser, user);
+        return await existingUser.save();
+      }
+      return await userSchema.create(user);
+    } catch (err) {
+      throw err;
+    }
+  },
+
   async createUserWithGoogle(user, date) {
     try {
       const standardDietDay = dietDayUtil.getStandardDietDay(date);

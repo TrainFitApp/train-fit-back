@@ -28,6 +28,7 @@ router.postAsync("/logout", legacyAuthGone);
 router.postAsync("/auth/verify-google", legacyAuthGone);
 router.postAsync("/auth/verify-apple", legacyAuthGone);
 router.postAsync("/", controller.createUser);
+router.postAsync("/professional", controller.createProfessionalUser);
 router.postAsync("/social", legacyAuthGone);
 // router.postAsync("/google", controller.createSocialUser); // Mantener por compatibilidad si es necesario, o eliminar
 // router.postAsync("/apple", controller.createSocialUser); // Unificando también Apple si es posible, o mantener separado si lógica difiere mucho

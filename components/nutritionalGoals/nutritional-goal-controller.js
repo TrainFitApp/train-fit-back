@@ -1,6 +1,7 @@
 const nutritionalGoalService = require("./nutritional-goal-service");
 const featureAccessService = require("../billing/feature-access-service");
 const userSchema = require("../users/schema");
+const trainerClientAccess = require("../trainerClients/trainer-client-access");
 
 function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
@@ -28,6 +29,26 @@ function sendLockedGoal(res) {
   return res.status(403).send({
     message: "Este objetivo nutricional esta bloqueado en el modo Free",
     code: "NUTRITIONAL_GOAL_LOCKED",
+  });
+}
+
+// Funcionalidad 7: mientras un trainer tenga este objetivo asignado y la
+// relación siga activa, el cliente no puede editarlo directo (admin sí,
+// mismo criterio que el resto de controllers). Si la relación ya no está
+// activa (revocada), el candado se libera solo.
+async function isGoalLockedByTrainer(goal) {
+  if (!goal.assignedByTrainerId) return false;
+  return trainerClientAccess.hasActiveRelation(
+    goal.assignedByTrainerId,
+    goal.userId,
+    "nutrition"
+  );
+}
+
+function sendTrainerLockedGoal(res) {
+  return res.status(403).send({
+    message: "Tu entrenador gestiona este objetivo nutricional",
+    code: "NUTRITIONAL_GOAL_TRAINER_LOCKED",
   });
 }
 
@@ -128,6 +149,9 @@ const controller = {
     const currentGoal = await nutritionalGoalService.getById(req.params.id);
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
+    if (!isAdmin(req) && (await isGoalLockedByTrainer(currentGoal))) {
+      return sendTrainerLockedGoal(res);
+    }
     if (await isGoalLockedForPlan(req, currentGoal)) return sendLockedGoal(res);
 
     const goal = isAdmin(req)
@@ -165,6 +189,23 @@ const controller = {
     const goalInUse = await syncActiveGoalAfterDelete(ownerId, currentGoal._id);
 
     return res.send({ goalInUse });
+  },
+
+  async assignByTrainer(req, res) {
+    try {
+      const goal = await nutritionalGoalService.assignByTrainer(
+        req.user.id,
+        req.params.clientId,
+        req.body || {}
+      );
+      return res.status(201).send(goal);
+    } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).send({ message: error.message, code: error.code });
+      }
+      console.error("[NUTRITIONAL_GOALS] assign_by_trainer_failed", error);
+      return res.status(500).send({ message: "Error interno del servidor" });
+    }
   },
 
   async activate(req, res) {

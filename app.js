@@ -6,6 +6,7 @@ const billingController = require("./components/billing/billing-controller");
 const { error404Handler, errorHandler } = require("./middleware");
 const logger = require("./middleware/logger");
 const maintenanceCheck = require("./middleware/maintenance");
+const { startCheckinReminderCron } = require("./components/trainerCheckins/checkin-reminder-cron");
 const app = express();
 
 app.use(express.json({ limit: "50mb" }));
@@ -63,5 +64,7 @@ app.get("/youtube-embed.html", (req, res) => {
 
 app.use(error404Handler);
 app.use(errorHandler);
+
+startCheckinReminderCron();
 
 module.exports = app;

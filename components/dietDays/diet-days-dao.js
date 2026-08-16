@@ -169,6 +169,15 @@ module.exports = {
   },
 
   // Crea dietDay con meals
+  // Variante de createDietDayOnNew() para cuando los Meal YA existen (clones
+  // reales del resolver de plantillas, funcionalidad 6) — a diferencia de
+  // createDietDay(), que espera objetos planos y crea los Meal ella misma.
+  async createDietDayWithMealIds(dietInUseId, date, mealIds) {
+    const dietDayDoc = await dietDaySchema.create({ date, meals: mealIds });
+    await dietModel.addDietDietDay(dietInUseId, dietDayDoc._id.toString());
+    return dietDayDoc;
+  },
+
   async createDietDayOnNew(dietInUseId, dietDay) {
     try {
       // Creación dietDay

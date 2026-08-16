@@ -60,6 +60,56 @@ function canSeeAds(user) {
   return !isPremiumUser(user);
 }
 
+// Funcionalidad 16 — monetización B2B del trainer, por capacidad de
+// clientes gestionables. Tres tiers, sin integración de pago real todavía
+// (placeholder consciente para el MVP): el límite ya es real y bloquea de
+// verdad (usado en trainer-client-service.js#invite), solo falta cobrar.
+const TRAINER_TIER_LIMITS = {
+  free: { maxClients: 3 },
+  trainer_pro: { maxClients: 20 },
+  trainer_unlimited: { maxClients: Number.MAX_SAFE_INTEGER },
+};
+
+function isTrainerEntitled(professionalPremium) {
+  if (!professionalPremium?.entitled) return false;
+  if (!professionalPremium.expiresAt) return true;
+  return new Date(professionalPremium.expiresAt).getTime() > Date.now();
+}
+
+function getTrainerTier(user) {
+  if (!isTrainerEntitled(user?.professionalPremium)) return "free";
+  const tier = user?.professionalPremium?.tier;
+  return TRAINER_TIER_LIMITS[tier] ? tier : "free";
+}
+
+function getTrainerLimits(user) {
+  return TRAINER_TIER_LIMITS[getTrainerTier(user)];
+}
+
+// Cuenta clientes ÚNICOS con relación no-terminal (cualquier scope) — un
+// mismo cliente con training+nutrition (2 TrainerClient, funcionalidad 2)
+// cuenta una sola vez contra el límite.
+function canInviteClient(user, activeUniqueClientCount) {
+  const limits = getTrainerLimits(user);
+  return activeUniqueClientCount < limits.maxClients;
+}
+
+function buildTrainerEntitlements(user, activeUniqueClientCount) {
+  const tier = getTrainerTier(user);
+  const limits = TRAINER_TIER_LIMITS[tier];
+  const maxClients = limits.maxClients === Number.MAX_SAFE_INTEGER ? null : limits.maxClients;
+
+  return {
+    tier,
+    isPaid: tier !== "free",
+    source: user?.professionalPremium?.source || null,
+    expiresAt: user?.professionalPremium?.expiresAt || null,
+    maxClients,
+    activeClients: activeUniqueClientCount,
+    remainingClients: maxClients === null ? null : Math.max(maxClients - activeUniqueClientCount, 0),
+  };
+}
+
 function getRemaining(limit, used) {
   if (limit === Number.MAX_SAFE_INTEGER) return null;
   return Math.max(limit - used, 0);
@@ -137,4 +187,10 @@ module.exports = {
   canCreateNutritionalGoal,
   canSeeAds,
   buildEntitlements,
+  TRAINER_TIER_LIMITS,
+  isTrainerEntitled,
+  getTrainerTier,
+  getTrainerLimits,
+  canInviteClient,
+  buildTrainerEntitlements,
 };

@@ -216,6 +216,77 @@ module.exports = {
     }
   },
 
+  // Alta mínima de un profesional (trainer): nombre, apellido, email,
+  // contraseña. Sin datos biométricos ni objetivos nutricionales — a
+  // diferencia de createUser, no crea Diet/DietDay automáticos.
+  async createProfessionalUser(req, res) {
+    try {
+      const email = normalizeEmail(req.body?.user?.email);
+      if (!email) {
+        return res.status(400).send({ message: "Email requerido" });
+      }
+
+      const name = req.body?.user?.name;
+      const lastname = req.body?.user?.lastname;
+      const password = req.body?.user?.password;
+      if (!name || !lastname || !password) {
+        return res
+          .status(400)
+          .send({ message: "Nombre, apellido y contraseña requeridos" });
+      }
+
+      const emailExists = await mail.validateEmailExists(email);
+      if (!emailExists) {
+        return res.status(400).send({ message: "El correo no existe" });
+      }
+
+      const userExist = await userModel.getUserByEmail(email);
+      if (userExist && userExist.name) {
+        return res
+          .status(409)
+          .send({ message: "Este usuario ya está registrado" });
+      }
+
+      const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
+
+      const user = await userModel.createProfessionalUser({
+        name,
+        lastname,
+        password,
+        email,
+        roles: ["trainer"],
+        hash: hashTemp,
+      });
+
+      notifyUserRegistered(user, req, "users.createProfessionalUser", "email");
+
+      const header1 = `Hola ${name}, verifique su cuenta`;
+      const description =
+        "Introduce el siguiente código en la aplicación para finalizar el registro.";
+      const htmlMail = mail.generateHashMail(header1, description, hashTemp);
+
+      await mail.sendMailSES(
+        user.email,
+        "Verificación de cuenta - TrainFit",
+        htmlMail,
+      );
+
+      return res.send(await userDto.single(user, req.user));
+    } catch (err) {
+      const isDup =
+        err?.code === 11000 ||
+        (typeof err?.message === "string" &&
+          err.message.toLowerCase().includes("duplicate key"));
+      if (isDup) {
+        return res
+          .status(409)
+          .send({ message: "Este usuario ya está registrado" });
+      }
+      console.error("Error al crear usuario profesional:", err);
+      return res.status(500).send({ message: "No se pudo crear el usuario" });
+    }
+  },
+
   /**
    * Crea un usuario nuevo desde Google Sign-In
    * Solo se crea con email, los demás datos se completan después en updateGoogleUser

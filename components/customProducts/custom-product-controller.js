@@ -1,5 +1,18 @@
 const customProductModel = require("./custom-product-model");
+const customProductSchema = require("./custom-product-schema");
+const mealLock = require("../meals/meal-lock");
 // const customProductDTO = require("./dto");
+
+function isAdmin(req) {
+  return Boolean(req.user?.roles?.includes("admin"));
+}
+
+function handleLockError(res, error) {
+  if (error.statusCode) {
+    return res.status(error.statusCode).send({ message: error.message, code: error.code });
+  }
+  throw error;
+}
 
 module.exports = {
   async getCustomProductById(req, res) {
@@ -38,6 +51,14 @@ module.exports = {
   // },
 
   async createCustomProductAndAddToMeal(req, res) {
+    if (!isAdmin(req)) {
+      try {
+        await mealLock.assertMealEditable(req.body.idMeal, req.user.id);
+      } catch (error) {
+        return handleLockError(res, error);
+      }
+    }
+
     const customProduct =
       await customProductModel.createCustomProductAndAddToMeal(
         req.body.idMeal,
@@ -48,6 +69,15 @@ module.exports = {
   },
 
   async updateCustomProduct(req, res) {
+    if (!isAdmin(req)) {
+      try {
+        const existing = await customProductSchema.findById(req.body._id).select("mealId");
+        await mealLock.assertMealEditable(existing?.mealId, req.user.id);
+      } catch (error) {
+        return handleLockError(res, error);
+      }
+    }
+
     const customProduct = await customProductModel.updateCustomProduct(
       req.body
     );
@@ -56,6 +86,15 @@ module.exports = {
   },
 
   async delete(req, res) {
+    if (!isAdmin(req)) {
+      try {
+        const existing = await customProductSchema.findById(req.params.id).select("mealId");
+        await mealLock.assertMealEditable(existing?.mealId, req.user.id);
+      } catch (error) {
+        return handleLockError(res, error);
+      }
+    }
+
     await customProductModel.delete(req.params.id);
     res.sendStatus(204);
   },

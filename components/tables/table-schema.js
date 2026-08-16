@@ -12,6 +12,16 @@ const TableSchema = Schema(
       index: true,
     },
     urlImage: String,
+    // Marca permanente de qué trainer asignó esta tabla (funcionalidad 5,
+    // docs/trainfit-trainers/05-especificaciones-acordadas.md) — independiente
+    // del estado vivo de la relación TrainerClient, se conserva aunque se
+    // revoque la relación (decisión de la funcionalidad 2: dos fuentes a
+    // consultar juntas para "¿esto viene de un trainer con acceso ahora?").
+    assignedByTrainerId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     splits: [
       {
         type: Schema.Types.ObjectId,

@@ -24,6 +24,20 @@ const pinnedExerciseNotes = require("../components/pinnedExerciseNotes/pinned-ex
 const anthropometry = require("../components/anthropometry/anthropometry-routes");
 const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goal-routes");
 const remoteConfig = require("../components/remoteConfig/remote-config-routes");
+const trainerClients = require("../components/trainerClients/trainer-client-routes");
+const trainerIntakeConfig = require("../components/trainerIntakeConfig/trainer-intake-config-routes");
+const workoutTemplates = require("../components/workoutTemplates/workout-template-routes");
+const dietTemplates = require("../components/dietTemplates/diet-template-routes");
+const planAssignments = require("../components/planAssignments/plan-assignment-routes");
+const nutritionPreferences = require("../components/nutritionPreferences/nutrition-preferences-routes");
+const nutritionPreferencesTrainer = require("../components/nutritionPreferences/nutrition-preferences-trainer-routes");
+const mealSnippets = require("../components/mealSnippets/meal-snippet-routes");
+const mealProposals = require("../components/mealProposals/meal-proposal-routes");
+const trainerCheckins = require("../components/trainerCheckins/checkin-routes");
+const trainerTasks = require("../components/trainerTasks/trainer-task-routes");
+const notifications = require("../components/notifications/notification-routes");
+const coachDashboard = require("../components/coachDashboard/coach-dashboard-routes");
+const trainerSubscription = require("../components/trainerSubscription/trainer-subscription-routes");
 
 const router = express.Router();
 
@@ -52,5 +66,22 @@ router.use("/git", gitManager);
 router.use("/anthropometry", anthropometry);
 router.use("/nutritionalgoals", nutritionalGoals);
 router.use("/config", remoteConfig);
+router.use("/trainer", trainerClients);
+router.use("/trainer", trainerIntakeConfig);
+router.use("/trainer", workoutTemplates);
+router.use("/trainer", dietTemplates);
+router.use("/trainer", planAssignments);
+router.use("/nutrition-preferences", nutritionPreferences);
+router.use("/trainer", nutritionPreferencesTrainer);
+router.use("/trainer", mealSnippets);
+router.use("/trainer", mealProposals.trainerRouter);
+router.use(mealProposals.clientRouter);
+router.use("/trainer", trainerCheckins.trainerRouter);
+router.use(trainerCheckins.clientRouter);
+router.use("/trainer", trainerTasks.trainerRouter);
+router.use(trainerTasks.clientRouter);
+router.use(notifications);
+router.use("/trainer", coachDashboard);
+router.use("/trainer", trainerSubscription);
 
 module.exports = router;

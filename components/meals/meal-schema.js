@@ -7,6 +7,16 @@ const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const MealSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
   notes: { type: String, trim: true, maxlength: 500 },
+  // Funcionalidad 8 — presente (con valor) solo si un trainer pautó
+  // directamente esta comida real de un cliente (mismo patrón que
+  // Table.assignedByTrainerId/Workout.trainerId). `completed` es
+  // independiente del bloqueo: marca si el cliente ya la hizo.
+  assignedByTrainerId: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
+  completed: { type: Boolean, default: false },
   customProducts: [
     {
       type: Schema.Types.ObjectId,

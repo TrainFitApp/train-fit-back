@@ -223,7 +223,14 @@ module.exports = {
 
   async searchProduct(page, limit, search) {
     try {
-      const trimmed = (typeof search === "string" ? search : "").trim();
+      // Acepta tanto el string plano histórico (req.body === "término",
+      // Content-Type text/plain) como un objeto {search: "término"} — un
+      // cliente que envíe application/json con un string en la raíz choca
+      // con el modo strict de express.json() y nunca llega aquí, así que en
+      // la práctica solo el segundo formato es fiable sobre HTTP.
+      const rawSearch =
+        typeof search === "string" ? search : search?.search;
+      const trimmed = (typeof rawSearch === "string" ? rawSearch : "").trim();
       if (!trimmed) return [];
       const normalizedQuery = normalizeSearchText(trimmed);
       if (!normalizedQuery) return [];

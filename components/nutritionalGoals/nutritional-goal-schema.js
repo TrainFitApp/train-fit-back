@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
+const AssignmentPeriodSchema = require("../planAssignments/assignment-period-schema");
 
 const NutritionalGoalSchema = new Schema({
   userId: {
@@ -19,6 +20,16 @@ const NutritionalGoalSchema = new Schema({
   proteinsGTotal: { type: Number, default: 0 },
   carbohydratesGTotal: { type: Number, default: 0 },
   fatGTotal: { type: Number, default: 0 },
+  // Funcionalidad 7 — presente (con valor) solo si un trainer asignó este
+  // objetivo (mismo patrón que Table.assignedByTrainerId/Workout.trainerId,
+  // funcionalidad 5). Mientras haya relación activa, bloquea edición directa
+  // del cliente (ver nutritional-goal-service.js#assertEditableByClient).
+  assignedByTrainerId: {
+    type: Schema.Types.ObjectId,
+    ref: "User",
+    default: null,
+  },
+  period: { type: AssignmentPeriodSchema, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

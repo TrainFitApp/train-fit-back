@@ -53,6 +53,28 @@ function resolveClientContext(req) {
   };
 }
 
+// com.trainfit.trainers envía este clientFamily. Los roles "trainer" y
+// "user" son mutuamente excluyentes (ver docs/trainfit-trainers/05-especificaciones-acordadas.md,
+// funcionalidad 1): una cuenta trainer solo puede iniciar sesión desde la
+// app de trainers, y viceversa.
+const TRAINER_CLIENT_FAMILY = "trainfit-trainers";
+
+function userHasTrainerRole(user) {
+  return (user?.roles || []).includes("trainer");
+}
+
+function clientFamilyRoleMismatch(clientContext, user) {
+  const isTrainerClient = clientContext.clientFamily === TRAINER_CLIENT_FAMILY;
+  return isTrainerClient !== userHasTrainerRole(user);
+}
+
+function sendRoleMismatchResponse(res) {
+  return res.status(403).send({
+    error: "ROLE_MISMATCH",
+    message: "Esta cuenta no tiene acceso desde esta aplicación",
+  });
+}
+
 function generateAccessTokenForSession(user, sessionId, audience, extra = {}) {
   return TokenService.signAccess(
     {
@@ -263,6 +285,10 @@ module.exports = {
         return sendInvalidLoginResponse(res);
       }
 
+      if (clientFamilyRoleMismatch(resolveClientContext(req), user)) {
+        return sendRoleMismatchResponse(res);
+      }
+
       if (user.hash) {
         const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
         await userModel.updateVerificationHash(user._id, hashTemp);
@@ -464,6 +490,10 @@ module.exports = {
         return res.status(400).send({ message: "Código incorrecto" });
       }
 
+      if (clientFamilyRoleMismatch(resolveClientContext(req), user)) {
+        return sendRoleMismatchResponse(res);
+      }
+
       const activatedUser = await userSchema.findByIdAndUpdate(
         user._id,
         { $unset: { hash: 1 } },
@@ -494,6 +524,10 @@ module.exports = {
           provider: "google",
           email: identity.email,
         });
+      }
+
+      if (clientFamilyRoleMismatch(resolveClientContext(req), user)) {
+        return sendRoleMismatchResponse(res);
       }
 
       if (user.hash) {
@@ -565,6 +599,10 @@ module.exports = {
           { $set: { appleId: identity.appleId } },
           { new: true }
         );
+      }
+
+      if (clientFamilyRoleMismatch(resolveClientContext(req), user)) {
+        return sendRoleMismatchResponse(res);
       }
 
       if (user.hash) {

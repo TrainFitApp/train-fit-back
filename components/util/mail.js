@@ -276,6 +276,77 @@ const generateMail = (header1, description, linkHref, linkContent) => {
 </html>`;
 };
 
+// Plantilla simple: sin botón por defecto, pero admite una lista opcional de
+// enlaces (p. ej. tiendas de apps) renderizados como botones apilados. Útil
+// para notificaciones que no tienen una única URL de destino (p. ej.
+// invitaciones de trainer — la app no tiene deep links configurados, ver
+// docs/MOBILE.md). Mismo estilo visual que generateMail/generateHashMail.
+const generateNotificationMail = (header1, description, links = []) => {
+  const year = new Date().getFullYear();
+  const preheader = description?.substring(0, 100) || header1 || "TrainFit";
+
+  const linksHtml =
+    links.length > 0
+      ? `<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="text-align:center;margin:24px 0 8px 0">
+          <tbody>
+            ${links
+              .map(
+                ({ href, label }) => `
+            <tr>
+              <td style="padding-bottom:12px">
+                <a href="${escapeHtml(href)}"
+                  target="_blank"
+                  style="background-color:#FE9000;color:#ffffff;font-weight:700;padding:12px 20px;border-radius:6px;text-decoration:none;display:inline-block;line-height:120%;box-sizing:border-box;max-width:100%;">
+                  ${escapeHtml(label)}
+                </a>
+              </td>
+            </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>`
+      : "";
+
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//ES" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html dir="ltr" lang="es">
+  <head>
+    <meta content="text/html; charset=UTF-8" http-equiv="Content-Type" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(header1 || "TrainFit")}</title>
+    <span style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0">${preheader}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</span>
+  </head>
+  <body style='background-color:#F3F4F6;font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol";padding-top:40px;padding-bottom:40px;margin:0;'>
+    <table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#ffffff;border-radius:8px;margin:0 auto;padding:20px;max-width:600px">
+      <tbody>
+        <tr style="width:100%">
+          <td>
+            <h1 style="font-size:24px;font-weight:700;text-align:center;margin:30px 0;color:#000000">
+              ${header1 || "TrainFit"}
+            </h1>
+
+            <p style="font-size:16px;line-height:24px;color:#374151;margin:16px 0;text-align:center">
+              ${description || ""}
+            </p>
+
+            ${linksHtml}
+
+            <hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;width:100%;" />
+
+            <p style="font-size:12px;line-height:16px;color:#6B7280;margin:4px 0">
+              Para cualquier duda, escribe a <strong>soporte@trainfit.net</strong>
+            </p>
+            <p style="font-size:12px;line-height:16px;color:#6B7280;margin:0">
+              © ${year} TrainFit. Todos los derechos reservados.
+            </p>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>`;
+};
+
 const escapeHtml = (value) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -493,6 +564,7 @@ module.exports = {
   sendMailSES,
   generateMail,
   generateHashMail,
+  generateNotificationMail,
   generateRegistrationNotificationMail,
   sendRegistrationNotification,
   notifyUserRegistered,

@@ -2,6 +2,7 @@ const dietDayDao = require("./diet-days-dao");
 const dietDayUtil = require("./diet-days-util");
 const aggregateService = require("../util/aggregate-service");
 const anthropometryModel = require("../anthropometry/anthropometry-service");
+const dietDayResolver = require("../planAssignments/diet-day-resolver");
 
 module.exports = {
   async getDietDays(page, limit) {
@@ -67,9 +68,39 @@ module.exports = {
     return dietDayDao.createDietDay(dietDay);
   },
 
+  // Si el cliente tiene un plan de dieta activo (funcionalidad 6), el día
+  // nuevo se rellena con las comidas resueltas de la plantilla en vez de los
+  // 6 huecos vacíos estándar. Cualquier fallo del resolver (sin plan, plan
+  // fuera de vigencia, error inesperado) cae al comportamiento existente sin
+  // romper el flujo — este endpoint lo usan TODOS los usuarios, no solo los
+  // vinculados a un trainer.
   async createDayWeightOnNewDietDay(dayWeight, dietInUseId, currentDate, userId) {
-    const standardDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    const dietDay = await dietDayDao.createDietDayOnNew(dietInUseId, standardDietDay);
+    let dietDay = null;
+
+    try {
+      const resolvedMealIds = await dietDayResolver.resolveTemplateMealsForDate(
+        userId,
+        currentDate
+      );
+      if (resolvedMealIds) {
+        dietDay = await dietDayDao.createDietDayWithMealIds(
+          dietInUseId,
+          currentDate,
+          resolvedMealIds
+        );
+      }
+    } catch (error) {
+      console.error("[DIET_DAY_RESOLVER] resolve_failed", {
+        userId,
+        currentDate,
+        message: error?.message,
+      });
+    }
+
+    if (!dietDay) {
+      const standardDietDay = dietDayUtil.getStandardDietDay(currentDate);
+      dietDay = await dietDayDao.createDietDayOnNew(dietInUseId, standardDietDay);
+    }
 
     if (dayWeight && userId) {
       await anthropometryModel.upsertAnthropometry(userId, currentDate, { weight: dayWeight });
