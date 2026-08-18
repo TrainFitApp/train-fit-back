@@ -13,6 +13,7 @@ router.getAsync("/invites", auth(["trainer"]), controller.listInvitesByTrainer);
 router.deleteAsync("/invites/:id", auth(["trainer"]), controller.cancelInvite);
 router.getAsync("/clients", auth(["trainer"]), controller.listMyClients);
 router.getAsync("/clients/paginated", auth(["trainer"]), controller.listMyClientsPaginated);
+router.getAsync("/clients/check-email", auth(["trainer"]), controller.checkClientEmailStatus);
 router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByTrainer);
 
 // --- TAREA 3: cuestionario inicial — el profesional revisa/confirma ANTES

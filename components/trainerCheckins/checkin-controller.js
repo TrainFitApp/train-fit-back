@@ -241,13 +241,10 @@ module.exports = {
     }
 
     const anthropometryFields = {};
-    const wellbeingValues = {};
     for (const key of submittedKeys) {
       const fieldDef = CHECKIN_FIELDS_BY_KEY.get(key);
       if (fieldDef.storage === "anthropometry") {
         anthropometryFields[fieldDef.anthropometryField] = values[key];
-      } else {
-        wellbeingValues[key] = values[key];
       }
     }
 
@@ -260,9 +257,19 @@ module.exports = {
       );
     }
 
+    // Antes solo se creaba CheckinResponse si había campos wellbeing — un
+    // check-in respondido ÚNICAMENTE con composición corporal (peso,
+    // perímetros...) nunca generaba ningún registro aquí, así que jamás
+    // aparecía en "Respuestas de check-in" del trainer aunque el cliente sí
+    // hubiera respondido y visto el toast de éxito. Ahora se guarda SIEMPRE
+    // que se haya enviado algo, con TODOS los valores enviados (no solo los
+    // wellbeing) — usa las mismas claves del catálogo que ya sabe
+    // renderizar el frontend del trainer (checkinFieldLabel/Unit), así que
+    // los campos de composición se ven ahí con su etiqueta y unidad
+    // correctas sin tocar el frontend.
     let responseDoc = null;
-    if (Object.keys(wellbeingValues).length) {
-      responseDoc = await checkinDao.createResponse(trainerId, clientId, wellbeingValues);
+    if (submittedKeys.length) {
+      responseDoc = await checkinDao.createResponse(trainerId, clientId, values);
     }
 
     return res.status(201).send({ anthropometry: anthropometryDoc, response: responseDoc });

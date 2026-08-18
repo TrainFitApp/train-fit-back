@@ -13,6 +13,22 @@ const single = (resource) => ({
 
 const multiple = (resources) => resources.map(single);
 
+// Para listInvitesByTrainer — clientId llega populado (name/lastname) desde
+// findAllByTrainerWithClient; aquí se separa el id "de verdad" (string, lo
+// que ya espera el resto del frontend) del nombre para mostrar, en vez de
+// devolver el subdocumento entero como si fuera el id.
+const singleWithClient = (resource) => {
+  const populatedClient =
+    resource.clientId && typeof resource.clientId === "object" ? resource.clientId : null;
+  return {
+    ...single(resource),
+    clientId: populatedClient ? populatedClient._id : resource.clientId || null,
+    client: populatedClient ? { name: populatedClient.name, lastname: populatedClient.lastname } : null,
+  };
+};
+
+const multipleWithClient = (resources) => resources.map(singleWithClient);
+
 // F04: como `single`, pero conserva `trainer` (nombre/apellidos/email) cuando
 // el service lo adjuntó (ver trainer-client-service.js#attachTrainerInfo) —
 // el cliente necesita saber QUIÉN le invitó, no solo el trainerId en bruto.
@@ -46,6 +62,8 @@ module.exports = {
   multiple,
   singleWithTrainer,
   multipleWithTrainer,
+  singleWithClient,
+  multipleWithClient,
   aggregated,
   multipleAggregated,
 };

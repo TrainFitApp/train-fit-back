@@ -69,6 +69,24 @@ module.exports = {
   DuplicateInviteError,
   TrainerLimitReachedError,
 
+  // Estado por scope de un email para ESTE trainer, para avisar en el
+  // formulario de invitar antes de enviar (no solo dejar que el submit
+  // falle contra el índice único). `blocked` = ya hay algo en curso o
+  // activo en ese scope; declined/revoked no cuentan, se puede reinvitar.
+  async checkClientEmailStatus(trainerId, clientEmailRaw) {
+    const clientEmail = String(clientEmailRaw || "").trim().toLowerCase();
+    const result = { training: { blocked: false, status: null }, nutrition: { blocked: false, status: null } };
+    if (!clientEmail) return result;
+
+    const relations = await trainerClientDao.findBlockingByTrainerAndEmail(trainerId, clientEmail);
+    for (const relation of relations) {
+      if (result[relation.scope]) {
+        result[relation.scope] = { blocked: true, status: relation.status };
+      }
+    }
+    return result;
+  },
+
   /**
    * Invita a un cliente para uno o varios scopes a la vez. Crea UN documento
    * TrainerClient por scope — nunca un único documento "both" (ver
@@ -142,7 +160,7 @@ module.exports = {
   },
 
   async listInvitesByTrainer(trainerId) {
-    return trainerClientDao.findAllByTrainer(trainerId);
+    return trainerClientDao.findAllByTrainerWithClient(trainerId);
   },
 
   // TASK-035 (MASTER_BACKLOG.md) — antes solo cancelaba invitaciones

@@ -8,6 +8,19 @@ const logger = require("./middleware/logger");
 const maintenanceCheck = require("./middleware/maintenance");
 const app = express();
 
+// La API sirve datos autenticados/por-usuario — nunca deben cachearse en el
+// navegador. Express genera ETag por defecto en cada res.send(), y un GET
+// con el mismo cuerpo (p. ej. /trainer/invites sin cambios) puede volver un
+// 304 sin body; si el navegador no tiene ese recurso en su cache de disco
+// (sesión nueva, cache limpiada, cabeceras Authorization distintas entre
+// peticiones) la respuesta le llega vacía a la app sin lanzar ningún error
+// de red. Desactivar el cacheo evita la clase entera de bug.
+app.set("etag", false);
+app.use("/api", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: false, limit: "50mb" }));
 app.use(cookieParser()); // Parse cookies for refresh token

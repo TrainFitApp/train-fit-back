@@ -27,6 +27,17 @@ module.exports = {
     return Boolean(relation);
   },
 
+  // Mismos 4 estados que bloquean el índice único de trainer-client-schema.js
+  // (trainerId+clientEmail+scope) — usado para avisar en el front ANTES de
+  // enviar, no solo dejar que el submit falle.
+  async findBlockingByTrainerAndEmail(trainerId, clientEmail) {
+    return TrainerClient.find({
+      trainerId,
+      clientEmail: clientEmail.trim().toLowerCase(),
+      status: { $in: ["pending", "cuestionario_pendiente", "en_revision", "active"] },
+    }).select("scope status");
+  },
+
   async findPendingByEmail(clientEmail) {
     return TrainerClient.find({
       clientEmail: clientEmail.trim().toLowerCase(),
@@ -57,6 +68,18 @@ module.exports = {
     const query = { trainerId };
     if (status) query.status = Array.isArray(status) ? { $in: status } : status;
     return TrainerClient.find(query).sort({ invitedAt: -1 });
+  },
+
+  // Para listInvitesByTrainer (GET /trainer/invites) — el listado del
+  // trainer necesita nombre/apellidos del cliente para las cards (no solo
+  // el email), pero SOLO ese consumidor: método aparte en vez de añadir el
+  // populate a findAllByTrainer para no tocar los otros 3 usos
+  // (aggregateByOtherParty no lo necesita y añadir un populate ahí sería
+  // trabajo de red desperdiciado en cada uno de ellos).
+  async findAllByTrainerWithClient(trainerId) {
+    return TrainerClient.find({ trainerId })
+      .sort({ invitedAt: -1 })
+      .populate("clientId", "name lastname");
   },
 
   // TASK-022 (MASTER_BACKLOG.md) — versión paginada de "clientes activos

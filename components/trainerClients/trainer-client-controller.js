@@ -44,10 +44,26 @@ const controller = {
     }
   },
 
+  // GET /trainer/clients/check-email?email=...
+  async checkClientEmailStatus(req, res) {
+    const status = await trainerClientService.checkClientEmailStatus(req.auth.userId, req.query.email);
+    return res.send(status);
+  },
+
   // GET /trainer/invites
   async listInvitesByTrainer(req, res) {
     const invites = await trainerClientService.listInvitesByTrainer(req.auth.userId);
-    return res.send(trainerClientDto.multiple(invites));
+    // Express genera ETag automáticamente para cualquier res.send() con JSON
+    // (etag activado por defecto) — dos GET seguidas con el mismo contenido
+    // (nada cambió entre pedir el listado y volver a pedirlo) devuelven un
+    // 304 sin cuerpo. El navegador debería rellenarlo con la respuesta
+    // cacheada, pero cuando no lo hace (caché vaciada/incógnito/disco), el
+    // frontend recibe un body vacío sin ningún error — se ve como
+    // "invitaciones pendientes" desaparecidas de la nada. Este listado
+    // cambia por acción del propio trainer (invitar/cancelar), nunca hace
+    // falta servirlo desde caché condicional.
+    res.set("Cache-Control", "no-store");
+    return res.send(trainerClientDto.multipleWithClient(invites));
   },
 
   // DELETE /trainer/invites/:id
