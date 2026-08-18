@@ -19,7 +19,7 @@
     "migrate:weights-to-anthropometry:dry-run": "node scripts/migrate-weights-to-anthropometry.js --dry-run",
     "migrate:normalize-emails": "node scripts/migrate-normalize-emails.js",
     "migrate:normalize-emails:dry-run": "node scripts/migrate-normalize-emails.js --dry-run",
-    "test": "node --test components/remoteConfig/remote-config-service.test.js components/billing/feature-access-service.test.js components/util/normalize-email.test.js components/users/schema.test.js"
+    "test": "node --test components/remoteConfig/remote-config-service.test.js components/billing/feature-access-service.test.js components/util/normalize-email.test.js components/users/schema.test.js components/sets/set-dao.test.js"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",
