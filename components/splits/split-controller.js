@@ -56,10 +56,10 @@ module.exports = {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
+      const limit = featureAccessService.getLimits(req.user).microcyclesPerRoutine;
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
-        message:
-          "L\u00edmite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
+        message: `L\u00edmite alcanzado. Solo puedes tener ${limit} micro-ciclos por rutina.`,
       });
     }
 
@@ -77,10 +77,10 @@ module.exports = {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
+      const limit = featureAccessService.getLimits(req.user).microcyclesPerRoutine;
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
-        message:
-          "L\u00edmite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
+        message: `L\u00edmite alcanzado. Solo puedes tener ${limit} micro-ciclos por rutina.`,
       });
     }
 

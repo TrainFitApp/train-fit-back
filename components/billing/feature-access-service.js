@@ -8,7 +8,7 @@ const FREE_LIMITS = {
 
 const PREMIUM_LIMITS = {
   routines: Number.MAX_SAFE_INTEGER,
-  microcyclesPerRoutine: 21,
+  microcyclesPerRoutine: 50,
   customExercises: Number.MAX_SAFE_INTEGER,
   recipes: Number.MAX_SAFE_INTEGER,
   nutritionalGoals: 10,
