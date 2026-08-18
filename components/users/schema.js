@@ -13,6 +13,27 @@ const anthropometrySchema =
   mongoose.models.Anthropometry ||
   mongoose.model("Anthropometry", anthropometrySchemaDef);
 const nutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
+const workoutSchema = require("../workouts/workout-schema");
+const mealSchema = require("../meals/meal-schema");
+const dietTemplateSchema = require("../dietTemplates/diet-template-schema");
+// Auditoría cascadas de borrado (2026-08) — ninguna de estas colecciones
+// "Coach tab" tenía limpieza al borrar cuenta, hueco preexistente arrastrado
+// desde que se fueron añadiendo feature a feature (mismo problema que tenía
+// DietTemplate antes de esta pasada).
+const trainerClientSchema = require("../trainerClients/trainer-client-schema");
+const trainerNoteSchema = require("../trainerNotes/trainer-note-schema");
+const trainerPaymentSchema = require("../trainerPayments/trainer-payment-schema");
+const trainerTaskSchema = require("../trainerTasks/trainer-task-schema");
+const clientIntakeSchema = require("../clientIntake/client-intake-schema");
+const trainerIntakeConfigSchema = require("../trainerIntakeConfig/trainer-intake-config-schema");
+const checkinResponseSchema = require("../trainerCheckins/checkin-response-schema");
+const trainerCheckinTemplateSchema = require("../trainerCheckins/trainer-checkin-template-schema");
+const checkinTemplateDefinitionSchema = require("../trainerCheckins/checkin-template-definition-schema");
+const planAssignmentSchema = require("../planAssignments/plan-assignment-schema");
+const notificationSchema = require("../notifications/notification-schema");
+const recipeSchema = require("../recipes/recipe-schema");
+const billingCustomerSchema = require("../billing/billing-customer-schema");
+const billingEventSchema = require("../billing/billing-event-schema");
 const { EMAIL_FORMAT_REGEX } = require("../util/normalize-email");
 const SALT_WORK_FACTOR = 10;
 
@@ -59,10 +80,8 @@ const UserSchema = new Schema({
   dietInUse: Schema.Types.ObjectId,
   tableInUse: Schema.Types.ObjectId,
   workoutInUse: Schema.Types.ObjectId,
-  archivedDiets: { type: [Schema.Types.ObjectId], default: [] },
   archivedProducts: { type: [Schema.Types.ObjectId], default: [] },
   archivedRecipes: { type: [Schema.Types.ObjectId], default: [] },
-  archivedTables: { type: [Schema.Types.ObjectId], default: [] },
   archivedExercises: { type: [Schema.Types.ObjectId], default: [] },
   personalAds: Boolean,
   lastLogin: Date,
@@ -157,6 +176,66 @@ UserSchema.pre("deleteOne", async function (next) {
 
       await productSchema.deleteMany({ userId: user._id });
       await nutritionalGoalSchema.deleteMany({ userId: user._id });
+      // Plantillas de workout del trainer (trainerId set, sin split que las
+      // referencie) — el hook pre('deleteMany') de workout-schema.js ya
+      // cascada el borrado de sus CustomExercise/Set.
+      await workoutSchema.deleteMany({ trainerId: user._id });
+      // Snippets de comida del trainer (trainerId set, sin DietDay que los
+      // referencie) — el hook pre('deleteMany') de meal-schema.js ya
+      // cascada el borrado de sus CustomProduct/CustomRecipe.
+      await mealSchema.deleteMany({ trainerId: user._id });
+      // Plantillas de dieta del trainer — hueco preexistente (nunca se
+      // limpiaban al borrar la cuenta). El hook pre('deleteMany') de
+      // diet-template-schema.js ya cascada el borrado de sus
+      // CustomProduct/CustomRecipe.
+      await dietTemplateSchema.deleteMany({ trainerId: user._id });
+
+      // El usuario puede ser el trainer O el cliente de cada una de estas
+      // relaciones — hay que limpiar por ambos lados.
+      await trainerClientSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await trainerNoteSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await trainerPaymentSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      // deleteMany (no deleteOne) dispara el hook en cascada de
+      // trainer-task-schema.js que borra los TaskCompletion de cada tarea.
+      await trainerTaskSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await clientIntakeSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await checkinResponseSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await trainerCheckinTemplateSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await notificationSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      // deleteMany (no deleteOne) dispara el hook en cascada de
+      // plan-assignment-schema.js que borra las DietException de cada plan.
+      await planAssignmentSchema.deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+
+      // Config/biblioteca solo del lado trainer (sin clientId).
+      await trainerIntakeConfigSchema.deleteMany({ trainerId: user._id });
+      await checkinTemplateDefinitionSchema.deleteMany({ trainerId: user._id });
+
+      // Recetas propias del usuario (no verificadas por admin) — nunca
+      // tuvieron hook de borrado propio.
+      await recipeSchema.deleteMany({ userId: user._id });
+
+      // Billing — decisión explícita: se borra igual que el resto, no se
+      // conserva como histórico tras borrar la cuenta.
+      await billingCustomerSchema.deleteMany({ userId: user._id });
+      await billingEventSchema.deleteMany({ userId: user._id });
     }
     next();
   } catch (e) {

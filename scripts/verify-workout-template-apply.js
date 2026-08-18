@@ -33,7 +33,6 @@ async function main() {
   const customExerciseSchema = require("../components/customExercises/custom-exercise-schema");
   const setSchema = require("../components/sets/set-schema");
   const trainerClientSchema = require("../components/trainerClients/trainer-client-schema");
-  const workoutTemplateSchema = require("../components/workoutTemplates/workout-template-schema");
   const workoutTemplateDao = require("../components/workoutTemplates/workout-template-dao");
   const workoutDao = require("../components/workouts/workout-dao");
   const customExerciseDao = require("../components/customExercises/custom-exercise-dao");
@@ -79,8 +78,7 @@ async function main() {
     });
     ok("table/split de prueba creados", created.table._id, created.split._id);
 
-    created.template = await workoutTemplateSchema.create({
-      trainerId: created.trainer._id,
+    created.template = await workoutTemplateDao.create(created.trainer._id, {
       name: "Plantilla de verificación",
       blocks: [
         {
@@ -110,8 +108,15 @@ async function main() {
     ok("WorkoutTemplate creada", created.template._id);
 
     log("aplicando plantilla al split...");
+    // applyToSplit necesita el Workout-plantilla real (autopoblado), no el
+    // objeto de respuesta ya "aplanado a anidado" que devuelve create() —
+    // mismo dato que usa el controller real vía findOwnedByTrainer.
+    const templateForApply = await workoutTemplateDao.findOwnedByTrainer(
+      created.trainer._id,
+      created.template._id
+    );
     const resultSplits = await workoutTemplateDao.applyToSplit(
-      created.template,
+      templateForApply,
       created.split._id.toString(),
       created.client._id.toString()
     );
@@ -200,7 +205,9 @@ async function main() {
     }
     if (created.split) await splitSchema.deleteOne({ _id: created.split._id });
     if (created.table) await tableSchema.deleteOne({ _id: created.table._id });
-    if (created.template) await workoutTemplateSchema.deleteOne({ _id: created.template._id });
+    // deleteOne (no deleteMany) dispara el hook en cascada de
+    // workout-schema.js que borra los CustomExercise/Set de la plantilla.
+    if (created.template) await workoutSchema.deleteOne({ _id: created.template._id });
     if (created.relation) await trainerClientSchema.deleteOne({ _id: created.relation._id });
     if (created.exercise) await exerciseSchema.deleteOne({ _id: created.exercise._id });
     if (created.trainer) await userSchema.deleteOne({ _id: created.trainer._id });

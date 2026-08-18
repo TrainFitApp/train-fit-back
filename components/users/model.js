@@ -85,10 +85,8 @@ module.exports = {
     user.theme = "dark";
 
     user.tables = [];
-    user.archivedDiets = [];
     user.archivedProducts = [];
     user.archivedRecipes = [];
-    user.archivedTables = [];
     user.archivedExercises = [];
 
     const updatedUser = await userDao.updateGoogleUser(user);
@@ -121,10 +119,8 @@ module.exports = {
     user.theme = "dark";
 
     user.tables = [];
-    user.archivedDiets = [];
     user.archivedProducts = [];
     user.archivedRecipes = [];
-    user.archivedTables = [];
     user.archivedExercises = [];
 
     const updatedUser = await userDao.updateAppleUser(user);

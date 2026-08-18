@@ -21,7 +21,7 @@ async function main() {
 
   const userSchema = require("../components/users/schema");
   const mealSnippetDao = require("../components/mealSnippets/meal-snippet-dao");
-  const MealSnippet = require("../components/mealSnippets/meal-snippet-schema");
+  const mealSchema = require("../components/meals/meal-schema");
 
   const runId = new mongoose.Types.ObjectId().toString();
   const created = { trainerA: null, trainerB: null, snippet: null };
@@ -54,14 +54,16 @@ async function main() {
     assert.equal(crossTrainerAttempt, null, "un trainer no debe poder renombrar el snippet de otro");
     ok("rename() respeta el aislamiento por trainerId (null si no es el dueño)");
 
-    const stillOriginalOwnerName = await MealSnippet.findById(created.snippet._id).select("name");
+    const stillOriginalOwnerName = await mealSchema.findById(created.snippet._id).select("name");
     assert.equal(stillOriginalOwnerName.name, "Snippet renombrado", "el intento cruzado no debe haber modificado nada");
     ok("el nombre no cambió tras el intento de otro trainer");
 
     console.log(`${LOG_PREFIX} PASS`);
   } finally {
     log("limpiando datos de prueba...");
-    if (created.snippet) await MealSnippet.deleteOne({ _id: created.snippet._id });
+    // deleteOne (no deleteMany) dispara el hook en cascada de meal-schema.js
+    // que borra los CustomProduct/CustomRecipe del snippet.
+    if (created.snippet) await mealSchema.deleteOne({ _id: created.snippet._id });
     if (created.trainerA) await userSchema.deleteOne({ _id: created.trainerA._id });
     if (created.trainerB) await userSchema.deleteOne({ _id: created.trainerB._id });
     ok("datos de prueba borrados");

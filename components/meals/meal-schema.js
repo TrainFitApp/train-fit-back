@@ -31,9 +31,32 @@ const MealSchema = Schema({
       autopopulate: true,
     },
   ],
+  // Unificación mealSnippets -> meals (2026-08, mismo criterio que
+  // workoutTemplates -> workouts) — un Meal con trainerId es un snippet
+  // reutilizable del profesional (sin DietDay que lo referencie), nunca una
+  // comida real de cliente. Único discriminador, nunca se reutiliza para
+  // otro significado (p.ej. provenance ya tiene su propio campo:
+  // assignedByTrainerId).
+  trainerId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+  createdAt: { type: Date, default: Date.now },
 });
 
 MealSchema.plugin(mongooseAutopopulate);
+
+// Guardarraíl: toda query BROAD de Meal (sin _id ni trainerId propios)
+// excluye snippets (trainerId set) por defecto — protege listados/búsquedas
+// existentes (findAll, searchAllWithFilters) de colar snippets como si
+// fueran comidas reales. Una consulta por _id concreto (incluida la que hace
+// pasteMeal internamente, compartida con la creación de snippets) o que ya
+// filtra por trainerId explícito no se toca — mismo criterio que
+// workouts/workout-schema.js.
+MealSchema.pre(/^find/, function (next) {
+  const query = this.getQuery();
+  if (query._id === undefined && query.trainerId === undefined) {
+    this.where({ trainerId: null });
+  }
+  next();
+});
 
 const handleDelete = async function (next) {
   try {

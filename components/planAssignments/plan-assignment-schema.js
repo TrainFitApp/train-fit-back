@@ -33,4 +33,36 @@ const PlanAssignmentSchema = new Schema(
 // de escanear todas las asignaciones históricas del cliente.
 PlanAssignmentSchema.index({ clientId: 1, status: 1, startDate: 1 });
 
+// Auditoría cascadas de borrado (2026-08) — las DietException puntuales de
+// una asignación no tenían ningún camino de limpieza: ni al borrar la
+// asignación, ni al borrar la cuenta del cliente/trainer (ver users/schema.js).
+const dietExceptionSchema = require("../dietExceptions/diet-exception-schema");
+
+const handleDelete = async function (next) {
+  try {
+    const query = this.getQuery();
+    const assignment = await this.model.findOne(query);
+    if (assignment) await dietExceptionSchema.deleteMany({ assignmentId: assignment._id });
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+PlanAssignmentSchema.pre("deleteOne", handleDelete);
+PlanAssignmentSchema.pre("findOneAndDelete", handleDelete);
+
+PlanAssignmentSchema.pre("deleteMany", async function (next) {
+  try {
+    const filter = this.getFilter();
+    const assignments = await this.model.find(filter, "_id");
+    await dietExceptionSchema.deleteMany({
+      assignmentId: { $in: assignments.map((a) => a._id) },
+    });
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = mongoose.model("PlanAssignment", PlanAssignmentSchema);

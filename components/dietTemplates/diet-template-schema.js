@@ -1,13 +1,21 @@
 const mongoose = require("mongoose");
+const mongooseAutopopulate = require("mongoose-autopopulate");
 const Schema = mongoose.Schema;
+const customProductSchema = require("../customProducts/custom-product-schema");
+const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 
 // Replanteamiento MVP (nutrición) — plantilla de dieta reutilizable del
 // profesional, mismo espíritu que las plantillas de Table (rutinas): se
 // construye una vez y se aplica a N clientes en vez de teclear cada comida
-// de cada cliente de cada día a mano. `customProducts`/`customRecipes` usan
-// el mismo formato "clipboard" crudo que ya acepta `mealModel.pasteMeal`
-// (ver F12/F28) — se materializan como documentos reales solo al aplicar la
-// plantilla a un cliente (diet-template-controller.js#applyToClient).
+// de cada cliente de cada día a mano.
+//
+// 2026-08 — `customProducts`/`customRecipes` de cada alternativa dejaron de
+// ser `Mixed` (blob crudo sin validar) para ser refs REALES a CustomProduct/
+// CustomRecipe, mismo criterio que ya se aplicó a mealSnippets -> meals: la
+// app entera ya tiene una única forma de representar "producto en un plato"
+// (autopopulate + cascada de borrado), y un blob Mixed aparte solo duplicaba
+// esa forma sin aportar nada — se materializan al crear/actualizar la
+// plantilla (diet-template-dao.js), no al aplicar como antes.
 // Auditoría de arquitectura (nutrición) — `mode` generaliza esta plantilla en
 // tres formas de repetirse, sin romper nada de lo existente:
 //   - "sequential" (default, TODO documento existente lo es): el `days[]` de
@@ -32,8 +40,8 @@ const Schema = mongoose.Schema;
 // meal-proposal-schema.js, reutilizado aquí en vez de reinventado.
 const MealAlternativeSchema = {
   label: { type: String, trim: true, maxlength: 100, default: "" },
-  customProducts: { type: [Schema.Types.Mixed], default: [] },
-  customRecipes: { type: [Schema.Types.Mixed], default: [] },
+  customProducts: [{ type: Schema.Types.ObjectId, ref: "CustomProduct", autopopulate: true }],
+  customRecipes: [{ type: Schema.Types.ObjectId, ref: "CustomRecipe", autopopulate: true }],
 };
 
 const MealStructureSchema = {
@@ -74,4 +82,74 @@ const DietTemplateSchema = new Schema(
   { collection: "diettemplates" }
 );
 
-module.exports = mongoose.model("DietTemplate", DietTemplateSchema);
+DietTemplateSchema.plugin(mongooseAutopopulate);
+
+// Recorre days[] y dayPatterns[] (mismo shape .meals[].alternatives[]) y
+// junta los ids de CustomProduct/CustomRecipe referenciados en TODO el
+// documento — usado tanto por la cascada de borrado de aquí abajo como por
+// diet-template-dao.js#update para limpiar el contenido viejo que se
+// reemplaza (expuesto como propiedad del modelo, no como export aparte, para
+// no crear un require circular schema<->dao).
+function collectIdsFromMeals(containers) {
+  const productIds = [];
+  const recipeIds = [];
+  for (const container of containers || []) {
+    for (const meal of container.meals || []) {
+      for (const alt of meal.alternatives || []) {
+        productIds.push(...(alt.customProducts || []));
+        recipeIds.push(...(alt.customRecipes || []));
+      }
+    }
+  }
+  return { productIds, recipeIds };
+}
+
+function collectContentIds(doc) {
+  const fromDays = collectIdsFromMeals(doc?.days);
+  const fromPatterns = collectIdsFromMeals(doc?.dayPatterns);
+  return {
+    productIds: [...fromDays.productIds, ...fromPatterns.productIds],
+    recipeIds: [...fromDays.recipeIds, ...fromPatterns.recipeIds],
+  };
+}
+
+async function deleteContentIds({ productIds, recipeIds }) {
+  if (productIds.length) await customProductSchema.deleteMany({ _id: { $in: productIds } });
+  if (recipeIds.length) await customRecipeSchema.deleteMany({ _id: { $in: recipeIds } });
+}
+
+const handleDeleteOne = async function (next) {
+  try {
+    const doc = await this.model.findOne(this.getQuery());
+    if (doc) await deleteContentIds(collectContentIds(doc));
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+DietTemplateSchema.pre("deleteOne", handleDeleteOne);
+DietTemplateSchema.pre("findOneAndDelete", handleDeleteOne);
+DietTemplateSchema.pre("findOneAndRemove", handleDeleteOne);
+
+DietTemplateSchema.pre("deleteMany", async function (next) {
+  try {
+    const docs = await this.model.find(this.getFilter());
+    const productIds = [];
+    const recipeIds = [];
+    for (const doc of docs) {
+      const ids = collectContentIds(doc);
+      productIds.push(...ids.productIds);
+      recipeIds.push(...ids.recipeIds);
+    }
+    await deleteContentIds({ productIds, recipeIds });
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+const DietTemplateModel = mongoose.model("DietTemplate", DietTemplateSchema);
+DietTemplateModel.collectContentIds = collectContentIds;
+
+module.exports = DietTemplateModel;

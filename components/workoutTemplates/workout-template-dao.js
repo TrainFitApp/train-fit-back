@@ -1,17 +1,18 @@
 const mongoose = require("mongoose");
-const WorkoutTemplate = require("./workout-template-schema");
+const workoutSchema = require("../workouts/workout-schema");
 const splitSchema = require("../splits/split-schema");
 const tableSchema = require("../tables/table-schema");
-const workoutSchema = require("../workouts/workout-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const setSchema = require("../sets/set-schema");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
-// Fase B — aplana blocks[].exercises[].sets (formato de prescripción de la
-// plantilla) en CustomExercise/Set reales CON blockId real, y en paralelo
-// materializa Workout.blocks[] (solo metadata: nombre/tipo/rondas/descansos).
-// Función pura (sin acceso a BD) para poder testearla de forma aislada,
-// mismo criterio que cloneWorkoutForTemplateCopy en workouts/workout-dao.js.
+// Unificación workoutTemplates -> workouts (2026-08) — las plantillas ya no
+// viven en su propia colección; son Workout con trainerId set y sin ningún
+// Split que las referencie (ver workout-schema.js). El shape "de edición"
+// (blocks[].exercises[].sets[] anidado) que manda/espera el front NO es el
+// shape de almacenamiento real (Workout.blocks solo metadata + Workout.exercises
+// aparte con blockId) — estas dos funciones son la traducción entre ambos,
+// igual que ya hacía falta antes de la unificación.
 function materializeBlocksAsExercises(blocks) {
   const customExercisesToCreate = [];
   const setsToCreate = [];
@@ -83,13 +84,11 @@ function mapCustomExerciseToTemplateShape(customExercise, index) {
   };
 }
 
-// Fase B — inverso de materializeBlocksAsExercises. Lee los Workout.blocks[]
-// reales y agrupa workout.exercises[] (autopoblado) por blockId. Cualquier
-// ejercicio sin blockId, o con un blockId que ya no exista en el Workout
-// (huérfano — no debería pasar, pero updateWorkoutBlocks ya limpia esto al
-// borrar un bloque, así que es solo defensa en profundidad), cae en UN bloque
-// "straight" final — nunca se pierde contenido silenciosamente al guardar
-// como plantilla. Función pura.
+// Inverso de materializeBlocksAsExercises. Lee Workout.blocks[] reales y
+// agrupa Workout.exercises[] (autopoblado) por blockId. Ejercicios sin
+// blockId, o con blockId que ya no existe (huérfano — defensa en
+// profundidad), caen en un bloque "straight" final: nunca se pierde
+// contenido silenciosamente.
 function buildBlockFromWorkout(workout) {
   const realBlocks = [...(workout.blocks || [])].sort(
     (a, b) => (a.order || 0) - (b.order || 0)
@@ -140,43 +139,118 @@ function buildBlockFromWorkout(workout) {
   return blocks;
 }
 
+// Borra los CustomExercise (y, en cascada vía su propio hook, los Set) de un
+// Workout-plantilla — usado antes de re-materializar blocks nuevos en update,
+// y en delete. Nunca toca el propio documento Workout.
+async function deleteTemplateChildren(workout) {
+  if (workout.exercises && workout.exercises.length > 0) {
+    await customExerciseSchema.deleteMany({ _id: { $in: workout.exercises } });
+  }
+}
+
 module.exports = {
   // Funciones puras exportadas para test (workout-template-dao.test.js).
   materializeBlocksAsExercises,
   buildBlockFromWorkout,
 
   async create(trainerId, data) {
-    return WorkoutTemplate.create({ trainerId, ...data });
+    const { customExercisesToCreate, setsToCreate, workoutBlocksToCreate } =
+      materializeBlocksAsExercises(data.blocks);
+
+    if (setsToCreate.length > 0) await setSchema.insertMany(setsToCreate);
+    if (customExercisesToCreate.length > 0) {
+      await customExerciseSchema.insertMany(customExercisesToCreate);
+    }
+
+    const created = await workoutSchema.create({
+      trainerId,
+      name: data.name,
+      description: data.description,
+      level: data.level,
+      tags: data.tags,
+      equipment: data.equipment,
+      blocks: workoutBlocksToCreate,
+      exercises: customExercisesToCreate.map((ce) => ce._id),
+    });
+
+    // create() no pasa por el middleware de autopopulate (solo corre en
+    // find/findOne), así que el shape anidado de respuesta se arma en
+    // memoria con los mismos objetos recién insertados — mismo criterio que
+    // el resto del dao: sin round-trip innecesario a BD.
+    const exercisesForResponse = customExercisesToCreate.map((ce) => ({
+      ...ce,
+      sets: ce.sets.map((setId) => setsToCreate.find((s) => String(s._id) === String(setId))),
+    }));
+
+    return {
+      _id: created._id,
+      trainerId: created.trainerId,
+      name: created.name,
+      description: created.description,
+      level: created.level,
+      tags: created.tags,
+      equipment: created.equipment,
+      createdAt: created.createdAt,
+      blocks: buildBlockFromWorkout({ blocks: workoutBlocksToCreate, exercises: exercisesForResponse }),
+    };
   },
 
-  // Populate solo en paths de lectura/respuesta al cliente (lista y builder
-  // de plantillas necesitan nombre/tipo de cada ejercicio). NUNCA en
-  // findOwnedByTrainer: su resultado alimenta materializeBlocksAsExercises
-  // en applyToSplit, que necesita el ObjectId crudo para insertar el nuevo
-  // CustomExercise.exercise tal cual — poblarlo ahí rompería esa inserción.
+  // Populate automático (plugin autopopulate del schema) — a diferencia del
+  // create() de arriba, aquí sí conviene: es lectura pura, sin insert que
+  // proteger de una population prematura.
   async listByTrainer(trainerId) {
-    return WorkoutTemplate.find({ trainerId })
-      .sort({ createdAt: -1 })
-      .populate("blocks.exercises.exercise");
+    const templates = await workoutSchema.find({ trainerId }).sort({ createdAt: -1 }).lean();
+    return templates.map((t) => ({ ...t, blocks: buildBlockFromWorkout(t) }));
   },
 
   async findOwnedByTrainer(trainerId, id) {
-    return WorkoutTemplate.findOne({ _id: id, trainerId });
+    return workoutSchema.findOne({ _id: id, trainerId });
   },
 
   async update(trainerId, id, patch) {
-    return WorkoutTemplate.findOneAndUpdate({ _id: id, trainerId }, patch, { new: true }).populate(
-      "blocks.exercises.exercise"
-    );
+    const existing = await workoutSchema.findOne({ _id: id, trainerId });
+    if (!existing) return null;
+
+    const setOps = {};
+    ["name", "description", "level", "tags", "equipment"].forEach((key) => {
+      if (patch[key] !== undefined) setOps[key] = patch[key];
+    });
+
+    if (patch.blocks !== undefined) {
+      // Reemplaza el contenido: fuera los CustomExercise/Set viejos, dentro
+      // los nuevos materializados del patch — mismo resultado que el
+      // "sobrescribe todo el subdocumento embebido" del modelo anterior,
+      // aplicado ahora a colecciones reales.
+      await deleteTemplateChildren(existing);
+      const { customExercisesToCreate, setsToCreate, workoutBlocksToCreate } =
+        materializeBlocksAsExercises(patch.blocks);
+      if (setsToCreate.length > 0) await setSchema.insertMany(setsToCreate);
+      if (customExercisesToCreate.length > 0) {
+        await customExerciseSchema.insertMany(customExercisesToCreate);
+      }
+      setOps.blocks = workoutBlocksToCreate;
+      setOps.exercises = customExercisesToCreate.map((ce) => ce._id);
+    }
+
+    await workoutSchema.updateOne({ _id: id }, { $set: setOps });
+
+    const updated = await workoutSchema.findOne({ _id: id, trainerId }).lean();
+    return { ...updated, blocks: buildBlockFromWorkout(updated) };
   },
 
   async delete(trainerId, id) {
-    return WorkoutTemplate.deleteOne({ _id: id, trainerId });
+    const existing = await workoutSchema.findOne({ _id: id, trainerId });
+    if (!existing) return { deletedCount: 0 };
+    await deleteTemplateChildren(existing);
+    return workoutSchema.deleteOne({ _id: id, trainerId });
   },
 
   // Crea un Workout real dentro del split indicado, con exercises/sets ya
-  // materializados — reutiliza el patrón de clonado ya probado en
-  // workouts/workout-dao.js en vez de reinventar el insertMany a mano.
+  // materializados. `template` viene de findOwnedByTrainer (autopoblado), su
+  // shape es el mismo Workout real -> primero se lleva a la forma anidada
+  // (buildBlockFromWorkout) y se vuelve a aplanar en documentos nuevos
+  // (materializeBlocksAsExercises), mismo camino que create()/update() para
+  // no mantener un tercer camino de escritura distinto.
   async applyToSplit(template, splitId, clientId) {
     const split = await splitSchema.findById(splitId);
     if (!split) {
@@ -192,14 +266,17 @@ module.exports = {
       throw err;
     }
 
+    const nestedBlocks = buildBlockFromWorkout(template);
     const { customExercisesToCreate, setsToCreate, workoutBlocksToCreate } =
-      materializeBlocksAsExercises(template.blocks);
+      materializeBlocksAsExercises(nestedBlocks);
 
     if (setsToCreate.length > 0) await setSchema.insertMany(setsToCreate);
     if (customExercisesToCreate.length > 0) {
       await customExerciseSchema.insertMany(customExercisesToCreate);
     }
 
+    // trainerId se omite a propósito: un workout aplicado a un split es una
+    // instancia real de cliente, nunca una plantilla.
     const workoutDoc = await workoutSchema.create({
       name: template.name,
       blocks: workoutBlocksToCreate,

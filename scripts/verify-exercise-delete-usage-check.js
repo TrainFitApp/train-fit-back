@@ -27,7 +27,8 @@ async function main() {
   const userSchema = require("../components/users/schema");
   const exerciseSchema = require("../components/exercises/exercise-schema");
   const customExerciseSchema = require("../components/customExercises/custom-exercise-schema");
-  const workoutTemplateSchema = require("../components/workoutTemplates/workout-template-schema");
+  const workoutSchema = require("../components/workouts/workout-schema");
+  const workoutTemplateDao = require("../components/workoutTemplates/workout-template-dao");
   const exerciseModel = require("../components/exercises/exercise-model");
 
   const runId = new mongoose.Types.ObjectId().toString();
@@ -53,8 +54,7 @@ async function main() {
     });
     ok("ejercicios de prueba creados");
 
-    created.template = await workoutTemplateSchema.create({
-      trainerId: created.trainer._id,
+    created.template = await workoutTemplateDao.create(created.trainer._id, {
       name: `Plantilla de prueba ${runId}`,
       blocks: [
         {
@@ -117,7 +117,7 @@ async function main() {
     console.log(`${LOG_PREFIX} PASS`);
   } finally {
     log("limpiando datos de prueba...");
-    if (created.template) await workoutTemplateSchema.deleteOne({ _id: created.template._id });
+    if (created.template) await workoutSchema.deleteOne({ _id: created.template._id });
     if (created.customExercise) await customExerciseSchema.deleteOne({ _id: created.customExercise._id });
     if (created.exerciseInTemplate) await exerciseSchema.deleteOne({ _id: created.exerciseInTemplate._id });
     if (created.exerciseInCustomOnly) await exerciseSchema.deleteOne({ _id: created.exerciseInCustomOnly._id });

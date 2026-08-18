@@ -48,9 +48,43 @@ const WorkoutSchema = Schema({
       autopopulate: true
     },
   ],
+  // Unificación workoutTemplates -> workouts (2026-08) — un Workout con
+  // trainerId es una plantilla suelta del profesional (sin Split que lo
+  // referencie), nunca un workout real de cliente. Único discriminador: si
+  // en el futuro hace falta "quién asignó este workout" (provenance sobre un
+  // workout SÍ vinculado a un split, mismo patrón que Meal.assignedByTrainerId),
+  // eso es un campo nuevo y distinto — trainerId nunca se reutiliza para dos
+  // significados.
+  trainerId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+  // Solo con sentido para plantillas (trainerId set); en workouts reales
+  // quedan en su default y no se usan.
+  description: { type: String, trim: true, maxlength: 500, default: "" },
+  level: {
+    type: String,
+    enum: ["principiante", "intermedio", "avanzado"],
+    default: "intermedio",
+  },
+  tags: { type: [String], default: [] },
+  equipment: { type: [String], default: [] },
+  createdAt: { type: Date, default: Date.now },
 });
 
 WorkoutSchema.plugin(require('mongoose-autopopulate'));
+
+// Guardarraíl: toda query BROAD de Workout (sin _id ni trainerId propios)
+// excluye plantillas (trainerId set) por defecto — así un listado/stats
+// nuevo nunca las cuela por olvido. Una consulta por _id concreto (findById,
+// findByIdAndUpdate, incluso $in con ids ya conocidos) o que ya filtra por
+// trainerId explícito no se toca: ya está scopeada a un documento/dueño
+// concreto, forzar trainerId:null ahí rompería ese caso en vez de proteger
+// nada (mismo criterio en meals/meal-schema.js).
+WorkoutSchema.pre(/^find/, function (next) {
+  const query = this.getQuery();
+  if (query._id === undefined && query.trainerId === undefined) {
+    this.where({ trainerId: null });
+  }
+  next();
+});
 
 WorkoutSchema.pre("deleteOne", async function (next) {
   try {

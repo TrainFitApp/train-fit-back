@@ -34,6 +34,36 @@ function isPasswordValid(password, encryptedPassword) {
   }
 }
 
+// Gate de acceso por app (2026-08) — hasta ahora cualquier cuenta podía
+// iniciar sesión en cualquier app: un trainer entrando a la app de
+// consumidor (o viceversa) solo se enteraba a base de 403 sueltos en cada
+// llamada posterior (ver user-loader.page.ts). Se corta en el login mismo,
+// con un mensaje claro, en vez de dejar que la sesión se cree y falle a
+// trocitos. Roles inclusivos (si algún día una cuenta tiene ambos roles,
+// pasa el check de las dos apps) — nunca exclusivo.
+const CLIENT_FAMILY_ROLE_REQUIREMENTS = {
+  "trainfit-trainers": {
+    requiredRole: "trainer",
+    message: "Esta cuenta no es de un profesional. Inicia sesión en la app TrainFit para clientes.",
+  },
+  "trainfit-front": {
+    requiredRole: "user",
+    message: "Esta es una cuenta de profesional. Inicia sesión en TrainFit Trainers.",
+  },
+};
+
+function checkClientFamilyRoleAccess(user, clientContext) {
+  const requirement = CLIENT_FAMILY_ROLE_REQUIREMENTS[clientContext.clientFamily];
+  if (!requirement) return null;
+  const roles = user.roles || [];
+  if (roles.includes(requirement.requiredRole)) return null;
+  return requirement.message;
+}
+
+function sendWrongAppResponse(res, message) {
+  return res.status(403).send({ error: "WRONG_APP_FOR_ROLE", message });
+}
+
 function resolveClientContext(req) {
   const platformHeader = String(req.headers?.["x-client-platform"] || "")
     .trim()
@@ -261,6 +291,11 @@ module.exports = {
       const isMatch = isPasswordValid(password, user.password);
       if (!isMatch) {
         return sendInvalidLoginResponse(res);
+      }
+
+      const roleMismatchMessage = checkClientFamilyRoleAccess(user, resolveClientContext(req));
+      if (roleMismatchMessage) {
+        return sendWrongAppResponse(res, roleMismatchMessage);
       }
 
       if (user.hash) {
@@ -496,6 +531,11 @@ module.exports = {
         });
       }
 
+      const roleMismatchMessage = checkClientFamilyRoleAccess(user, resolveClientContext(req));
+      if (roleMismatchMessage) {
+        return sendWrongAppResponse(res, roleMismatchMessage);
+      }
+
       if (user.hash) {
         const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
         await userModel.updateVerificationHash(user._id, hashTemp);
@@ -551,6 +591,11 @@ module.exports = {
           email: identity.email,
           appleId: identity.appleId,
         });
+      }
+
+      const roleMismatchMessage = checkClientFamilyRoleAccess(user, resolveClientContext(req));
+      if (roleMismatchMessage) {
+        return sendWrongAppResponse(res, roleMismatchMessage);
       }
 
       if (user.appleId && user.appleId !== identity.appleId) {

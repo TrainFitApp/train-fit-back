@@ -46,7 +46,6 @@ const single = async (resource, authUser) => ({
   archivedRecipes: resource.archivedRecipes,
   birth: resource.birth,
   hash: resource.hash,
-  archivedTables: resource.archivedTables,
   personalAds: resource.personalAds,
   lastLogin: resource.lastLogin,
   premium: resolvePremium(resource),

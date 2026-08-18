@@ -1,9 +1,19 @@
 const exerciseSchema = require("./exercise-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
-const workoutTemplateSchema = require("../workoutTemplates/workout-template-schema");
+const workoutSchema = require("../workouts/workout-schema");
 const userSchema = require("../users/schema");
 const { Types } = require("mongoose");
 const { cleanObject } = require("../util/clean-data");
+
+// trainerId set = plantilla suelta (ver workout-schema.js). Se pasa
+// trainerId:{$ne:null} explícito para saltar el guardarraíl por defecto del
+// schema (que excluye plantillas cuando el caller no filtra por trainerId).
+async function getTemplateExerciseIds() {
+  const templates = await workoutSchema
+    .find({ trainerId: { $ne: null } }, "exercises")
+    .lean();
+  return templates.flatMap((t) => t.exercises || []).map(String);
+}
 
 module.exports = {
   async getExercises(page, limit) {
@@ -304,17 +314,31 @@ module.exports = {
   },
 
   // TASK-016 (MASTER_BACKLOG.md) — borrar un Exercise referenciado deja
-  // `exercise: null` tras el autopopulate en CustomExercise (rutinas reales
-  // de clientes) y en WorkoutTemplate.blocks[].exercises[] (plantillas del
-  // entrenador), causando errores en cualquier pantalla que renderice ese
-  // nombre. Se comprueba uso en ambas colecciones antes de permitir borrar.
-  async countCustomExerciseUsage(id) {
-    return customExerciseSchema.countDocuments({ exercise: id });
+  // `exercise: null` tras el autopopulate en CustomExercise, tanto en
+  // rutinas reales de clientes como en plantillas del entrenador (desde la
+  // unificación workoutTemplates -> workouts, ambas son CustomExercise,
+  // distinguibles solo subiendo al Workout padre vía trainerId). Se
+  // comprueba uso real vs. uso en plantilla por separado para no perder la
+  // distinción que ya mostraba el frontend.
+  async countWorkoutTemplateUsage(id) {
+    const templateExerciseIds = await getTemplateExerciseIds();
+    if (templateExerciseIds.length === 0) return 0;
+    return customExerciseSchema.countDocuments({
+      exercise: id,
+      _id: { $in: templateExerciseIds },
+    });
   },
 
-  async countWorkoutTemplateUsage(id) {
-    return workoutTemplateSchema.countDocuments({
-      "blocks.exercises.exercise": id,
+  async countCustomExerciseUsage(id) {
+    const [total, templateExerciseIds] = await Promise.all([
+      customExerciseSchema.countDocuments({ exercise: id }),
+      getTemplateExerciseIds(),
+    ]);
+    if (templateExerciseIds.length === 0) return total;
+    const templateUsage = await customExerciseSchema.countDocuments({
+      exercise: id,
+      _id: { $in: templateExerciseIds },
     });
+    return total - templateUsage;
   },
 };

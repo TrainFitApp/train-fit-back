@@ -53,10 +53,17 @@ async function resolvePlanForDate(clientId, date, { chosenPatternName } = {}) {
     }
   } else {
     // "sequential" (o legado sin mode): días en orden desde el inicio de la
-    // asignación. Si la fecha cae más allá de la secuencia, no hay
-    // resolución — el día se crea vacío, igual que si no hubiera plan.
-    const dayIndex = daysBetweenIsoDates(assignment.startDate, date);
-    const day = (plan.days || [])[dayIndex];
+    // asignación, CICLANDO al llegar al final (día 5 de una plantilla de 4
+    // vuelve a ser el día 1) — el propio builder lo vende así al trainer
+    // ("¿Cómo se repite esta plantilla?" / "Días (1, 2, 3...)"), y aplicar
+    // un plan no está acoplado al nº de días de la plantilla (el trainer
+    // puede perfectamente asignar "duration: 8 semanas" a una plantilla de
+    // 4 días). Sin ciclo, esos días de más quedaban vacíos en silencio, sin
+    // aviso en ningún sitio — bug, no comportamiento buscado. `days` vacío
+    // (plantilla en borrador, sin validación mínima en el controller) sigue
+    // sin resolución, igual que antes — % por longitud 0 rompería.
+    const daysCount = (plan.days || []).length;
+    const day = daysCount ? plan.days[daysBetweenIsoDates(assignment.startDate, date) % daysCount] : null;
     if (day) mealsForDay = day.meals;
   }
 

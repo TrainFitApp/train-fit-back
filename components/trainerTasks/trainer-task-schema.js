@@ -33,4 +33,34 @@ const TrainerTaskSchema = new Schema(
 
 TrainerTaskSchema.index({ trainerId: 1, clientId: 1, active: 1 });
 
+// Auditoría cascadas de borrado (2026-08) — TaskCompletion (histórico de
+// cumplimiento) nunca se limpiaba, ni al borrar la tarea ni al borrar la
+// cuenta del trainer/cliente (ver users/schema.js).
+const taskCompletionSchema = require("./task-completion-schema");
+
+const handleDelete = async function (next) {
+  try {
+    const query = this.getQuery();
+    const task = await this.model.findOne(query);
+    if (task) await taskCompletionSchema.deleteMany({ taskId: task._id });
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+TrainerTaskSchema.pre("deleteOne", handleDelete);
+TrainerTaskSchema.pre("findOneAndDelete", handleDelete);
+
+TrainerTaskSchema.pre("deleteMany", async function (next) {
+  try {
+    const filter = this.getFilter();
+    const tasks = await this.model.find(filter, "_id");
+    await taskCompletionSchema.deleteMany({ taskId: { $in: tasks.map((t) => t._id) } });
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = mongoose.model("TrainerTask", TrainerTaskSchema);

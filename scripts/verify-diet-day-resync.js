@@ -24,6 +24,7 @@ async function main() {
 
   const userSchema = require("../components/users/schema");
   const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
+  const dietTemplateDao = require("../components/dietTemplates/diet-template-dao");
   const planAssignmentDao = require("../components/planAssignments/plan-assignment-dao");
   const dietDayResolver = require("../components/dietDays/diet-day-resolver");
   const dietSchema = require("../components/diets/diet-schema");
@@ -67,11 +68,14 @@ async function main() {
 
     // 2. El entrenador asigna un plan DESPUÉS — mismo escenario real que
     //    describe el hallazgo del audit.
-    created.template = await dietTemplateSchema.create({
-      trainerId: created.trainer._id,
-      name: `Plantilla de prueba ${runId}`,
-      mode: "sequential",
-      days: [
+    // customProducts/customRecipes son refs reales desde la unificación
+    // Mixed -> refs (2026-08) — hay que pasar por el dao (materializa
+    // {product,quantity} en un CustomProduct real), no escribir Mixed crudo
+    // directo contra el schema.
+    created.template = await dietTemplateDao.create(
+      created.trainer._id,
+      `Plantilla de prueba ${runId}`,
+      [
         {
           dayLabel: "Día 1",
           meals: [
@@ -80,7 +84,7 @@ async function main() {
               alternatives: [
                 {
                   label: "",
-                  customProducts: [{ quantity: 100, energyKcal100g: 200 }],
+                  customProducts: [{ product: new mongoose.Types.ObjectId().toString(), quantity: 100 }],
                   customRecipes: [],
                 },
               ],
@@ -88,7 +92,9 @@ async function main() {
           ],
         },
       ],
-    });
+      "sequential",
+      []
+    );
     created.assignment = await planAssignmentDao.create({
       planId: created.template._id,
       clientId: created.client._id,
