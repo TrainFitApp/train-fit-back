@@ -247,10 +247,14 @@ module.exports = {
     );
     const nextStatus = alreadyActiveWithTrainer ? "active" : "cuestionario_pendiente";
 
-    return trainerClientDao.updateStatus(invitation._id, nextStatus, {
+    const updated = await trainerClientDao.updateStatus(invitation._id, nextStatus, {
       clientId: clientUser._id,
       respondedAt: new Date(),
     });
+    await notificationDao.createForTrainer(invitation.trainerId, clientUser._id, "invite_accepted", {
+      scope: invitation.scope,
+    });
+    return updated;
   },
 
   /**
@@ -279,6 +283,7 @@ module.exports = {
     });
     await trainerClientDao.updateManyStatus(trainerId, clientId, "cuestionario_pendiente", "en_revision");
     await notificationDao.create(clientId, trainerId, "intake_submitted", {});
+    await notificationDao.createForTrainer(trainerId, clientId, "intake_submitted_trainer", {});
 
     return intake;
   },

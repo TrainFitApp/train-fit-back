@@ -270,6 +270,7 @@ module.exports = {
     let responseDoc = null;
     if (submittedKeys.length) {
       responseDoc = await checkinDao.createResponse(trainerId, clientId, values);
+      await notificationDao.createForTrainer(trainerId, clientId, "checkin_responded", {});
     }
 
     return res.status(201).send({ anthropometry: anthropometryDoc, response: responseDoc });

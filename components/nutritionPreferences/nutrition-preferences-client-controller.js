@@ -1,5 +1,7 @@
 const nutritionPreferencesDao = require("./nutrition-preferences-dao");
 const dietDaysUtil = require("../dietDays/diet-days-util");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const notificationDao = require("../notifications/notification-dao");
 
 const COOKS_AT_HOME_VALUES = ["yes", "no", "sometimes"];
 const VALID_MEAL_SLOTS = Object.values(dietDaysUtil.MEALS);
@@ -57,6 +59,22 @@ module.exports = {
       disabledMealSlots,
       mealSlotLabels,
     });
+
+    // Dashboard trainer (2026-08-18) — las preferencias no son por trainer
+    // (una sola respuesta del cliente), así que avisa a TODOS los
+    // profesionales con relación de nutrición activa, no solo a uno.
+    const activeRelations = await trainerClientDao.findActiveByClient(req.auth.userId);
+    const nutritionTrainerIds = [
+      ...new Set(
+        activeRelations.filter((r) => r.scope === "nutrition").map((r) => String(r.trainerId))
+      ),
+    ];
+    await Promise.all(
+      nutritionTrainerIds.map((trainerId) =>
+        notificationDao.createForTrainer(trainerId, req.auth.userId, "nutrition_preferences_updated", {})
+      )
+    );
+
     return res.send(preferences);
   },
 };
