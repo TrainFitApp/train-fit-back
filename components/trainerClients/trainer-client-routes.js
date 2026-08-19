@@ -192,6 +192,7 @@ router.deleteAsync("/link/:scope", auth(["user", "admin"]), controller.revokeByC
 
 // --- TAREA 3: cuestionario inicial — lado cliente ---
 router.getAsync("/onboarding-status", auth(["user", "admin"]), controller.getOnboardingStatus);
+router.getAsync("/intake/:trainerId", auth(["user", "admin"]), controller.getMyIntake);
 router.postAsync("/intake", auth(["user", "admin"]), controller.submitIntake);
 
 // --- Historial (F22) — accesible por ambos lados ---

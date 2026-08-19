@@ -180,10 +180,21 @@ const controller = {
     return res.send(status);
   },
 
+  // GET /trainer/intake/:trainerId — el propio cliente recupera lo que ya
+  // le había respondido a este trainer (o null si nunca lo hizo). Para
+  // precargar el formulario cuando ese mismo trainer añade un scope nuevo
+  // más tarde (p.ej. ya rellenó nutrición, ahora también invita a
+  // entrenamiento): sin esto, "completar" el cuestionario del mismo trainer
+  // una segunda vez partía de cero y perdía lo ya respondido.
+  async getMyIntake(req, res) {
+    const intake = await clientIntakeDao.getByTrainerAndClient(req.params.trainerId, req.auth.userId);
+    return res.send(intake);
+  },
+
   // POST /trainer/intake — cliente envía su cuestionario inicial para un
   // profesional concreto. body: { trainerId, goals, healthConditions,
   // experienceLevel, availability, equipment, allergies, favoriteFoods,
-  // dislikedFoods, cooksAtHome }
+  // dislikedFoods, cooksAtHome, customAnswers: [{ questionId, label, value }] }
   async submitIntake(req, res) {
     try {
       const { trainerId, ...intakeData } = req.body || {};

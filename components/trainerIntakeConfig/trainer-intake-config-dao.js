@@ -21,11 +21,20 @@ module.exports = {
     return new Map(trainerIds.map((id) => [id, byTrainer.get(id) || [...INTAKE_FIELD_KEYS]]));
   },
 
-  async upsert(trainerId, enabledFields) {
+  async upsert(trainerId, enabledFields, customQuestions, lastScopes) {
     return TrainerIntakeConfig.findOneAndUpdate(
       { trainerId },
-      { $set: { enabledFields, updatedAt: new Date() } },
+      { $set: { enabledFields, customQuestions, lastScopes, updatedAt: new Date() } },
       { new: true, upsert: true }
     ).lean();
+  },
+
+  // Mismo criterio que getEnabledFieldsByTrainers (un solo $in en vez de un
+  // findOne por trainerId) — usado por getOnboardingStatus para que el
+  // cliente sepa qué preguntas custom añadió cada uno de sus trainers.
+  async getCustomQuestionsByTrainers(trainerIds) {
+    const configs = await TrainerIntakeConfig.find({ trainerId: { $in: trainerIds } }).lean();
+    const byTrainer = new Map(configs.map((c) => [String(c.trainerId), c.customQuestions || []]));
+    return new Map(trainerIds.map((id) => [id, byTrainer.get(id) || []]));
   },
 };

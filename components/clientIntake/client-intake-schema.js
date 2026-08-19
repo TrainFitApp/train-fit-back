@@ -20,6 +20,23 @@ const ClientIntakeSchema = new Schema(
     },
     availability: { type: String, trim: true, maxlength: 500, default: "" },
     equipment: { type: String, trim: true, maxlength: 500, default: "" },
+    // Respuestas a las preguntas custom del trainer (ver
+    // trainerIntakeConfig/trainer-intake-config-schema.js#customQuestions).
+    // Se guarda el label junto a la respuesta (snapshot en el momento del
+    // envío) para que si el trainer edita o borra la pregunta más tarde, el
+    // cuestionario ya recibido siga siendo legible sin tener que resolver el
+    // questionId contra una config que puede haber cambiado.
+    customAnswers: {
+      type: [
+        {
+          _id: false,
+          questionId: { type: String, required: true },
+          label: { type: String, required: true, trim: true, maxlength: 200 },
+          value: { type: String, trim: true, maxlength: 1000, default: "" },
+        },
+      ],
+      default: () => [],
+    },
     submittedAt: { type: Date, default: Date.now },
   },
   { collection: "clientintakes" }

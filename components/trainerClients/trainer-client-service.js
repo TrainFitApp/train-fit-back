@@ -334,7 +334,10 @@ module.exports = {
     // archivo — evita N consultas individuales cuando el cliente tiene
     // relaciones pendientes con varios trainers a la vez.
     const trainerIds = [...new Set(enriched.map((r) => String(r.trainerId)))];
-    const enabledFieldsByTrainer = await trainerIntakeConfigService.getEnabledFieldsByTrainers(trainerIds);
+    const [enabledFieldsByTrainer, customQuestionsByTrainer] = await Promise.all([
+      trainerIntakeConfigService.getEnabledFieldsByTrainers(trainerIds),
+      trainerIntakeConfigService.getCustomQuestionsByTrainers(trainerIds),
+    ]);
     return {
       blocked: true,
       relations: enriched.map((r) => ({
@@ -343,6 +346,15 @@ module.exports = {
         status: r.status,
         trainer: r.trainer,
         intakeEnabledFields: enabledFieldsByTrainer.get(String(r.trainerId)),
+        // Mismo criterio que intakeEnabledFields — por trainer, no por scope
+        // de la relación (ver comentario del schema en
+        // trainerIntakeConfig/trainer-intake-config-schema.js). Solo las que
+        // el trainer dejó marcadas para enviar — enabled: false se guarda
+        // (no se pierde el texto) pero no llega al cuestionario del cliente,
+        // mismo criterio que enabledFields con los 9 campos predefinidos.
+        intakeCustomQuestions: (customQuestionsByTrainer.get(String(r.trainerId)) || [])
+          .filter((q) => q.enabled !== false)
+          .map((q) => ({ id: String(q._id), label: q.label })),
       })),
     };
   },

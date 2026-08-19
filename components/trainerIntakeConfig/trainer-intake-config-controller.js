@@ -8,14 +8,19 @@ module.exports = {
     return res.send({ ...config, catalog: INTAKE_FIELD_KEYS });
   },
 
-  // PUT /trainer/intake-config — body: { enabledFields: [...] }
+  // PUT /trainer/intake-config — body: { enabledFields: [...], customQuestions: [{ label }], lastScopes: [...] }
   async updateMyConfig(req, res) {
-    const { enabledFields } = req.body || {};
+    const { enabledFields, customQuestions, lastScopes } = req.body || {};
     try {
-      const config = await trainerIntakeConfigService.updateMyConfig(req.auth.userId, enabledFields || []);
+      const config = await trainerIntakeConfigService.updateMyConfig(
+        req.auth.userId,
+        enabledFields || [],
+        customQuestions || [],
+        lastScopes || []
+      );
       return res.send(config);
     } catch (e) {
-      if (e.code === "INVALID_INTAKE_FIELDS") {
+      if (e.code === "INVALID_INTAKE_FIELDS" || e.code === "INVALID_CUSTOM_QUESTIONS" || e.code === "INVALID_LAST_SCOPES") {
         return res.status(400).send({ message: e.message, code: e.code });
       }
       throw e;
