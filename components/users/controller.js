@@ -5,6 +5,7 @@ const bcrypt = require("../util/bcrypt");
 const mail = require("./../util/mail");
 const jwt = require("jsonwebtoken");
 const { normalizeEmail } = require("../util/normalize-email");
+const { generateVerificationCode } = require("../util/verification-code");
 
 const PASSWORD_RESET_REQUEST_RESPONSE = {
   message:
@@ -157,7 +158,7 @@ module.exports = {
           .send({ message: "Este usuario ya está registrado" });
       }
 
-      const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
+      const hashTemp = generateVerificationCode();
 
       const user = await userModel.createUser(
         {
@@ -344,10 +345,11 @@ module.exports = {
 
       if (user.hash) {
         // Generar nuevo codigo y enviar correo
-        const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
+        const hashTemp = generateVerificationCode();
+        const hashExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
         // Actualizar user hash en BD
-        await userModel.updateVerificationHash(user._id, hashTemp);
+        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
 
         // Send mail
         const header1 = `Hola ${user.name}, verifique su cuenta`;
@@ -807,13 +809,31 @@ module.exports = {
   async sendMailCode(req, res) {
     try {
       await userModel.sendMailCode(normalizeEmail(req.params.email));
+      return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
     } catch (error) {
-      console.warn("[AUTH] password_reset_code_request_not_completed", {
-        reason: error?.message || "unknown",
-      });
+      switch (error?.message) {
+        case "COOLDOWN_ACTIVE":
+          return res.status(429).send({
+            message: "Espera unos segundos antes de solicitar un nuevo código",
+          });
+        case "DAILY_LIMIT_REACHED":
+          return res.status(429).send({
+            message: "Has alcanzado el límite diario de códigos. Intenta de nuevo mañana.",
+          });
+        case "USER_NOT_FOUND":
+        case "INVALID_EMAIL":
+          // Anti-enumeración deliberada: mismo 200 genérico que en éxito,
+          // para no revelar si el email existe. El cooldown y el límite
+          // diario de arriba SÍ se exponen porque el usuario legítimo
+          // necesita saber que su reenvío no se ha realizado.
+          return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
+        default:
+          console.warn("[AUTH] password_reset_code_request_not_completed", {
+            reason: error?.message || "unknown",
+          });
+          return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
+      }
     }
-
-    return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
   },
 
   async checkRestoreCode(req, res) {

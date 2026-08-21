@@ -508,15 +508,130 @@ module.exports = {
     }
   },
 
-  async updateVerificationHash(userId, hash) {
+  async updateVerificationHash(userId, hash, expiresAt) {
     try {
       return await userSchema.findByIdAndUpdate(
         userId,
-        { $set: { hash } },
+        {
+          $set: {
+            hash,
+            hashExpiresAt: expiresAt,
+            hashFailedAttempts: 0,
+            lastHashSentAt: new Date(),
+          },
+        },
         { new: true },
       );
     } catch (err) {
       throw err;
+    }
+  },
+
+  // Reenvío explícito del código de verificación de signup (botón "Reenviar
+  // código"). El filtro de cooldown va dentro del propio findOneAndUpdate
+  // para que la comprobación + sobreescritura sea una única operación
+  // atómica a nivel de BD: dos reenvíos concurrentes no pueden colarse los
+  // dos, MongoDB serializa las escrituras sobre el mismo documento y solo
+  // una gana el filtro de cooldown (evita la condición de carrera).
+  async resendVerificationHash(email, hash, expiresAt) {
+    try {
+      const emailExists = await mail.validateEmailExists(email);
+      if (!emailExists) {
+        throw new Error("INVALID_EMAIL");
+      }
+
+      const user = await userSchema
+        .findOne({ email })
+        .select("_id email name hash lastHashSentAt");
+      if (!user) {
+        throw new Error("USER_NOT_FOUND");
+      }
+      if (!user.hash) {
+        throw new Error("ALREADY_VERIFIED");
+      }
+
+      const cooldownCutoff = new Date(Date.now() - 60 * 1000);
+      const updatedUser = await userSchema.findOneAndUpdate(
+        {
+          _id: user._id,
+          $or: [
+            { lastHashSentAt: { $exists: false } },
+            { lastHashSentAt: null },
+            { lastHashSentAt: { $lte: cooldownCutoff } },
+          ],
+        },
+        {
+          $set: {
+            hash,
+            hashExpiresAt: expiresAt,
+            hashFailedAttempts: 0,
+            lastHashSentAt: new Date(),
+          },
+        },
+        { new: true },
+      );
+
+      if (!updatedUser) {
+        throw new Error("COOLDOWN_ACTIVE");
+      }
+
+      const header1 = `Hola ${updatedUser.name}, verifique su cuenta`;
+      const description =
+        "Introduce el siguiente código en la aplicación para finalizar el registro.";
+      const htmlMail = mail.generateHashMail(header1, description, hash);
+      await mail.sendMailSES(
+        updatedUser.email,
+        "Verificación de cuenta - TrainFit",
+        htmlMail,
+      );
+
+      return updatedUser;
+    } catch (e) {
+      throw e;
+    }
+  },
+
+  // Verificación del código de signup. Igual que checkRestoreCode: primero
+  // se comprueban intentos fallidos/expiración, y en caso de código
+  // incorrecto se incrementa el contador; en caso de acierto se invalida el
+  // hash (y el resto de metadatos asociados) atómicamente para que quede
+  // inutilizable de inmediato, aunque no haya expirado.
+  async verifyActivationHash(email, code) {
+    try {
+      const user = await userSchema.findOne({ email });
+      if (!user) {
+        throw new Error("USER_NOT_FOUND");
+      }
+      if (!user.hash) {
+        throw new Error("ALREADY_VERIFIED");
+      }
+      if ((user.hashFailedAttempts || 0) >= 5) {
+        throw new Error("TOO_MANY_ATTEMPTS");
+      }
+      if (user.hashExpiresAt && Date.now() > user.hashExpiresAt.getTime()) {
+        throw new Error("CODE_EXPIRED");
+      }
+      if (user.hash !== code) {
+        await userSchema.findByIdAndUpdate(user._id, {
+          $inc: { hashFailedAttempts: 1 },
+        });
+        throw new Error("INVALID_CODE");
+      }
+
+      return await userSchema.findByIdAndUpdate(
+        user._id,
+        {
+          $unset: {
+            hash: 1,
+            hashExpiresAt: 1,
+            hashFailedAttempts: 1,
+            lastHashSentAt: 1,
+          },
+        },
+        { new: true },
+      );
+    } catch (e) {
+      throw e;
     }
   },
 
@@ -561,23 +676,32 @@ module.exports = {
     return user;
   },
 
+  // Igual que resendVerificationHash (signup): la comprobación de cooldown y
+  // la sobreescritura de restoreCode van dentro del mismo findOneAndUpdate,
+  // como una única operación atómica de BD. Antes eran 3 pasos separados
+  // (leer -> comprobar en JS -> escribir con findByIdAndUpdate), lo que
+  // dejaba una ventana de condición de carrera: dos reenvíos casi
+  // simultáneos podían superar los dos la comprobación de cooldown antes de
+  // que ninguno hubiese escrito todavía, generando dos códigos/emails
+  // distintos donde solo el ganador de la escritura en Mongo quedaba activo
+  // (no necesariamente el último correo recibido por el usuario).
   async sendMailCode(email, hash, expiresAt) {
     try {
       // Validar que el email existe (formato + dominio con MX)
       const emailExists = await mail.validateEmailExists(email);
       if (!emailExists) {
-        throw new Error("Invalid or non-existent email address");
+        throw new Error("INVALID_EMAIL");
       }
 
-      // Buscar usuario en BD
-      const user = await userSchema.findOne({ email }).select("email lastRestoreCodeSentAt");
+      // Buscar usuario en BD. OJO: select() debe incluir explícitamente
+      // restoreCodeDate/restoreCodeDailyCount — antes no se seleccionaban y
+      // por tanto currentCount siempre daba 0 y el límite diario nunca se
+      // llegaba a aplicar.
+      const user = await userSchema
+        .findOne({ email })
+        .select("_id email lastRestoreCodeSentAt restoreCodeDate restoreCodeDailyCount");
       if (!user) {
-        throw new Error("User not found");
-      }
-
-      // Rate limit: 60s entre envíos
-      if (user.lastRestoreCodeSentAt && (Date.now() - user.lastRestoreCodeSentAt.getTime()) < 60000) {
-        throw new Error("Espera 60 segundos antes de solicitar un nuevo código");
+        throw new Error("USER_NOT_FOUND");
       }
 
       // Daily limit: max 3 códigos por día por email
@@ -588,22 +712,36 @@ module.exports = {
       const currentCount = isNewDay ? 0 : (user.restoreCodeDailyCount || 0);
 
       if (currentCount >= 3) {
-        throw new Error("Has alcanzado el límite diario de códigos. Intenta de nuevo mañana.");
+        throw new Error("DAILY_LIMIT_REACHED");
       }
 
-      const updatedUser = await userSchema.findByIdAndUpdate(user._id, {
-        $set: {
-          restoreCode: hash,
-          restoreCodeExpiresAt: expiresAt,
-          restoreFailedAttempts: 0,
-          lastRestoreCodeSentAt: new Date(),
-          restoreCodeDate: today,
-          restoreCodeDailyCount: currentCount + 1,
+      const cooldownCutoff = new Date(Date.now() - 60 * 1000);
+      const updatedUser = await userSchema.findOneAndUpdate(
+        {
+          _id: user._id,
+          $or: [
+            { lastRestoreCodeSentAt: { $exists: false } },
+            { lastRestoreCodeSentAt: null },
+            { lastRestoreCodeSentAt: { $lte: cooldownCutoff } },
+          ],
         },
-      }, { new: true });
+        {
+          $set: {
+            restoreCode: hash,
+            restoreCodeExpiresAt: expiresAt,
+            restoreFailedAttempts: 0,
+            lastRestoreCodeSentAt: new Date(),
+            restoreCodeDate: today,
+            restoreCodeDailyCount: currentCount + 1,
+          },
+        },
+        { new: true },
+      );
+
       if (!updatedUser) {
-        throw new Error("User not found");
+        throw new Error("COOLDOWN_ACTIVE");
       }
+
       const html = mail.generateHashMail(
         `Hola ${user.email}`,
         "Este es tu código de verificación. Copia y pégalo en la app.",
