@@ -250,8 +250,16 @@ module.exports = {
       };
       const merge = Boolean(req.body.merge);
 
-      const updatedMeal = await mealModel.pasteMeal(mealClipboard, targetMeal, merge);
-      await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
+      // TAREA (meals pautados) — pasteMeal estampa assignedByTrainerId en
+      // cada item nuevo (a nivel de producto/receta, no solo de Meal). El
+      // flag de Meal completa solo se marca en modo "reemplazar": en modo
+      // "combinar" la comida sigue siendo mixta (items propios del cliente
+      // + los recién pautados), así que bloquearla entera sería excesivo —
+      // la protección por item ya cubre lo que pautó el profesional.
+      const updatedMeal = await mealModel.pasteMeal(mealClipboard, targetMeal, merge, req.auth.userId);
+      if (!merge) {
+        await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
+      }
 
       // TAREA 1 — prescribeMeal (F12) no generaba ninguna notificación hasta
       // ahora, a diferencia de proposeMealAlternatives (F28). El cliente debe
@@ -517,8 +525,10 @@ module.exports = {
       if (!targetMeal) {
         throw new Error(`No existe la comida "${mealSlot}" para este cliente en esta fecha`);
       }
-      await mealModel.pasteMeal(mealClipboard, targetMeal, merge);
-      await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
+      await mealModel.pasteMeal(mealClipboard, targetMeal, merge, req.auth.userId);
+      if (!merge) {
+        await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
+      }
       await notificationDao.create(targetClientId, req.auth.userId, "meal_prescribed", { date, mealName: targetMeal.name });
     });
     return res.send(results);
@@ -551,8 +561,10 @@ module.exports = {
       if (!targetMeal) {
         throw new Error(`No existe la comida "${mealSlot}" para este cliente en esta fecha`);
       }
-      await mealModel.pasteMeal(mealClipboard, targetMeal, merge);
-      await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
+      await mealModel.pasteMeal(mealClipboard, targetMeal, merge, req.auth.userId);
+      if (!merge) {
+        await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
+      }
       await notificationDao.create(targetClientId, req.auth.userId, "meal_prescribed", { date, mealName: targetMeal.name });
     });
     return res.send(results);

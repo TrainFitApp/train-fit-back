@@ -253,4 +253,15 @@ module.exports = {
       }),
     );
   },
+
+  // Marcar/desmarcar consumido — nunca bloqueado por assignedByTrainerId
+  // (ver custom-product-schema.js): seguimiento y composición son
+  // conceptos distintos, mismo criterio que Meal.completed.
+  async setConsumed(id, consumed) {
+    return customProductSchema.findByIdAndUpdate(
+      id,
+      { $set: { consumed: Boolean(consumed) } },
+      { new: true },
+    );
+  },
 };

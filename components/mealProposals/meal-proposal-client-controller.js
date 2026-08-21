@@ -38,7 +38,7 @@ module.exports = {
       customProducts: alternative.customProducts || [],
       customRecipes: alternative.customRecipes || [],
     };
-    const updatedMeal = await mealModel.pasteMeal(mealClipboard, targetMeal, false);
+    const updatedMeal = await mealModel.pasteMeal(mealClipboard, targetMeal, false, proposal.trainerId);
     // TAREA 1 (coach-tab) — igual que prescribeMeal: el resultado de elegir
     // una alternativa propuesta por el profesional también queda protegido
     // de edición libre, mismo mecanismo de assignedByTrainerId.

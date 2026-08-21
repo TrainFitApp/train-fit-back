@@ -1,4 +1,6 @@
 const mealDao = require("./meal-dao");
+const customProductDao = require("../customProducts/custom-product-dao");
+const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 
 // TAREA 1 (coach-tab) — única comprobación de "¿puede el cliente editar
 // libremente esta comida?" en todo el módulo. Una comida pautada por un
@@ -12,15 +14,51 @@ class MealProtectedError extends Error {
   }
 }
 
+// Reutilizada tal cual para CustomProduct/CustomRecipe individuales (ver
+// custom-product-controller.js/custom-recipe-controller.js y
+// deleteMealProduct/deleteMealCustomRecipe más abajo): mismo campo, mismo
+// significado ("¿esto lo compuso un profesional?"), no hace falta una
+// función aparte solo porque el objeto no sea un Meal.
 function assertMealEditable(meal) {
   if (meal?.assignedByTrainerId) {
     throw new MealProtectedError();
   }
 }
 
+// pasteMeal en modo "reemplazar" (merge=false) borra TODO lo que hubiera
+// antes en la comida — si esta ya tiene items pautados a nivel individual
+// (meal.assignedByTrainerId sigue null porque la comida es "mixta", ver
+// meal-dao.js#pasteMeal), un reemplazo se los llevaría por delante sin que
+// assertMealEditable (que solo mira el nivel de Meal) lo detecte. En modo
+// "combinar" (merge=true) los items existentes sobreviven intactos, así
+// que no hace falta esta comprobación extra.
+function assertMealPasteAllowed(meal, merge) {
+  assertMealEditable(meal);
+  if (merge) return;
+
+  const hasProtectedItems =
+    (meal?.customProducts || []).some((cp) => cp?.assignedByTrainerId) ||
+    (meal?.customRecipes || []).some((cr) => cr?.assignedByTrainerId);
+  if (hasProtectedItems) {
+    throw new MealProtectedError();
+  }
+}
+
+// Traduce MealProtectedError a 403 — antes duplicada byte a byte en
+// custom-product-controller.js y custom-recipe-controller.js (ninguno de
+// los dos pasa por meal-controller.js#handleMealError). Un solo sitio.
+function handleProtectedError(res, e) {
+  if (e instanceof MealProtectedError) {
+    return res.status(403).send({ message: e.message, code: e.code });
+  }
+  return null;
+}
+
 module.exports = {
   MealProtectedError,
   assertMealEditable,
+  assertMealPasteAllowed,
+  handleProtectedError,
   async findAll(page, limit) {
     return mealDao.findAll(page, limit);
   },
@@ -71,8 +109,8 @@ module.exports = {
     return mealDao.modifyMeal(meal);
   },
 
-  async pasteMeal(mealClipboard, mealToPaste, merge) {
-    return mealDao.pasteMeal(mealClipboard, mealToPaste, merge);
+  async pasteMeal(mealClipboard, mealToPaste, merge, trainerId = null) {
+    return mealDao.pasteMeal(mealClipboard, mealToPaste, merge, trainerId);
   },
 
   async deleteMeal(id) {
@@ -121,5 +159,16 @@ module.exports = {
   // Table/NutritionalGoal.assignedByTrainerId — no se borra al revocar.
   async markAssignedByTrainer(id, trainerId) {
     return mealDao.markAssignedByTrainer(id, trainerId);
+  },
+
+  // Pautados a nivel de item (TAREA meals pautados) — marcar/desmarcar
+  // consumido nunca pasa por assertMealEditable (mismo criterio que
+  // setCompleted de arriba).
+  async setCustomProductConsumed(id, consumed) {
+    return customProductDao.setConsumed(id, consumed);
+  },
+
+  async setCustomRecipeConsumed(id, consumed) {
+    return customRecipeDao.setConsumed(id, consumed);
   },
 };

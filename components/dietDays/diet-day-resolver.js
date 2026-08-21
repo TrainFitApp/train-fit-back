@@ -38,7 +38,8 @@ async function applyResolvedPlanToDietDay(dietDayDoc, date, resolved, trainerId,
       await mealModel.pasteMeal(
         { customProducts: nonEmpty[0].customProducts, customRecipes: nonEmpty[0].customRecipes },
         { _id: mealIds[i], customProducts: [], customRecipes: [] },
-        false
+        false,
+        trainerId
       );
     } else {
       await mealProposalDao.deletePendingForDateAndSlot(clientId, date, slotName);

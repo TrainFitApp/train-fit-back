@@ -819,7 +819,16 @@ module.exports = {
     );
   },
 
-  async pasteMeal(mealClipboard, mealToPaste, merge) {
+  // TAREA (meals pautados) — trainerId opcional: solo lo pasan los flujos
+  // controlados por un profesional (prescribeMeal/applyMealToClients/
+  // MealProposal aceptada/plan-resolver), nunca el "pegar" que el propio
+  // cliente usa para copiar una comida a otro día (meal-controller.js#pasteMeal,
+  // que sigue llamando sin este argumento). Estampa assignedByTrainerId en
+  // cada CustomProduct/CustomRecipe NUEVO — a nivel de item, no de Meal
+  // completa — para que el cliente pueda seguir añadiendo sus propios
+  // productos/recetas a la misma comida sin que toda ella quede bloqueada
+  // (ver meal-service.js#assertMealEditable, ahora reutilizada por item).
+  async pasteMeal(mealClipboard, mealToPaste, merge, trainerId = null) {
     try {
       const normalizeId = (value) => value?._id || value;
       const toPlainObject = (value) =>
@@ -827,12 +836,14 @@ module.exports = {
       const cloneCustomProductPayload = (value) => {
         const payload = toPlainObject(value);
         delete payload._id;
+        if (trainerId) payload.assignedByTrainerId = trainerId;
         return payload;
       };
       const buildCustomRecipeClonePayload = (customRecipeObj) => ({
         recipe: normalizeId(customRecipeObj.recipe),
         quantity: customRecipeObj.quantity ?? null,
         quantityCooked: customRecipeObj.quantityCooked ?? null,
+        ...(trainerId ? { assignedByTrainerId: trainerId } : {}),
         addedCustomProducts: (
           customRecipeObj.addedCustomProducts ||
           customRecipeObj.additionalCustomProducts ||
@@ -873,6 +884,7 @@ module.exports = {
       const customProductsToCreate = clipboardCustomProducts.map((cp) => {
         const cpObj = toPlainObject(cp);
         delete cpObj._id;
+        if (trainerId) cpObj.assignedByTrainerId = trainerId;
         return cpObj;
       });
 
@@ -1104,20 +1116,29 @@ module.exports = {
     );
   },
 
+  // Pautados sobreviven — antes borraba TODOS los customProducts de la
+  // comida sin distinción; con items pautados individuales (ver
+  // pasteMeal/assignedByTrainerId de arriba), un "vaciar comida" del
+  // cliente ya no puede llevarse por delante lo que pautó su profesional
+  // (mismo criterio que meal-service.js#assertMealEditable, a nivel de item).
   async deleteMealCustomProducts(id) {
     return new Promise((resolve, reject) =>
       mealSchema.findById(id, (err, doc) => {
         if (err) return reject(err);
-        const customProductIds = doc.customProducts.map(
-          (productTemp) => productTemp._id || productTemp,
-        );
+        const deletableIds = [];
+        const keptIds = [];
+        for (const productTemp of doc.customProducts) {
+          const productId = productTemp._id || productTemp;
+          if (productTemp?.assignedByTrainerId) keptIds.push(productId);
+          else deletableIds.push(productId);
+        }
         customProductSchema.deleteMany(
-          { _id: { $in: customProductIds } },
+          { _id: { $in: deletableIds } },
           (err2, doc2) => {
             if (err2) return reject(err2);
             mealSchema.findByIdAndUpdate(
               id,
-              { $set: { customProducts: [] } },
+              { $set: { customProducts: keptIds } },
               { new: true },
               (err3, finalDoc) => {
                 if (err3) return reject(err3);
@@ -1282,21 +1303,27 @@ module.exports.deleteMealCustomRecipe = async function (
   return meal;
 };
 
+// Pautadas sobreviven — mismo criterio que deleteMealCustomProducts de
+// arriba (ver ese comentario).
 module.exports.deleteMealCustomRecipes = async function (id) {
   const CustomRecipe = require("../customRecipes/custom-recipe-schema");
 
   const meal = await mealSchema.findById(id);
-  if (
-    meal &&
-    meal.customRecipes &&
-    meal.customRecipes.length > 0
-  ) {
-    await CustomRecipe.deleteMany({ _id: { $in: meal.customRecipes } });
+  const deletableIds = [];
+  const keptIds = [];
+  for (const recipeTemp of meal?.customRecipes || []) {
+    const recipeId = recipeTemp._id || recipeTemp;
+    if (recipeTemp?.assignedByTrainerId) keptIds.push(recipeId);
+    else deletableIds.push(recipeId);
+  }
+
+  if (deletableIds.length > 0) {
+    await CustomRecipe.deleteMany({ _id: { $in: deletableIds } });
   }
 
   return mealSchema.findByIdAndUpdate(
     id,
-    { $set: { customRecipes: [] } },
+    { $set: { customRecipes: keptIds } },
     { new: true },
   );
 };

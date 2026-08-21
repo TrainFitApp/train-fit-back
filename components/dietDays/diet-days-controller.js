@@ -26,18 +26,28 @@ const controller = {
     return res.send(dietDays);
   },
 
+  // Auditoría de arquitectura (nutrición) — este era el endpoint REAL que
+  // usa la app del cliente para leer su día (dietDayService
+  // .getDietDayByIdDietAndDate), y hacía un fetch crudo sin pasar nunca por
+  // resolveOwnedDietDay: aplicar un PlanAssignment a un cliente (F11)
+  // nunca se reflejaba en nada — el día se creaba vacío desde el frontend
+  // (fallback getStandardDietDay + createDietDay) sin resolver contra el
+  // plan activo. resolveOwnedDietDay ya hacía exactamente esto (auto-crea +
+  // resincroniza un día vacío con el plan activo, TASK-006), pero solo
+  // estaba enganchado a acciones puntuales del trainer (prescribeMeal) y a
+  // chooseDayType (Fase 9) — nunca a la lectura normal del cliente. De
+  // paso cierra un IDOR: antes confiaba en `req.params.id` (un dietId
+  // suelto del cliente) sin comprobar que perteneciera al usuario
+  // autenticado; ahora se resuelve siempre contra `req.user.id`.
   async getDietDayByIdDietAndDate(req, res) {
-    const dietDay = await dietDayModel.findByIdDietAndDate(
-      req.params.id,
-      req.body.date,
-    );
-    
+    const dietDay = await resolveOwnedDietDay(req.user.id, req.body.date);
+
     // Also fetch anthropometry for this date
     const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(
       req.user.id,
       req.body.date
     );
-    
+
     return res.send({ dietDay, anthropometry: anthropometry || null });
   },
 
