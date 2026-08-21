@@ -58,7 +58,9 @@ module.exports = {
       const unsetOperation = {};
 
       for (const key in set) {
-        if (key === "_id") continue;
+        // _id no se actualiza. donedAt nunca se confía del cliente (deriva
+        // de reloj entre dispositivo/servidor) — el backend lo calcula abajo.
+        if (key === "_id" || key === "donedAt") continue;
         const value = set[key];
         const isEmptyArray = Array.isArray(value) && value.length === 0;
         if (value === null || value === undefined || isEmptyArray) {
@@ -66,6 +68,19 @@ module.exports = {
         } else {
           updateOperation[key] = value;
         }
+      }
+
+      // donedAt: solo se fija en la transición real false->true (comprobando
+      // el valor actual en BD, no basta con mirar el payload — el frontend
+      // manda `doned` en cada guardado, no solo cuando cambia). Al desmarcar
+      // una serie se limpia, para no dejar un timestamp obsoleto.
+      if (updateOperation.doned === true) {
+        const current = await setSchema.findById(set._id).select("doned");
+        if (!current?.doned) {
+          updateOperation.donedAt = new Date();
+        }
+      } else if (updateOperation.doned === false) {
+        unsetOperation.donedAt = "";
       }
 
       const update = {};

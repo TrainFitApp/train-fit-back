@@ -5,6 +5,12 @@ const userSchema = require("../users/schema");
 const TokenService = require("../../services/token.service");
 const mail = require("../util/mail");
 const { normalizeEmail } = require("../util/normalize-email");
+const {
+  generateVerificationCode,
+  isValidVerificationCodeFormat,
+} = require("../util/verification-code");
+
+const HASH_CODE_TTL_MS = 15 * 60 * 1000;
 
 const LOGIN_INVALID_RESPONSE = {
   error: "INVALID_CREDENTIALS",
@@ -299,8 +305,9 @@ module.exports = {
       }
 
       if (user.hash) {
-        const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
-        await userModel.updateVerificationHash(user._id, hashTemp);
+        const hashTemp = generateVerificationCode();
+        const hashExpiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
+        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
 
         const header1 = `Hola ${user.name}, verifique su cuenta`;
         const description =
@@ -490,25 +497,72 @@ module.exports = {
         return res.status(400).send({ message: "Faltan datos requeridos" });
       }
 
-      const user = await userModel.getUserByEmail(email);
-      if (!user) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
+      // El frontend ya restringe el input a dígitos, pero el backend nunca
+      // debe confiar solo en esa validación: se revalida aquí el formato
+      // exacto antes de tocar la BD.
+      if (!isValidVerificationCodeFormat(code)) {
+        return res.status(400).send({ message: "Código inválido" });
       }
 
-      if (user.hash !== code) {
-        return res.status(400).send({ message: "Código incorrecto" });
-      }
-
-      const activatedUser = await userSchema.findByIdAndUpdate(
-        user._id,
-        { $unset: { hash: 1 } },
-        { new: true }
-      );
+      const activatedUser = await userModel.verifyActivationCode(email, code);
 
       return res.status(200).send(await issueSession(activatedUser, req, res));
     } catch (error) {
-      console.error("Error en auth/activate:", error);
-      return res.status(500).send({ message: "Error interno del servidor" });
+      switch (error?.message) {
+        case "USER_NOT_FOUND":
+          return res.status(404).send({ message: "Usuario no encontrado" });
+        case "ALREADY_VERIFIED":
+          return res
+            .status(400)
+            .send({ message: "Esta cuenta ya ha sido verificada" });
+        case "TOO_MANY_ATTEMPTS":
+          return res.status(429).send({
+            message: "Demasiados intentos fallidos. Solicita un nuevo código.",
+          });
+        case "CODE_EXPIRED":
+          return res
+            .status(400)
+            .send({ message: "Código expirado. Solicita uno nuevo." });
+        case "INVALID_CODE":
+          return res.status(400).send({ message: "Código incorrecto" });
+        default:
+          console.error("Error en auth/activate:", error);
+          return res.status(500).send({ message: "Error interno del servidor" });
+      }
+    }
+  },
+
+  async resendActivationCode(req, res) {
+    try {
+      const email = normalizeEmail(req.body?.email);
+
+      if (!email) {
+        return res.status(400).send({ message: "Falta el email" });
+      }
+
+      await userModel.resendVerificationCode(email);
+
+      return res.status(200).send({
+        message: "Se ha enviado un nuevo código de verificación.",
+      });
+    } catch (error) {
+      switch (error?.message) {
+        case "USER_NOT_FOUND":
+          return res.status(404).send({ message: "Usuario no encontrado" });
+        case "ALREADY_VERIFIED":
+          return res
+            .status(400)
+            .send({ message: "Esta cuenta ya ha sido verificada" });
+        case "COOLDOWN_ACTIVE":
+          return res.status(429).send({
+            message: "Espera unos segundos antes de solicitar un nuevo código",
+          });
+        case "INVALID_EMAIL":
+          return res.status(400).send({ message: "Email inválido" });
+        default:
+          console.error("Error en auth/resend-code:", error);
+          return res.status(500).send({ message: "Error interno del servidor" });
+      }
     }
   },
 
@@ -537,8 +591,9 @@ module.exports = {
       }
 
       if (user.hash) {
-        const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
-        await userModel.updateVerificationHash(user._id, hashTemp);
+        const hashTemp = generateVerificationCode();
+        const hashExpiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
+        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
 
         const header1 = `Hola ${user.name}, verifique su cuenta`;
         const description =
@@ -613,8 +668,9 @@ module.exports = {
       }
 
       if (user.hash) {
-        const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
-        await userModel.updateVerificationHash(user._id, hashTemp);
+        const hashTemp = generateVerificationCode();
+        const hashExpiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
+        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
 
         const header1 = `Hola ${user.name}, verifique su cuenta`;
         const description =

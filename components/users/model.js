@@ -10,6 +10,9 @@ const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-ser
 const suggestionsEmailUser = process.env.SUGGESTIONS_MAIL_SENDER_USER;
 const restorePassEmail = process.env.REGISTER_MAIL_SENDER_USER;
 const jwt = require("jsonwebtoken");
+const { generateVerificationCode } = require("../util/verification-code");
+
+const HASH_CODE_TTL_MS = 15 * 60 * 1000;
 const axios = require("axios");
 const jwkToPem = require("jwk-to-pem");
 
@@ -69,8 +72,19 @@ module.exports = {
     return await userDao.updateUser(user);
   },
 
-  async updateVerificationHash(userId, hash) {
-    return await userDao.updateVerificationHash(userId, hash);
+  async updateVerificationHash(userId, hash, expiresAt) {
+    return await userDao.updateVerificationHash(userId, hash, expiresAt);
+  },
+
+  async resendVerificationCode(email) {
+    const code = generateVerificationCode();
+    const expiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
+
+    return userDao.resendVerificationHash(email, code, expiresAt);
+  },
+
+  async verifyActivationCode(email, code) {
+    return await userDao.verifyActivationHash(email, code);
   },
 
   async updateGoogleUser(user, date) {

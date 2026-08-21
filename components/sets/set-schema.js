@@ -12,6 +12,12 @@ const SetSchema = Schema(
     expectedReps: [{ type: Number, min: 0, max: 999 }],
     drop: Boolean,
     restPause: { type: Number, min: 0, max: 600 },
+    // Descanso pautado tras completar esta serie (segundos). Distinto de
+    // restPause, que es la técnica "rest-pause" DENTRO de la misma serie.
+    restSeconds: { type: Number, min: 0, max: 600 },
+    // Cuándo se marcó doned=true. Solo lo fija el backend (set-dao.js), en
+    // la transición false->true — nunca confiar en un timestamp del cliente.
+    donedAt: Date,
     cronometer: Number,
     doned: Boolean,
     order: Number,

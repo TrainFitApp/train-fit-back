@@ -57,16 +57,20 @@ module.exports = {
     const table = await tableSchema
       .findById(req.params.tableInUseId)
       .select("_id userId splits assignedByTrainerId");
-    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!table)
+      return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
-    const isExempt = await isMicrocycleExempt(table);
-    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length, isExempt)) {
+    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
+      const limit = featureAccessService.getLimits(
+        req.user,
+      ).microcyclesPerRoutine;
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
-        message:
-          "L\u00edmite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
+        message: `L\u00edmite alcanzado. Solo puedes tener ${limit} micro-ciclos por rutina.`,
       });
     }
 
@@ -81,16 +85,20 @@ module.exports = {
     const table = await tableSchema
       .findById(req.body.idTable)
       .select("_id userId splits assignedByTrainerId");
-    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!table)
+      return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
-    const isExempt = await isMicrocycleExempt(table);
-    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length, isExempt)) {
+    if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
+      const limit = featureAccessService.getLimits(
+        req.user,
+      ).microcyclesPerRoutine;
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
-        message:
-          "L\u00edmite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
+        message: `L\u00edmite alcanzado. Solo puedes tener ${limit} micro-ciclos por rutina.`,
       });
     }
 
@@ -104,10 +112,15 @@ module.exports = {
   },
 
   async addTableSplit(req, res) {
-    const tableDoc = await tableSchema.findById(req.params.idTable).select("_id userId");
-    if (!tableDoc) return res.status(404).send({ message: "Rutina no encontrada" });
+    const tableDoc = await tableSchema
+      .findById(req.params.idTable)
+      .select("_id userId");
+    if (!tableDoc)
+      return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, tableDoc.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
 
     const table = await splitService.addTableSplit(
@@ -122,9 +135,12 @@ module.exports = {
   // de paso al abrir este módulo a "trainer").
   async addWorkoutsSplit(req, res) {
     const table = await tableAccess.findTableOwningSplit(req.params.idSplit);
-    if (!table) return res.status(404).send({ message: "Micro-ciclo no encontrado" });
+    if (!table)
+      return res.status(404).send({ message: "Micro-ciclo no encontrado" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
 
     const split = await splitService.addWorkoutsSplit(
@@ -144,7 +160,9 @@ module.exports = {
     const table = await tableAccess.findTableOwningSplit(req.params.id);
     if (!table) return res.sendStatus(404);
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
 
     await splitService.updateSplit(req.params.id, req.body);
@@ -154,36 +172,60 @@ module.exports = {
 
   // Planificador visual (Fase C) — reordena columnas dentro de una tabla.
   async reorderSplits(req, res) {
-    const table = await tableSchema.findById(req.params.idTable).select("_id userId");
-    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    const table = await tableSchema
+      .findById(req.params.idTable)
+      .select("_id userId");
+    if (!table)
+      return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
 
     try {
-      const splits = await splitService.reorderSplits(req.params.idTable, req.body?.splitIdsOrder);
+      const splits = await splitService.reorderSplits(
+        req.params.idTable,
+        req.body?.splitIdsOrder,
+      );
       return res.send(splits);
     } catch (e) {
-      if (e.code === "INVALID_SPLIT_ORDER") return res.status(400).send({ message: e.message });
-      if (e.code === "TABLE_NOT_FOUND") return res.status(404).send({ message: e.message });
+      if (e.code === "INVALID_SPLIT_ORDER")
+        return res.status(400).send({ message: e.message });
+      if (e.code === "TABLE_NOT_FOUND")
+        return res.status(404).send({ message: e.message });
       throw e;
     }
   },
 
   // Planificador visual (Fase C) — "Añadir semana" en blanco.
   async createBlankSplitAndAddToTable(req, res) {
-    const table = await tableSchema.findById(req.params.idTable).select("_id userId");
-    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    const table = await tableSchema
+      .findById(req.params.idTable)
+      .select("_id userId");
+    if (!table)
+      return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
 
     const isExempt = await isMicrocycleExempt(table);
-    const fullTable = await tableSchema.findById(req.params.idTable).select("splits");
-    if (!featureAccessService.canAddMicrocycle(req.user, fullTable.splits.length, isExempt)) {
+    const fullTable = await tableSchema
+      .findById(req.params.idTable)
+      .select("splits");
+    if (
+      !featureAccessService.canAddMicrocycle(
+        req.user,
+        fullTable.splits.length,
+        isExempt,
+      )
+    ) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_MICROCYCLES",
-        message: "Límite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
+        message:
+          "Límite Free alcanzado. Solo puedes tener 4 micro-ciclos por rutina.",
       });
     }
 
@@ -195,10 +237,15 @@ module.exports = {
   },
 
   async deleteSplit(req, res) {
-    const table = await tableSchema.findById(req.params.idTable).select("_id userId");
-    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    const table = await tableSchema
+      .findById(req.params.idTable)
+      .select("_id userId");
+    if (!table)
+      return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      return res
+        .status(403)
+        .send({ message: "No tienes permiso para esta rutina" });
     }
 
     await splitService.deleteSplit(req.params.idTable, req.params.idSplit);
@@ -233,7 +280,8 @@ module.exports = {
       .findById(req.params.idTable)
       .select("_id userId splits");
 
-    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
+    if (!table)
+      return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({
         message: "No tienes permiso para esta rutina",
@@ -241,9 +289,7 @@ module.exports = {
     }
 
     const tableSplitIds = new Set(
-      (table.splits || []).map((split) =>
-        (split?._id || split)?.toString(),
-      ),
+      (table.splits || []).map((split) => (split?._id || split)?.toString()),
     );
 
     if (splitIds.some((id) => !tableSplitIds.has(id))) {

@@ -1,6 +1,7 @@
 const express = require("@awaitjs/express");
 const controller = require("./auth-controller");
 const { auth } = require("../../middleware/validateAuth");
+const rateLimiter = require("../util/rate-limiter");
 
 const router = express.Router();
 
@@ -8,7 +9,8 @@ router.postAsync("/login", controller.login);
 router.postAsync("/refresh", controller.refresh);
 router.postAsync("/logout", controller.logout);
 router.getAsync("/me", auth(["admin", "user"]), controller.me);
-router.postAsync("/activate", controller.activate);
+router.postAsync("/activate", rateLimiter, controller.activate);
+router.postAsync("/resend-code", rateLimiter, controller.resendActivationCode);
 router.postAsync("/social/google/verify", controller.verifyGoogle);
 router.postAsync("/social/apple/verify", controller.verifyApple);
 router.postAsync("/social/register", controller.registerSocial);
