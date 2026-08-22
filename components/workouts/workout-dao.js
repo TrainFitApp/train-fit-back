@@ -9,6 +9,7 @@ const { default: mongoose } = require("mongoose");
 const customExerciseDao = require("../customExercises/custom-exercise-dao");
 const userSchema = require("../users/schema");
 const { isSamePermutation } = require("../util/permutation-util");
+const featureAccessService = require("../billing/feature-access-service");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -964,14 +965,31 @@ module.exports = {
     );
   },
 
-  async addDataExerciseToWorkout(workoutId, dataExerciseData) {
+  async addDataExerciseToWorkout(workoutId, dataExerciseData, requestingUser) {
     try {
       // 1. Crear el Exercise si viene como objeto (sin _id)
       let exerciseId;
       if (dataExerciseData.exercise && !dataExerciseData.exercise._id) {
-        const exerciseDoc = await exerciseSchema.create(
-          dataExerciseData.exercise,
-        );
+        // userId SIEMPRE del usuario autenticado, nunca del body: antes se
+        // creaba el Exercise con el dataExerciseData.exercise.userId tal
+        // cual lo mandara el cliente — cualquiera podía falsificarlo. Mismo
+        // criterio que exercise-controller.js#createExercise.
+        const ownExerciseCount = await exerciseSchema.countDocuments({
+          userId: requestingUser.id,
+        });
+        if (!featureAccessService.canCreateExercise(requestingUser, ownExerciseCount)) {
+          const limitError = new Error(
+            "Límite Free alcanzado. Solo puedes crear 2 ejercicios propios.",
+          );
+          limitError.code = "PREMIUM_LIMIT_EXERCISES";
+          limitError.status = 403;
+          throw limitError;
+        }
+
+        const exerciseDoc = await exerciseSchema.create({
+          ...dataExerciseData.exercise,
+          userId: requestingUser.id,
+        });
         exerciseId = exerciseDoc._id;
       } else {
         // Si ya tiene _id, usar ese

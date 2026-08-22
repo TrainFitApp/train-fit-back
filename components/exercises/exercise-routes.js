@@ -21,24 +21,24 @@ router.postAsync(
   auth(["admin", "user", "trainer"]),
   controller.getSearchExercise
 );
-router.postAsync("/", auth(["admin", "user"]), controller.createExercise);
-router.patchAsync("/:id", auth(["admin", "user"]), controller.updateExercise);
+router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createExercise);
+router.patchAsync("/:id", auth(["admin", "user", "trainer"]), controller.updateExercise);
 router.putAsync(
   "/archive",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.archiveExercise
 );
 router.putAsync(
   "/favorite",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.addExerciseToFavorites
 );
 
 // Servir helper de YouTube embed protegido (requiere admin o user)
-router.getAsync("/youtube-embed", auth(["admin", "user"]), async (req, res) => {
+router.getAsync("/youtube-embed", auth(["admin", "user", "trainer"]), async (req, res) => {
   const filePath = path.join(__dirname, "../../youtube-embed.html");
   res.sendFile(filePath);
 });
-router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteExercise);
+router.deleteAsync("/:id", auth(["admin", "user", "trainer"]), controller.deleteExercise);
 
 module.exports = router;

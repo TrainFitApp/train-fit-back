@@ -72,8 +72,8 @@ module.exports = {
     return workoutDao.updateWorkout(workout, customExercise);
   },
 
-  async addDataExerciseToWorkout(workoutId, dataExerciseData) {
-    return workoutDao.addDataExerciseToWorkout(workoutId, dataExerciseData);
+  async addDataExerciseToWorkout(workoutId, dataExerciseData, requestingUser) {
+    return workoutDao.addDataExerciseToWorkout(workoutId, dataExerciseData, requestingUser);
   },
 
   async updateWorkoutsOrder(idWorkout, idTable, indexReorderedCustomExercises) {

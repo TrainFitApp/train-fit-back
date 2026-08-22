@@ -268,11 +268,19 @@ module.exports = {
 
   async addDataExerciseToWorkout(req, res) {
     if (!(await assertCanAccessWorkoutId(req, res, req.params.idWorkout))) return;
-    const workout = await workoutModel.addDataExerciseToWorkout(
-      req.params.idWorkout,
-      req.body,
-    );
-    return res.send(workout);
+    try {
+      const workout = await workoutModel.addDataExerciseToWorkout(
+        req.params.idWorkout,
+        req.body,
+        req.user,
+      );
+      return res.send(workout);
+    } catch (error) {
+      if (error?.code === "PREMIUM_LIMIT_EXERCISES") {
+        return res.status(403).send({ code: error.code, message: error.message });
+      }
+      throw error;
+    }
   },
 
   async updateWorkoutsOrder(req, res) {

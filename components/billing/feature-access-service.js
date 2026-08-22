@@ -44,7 +44,13 @@ function canAddMicrocycle(user, microcycleCount, isExempt = false) {
   return microcycleCount < limits.microcyclesPerRoutine;
 }
 
+// Ejercicios propios de ENTRENADOR — sin límite (F? MASTER_BACKLOG). No usa
+// premium.entitled (el de CONSUMIDOR): un entrenador crea ejercicios para su
+// trabajo profesional, no como cliente. professionalPremium tampoco aplica
+// aquí a propósito (decisión de producto: sin gate, no un lugar donde
+// monetizar esto todavía).
 function canCreateExercise(user, exerciseCount) {
+  if (user?.roles?.includes("trainer")) return true;
   const limits = getLimits(user);
   return exerciseCount < limits.customExercises;
 }
