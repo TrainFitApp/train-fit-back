@@ -22,9 +22,41 @@ function toPositiveNumber(value) {
 }
 
 function ingredientKcal(ingredient) {
-  const kcalPer100g = ingredient?.energyKcal100g || 0;
+  return ingredientMacros(ingredient).kcal;
+}
+
+// F20-ter — igual que ingredientKcal pero con los 3 macros a la vez, para
+// el gráfico de comparación pautado-vs-consumido (kcal/proteína/carbos/grasa).
+function ingredientMacros(ingredient) {
   const quantity = ingredient?.quantity || 0;
-  return (kcalPer100g * quantity) / 100;
+  const multiplier = quantity / 100;
+  return {
+    kcal: (ingredient?.energyKcal100g || 0) * multiplier,
+    protein: (ingredient?.protein100g || 0) * multiplier,
+    carbs: (ingredient?.carbohydrates100g || 0) * multiplier,
+    fat: (ingredient?.fat100g || 0) * multiplier,
+  };
+}
+
+function sumMacroList(list) {
+  return list.reduce(
+    (acc, m) => ({
+      kcal: acc.kcal + (m?.kcal || 0),
+      protein: acc.protein + (m?.protein || 0),
+      carbs: acc.carbs + (m?.carbs || 0),
+      fat: acc.fat + (m?.fat || 0),
+    }),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+  );
+}
+
+function scaleMacros(macros, ratio) {
+  return {
+    kcal: macros.kcal * ratio,
+    protein: macros.protein * ratio,
+    carbs: macros.carbs * ratio,
+    fat: macros.fat * ratio,
+  };
 }
 
 // Refleja recipe.service.ts#mergeRecipeIngredients: ingredientes base del
@@ -57,14 +89,18 @@ function mergeRecipeIngredients(recipe, customRecipe) {
 // Refleja recipe.service.ts#buildNutritionCalculation: la porción
 // realmente pautada no es el total de la receta, sino
 // quantity / (quantityCooked || pesoCrudoTotal).
-function kcalForCustomRecipe(customRecipe) {
+function macrosForCustomRecipe(customRecipe) {
   const ingredients = mergeRecipeIngredients(customRecipe?.recipe, customRecipe);
-  const totalKcal = ingredients.reduce((acc, ing) => acc + ingredientKcal(ing), 0);
+  const totals = sumMacroList(ingredients.map(ingredientMacros));
   const rawWeight = ingredients.reduce((acc, ing) => acc + (ing?.quantity || 0), 0);
   const baseline = toPositiveNumber(customRecipe?.quantityCooked) || rawWeight;
   const consumed = toPositiveNumber(customRecipe?.quantity);
   const portionRatio = baseline > 0 && consumed > 0 ? consumed / baseline : 0;
-  return totalKcal * portionRatio;
+  return scaleMacros(totals, portionRatio);
+}
+
+function kcalForCustomRecipe(customRecipe) {
+  return macrosForCustomRecipe(customRecipe).kcal;
 }
 
 function kcalForMeal(meal) {
@@ -118,6 +154,68 @@ function computeDayCompletion(meals) {
   };
 }
 
+// F20-ter — "pautado" es un item que el profesional prescribió
+// (assignedByTrainerId set, ver Meal/CustomProduct/CustomRecipe schema).
+// Todo lo demás en la comida (assignedByTrainerId null) lo añadió el
+// propio cliente por su cuenta — el cliente PUEDE registrar comida no
+// pautada en la misma comida (assertMealEditable solo bloquea a nivel de
+// Meal completa, no impide añadir items sueltos junto a los ya pautados).
+function isItemPlanned(item) {
+  return !!item?.assignedByTrainerId;
+}
+
+// Un item pautado cuenta como "consumido" solo si el cliente lo marcó
+// (Meal.completed cubre toda la comida de una vez, o el flag individual
+// del item). Un item NO pautado (el cliente lo metió él mismo) cuenta como
+// consumido directamente — no existe un estado "lo añadí pero todavía no
+// me lo he comido" para algo que el propio cliente registró.
+function isItemConsumed(item, meal) {
+  if (!isItemPlanned(item)) return true;
+  return !!(meal?.completed || item?.consumed);
+}
+
+function mealTracking(meal) {
+  const products = meal?.customProducts || [];
+  const recipes = meal?.customRecipes || [];
+
+  const plannedMacros = sumMacroList([
+    ...products.filter(isItemPlanned).map(ingredientMacros),
+    ...recipes.filter(isItemPlanned).map(macrosForCustomRecipe),
+  ]);
+  const consumedMacros = sumMacroList([
+    ...products.filter((p) => isItemConsumed(p, meal)).map(ingredientMacros),
+    ...recipes.filter((r) => isItemConsumed(r, meal)).map(macrosForCustomRecipe),
+  ]);
+
+  return {
+    hasPlan: products.some(isItemPlanned) || recipes.some(isItemPlanned),
+    planned: plannedMacros,
+    consumed: consumedMacros,
+  };
+}
+
+// Día completo: suma de "pautado" y "consumido" (según mealTracking) sobre
+// todas las comidas. hasPlan = hubo AL MENOS un item pautado ese día
+// (independiente de si su kcal es 0) — para distinguir "sin plan ese día"
+// de "plan con 0 kcal".
+function computeDayTracking(meals) {
+  return (meals || []).reduce(
+    (acc, meal) => {
+      const { hasPlan, planned, consumed } = mealTracking(meal);
+      return {
+        hasPlan: acc.hasPlan || hasPlan,
+        planned: sumMacroList([acc.planned, planned]),
+        consumed: sumMacroList([acc.consumed, consumed]),
+      };
+    },
+    {
+      hasPlan: false,
+      planned: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+      consumed: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+    },
+  );
+}
+
 module.exports = {
   mergeRecipeIngredients,
   kcalForCustomRecipe,
@@ -125,4 +223,5 @@ module.exports = {
   sumMealsKcal,
   countMealItems,
   computeDayCompletion,
+  computeDayTracking,
 };

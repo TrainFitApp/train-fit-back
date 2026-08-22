@@ -129,6 +129,12 @@ router.getAsync(
   dataController.getClientNutritionCompliance
 );
 router.getAsync(
+  "/clients/:clientId/nutrition-tracking",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.getClientNutritionTracking
+);
+router.getAsync(
   "/clients/:clientId/payments",
   auth(["trainer"]),
   requireActiveClient(),
