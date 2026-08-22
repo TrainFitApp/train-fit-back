@@ -547,6 +547,44 @@ module.exports = {
     return res.send(preferences);
   },
 
+  // GET /trainer/routines — Rutinas -> Plantillas (rediseño 2026-08):
+  // biblioteca de plantillas de rutina COMPLETA (microciclos/splits/
+  // workouts) propia del profesional — distinto de WorkoutTemplate
+  // (plantilla de un solo día/sesión, /trainer/workout-templates). Reutiliza
+  // tableModel.getTables(own=true) tal cual: mismo mecanismo que un cliente
+  // listando sus propias Tables, sin duplicar query.
+  async listOwnRoutines(req, res) {
+    const page = parseInt((req.query.page || 0).toString(), 10);
+    const limit = parseInt((req.query.limit || 50).toString(), 10);
+    const tables = await tableModel.getTables(page, limit, true, req.auth.userId);
+    return res.send(tables);
+  },
+
+  // POST /trainer/routines — crea una plantilla de rutina vacía (Table con
+  // userId=trainerId, sin cliente ni assignedByTrainerId: no es una rutina
+  // "asignada", es la biblioteca propia del profesional). El resultado se
+  // edita con el mismo Planificador (/tabs/routines/:id/planner) que las
+  // rutinas reales de cliente.
+  async createOwnRoutine(req, res) {
+    const name = (req.body?.name || "").trim();
+    if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
+    const table = await tableModel.createOwnRoutineTemplate(req.auth.userId, name);
+    return res.status(201).send(table);
+  },
+
+  // DELETE /trainer/routines/:id — borra una plantilla propia. adminMode=false
+  // a propósito: la query resultante es {_id, userId: trainerId}, así que
+  // solo borra si la Table pertenece de verdad a este profesional — la
+  // comprobación de propiedad la hace la propia query, no hace falta
+  // canAccessUserTable aparte.
+  async deleteOwnRoutine(req, res) {
+    const result = await tableModel.deleteTable(req.auth.userId, req.params.id, false);
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Plantilla no encontrada" });
+    }
+    return res.sendStatus(204);
+  },
+
   // POST /trainer/routines/:routineId/apply-to-clients — F30, reutiliza literalmente
   // tableModel.assignTemplateToClient (F11), una vez por cliente destino.
   // :routineId es una plantilla (pública o propia del profesional), NUNCA una

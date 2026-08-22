@@ -36,6 +36,11 @@ TableSchema.pre("deleteOne", async function (next) {
   try {
     const query = this.getQuery();
     const table = await this.model.findOne(query);
+    // Sin match (dueño equivocado, id ya borrado) es un resultado normal de
+    // deleteOne — no un error. Sin este guard, table.splits revienta con
+    // TypeError y el 404 limpio que espera el controller (deletedCount: 0)
+    // nunca llega, sale un 500 en su lugar.
+    if (!table) return next();
     await splitSchema.deleteMany({ _id: { $in: table.splits } });
     // Hueco preexistente (2026-08): las notas fijadas de esta tabla nunca se
     // limpiaban, ni aquí ni al borrar la cuenta del dueño (que pasa por este
