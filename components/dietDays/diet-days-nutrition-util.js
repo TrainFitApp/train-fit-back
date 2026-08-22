@@ -25,16 +25,24 @@ function ingredientKcal(ingredient) {
   return ingredientMacros(ingredient).kcal;
 }
 
-// F20-ter — igual que ingredientKcal pero con los 3 macros a la vez, para
-// el gráfico de comparación pautado-vs-consumido (kcal/proteína/carbos/grasa).
+// F20-septendecies — BUG real: un CustomProduct no siempre trae su propio
+// snapshot de macros (energyKcal100g/protein100g/...) — muchos solo tienen
+// el producto real POBLADO en `.product` y nada copiado al propio
+// CustomProduct. La función original (sumMealsKcal, antes de portarse
+// aquí) ya lo sabía: `cp.energyKcal100g ?? cp.product?.energyKcal100g ?? 0`
+// — ese fallback se perdió al extraer ingredientMacros() para el fix de
+// recetas, así que TODO producto sin snapshot propio computaba 0 kcal en
+// todos lados (adherencia, cumplimiento, seguimiento) sin ningún error
+// visible. Restaurado aquí, para los 4 macros, no solo kcal.
 function ingredientMacros(ingredient) {
   const quantity = ingredient?.quantity || 0;
   const multiplier = quantity / 100;
+  const source = ingredient?.product || {};
   return {
-    kcal: (ingredient?.energyKcal100g || 0) * multiplier,
-    protein: (ingredient?.protein100g || 0) * multiplier,
-    carbs: (ingredient?.carbohydrates100g || 0) * multiplier,
-    fat: (ingredient?.fat100g || 0) * multiplier,
+    kcal: (ingredient?.energyKcal100g ?? source.energyKcal100g ?? 0) * multiplier,
+    protein: (ingredient?.protein100g ?? source.protein100g ?? 0) * multiplier,
+    carbs: (ingredient?.carbohydrates100g ?? source.carbohydrates100g ?? 0) * multiplier,
+    fat: (ingredient?.fat100g ?? source.fat100g ?? 0) * multiplier,
   };
 }
 

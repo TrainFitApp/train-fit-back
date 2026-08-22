@@ -15,6 +15,7 @@ const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("./trainer-client-dao");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
+const planResolver = require("../planAssignments/plan-resolver");
 
 // MVP-trainers F20 — margen de tolerancia único, no repetido inline en varios
 // sitios (sección 9 del doc). ±15% sobre el objetivo de kcal del día.
@@ -34,6 +35,64 @@ function daysBetweenIsoDates(fromIso, toIso) {
   const from = new Date(`${fromIso}T00:00:00.000Z`);
   const to = new Date(`${toIso}T00:00:00.000Z`);
   return Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000) + 1);
+}
+
+// F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
+// YA EXISTEN como documento; la resolución de un plan es LAZY
+// (resolveOwnedDietDay materializa un día la primera vez que alguien lo
+// abre — el cliente en su app, o el entrenador al mirar esa fecha desde la
+// ficha). La inmensa mayoría de los días de una ventana de 30/90 días
+// nunca se han "abierto" por nadie, así que adherencia/cumplimiento/
+// seguimiento salían casi vacíos para un plan recién aplicado aunque SÍ lo
+// cubriera — bug real, no "sin datos". Para cada fecha del rango sin
+// DietDay real, resuelve el plan sobre la marcha (resolvePlanForDate, sin
+// escribir nada en BD — un GET no debe materializar 90 documentos) y
+// construye una comida "sintética" con lo pautado (primera alternativa de
+// cada slot, mismo criterio que el total de macros del builder). Sin
+// datos de consumo real —nada se ha marcado porque nadie ha abierto ese
+// día—, pero eso es justo lo correcto: hasPlan=true, 0% consumido.
+async function getTrackingDaysForClient(clientId, dietId, from, to) {
+  const materialized = dietId
+    ? await dietDaysService.getFullyPopulatedDietDaysForDiet(dietId, from, to)
+    : [];
+  const materializedDates = new Set(materialized.map((d) => d.date));
+
+  const days = [...materialized];
+  const totalDays = daysBetweenIsoDates(from, to);
+  for (let i = 0; i < totalDays; i++) {
+    const date = addDaysToIsoDate(from, i);
+    if (materializedDates.has(date)) continue;
+
+    let result;
+    try {
+      result = await planResolver.resolvePlanForDate(clientId, date);
+    } catch (e) {
+      continue;
+    }
+    if (!result) continue;
+
+    const meals = Object.values(result.resolved || {})
+      .map((slot) => slot.alternatives?.[0])
+      .filter((alt) => alt && ((alt.customProducts || []).length || (alt.customRecipes || []).length))
+      .map((alt) => ({
+        completed: false,
+        customProducts: (alt.customProducts || []).map((cp) => ({
+          ...(typeof cp.toObject === "function" ? cp.toObject() : cp),
+          assignedByTrainerId: result.trainerId,
+          consumed: false,
+        })),
+        customRecipes: (alt.customRecipes || []).map((cr) => ({
+          ...(typeof cr.toObject === "function" ? cr.toObject() : cr),
+          assignedByTrainerId: result.trainerId,
+          consumed: false,
+        })),
+      }));
+
+    if (meals.length) days.push({ date, meals });
+  }
+
+  days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return days;
 }
 
 // MVP-trainers F30 — orquesta la MISMA operación individual (F11/F12/F13) sobre
@@ -371,15 +430,10 @@ module.exports = {
     const from = req.query.from || addDaysToIsoDate(to, -30);
     const daysInRange = daysBetweenIsoDates(from, to);
 
-    let dietDays = [];
-    if (client.dietInUse) {
-      // F20-bis: getFullyPopulatedDietDaysForDiet (autopopulate en cascada)
-      // en vez de getDietDaysBetweenDatesByIdDiet (aggregate con $project
-      // estrecho) — así sumMealsKcal puede incluir customRecipes, antes
-      // deliberadamente excluidas por no tener aquí el árbol de merge de
-      // ingredientes que su cálculo real necesita. Ver diet-days-nutrition-util.js.
-      dietDays = await dietDaysService.getFullyPopulatedDietDaysForDiet(client.dietInUse, from, to);
-    }
+    // F20-undecies: getTrackingDaysForClient (materializados + resueltos al
+    // vuelo para fechas sin DietDay real) en vez de leer solo lo ya
+    // materializado — si no, un plan recién aplicado salía casi sin datos.
+    const dietDays = await getTrackingDaysForClient(clientId, client.dietInUse, from, to);
 
     const dailyBreakdown = dietDays
       .filter((d) => (d.meals || []).length)
@@ -414,10 +468,7 @@ module.exports = {
     const to = req.query.to || todayIsoDate();
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
-    let dietDays = [];
-    if (client?.dietInUse) {
-      dietDays = await dietDaysService.getFullyPopulatedDietDaysForDiet(client.dietInUse, from, to);
-    }
+    const dietDays = await getTrackingDaysForClient(clientId, client?.dietInUse, from, to);
 
     const exceptions = await dietExceptionDao.findAllForClient(clientId, 200);
     const exceptionByDate = new Map();
@@ -460,15 +511,36 @@ module.exports = {
     const to = req.query.to || todayIsoDate();
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
-    let dietDays = [];
-    if (client?.dietInUse) {
-      dietDays = await dietDaysService.getFullyPopulatedDietDaysForDiet(client.dietInUse, from, to);
-    }
+    const dietDays = await getTrackingDaysForClient(clientId, client?.dietInUse, from, to);
+    const byDate = new Map(dietDays.map((d) => [d.date, d]));
 
-    const dailyTracking = dietDays.map((d) => ({
-      date: d.date,
-      ...dietDaysNutritionUtil.computeDayTracking(d.meals),
-    }));
+    // F20-octodecies — antes solo se listaban los días con documento (real
+    // o sintético) resuelto: cualquier día sin plan Y sin DietDay
+    // materializado (nadie lo abrió) faltaba directamente en el array, no
+    // aparecía ni con ceros. Para una gráfica de LÍNEAS eso es un eje X
+    // poco fiable — Chart.js coloca las fechas pegadas unas a otras en el
+    // orden del array, así que un hueco de una semana se veía tan ancho
+    // como uno de un día. Se rellena aquí cada fecha del rango completo,
+    // con ceros explícitos donde no hay nada.
+    const dailyTracking = [];
+    for (
+      let cursor = new Date(`${from}T00:00:00.000Z`);
+      cursor.getTime() <= new Date(`${to}T00:00:00.000Z`).getTime();
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
+    ) {
+      const date = cursor.toISOString().slice(0, 10);
+      const day = byDate.get(date);
+      dailyTracking.push(
+        day
+          ? { date, ...dietDaysNutritionUtil.computeDayTracking(day.meals) }
+          : {
+              date,
+              hasPlan: false,
+              planned: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+              consumed: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+            },
+      );
+    }
 
     return res.send({ status: "ok", dailyTracking });
   },
