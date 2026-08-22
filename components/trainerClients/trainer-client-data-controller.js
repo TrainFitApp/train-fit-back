@@ -436,6 +436,33 @@ module.exports = {
     return res.send({ status: "ok", dailyBreakdown });
   },
 
+  // GET /trainer/clients/:clientId/nutrition-tracking?from=&to= — F20-ter,
+  // requireActiveClient("nutrition"). Compara día a día lo PAUTADO (items
+  // con assignedByTrainerId) contra lo REALMENTE consumido — un item
+  // pautado solo cuenta como consumido si el cliente lo marcó
+  // (completed/consumed); un item que el cliente añadió por su cuenta
+  // (assignedByTrainerId null) cuenta como consumido directamente. Kcal +
+  // los 3 macros, para el gráfico de comparación del tab de nutrición.
+  async getClientNutritionTracking(req, res) {
+    const clientId = req.params.clientId;
+    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+
+    const to = req.query.to || todayIsoDate();
+    const from = req.query.from || addDaysToIsoDate(to, -30);
+
+    let dietDays = [];
+    if (client?.dietInUse) {
+      dietDays = await dietDaysService.getFullyPopulatedDietDaysForDiet(client.dietInUse, from, to);
+    }
+
+    const dailyTracking = dietDays.map((d) => ({
+      date: d.date,
+      ...dietDaysNutritionUtil.computeDayTracking(d.meals),
+    }));
+
+    return res.send({ status: "ok", dailyTracking });
+  },
+
   // GET /trainer/clients/:clientId/payments — F26, requireActiveClient() sin scope
   async listPayments(req, res) {
     const payments = await trainerPaymentDao.list(req.auth.userId, req.params.clientId);
