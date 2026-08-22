@@ -152,6 +152,13 @@ router.postAsync(
   dataController.requestNutritionPreferences
 );
 
+// --- Rutinas -> Plantillas (rediseño 2026-08): biblioteca de plantillas de
+// rutina completa del profesional, editada con el mismo Planificador que ya
+// usa para las rutinas reales de sus clientes (ver planner.page.ts) ---
+router.getAsync("/routines", auth(["trainer"]), dataController.listOwnRoutines);
+router.postAsync("/routines", auth(["trainer"]), dataController.createOwnRoutine);
+router.deleteAsync("/routines/:id", auth(["trainer"]), dataController.deleteOwnRoutine);
+
 // --- F30: aplicar en bloque a varios clientes (cada uno validado individualmente dentro) ---
 router.postAsync(
   "/routines/:routineId/apply-to-clients",

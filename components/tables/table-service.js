@@ -119,4 +119,16 @@ module.exports = {
 
     return tableDao.copyTableForClient(clientId, sourceTableId, trainerId);
   },
+
+  // Rutinas -> Plantillas (rediseño 2026-08): mismo criterio que
+  // assignNewRoutineToClient (F11) — SIN gate de canCreateRoutine. Ese
+  // límite Free/Premium es la palanca de negocio del CLIENTE final
+  // (routines: 1 en FREE_LIMITS); no aplica a la biblioteca de plantillas de
+  // un profesional, que debe poder construir tantas como quiera aunque su
+  // propia cuenta no sea premium.
+  async createOwnRoutineTemplate(trainerId, name) {
+    const standardTable = tableUtil.getStandardTable();
+    standardTable.name = name;
+    return tableDao.createTableForTrainer(trainerId, standardTable);
+  },
 };
