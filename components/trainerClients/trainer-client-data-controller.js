@@ -164,12 +164,21 @@ module.exports = {
   // (diet-days-controller.js#getDietDayByIdDietAndDate) — DietDay.date es
   // String y se compara por igualdad estricta, no por parseo de fecha.
   async getClientDiet(req, res) {
-    const client = await userSchema.findById(req.params.clientId).select("dietInUse").lean();
-    if (!client?.dietInUse || !req.query.date) {
+    if (!req.query.date) {
       return res.send(null);
     }
+    const clientId = req.params.clientId;
 
-    const dietDay = await dietDaysService.findByIdDietAndDate(client.dietInUse, req.query.date);
+    // F20-quater — antes esto era un findByIdDietAndDate a secas: si el
+    // DietDay de esa fecha todavía no existía (el cliente nunca abrió su
+    // app ese día) se devolvía null aunque un PlanAssignment recurrente sí
+    // cubriera esa fecha — el entrenador veía "vacío" mientras que el
+    // propio cliente, al abrir su app, lo habría visto bien resuelto (su
+    // endpoint ya pasa por resolveOwnedDietDay). Misma función aquí, con el
+    // id del CLIENTE — resolveOwnedDietDay no asume nada sobre quién hace
+    // la petición, solo sobre de quién es la dieta (ver su uso idéntico más
+    // arriba en applyMealToClients/proposeMealAlternatives).
+    const dietDay = await resolveOwnedDietDay(clientId, req.query.date);
     if (!dietDay) {
       return res.send(null);
     }
@@ -178,8 +187,9 @@ module.exports = {
     // el DietDay) para poder pedir productos/recetas recientes de esta
     // comida vía GET /diets/:id/recent-products|recipes (mismo endpoint que
     // ya usa el propio consumidor, indexado por dietId+mealIndex).
+    const client = await userSchema.findById(clientId).select("dietInUse").lean();
     const dietDayObj = typeof dietDay.toObject === "function" ? dietDay.toObject() : dietDay;
-    return res.send({ ...dietDayObj, dietId: client.dietInUse.toString() });
+    return res.send({ ...dietDayObj, dietId: client?.dietInUse?.toString() || null });
   },
 
   // GET /trainer/clients/:clientId/nutritional-goals — F10, requireActiveClient("nutrition")
