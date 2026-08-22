@@ -11,6 +11,13 @@ module.exports = {
     return MealProposal.find({ clientId, date, chosenIndex: null }).lean();
   },
 
+  // Igual que arriba pero SIN filtrar por chosenIndex — el cliente necesita
+  // ver también las ya elegidas para poder alternar libremente entre
+  // opciones (selector persistente, no un banner de una sola vez).
+  async listForClientAndDate(clientId, date) {
+    return MealProposal.find({ clientId, date }).lean();
+  },
+
   // Igual que arriba pero sin filtrar por fecha — usado por el dashboard del
   // Coach (F1 del tab Coach) para mostrar TODAS las propuestas pendientes de
   // elegir, no solo las de un día concreto.
