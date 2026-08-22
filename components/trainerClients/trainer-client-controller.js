@@ -2,6 +2,7 @@ const trainerClientService = require("./trainer-client-service");
 const trainerClientDto = require("./trainer-client-dto");
 const trainerClientDao = require("./trainer-client-dao");
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
+const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 
 function handleKnownError(res, e) {
   if (e.code === "OVERLAP" || e.code === "DUPLICATE_INVITE" || e.code === "NOT_A_USER_ACCOUNT") {
@@ -120,6 +121,15 @@ const controller = {
   async listMyClients(req, res) {
     const aggregated = await trainerClientService.listActiveClientsForTrainer(req.auth.userId);
     return res.send(trainerClientDto.multipleAggregated(aggregated));
+  },
+
+  // GET /trainer/payments/summary — cobros agregados de TODOS los clientes
+  // del trainer (dashboard, tarjeta + gráfica "Cobros"): pendiente/vencido
+  // actual + serie mensual de los últimos 6 meses + variación vs mes
+  // pasado. Ver trainer-payment-dao.js#getPaymentsOverview.
+  async getPaymentsSummary(req, res) {
+    const summary = await trainerPaymentDao.getPaymentsOverview(req.auth.userId);
+    return res.send(summary);
   },
 
   // GET /trainer/clients/paginated?page=&limit=&search=

@@ -36,6 +36,7 @@ const NotificationSchema = new Schema(
         "intake_submitted",
         "client_confirmed",
         "meal_prescribed",
+        "anthropometry_requested",
         // --- Cliente → trainer (destinatario: trainer) ---
         "invite_accepted",
         "intake_submitted_trainer",

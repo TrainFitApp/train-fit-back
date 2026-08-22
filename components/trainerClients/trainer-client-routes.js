@@ -13,6 +13,7 @@ router.getAsync("/invites", auth(["trainer"]), controller.listInvitesByTrainer);
 router.deleteAsync("/invites/:id", auth(["trainer"]), controller.cancelInvite);
 router.getAsync("/clients", auth(["trainer"]), controller.listMyClients);
 router.getAsync("/clients/paginated", auth(["trainer"]), controller.listMyClientsPaginated);
+router.getAsync("/payments/summary", auth(["trainer"]), controller.getPaymentsSummary);
 router.getAsync("/clients/check-email", auth(["trainer"]), controller.checkClientEmailStatus);
 router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByTrainer);
 
@@ -79,6 +80,12 @@ router.postAsync(
   requireActiveClient("nutrition"),
   dataController.assignNutritionalGoal
 );
+router.putAsync(
+  "/clients/:clientId/nutritional-goals/:goalId/activate",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.activateNutritionalGoal
+);
 router.postAsync(
   "/clients/:clientId/diet-days/:date/meals/:mealId/prescribe",
   auth(["trainer"]),
@@ -114,6 +121,12 @@ router.getAsync(
   auth(["trainer"]),
   requireActiveClient("nutrition"),
   dataController.getClientAdherence
+);
+router.getAsync(
+  "/clients/:clientId/nutrition-compliance",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.getClientNutritionCompliance
 );
 router.getAsync(
   "/clients/:clientId/payments",
