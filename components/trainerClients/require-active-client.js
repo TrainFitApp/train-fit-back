@@ -17,6 +17,21 @@ function requireActiveClient(requiredScope) {
       const trainerId = req.auth.userId;
       const clientId = req.params.clientId;
 
+      // Rutinas -> Plantillas (rediseño 2026-08): un profesional editando su
+      // propia biblioteca de plantillas (Table con userId=trainerId, sin
+      // cliente — ver table-dao.js#createTableForTrainer) reutiliza rutas
+      // /trainer/clients/:clientId/* tal cual cuando :clientId coincide con
+      // su propio id (p. ej. aplicar una plantilla de un solo día dentro del
+      // Planificador). No hay ninguna "relación cliente" que comprobar
+      // cuando el cliente ES el propio profesional — mismo criterio "dueño
+      // real" que ya usa tableAccess.canAccessUserTable, extendido aquí para
+      // que sea el mismo en los dos únicos chokepoints de autorización del
+      // módulo trainer/clients.
+      if (String(clientId) === String(trainerId)) {
+        req.trainerClientRelation = null;
+        return next();
+      }
+
       const relation = await trainerClientDao.findActiveByTrainerAndClient(
         trainerId,
         clientId,

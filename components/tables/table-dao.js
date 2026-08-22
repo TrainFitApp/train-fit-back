@@ -287,6 +287,19 @@ module.exports = {
     });
   },
 
+  // Rutinas -> Plantillas (rediseño 2026-08): crea una Table propia del
+  // profesional (userId=trainerId, SIN assignedByTrainerId — no es una
+  // rutina asignada a un cliente, es su propia plantilla reutilizable).
+  // Queda listada por getTables(own=true, trainerId) y es editable por el
+  // mismo Planificador que las rutinas de cliente, vía canAccessUserTable
+  // (rama "dueño real") — sin código de acceso nuevo.
+  async createTableForTrainer(trainerId, standardTable) {
+    return tableSchema.create({
+      ...standardTable,
+      userId: trainerId,
+    });
+  },
+
   async updateTable(id, name, userId, adminMode = false) {
     const update = { $set: { name: name } };
     try {
