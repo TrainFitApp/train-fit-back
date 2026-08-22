@@ -80,4 +80,17 @@ router.patchAsync(
   controller.setMealCompleted,
 );
 
+// TAREA (meals pautados) — marcar/desmarcar consumido un producto/receta
+// pautados (ver meal-controller.js#setCustomProductConsumed).
+router.patchAsync(
+  "/:idMeal/customproducts/:idProduct/consumed",
+  auth(["admin", "user"]),
+  controller.setCustomProductConsumed,
+);
+router.patchAsync(
+  "/:idMeal/customrecipes/:idCustomRecipe/consumed",
+  auth(["admin", "user"]),
+  controller.setCustomRecipeConsumed,
+);
+
 module.exports = router;

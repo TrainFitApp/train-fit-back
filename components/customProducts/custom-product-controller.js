@@ -1,4 +1,12 @@
 const customProductModel = require("./custom-product-model");
+// TAREA (meals pautados) — sin esto, un cliente podía saltarse la
+// protección de meal-controller.js (assertMealEditable a nivel de comida Y
+// de item) llamando directamente a estos endpoints con el _id del
+// CustomProduct pautado: esta ruta nunca pasaba por /meals/..., así que
+// nunca comprobaba assignedByTrainerId. Reutiliza assertMealEditable/
+// handleProtectedError de meal-service.js — mismo criterio que usa
+// meal-controller.js, no una copia.
+const { assertMealEditable, handleProtectedError } = require("../meals/meal-service");
 // const customProductDTO = require("./dto");
 
 module.exports = {
@@ -48,15 +56,30 @@ module.exports = {
   },
 
   async updateCustomProduct(req, res) {
-    const customProduct = await customProductModel.updateCustomProduct(
-      req.body
-    );
-
-    return res.send(customProduct);
+    try {
+      const existing = await customProductModel.getCustomProductById(req.body._id);
+      assertMealEditable(existing);
+      const customProduct = await customProductModel.updateCustomProduct(
+        req.body
+      );
+      return res.send(customProduct);
+    } catch (e) {
+      const handled = handleProtectedError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async delete(req, res) {
-    await customProductModel.delete(req.params.id);
-    res.sendStatus(204);
+    try {
+      const existing = await customProductModel.getCustomProductById(req.params.id);
+      assertMealEditable(existing);
+      await customProductModel.delete(req.params.id);
+      res.sendStatus(204);
+    } catch (e) {
+      const handled = handleProtectedError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 };

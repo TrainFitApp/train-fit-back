@@ -251,6 +251,10 @@ module.exports = {
       removedBaseCustomProductIds: normalizeRefList(
         customRecipe.removedBaseCustomProductIds,
       ),
+      // Pautado por trainer (ver custom-recipe-schema.js) — solo presente
+      // cuando meal-dao.js#pasteMeal clona esta receta desde un flujo
+      // controlado por un profesional.
+      assignedByTrainerId: customRecipe.assignedByTrainerId || null,
     };
 
     recipeMergeService.validateCustomRecipe({
@@ -377,5 +381,15 @@ module.exports = {
       throw new Error(`CustomRecipe not found: ${id}`);
     }
     return { success: true };
+  },
+
+  // Marcar/desmarcar consumido — nunca bloqueado por assignedByTrainerId
+  // (ver custom-recipe-schema.js), mismo criterio que Meal.completed.
+  async setConsumed(id, consumed) {
+    return customRecipeSchema.findByIdAndUpdate(
+      id,
+      { $set: { consumed: Boolean(consumed) } },
+      { new: true },
+    );
   },
 };

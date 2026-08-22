@@ -122,7 +122,7 @@ module.exports = {
       }
 
       const ownedMealToPaste = await resolveOwnedMealById(req.auth.userId, mealToPasteId);
-      mealService.assertMealEditable(ownedMealToPaste);
+      mealService.assertMealPasteAllowed(ownedMealToPaste, req.body.merge);
 
       const meal = await mealService.pasteMeal(
         req.body.meals.mealClipboard,
@@ -169,6 +169,13 @@ module.exports = {
     try {
       const existing = await resolveOwnedMealById(req.auth.userId, req.params.idmeal);
       mealService.assertMealEditable(existing);
+      // Nivel de item, además del nivel de comida de arriba — una comida
+      // "mixta" (sin assignedByTrainerId propio, ver meal-dao.js#pasteMeal)
+      // puede seguir teniendo ESTE producto concreto pautado.
+      const target = (existing.customProducts || []).find(
+        (cp) => String(cp._id) === String(req.params.idproduct)
+      );
+      mealService.assertMealEditable(target);
       const meal = await mealService.deleteMealProduct(
         existing._id,
         req.params.idproduct,
@@ -185,6 +192,10 @@ module.exports = {
     try {
       const existing = await resolveOwnedMealById(req.auth.userId, req.params.idmeal);
       mealService.assertMealEditable(existing);
+      const target = (existing.customRecipes || []).find(
+        (cr) => String(cr._id) === String(req.params.idCustomRecipe)
+      );
+      mealService.assertMealEditable(target);
       const meal = await mealService.deleteMealCustomRecipe(
         existing._id,
         req.params.idCustomRecipe,
@@ -243,6 +254,10 @@ module.exports = {
     try {
       const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
       mealService.assertMealEditable(existing);
+      const target = (existing.customRecipes || []).find(
+        (cr) => String(cr._id) === String(req.params.idCustomRecipe)
+      );
+      mealService.assertMealEditable(target);
       const meal = await mealService.deleteMealCustomRecipe(
         existing._id,
         req.params.idCustomRecipe,
@@ -276,6 +291,48 @@ module.exports = {
       const existing = await resolveOwnedMealById(req.auth.userId, req.params.id);
       const meal = await mealService.setCompleted(existing._id, req.body?.completed !== false);
       return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
+  },
+
+  // TAREA (meals pautados) — marcar/desmarcar consumido un producto/receta
+  // pautados. Igual que setMealCompleted, nunca protegido por
+  // assertMealEditable (seguimiento ≠ composición); resuelve la comida vía
+  // resolveOwnedMealById (mismo IDOR-guard que el resto del módulo) y
+  // busca el item dentro de ella en vez de confiar en el :id suelto de la
+  // URL para verificar pertenencia.
+  async setCustomProductConsumed(req, res) {
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
+      const target = (existing.customProducts || []).find(
+        (cp) => String(cp._id) === String(req.params.idProduct)
+      );
+      if (!target) {
+        return res.status(400).send({ message: "Producto no encontrado en esta comida" });
+      }
+      const updated = await mealService.setCustomProductConsumed(target._id, req.body?.consumed !== false);
+      return res.send(updated);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
+  },
+
+  async setCustomRecipeConsumed(req, res) {
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
+      const target = (existing.customRecipes || []).find(
+        (cr) => String(cr._id) === String(req.params.idCustomRecipe)
+      );
+      if (!target) {
+        return res.status(400).send({ message: "Receta no encontrada en esta comida" });
+      }
+      const updated = await mealService.setCustomRecipeConsumed(target._id, req.body?.consumed !== false);
+      return res.send(updated);
     } catch (e) {
       const handled = handleMealError(res, e);
       if (handled) return handled;

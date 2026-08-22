@@ -80,6 +80,16 @@ const CustomProductSchema = Schema({
     type: Schema.Types.ObjectId,
     ref: "Meal",
   },
+  // Pautado por trainer — mismo criterio que Meal.assignedByTrainerId
+  // (meal-schema.js): presente si un profesional pautó este producto
+  // (meal-dao.js#pasteMeal). Permanente, protege de borrado/edición directa
+  // del cliente (ver meal-service.js#assertMealEditable, reutilizada aquí a
+  // nivel de item en vez de solo a nivel de Meal completa).
+  assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  // El cliente lo marca como tomado — nunca bloqueado por
+  // assignedByTrainerId (mismo criterio que Meal.completed: seguimiento y
+  // composición son conceptos distintos).
+  consumed: { type: Boolean, default: false },
   customRecipeId: {
     type: Schema.Types.ObjectId,
     ref: "CustomRecipe",

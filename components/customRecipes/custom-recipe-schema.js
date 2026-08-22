@@ -62,6 +62,12 @@ const CustomRecipeSchema = new Schema(
         ref: "CustomProduct",
       },
     ],
+    // Pautado por trainer — mismo criterio que Meal.assignedByTrainerId /
+    // CustomProduct.assignedByTrainerId (ver esos comentarios). Permanente,
+    // protege de borrado/edición directa del cliente.
+    assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    // El cliente lo marca como tomado — nunca bloqueado por assignedByTrainerId.
+    consumed: { type: Boolean, default: false },
   },
   {
     timestamps: true,

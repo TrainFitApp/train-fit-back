@@ -1,5 +1,10 @@
 const customRecipeModel = require("./custom-recipe-model");
 const recipeMergeService = require("../recipes/recipe-merge.service");
+// TAREA (meals pautados) — ver mismo comentario/criterio en
+// custom-product-controller.js: esta ruta no pasa por meal-controller.js,
+// así que sin esto un cliente podía borrar/editar una receta pautada
+// llamando directamente aquí con su _id.
+const { assertMealEditable, handleProtectedError } = require("../meals/meal-service");
 
 const controller = {
   async getCustomRecipeById(req, res) {
@@ -30,14 +35,30 @@ const controller = {
   },
 
   async update(req, res) {
-    const customRecipe = await customRecipeModel.update(req.params.id, req.body);
-    const merged = await recipeMergeService.getMergedRecipeData(customRecipe);
-    return res.send({ ...customRecipe.toObject(), merged });
+    try {
+      const existing = await customRecipeModel.getCustomRecipeById(req.params.id);
+      assertMealEditable(existing);
+      const customRecipe = await customRecipeModel.update(req.params.id, req.body);
+      const merged = await recipeMergeService.getMergedRecipeData(customRecipe);
+      return res.send({ ...customRecipe.toObject(), merged });
+    } catch (e) {
+      const handled = handleProtectedError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   async delete(req, res) {
-    await customRecipeModel.delete(req.params.id);
-    return res.sendStatus(204);
+    try {
+      const existing = await customRecipeModel.getCustomRecipeById(req.params.id);
+      assertMealEditable(existing);
+      await customRecipeModel.delete(req.params.id);
+      return res.sendStatus(204);
+    } catch (e) {
+      const handled = handleProtectedError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 };
 
