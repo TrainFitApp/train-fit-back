@@ -14,6 +14,7 @@ router.deleteAsync("/invites/:id", auth(["trainer"]), controller.cancelInvite);
 router.getAsync("/clients", auth(["trainer"]), controller.listMyClients);
 router.getAsync("/clients/paginated", auth(["trainer"]), controller.listMyClientsPaginated);
 router.getAsync("/payments/summary", auth(["trainer"]), controller.getPaymentsSummary);
+router.getAsync("/dashboard/attention-items", auth(["trainer"]), controller.getAttentionItems);
 router.getAsync("/clients/check-email", auth(["trainer"]), controller.checkClientEmailStatus);
 router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByTrainer);
 

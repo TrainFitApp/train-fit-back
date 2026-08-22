@@ -38,4 +38,22 @@ module.exports = {
   async findCoveringDate(clientId, date) {
     return planAssignmentDao.findCoveringDate(clientId, date);
   },
+
+  // Dashboard trainer, "Requiere tu atención" — planes que caducan en los
+  // próximos `days` días, con daysLeft ya calculado por asignación.
+  async listEndingSoonForTrainer(trainerId, days = 7) {
+    const from = new Date().toISOString().slice(0, 10);
+    const toDate = new Date(`${from}T00:00:00.000Z`);
+    toDate.setUTCDate(toDate.getUTCDate() + days);
+    const to = toDate.toISOString().slice(0, 10);
+
+    const assignments = await planAssignmentDao.listEndingSoonForTrainer(trainerId, from, to);
+    return assignments.map((assignment) => ({
+      ...assignment,
+      daysLeft: Math.round(
+        (new Date(`${assignment.endDate}T00:00:00.000Z`).getTime() - new Date(`${from}T00:00:00.000Z`).getTime()) /
+          86400000
+      ),
+    }));
+  },
 };

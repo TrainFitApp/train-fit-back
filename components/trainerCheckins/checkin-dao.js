@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const CheckinTemplateDefinition = require("./checkin-template-definition-schema");
 const TrainerCheckinTemplate = require("./trainer-checkin-template-schema");
 const CheckinResponse = require("./checkin-response-schema");
@@ -76,6 +77,28 @@ module.exports = {
       .limit(limit)
       .populate("clientId", "name lastname email")
       .lean();
+  },
+
+  // Dashboard trainer, "Requiere tu atención" — configuraciones de check-in
+  // aplicadas por este trainer a CUALQUIERA de sus clientes (a diferencia de
+  // getAppliedConfigsForClient, que es de un cliente concreto). Junto con
+  // getLatestResponseByClient sirve para calcular isCheckinDue por cliente
+  // sin recorrer clientes uno a uno.
+  async getAppliedConfigsForTrainer(trainerId) {
+    return TrainerCheckinTemplate.find({ trainerId }).populate("clientId", "name lastname").lean();
+  },
+
+  // Última respuesta (fecha) de CADA cliente de este trainer, en una sola
+  // agregación — a diferencia de listResponsesForTrainer (limit() global
+  // ordenado por fecha, que con muchos clientes activos podría dejar fuera
+  // la respuesta más reciente de un cliente poco activo y hacerlo parecer
+  // "sin responder nunca" por error).
+  async getLatestResponseByClient(trainerId) {
+    return CheckinResponse.aggregate([
+      { $match: { trainerId: new mongoose.Types.ObjectId(trainerId) } },
+      { $sort: { respondedAt: -1 } },
+      { $group: { _id: "$clientId", respondedAt: { $first: "$respondedAt" } } },
+    ]);
   },
 
   // TASK-024 (MASTER_BACKLOG.md)
