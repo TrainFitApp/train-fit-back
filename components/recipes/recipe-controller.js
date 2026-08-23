@@ -11,6 +11,10 @@ function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
 }
 
+function isTrainer(req) {
+  return Boolean(req.userData?.roles?.includes("trainer"));
+}
+
 // TASK-046 — acepta tags como array (?tags=a&tags=b) o CSV (?tags=a,b).
 function parseTags(raw) {
   if (!raw) return [];
@@ -133,7 +137,25 @@ const controller = {
   async composeRecipe(req, res, next) {
     try {
       const isCreatingNewRecipe = !req.body?.recipeId && !!req.body?.recipe;
-      if (isCreatingNewRecipe && !isAdmin(req)) {
+      const trainer = isTrainer(req) && !isAdmin(req);
+
+      // Un trainer solo puede usar este endpoint para crear una receta
+      // nueva y standalone para su propia biblioteca (mismo caso que
+      // RecipeBuilderModalComponent en apps/train-fit-trainers). Nunca para
+      // adjuntarla a un meal/diet day ajeno v\u00eda recipeId/context \u2014 ese es
+      // el mismo endpoint que usa "user" para su propia dieta, y
+      // recipeDao.composeRecipe no verifica ah\u00ed que context.mealId
+      // pertenezca a quien llama.
+      if (trainer && (req.body?.recipeId || req.body?.context)) {
+        return res.status(403).json({
+          message: "Trainers can only create standalone recipes via this endpoint",
+        });
+      }
+
+      // L\u00edmite Free de 2 recetas: es una regla del modelo de negocio del
+      // cliente final (featureAccessService), no aplica a la biblioteca
+      // profesional de un entrenador.
+      if (isCreatingNewRecipe && !isAdmin(req) && !trainer) {
         const ownRecipesCount = await recipeModel.countByUserId(req.user.id);
         if (!featureAccessService.canCreateRecipe(req.user, ownRecipesCount)) {
           return res.status(403).json({

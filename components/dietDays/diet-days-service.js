@@ -63,6 +63,10 @@ module.exports = {
     return dietDayDao.findByIdDietAndDate(id, date);
   },
 
+  async getFullyPopulatedDietDaysForDiet(dietId, startDate, endDate) {
+    return dietDayDao.getFullyPopulatedDietDaysForDiet(dietId, startDate, endDate);
+  },
+
   async countDaysWithoutChoice(dietId, startDate, endDate) {
     return dietDayDao.countDaysWithoutChoice(dietId, startDate, endDate);
   },

@@ -26,6 +26,7 @@ const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goa
 const remoteConfig = require("../components/remoteConfig/remote-config-routes");
 const trainerClients = require("../components/trainerClients/trainer-client-routes");
 const trainerCheckins = require("../components/trainerCheckins/checkin-routes");
+const anthropometryRequests = require("../components/anthropometryRequests/anthropometry-request-routes");
 const mealProposalClientRoutes = require("../components/mealProposals/meal-proposal-client-routes");
 const nutritionPreferencesClientRoutes = require("../components/nutritionPreferences/nutrition-preferences-client-routes");
 const coachDashboardRoutes = require("../components/coachDashboard/coach-dashboard-routes");
@@ -75,6 +76,7 @@ router.use("/nutritionalgoals", nutritionalGoals);
 router.use("/config", remoteConfig);
 router.use("/trainer", trainerClients);
 router.use("/trainer", trainerCheckins);
+router.use("/trainer", anthropometryRequests);
 router.use("/trainer", trainerIntakeConfigRoutes);
 
 module.exports = router;

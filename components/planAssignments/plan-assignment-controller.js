@@ -74,11 +74,26 @@ module.exports = {
       }
     }
 
+    // F20-quinquies — qué días de la semana cubre este plan "recurring",
+    // para pintar las píldoras L/M/X/J/V/S/D en la ficha del cliente. Unión
+    // de CADA dayPattern por separado (no solo la unión): un plan puede
+    // tener un patrón para Lun/Mié/Sáb y otro distinto para Mar/Dom, y en
+    // la ficha del cliente interesa distinguir cuál cubre cuáles días, no
+    // solo "qué días tienen algo pautado" (ver TASK del 2026-08-24,
+    // "si tiene varios patrones habría que indicarlos").
+    const recurringPatterns =
+      plan?.mode === "recurring"
+        ? (plan.dayPatterns || [])
+            .filter((p) => (p.appliesTo || []).length)
+            .map((p) => ({ name: p.name, appliesTo: [...(p.appliesTo || [])].sort() }))
+        : null;
+
     return res.send({
       ...assignment.toObject(),
       planName: plan?.name || null,
       mode: plan?.mode || null,
       stuckDaysCount,
+      recurringPatterns,
     });
   },
 

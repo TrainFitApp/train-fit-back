@@ -24,7 +24,14 @@ router.get("/archived", readAuth, controller.getArchivedRecipes);
 // CRUD operations
 router.get("/:id", readAuth, controller.getRecipeById);
 router.post("/", validateAuth, controller.createRecipe);
-router.post("/compose", validateAuth, controller.composeRecipe);
+// El trainer necesita crear recetas reales para su propia biblioteca desde
+// el constructor de plantillas (mismo precedente que POST /product más
+// abajo en components/products/product-routes.js, que ya usa
+// auth(["admin","user","trainer"])). composeRecipe en sí sigue limitando lo
+// que un trainer puede hacer aquí (ver isTrainer() ahí): solo crear una
+// receta nueva y standalone, nunca adjuntarla a un meal/diet day vía
+// recipeId/context — eso sigue siendo terreno exclusivo de "user"/"admin".
+router.post("/compose", auth(["admin", "user", "trainer"]), controller.composeRecipe);
 router.put("/:id", validateAuth, controller.updateRecipe);
 router.delete("/:id", validateAuth, controller.deleteRecipe);
 

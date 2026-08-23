@@ -82,6 +82,17 @@ module.exports = {
       .populate("clientId", "name lastname");
   },
 
+  // Dashboard trainer, "Requiere tu atención" — relaciones de un trainer en
+  // un status concreto (p.ej. "en_revision": alta terminada por el cliente,
+  // pendiente de que el trainer la confirme), con nombre/apellido/email del
+  // cliente ya poblados. Mismo patrón que findAllByTrainerWithClient, con
+  // filtro de status.
+  async findByTrainerAndStatusWithClient(trainerId, status) {
+    return TrainerClient.find({ trainerId, status })
+      .sort({ respondedAt: -1 })
+      .populate("clientId", "name lastname email");
+  },
+
   // TASK-022 (MASTER_BACKLOG.md) — versión paginada de "clientes activos
   // agregados por cliente" (mismo resultado conceptual que findAllByTrainer
   // + aggregateByOtherParty en trainer-client-service.js, pero resuelto en

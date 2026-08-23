@@ -153,6 +153,27 @@ module.exports = {
     return await dietSchema.aggregate(agg);
   },
 
+  // F20-bis — a diferencia de getDietDaysBetweenDatesByIdDiet (aggregate con
+  // $project deliberadamente estrecho, compartido con el calendario de peso
+  // del propio cliente), esta usa la API estándar de Mongoose para que el
+  // plugin mongoose-autopopulate poble en cascada TODO el árbol
+  // (meals -> customProducts/customRecipes -> recipe -> recipe.customProducts,
+  // addedCustomProducts, modifiedBaseCustomProducts) sin tener que replicar
+  // ese árbol a mano en un pipeline de aggregate. Necesario para que
+  // diet-days-nutrition-util.js pueda calcular kcal de recetas y
+  // cumplimiento por item.
+  async getFullyPopulatedDietDaysForDiet(dietId, startDate, endDate) {
+    const diet = await dietSchema.findById(dietId).select("dietsDay").lean();
+    if (!diet?.dietsDay?.length) return [];
+
+    return dietDaySchema
+      .find({
+        _id: { $in: diet.dietsDay },
+        date: { $gte: startDate, $lte: endDate },
+      })
+      .sort({ date: 1 });
+  },
+
   async createDietDay(standardDietDay) {
     try {
       let meals = standardDietDay.meals;

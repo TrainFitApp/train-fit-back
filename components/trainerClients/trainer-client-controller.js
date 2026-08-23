@@ -2,6 +2,17 @@ const trainerClientService = require("./trainer-client-service");
 const trainerClientDto = require("./trainer-client-dto");
 const trainerClientDao = require("./trainer-client-dao");
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
+const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
+const checkinDao = require("../trainerCheckins/checkin-dao");
+const planAssignmentService = require("../planAssignments/plan-assignment-service");
+const { isCheckinDue } = require("../coachDashboard/coach-dashboard-controller");
+
+// Dashboard trainer, "Requiere tu atención" — orden de prioridad entre
+// tipos: cuestionario por revisar primero (bloquea el alta del cliente),
+// luego plan a punto de caducar (por daysLeft ascendente: lo más urgente
+// arriba), luego check-in vencido (sin urgencia relativa entre sí, no hay
+// "cuánto de vencido" calculado, solo el booleano de isCheckinDue).
+const ATTENTION_TYPE_PRIORITY = { pending_review: 0, plan_ending_soon: 1, checkin_overdue: 2 };
 
 function handleKnownError(res, e) {
   if (e.code === "OVERLAP" || e.code === "DUPLICATE_INVITE" || e.code === "NOT_A_USER_ACCOUNT") {
@@ -120,6 +131,81 @@ const controller = {
   async listMyClients(req, res) {
     const aggregated = await trainerClientService.listActiveClientsForTrainer(req.auth.userId);
     return res.send(trainerClientDto.multipleAggregated(aggregated));
+  },
+
+  // GET /trainer/payments/summary — cobros agregados de TODOS los clientes
+  // del trainer (dashboard, tarjeta + gráfica "Cobros"): pendiente/vencido
+  // actual + serie mensual de los últimos 6 meses + variación vs mes
+  // pasado. Ver trainer-payment-dao.js#getPaymentsOverview.
+  async getPaymentsSummary(req, res) {
+    const summary = await trainerPaymentDao.getPaymentsOverview(req.auth.userId);
+    return res.send(summary);
+  },
+
+  // GET /trainer/dashboard/attention-items — clientes que requieren acción
+  // del profesional AHORA MISMO (cuestionario por revisar, check-in
+  // vencido, plan de nutrición a punto de caducar). 3 fuentes en paralelo,
+  // cada una una consulta indexada barata — nunca un fan-out calculando algo
+  // (p.ej. adherencia) cliente a cliente, eso queda fuera de esta agregación
+  // a propósito. Mismo criterio que getPaymentsSummary.
+  async getAttentionItems(req, res) {
+    const trainerId = req.auth.userId;
+
+    const [pendingReview, checkinConfigs, latestResponses, endingSoon] = await Promise.all([
+      trainerClientDao.findByTrainerAndStatusWithClient(trainerId, "en_revision"),
+      checkinDao.getAppliedConfigsForTrainer(trainerId),
+      checkinDao.getLatestResponseByClient(trainerId),
+      planAssignmentService.listEndingSoonForTrainer(trainerId, 7),
+    ]);
+
+    const items = [];
+
+    for (const relation of pendingReview) {
+      if (!relation.clientId) continue;
+      items.push({
+        type: "pending_review",
+        clientId: relation.clientId._id,
+        clientName: `${relation.clientId.name} ${relation.clientId.lastname}`.trim(),
+      });
+    }
+
+    const latestResponseByClient = new Map(
+      latestResponses.map((r) => [String(r._id), r.respondedAt])
+    );
+    for (const config of checkinConfigs) {
+      if (!config.clientId) continue;
+      const clientKey = String(config.clientId._id);
+      const lastResponse = latestResponseByClient.has(clientKey)
+        ? { respondedAt: latestResponseByClient.get(clientKey) }
+        : null;
+      if (isCheckinDue(config, lastResponse ? [lastResponse] : [])) {
+        items.push({
+          type: "checkin_overdue",
+          clientId: config.clientId._id,
+          clientName: `${config.clientId.name} ${config.clientId.lastname}`.trim(),
+        });
+      }
+    }
+
+    for (const assignment of endingSoon) {
+      if (!assignment.clientId) continue;
+      items.push({
+        type: "plan_ending_soon",
+        clientId: assignment.clientId._id,
+        clientName: `${assignment.clientId.name} ${assignment.clientId.lastname}`.trim(),
+        daysLeft: assignment.daysLeft,
+      });
+    }
+
+    items.sort((a, b) => {
+      if (ATTENTION_TYPE_PRIORITY[a.type] !== ATTENTION_TYPE_PRIORITY[b.type]) {
+        return ATTENTION_TYPE_PRIORITY[a.type] - ATTENTION_TYPE_PRIORITY[b.type];
+      }
+      if (a.type === "plan_ending_soon") return (a.daysLeft ?? 0) - (b.daysLeft ?? 0);
+      return 0;
+    });
+
+    return res.send(items);
   },
 
   // GET /trainer/clients/paginated?page=&limit=&search=

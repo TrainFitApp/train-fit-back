@@ -3,13 +3,18 @@ const mealModel = require("../meals/meal-service");
 const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
 
 module.exports = {
-  // GET /diets/:date/meal-proposals — cliente, propuestas pendientes de elegir ese día
+  // GET /diets/:date/meal-proposals — cliente, TODAS las propuestas de ese
+  // día (elegidas o no): el selector del cliente necesita ver también la
+  // ya elegida para poder alternar, no solo las pendientes.
   async listForDate(req, res) {
-    const proposals = await mealProposalDao.listPendingForClientAndDate(req.auth.userId, req.params.date);
+    const proposals = await mealProposalDao.listForClientAndDate(req.auth.userId, req.params.date);
     return res.send(proposals);
   },
 
-  // POST /diets/:date/meal-proposals/:proposalId/choose — cliente elige una alternativa
+  // POST /diets/:date/meal-proposals/:proposalId/choose — cliente elige (o
+  // cambia) una alternativa. Sin límite de una sola vez: pasteMeal ya
+  // reemplaza el contenido de la comida en cada llamada (merge:false), así
+  // que alternar entre opciones varias veces es seguro y no acumula nada.
   async choose(req, res) {
     const proposal = await mealProposalDao.findById(req.params.proposalId);
     if (!proposal || String(proposal.clientId) !== String(req.auth.userId)) {
@@ -17,9 +22,6 @@ module.exports = {
     }
     if (proposal.date !== req.params.date) {
       return res.status(400).send({ message: "La propuesta no corresponde a esta fecha" });
-    }
-    if (proposal.chosenIndex !== null && proposal.chosenIndex !== undefined) {
-      return res.status(409).send({ message: "Ya elegiste una alternativa para esta propuesta" });
     }
 
     const chosenIndex = Number(req.body?.chosenIndex);

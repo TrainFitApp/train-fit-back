@@ -1,4 +1,5 @@
 const anthropometryModel = require("./anthropometry-service");
+const anthropometryRequestDao = require("../anthropometryRequests/anthropometry-request-dao");
 
 const controller = {
   async createAnthropometry(req, res) {
@@ -17,6 +18,7 @@ const controller = {
       calf: req.body.calf,
       weight: req.body.weight,
     });
+    await anthropometryRequestDao.markFulfilledForClient(req.user.id);
     return res.send(anthropometry);
   },
 
@@ -89,6 +91,7 @@ const controller = {
         weight: req.body.weight,
       }
     );
+    await anthropometryRequestDao.markFulfilledForClient(req.user.id);
     return res.send(anthropometry);
   },
 };

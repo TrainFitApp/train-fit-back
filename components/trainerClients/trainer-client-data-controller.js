@@ -13,6 +13,9 @@ const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("./trainer-client-dao");
+const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
+const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
+const planResolver = require("../planAssignments/plan-resolver");
 
 // MVP-trainers F20 — margen de tolerancia único, no repetido inline en varios
 // sitios (sección 9 del doc). ±15% sobre el objetivo de kcal del día.
@@ -34,16 +37,62 @@ function daysBetweenIsoDates(fromIso, toIso) {
   return Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000) + 1);
 }
 
-function sumMealsKcal(meals) {
-  return (meals || []).reduce((mealAcc, meal) => {
-    const products = meal?.customProducts || [];
-    const productsKcal = products.reduce((acc, cp) => {
-      const per100g = cp.energyKcal100g ?? cp.product?.energyKcal100g ?? 0;
-      const quantity = cp.quantity || 0;
-      return acc + (per100g * quantity) / 100;
-    }, 0);
-    return mealAcc + productsKcal;
-  }, 0);
+// F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
+// YA EXISTEN como documento; la resolución de un plan es LAZY
+// (resolveOwnedDietDay materializa un día la primera vez que alguien lo
+// abre — el cliente en su app, o el entrenador al mirar esa fecha desde la
+// ficha). La inmensa mayoría de los días de una ventana de 30/90 días
+// nunca se han "abierto" por nadie, así que adherencia/cumplimiento/
+// seguimiento salían casi vacíos para un plan recién aplicado aunque SÍ lo
+// cubriera — bug real, no "sin datos". Para cada fecha del rango sin
+// DietDay real, resuelve el plan sobre la marcha (resolvePlanForDate, sin
+// escribir nada en BD — un GET no debe materializar 90 documentos) y
+// construye una comida "sintética" con lo pautado (primera alternativa de
+// cada slot, mismo criterio que el total de macros del builder). Sin
+// datos de consumo real —nada se ha marcado porque nadie ha abierto ese
+// día—, pero eso es justo lo correcto: hasPlan=true, 0% consumido.
+async function getTrackingDaysForClient(clientId, dietId, from, to) {
+  const materialized = dietId
+    ? await dietDaysService.getFullyPopulatedDietDaysForDiet(dietId, from, to)
+    : [];
+  const materializedDates = new Set(materialized.map((d) => d.date));
+
+  const days = [...materialized];
+  const totalDays = daysBetweenIsoDates(from, to);
+  for (let i = 0; i < totalDays; i++) {
+    const date = addDaysToIsoDate(from, i);
+    if (materializedDates.has(date)) continue;
+
+    let result;
+    try {
+      result = await planResolver.resolvePlanForDate(clientId, date);
+    } catch (e) {
+      continue;
+    }
+    if (!result) continue;
+
+    const meals = Object.values(result.resolved || {})
+      .map((slot) => slot.alternatives?.[0])
+      .filter((alt) => alt && ((alt.customProducts || []).length || (alt.customRecipes || []).length))
+      .map((alt) => ({
+        completed: false,
+        customProducts: (alt.customProducts || []).map((cp) => ({
+          ...(typeof cp.toObject === "function" ? cp.toObject() : cp),
+          assignedByTrainerId: result.trainerId,
+          consumed: false,
+        })),
+        customRecipes: (alt.customRecipes || []).map((cr) => ({
+          ...(typeof cr.toObject === "function" ? cr.toObject() : cr),
+          assignedByTrainerId: result.trainerId,
+          consumed: false,
+        })),
+      }));
+
+    if (meals.length) days.push({ date, meals });
+  }
+
+  days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return days;
 }
 
 // MVP-trainers F30 — orquesta la MISMA operación individual (F11/F12/F13) sobre
@@ -174,12 +223,21 @@ module.exports = {
   // (diet-days-controller.js#getDietDayByIdDietAndDate) — DietDay.date es
   // String y se compara por igualdad estricta, no por parseo de fecha.
   async getClientDiet(req, res) {
-    const client = await userSchema.findById(req.params.clientId).select("dietInUse").lean();
-    if (!client?.dietInUse || !req.query.date) {
+    if (!req.query.date) {
       return res.send(null);
     }
+    const clientId = req.params.clientId;
 
-    const dietDay = await dietDaysService.findByIdDietAndDate(client.dietInUse, req.query.date);
+    // F20-quater — antes esto era un findByIdDietAndDate a secas: si el
+    // DietDay de esa fecha todavía no existía (el cliente nunca abrió su
+    // app ese día) se devolvía null aunque un PlanAssignment recurrente sí
+    // cubriera esa fecha — el entrenador veía "vacío" mientras que el
+    // propio cliente, al abrir su app, lo habría visto bien resuelto (su
+    // endpoint ya pasa por resolveOwnedDietDay). Misma función aquí, con el
+    // id del CLIENTE — resolveOwnedDietDay no asume nada sobre quién hace
+    // la petición, solo sobre de quién es la dieta (ver su uso idéntico más
+    // arriba en applyMealToClients/proposeMealAlternatives).
+    const dietDay = await resolveOwnedDietDay(clientId, req.query.date);
     if (!dietDay) {
       return res.send(null);
     }
@@ -188,14 +246,27 @@ module.exports = {
     // el DietDay) para poder pedir productos/recetas recientes de esta
     // comida vía GET /diets/:id/recent-products|recipes (mismo endpoint que
     // ya usa el propio consumidor, indexado por dietId+mealIndex).
+    const client = await userSchema.findById(clientId).select("dietInUse").lean();
     const dietDayObj = typeof dietDay.toObject === "function" ? dietDay.toObject() : dietDay;
-    return res.send({ ...dietDayObj, dietId: client.dietInUse.toString() });
+    return res.send({ ...dietDayObj, dietId: client?.dietInUse?.toString() || null });
   },
 
   // GET /trainer/clients/:clientId/nutritional-goals — F10, requireActiveClient("nutrition")
+  // Enriquecido con isInUse por goal (no expone goalInUse crudo, no hace
+  // falta): el trainer necesita ver cuál es el activo del cliente AHORA
+  // MISMO, no solo cuál asignó él — antes no había ninguna forma de
+  // distinguirlo en esta pantalla.
   async getClientNutritionalGoals(req, res) {
-    const goals = await nutritionalGoalService.getByUserId(req.params.clientId);
-    return res.send(goals);
+    const [goals, client] = await Promise.all([
+      nutritionalGoalService.getByUserId(req.params.clientId),
+      userSchema.findById(req.params.clientId).select("goalInUse").lean(),
+    ]);
+    const goalInUseId = String(client?.goalInUse || "");
+    const enriched = goals.map((goal) => ({
+      ...(typeof goal.toObject === "function" ? goal.toObject() : goal),
+      isInUse: String(goal._id) === goalInUseId,
+    }));
+    return res.send(enriched);
   },
 
   // POST /trainer/clients/:clientId/nutritional-goals — F13, requireActiveClient("nutrition")
@@ -213,12 +284,15 @@ module.exports = {
       fatGTotal: req.body.fatGTotal || 0,
     });
 
-    // Mismo comportamiento que el flujo del propio cliente (nutritional-goal-controller.js#create):
-    // solo se activa automáticamente si el cliente no tenía ningún objetivo activo.
-    const client = await userSchema.findById(clientId).select("goalInUse");
-    if (!client?.goalInUse) {
-      await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
-    }
+    // A diferencia del flujo del propio cliente (nutritional-goal-controller.js
+    // #create, que solo activa si no había ninguno — ahí tiene sentido, un
+    // cliente puede crear varios presets sin querer cambiar cuál sigue):
+    // un objetivo ASIGNADO POR EL TRAINER es una prescripción, siempre pasa
+    // a ser el vigente. Bug real corregido en esta sesión — antes copiaba
+    // literalmente la condición "solo si no tenía ninguno", que casi nunca
+    // se cumple (todo cliente real ya tiene un objetivo activo), así que el
+    // objetivo asignado se creaba pero quedaba huérfano sin activarse.
+    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
 
     await notificationDao.create(clientId, trainerId, "goal_assigned", {
       goalName: goal.name,
@@ -226,6 +300,22 @@ module.exports = {
     });
 
     return res.status(201).send(goal);
+  },
+
+  // PUT /trainer/clients/:clientId/nutritional-goals/:goalId/activate
+  // Tocar una card de objetivo ya existente la pone en uso — sin crear ni
+  // editar nada, a diferencia de assignNutritionalGoal (crea + activa).
+  async activateNutritionalGoal(req, res) {
+    const { clientId, goalId } = req.params;
+
+    const goal = await nutritionalGoalService.getByIdAndUserId(goalId, clientId);
+    if (!goal) {
+      return res.status(404).send({ message: "Objetivo no encontrado para este cliente" });
+    }
+
+    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
+
+    return res.send({ _id: goal._id });
   },
 
   // POST /trainer/clients/:clientId/diet-days/:date/meals/:mealId/prescribe
@@ -340,21 +430,15 @@ module.exports = {
     const from = req.query.from || addDaysToIsoDate(to, -30);
     const daysInRange = daysBetweenIsoDates(from, to);
 
-    let dietDays = [];
-    if (client.dietInUse) {
-      dietDays = await dietDaysService.getDietDaysBetweenDatesByIdDiet(client.dietInUse, from, to, clientId);
-    }
+    // F20-undecies: getTrackingDaysForClient (materializados + resueltos al
+    // vuelo para fechas sin DietDay real) en vez de leer solo lo ya
+    // materializado — si no, un plan recién aplicado salía casi sin datos.
+    const dietDays = await getTrackingDaysForClient(clientId, client.dietInUse, from, to);
 
-    // Limitación conocida del MVP (F20): solo suma customProducts añadidos
-    // directamente a la comida. customRecipes NO se incluyen — su cálculo
-    // real depende de mergeRecipeIngredients/cooked-weight (lógica hoy solo
-    // en el frontend, recipe.service.ts), y una réplica apresurada en el
-    // backend arriesga dar un número de adherencia incorrecto, peor que no
-    // tener la funcionalidad. Ver F20-adherencia-nutricional.md, sección 15.
     const dailyBreakdown = dietDays
       .filter((d) => (d.meals || []).length)
       .map((d) => {
-        const kcal = sumMealsKcal(d.meals);
+        const kcal = dietDaysNutritionUtil.sumMealsKcal(d.meals);
         const withinMargin = Math.abs(kcal - goal.kcalTotal) <= goal.kcalTotal * ADHERENCE_TOLERANCE;
         return { date: d.date, kcal, withinMargin };
       });
@@ -369,6 +453,96 @@ module.exports = {
       daysInRange,
       dailyBreakdown,
     });
+  },
+
+  // GET /trainer/clients/:clientId/nutrition-compliance?from=&to= — F20-bis,
+  // requireActiveClient("nutrition"). Distinto de /adherence: adherencia
+  // mide si la comida PAUTADA cuadraba con el objetivo de kcal; esto mide
+  // si el cliente marcó lo pautado como hecho (Meal.completed /
+  // CustomProduct.consumed / CustomRecipe.consumed). Pensado para pintar el
+  // calendario del tab de nutrición del profesional (una celda por día).
+  async getClientNutritionCompliance(req, res) {
+    const clientId = req.params.clientId;
+    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+
+    const to = req.query.to || todayIsoDate();
+    const from = req.query.from || addDaysToIsoDate(to, -30);
+
+    const dietDays = await getTrackingDaysForClient(clientId, client?.dietInUse, from, to);
+
+    const exceptions = await dietExceptionDao.findAllForClient(clientId, 200);
+    const exceptionByDate = new Map();
+    exceptions.forEach((exception) => {
+      if (exception.date < from || exception.date > to) return;
+      // Si un día tiene varias excepciones (una por mealSlot), basta con
+      // saber que hubo alguna para pintar el marcador del calendario — el
+      // detalle por comida ya se ve al entrar en ese día.
+      if (!exceptionByDate.has(exception.date)) {
+        exceptionByDate.set(exception.date, exception.action);
+      }
+    });
+
+    const dailyBreakdown = dietDays.map((d) => {
+      const { hasPlan, completionPercentage } = dietDaysNutritionUtil.computeDayCompletion(d.meals);
+      const exceptionType = exceptionByDate.get(d.date) || null;
+      return {
+        date: d.date,
+        hasPlan,
+        completionPercentage,
+        hasException: !!exceptionType,
+        exceptionType,
+      };
+    });
+
+    return res.send({ status: "ok", dailyBreakdown });
+  },
+
+  // GET /trainer/clients/:clientId/nutrition-tracking?from=&to= — F20-ter,
+  // requireActiveClient("nutrition"). Compara día a día lo PAUTADO (items
+  // con assignedByTrainerId) contra lo REALMENTE consumido — un item
+  // pautado solo cuenta como consumido si el cliente lo marcó
+  // (completed/consumed); un item que el cliente añadió por su cuenta
+  // (assignedByTrainerId null) cuenta como consumido directamente. Kcal +
+  // los 3 macros, para el gráfico de comparación del tab de nutrición.
+  async getClientNutritionTracking(req, res) {
+    const clientId = req.params.clientId;
+    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+
+    const to = req.query.to || todayIsoDate();
+    const from = req.query.from || addDaysToIsoDate(to, -30);
+
+    const dietDays = await getTrackingDaysForClient(clientId, client?.dietInUse, from, to);
+    const byDate = new Map(dietDays.map((d) => [d.date, d]));
+
+    // F20-octodecies — antes solo se listaban los días con documento (real
+    // o sintético) resuelto: cualquier día sin plan Y sin DietDay
+    // materializado (nadie lo abrió) faltaba directamente en el array, no
+    // aparecía ni con ceros. Para una gráfica de LÍNEAS eso es un eje X
+    // poco fiable — Chart.js coloca las fechas pegadas unas a otras en el
+    // orden del array, así que un hueco de una semana se veía tan ancho
+    // como uno de un día. Se rellena aquí cada fecha del rango completo,
+    // con ceros explícitos donde no hay nada.
+    const dailyTracking = [];
+    for (
+      let cursor = new Date(`${from}T00:00:00.000Z`);
+      cursor.getTime() <= new Date(`${to}T00:00:00.000Z`).getTime();
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
+    ) {
+      const date = cursor.toISOString().slice(0, 10);
+      const day = byDate.get(date);
+      dailyTracking.push(
+        day
+          ? { date, ...dietDaysNutritionUtil.computeDayTracking(day.meals) }
+          : {
+              date,
+              hasPlan: false,
+              planned: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+              consumed: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+            },
+      );
+    }
+
+    return res.send({ status: "ok", dailyTracking });
   },
 
   // GET /trainer/clients/:clientId/payments — F26, requireActiveClient() sin scope
@@ -630,10 +804,9 @@ module.exports = {
         userId: targetClientId,
         assignedByTrainerId: req.auth.userId,
       });
-      const client = await userSchema.findById(targetClientId).select("goalInUse");
-      if (!client?.goalInUse) {
-        await userSchema.findByIdAndUpdate(targetClientId, { $set: { goalInUse: goal._id } });
-      }
+      // Mismo fix que assignNutritionalGoal: una asignación del trainer
+      // siempre pasa a ser el objetivo vigente, no solo "si no tenía ninguno".
+      await userSchema.findByIdAndUpdate(targetClientId, { $set: { goalInUse: goal._id } });
       await notificationDao.create(targetClientId, req.auth.userId, "goal_assigned", {
         goalName: goal.name,
         kcalTotal: goal.kcalTotal,

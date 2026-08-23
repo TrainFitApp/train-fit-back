@@ -32,6 +32,21 @@ module.exports = {
     return PlanAssignment.find({ clientId }).sort({ startDate: -1 });
   },
 
+  // Dashboard trainer, "Requiere tu atención" — asignaciones activas de
+  // CUALQUIER cliente de este trainer cuyo endDate cae dentro del rango
+  // dado (p.ej. próximos 7 días) — a diferencia de findActiveForClient, que
+  // es de un cliente concreto. endDate:null (indefinido) queda fuera a
+  // propósito: nada que "caduque pronto" ahí.
+  async listEndingSoonForTrainer(trainerId, fromDateStr, toDateStr) {
+    return PlanAssignment.find({
+      trainerId,
+      status: "active",
+      endDate: { $ne: null, $gte: fromDateStr, $lte: toDateStr },
+    })
+      .populate("clientId", "name lastname")
+      .lean();
+  },
+
   async markSuperseded(id, supersededBy) {
     return PlanAssignment.findByIdAndUpdate(
       id,
