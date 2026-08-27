@@ -224,9 +224,33 @@ module.exports = {
       const setsUpdated = finalSets.map((setTemp) => setTemp._id);
       const queryUpdate = { $set: { sets: setsUpdated } };
 
+      // Nota del ENTRENADOR. Se mantiene tal cual estaba: ausente o vacía
+      // borra el campo. No es un descuido — el planificador borra una nota
+      // con `delete customExercise.notes` (workout.component.ts
+      // #updateExerciseNote) y luego manda el objeto, así que "ausente"
+      // significa ahí "bórrala". Cambiarlo por hasOwnProperty dejaría de
+      // poder borrarse ninguna nota del entrenador.
       if (!customExercise.notes || customExercise.notes?.trim() === "")
         queryUpdate.$unset = { notes: 1 };
       else queryUpdate.$set.notes = customExercise.notes;
+
+      // Movimiento 2 Coach Pro — nota del CLIENTE, campo aparte para que
+      // ninguno de los dos pise al otro.
+      //
+      // Aquí SÍ se mira hasOwnProperty, al revés que arriba: este campo es
+      // nuevo, así que hay objetos en memoria y en peticiones de versiones
+      // anteriores de la app que no lo traen. Con la regla de arriba, cada
+      // uno de esos guardados borraría la nota del cliente sin que nadie lo
+      // pidiera. Para vaciarla se manda la cadena vacía, que es lo que hace
+      // la pantalla del cliente.
+      if (Object.prototype.hasOwnProperty.call(customExercise, "clientNotes")) {
+        const clientNotes = customExercise.clientNotes;
+        if (!clientNotes || String(clientNotes).trim() === "") {
+          queryUpdate.$unset = { ...(queryUpdate.$unset || {}), clientNotes: 1 };
+        } else {
+          queryUpdate.$set.clientNotes = clientNotes;
+        }
+      }
 
       await customExerciseSchema.findByIdAndUpdate(
         customExercise._id,

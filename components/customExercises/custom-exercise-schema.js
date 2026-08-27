@@ -16,7 +16,22 @@ const CustomExerciseSchema = Schema({
     ref: "Exercise",
     autopopulate: true,
   },
+  // Movimiento 2 Coach Pro — `notes` pasa a ser LA NOTA DEL ENTRENADOR: la
+  // indicación que acompaña al ejercicio ("baja el peso y busca profundidad").
+  //
+  // Hasta ahora este campo era de los dos, y el último en escribir borraba lo
+  // del otro: el entrenador dejaba una corrección, el cliente apuntaba encima
+  // que le dolió el hombro, y la corrección desaparecía sin rastro.
+  //
+  // NO se migra nada: lo que ya hubiera aquí escrito por un cliente se queda
+  // donde está y se sigue leyendo, solo que bajo la etiqueta del entrenador.
+  // Renombrar el campo o repartir su contenido exigiría adivinar quién
+  // escribió cada nota, y no hay dato que lo diga.
   notes: { type: String, trim: true, maxlength: 500 },
+  // La nota que escribe EL CLIENTE durante la sesión ("me molestó el hombro
+  // en la última serie"). Campo aparte para que ninguno de los dos pise al
+  // otro, y para que el entrenador sepa siempre quién dijo qué.
+  clientNotes: { type: String, trim: true, maxlength: 500 },
   // Rediseño de entrenamiento Fase B — apunta al _id de un elemento de
   // Workout.blocks[] (subdocumento del Workout padre, no una colección
   // separada, por eso no lleva `ref`). null/ausente = ejercicio suelto, sin
