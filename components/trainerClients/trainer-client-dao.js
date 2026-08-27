@@ -169,6 +169,16 @@ module.exports = {
     };
   },
 
+  // Fase 1 Coach Pro — profesionales que tienen al menos un cliente vivo
+  // (activo o en alta). El job nocturno de alertas itera sobre ESTO en vez
+  // de sobre todos los usuarios con rol "trainer": un profesional sin
+  // clientes no tiene nada que evaluar y no debe costar ni una consulta.
+  // `distinct` sobre el índice { trainerId, clientId, status } lo resuelve
+  // sin traer documentos.
+  async listTrainerIdsWithLiveClients() {
+    return TrainerClient.distinct("trainerId", { status: { $in: ["active", "en_revision"] } });
+  },
+
   async findAllByClient(clientId, { status } = {}) {
     const query = { clientId };
     if (status) query.status = Array.isArray(status) ? { $in: status } : status;

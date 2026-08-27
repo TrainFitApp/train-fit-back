@@ -199,7 +199,17 @@ module.exports = {
   // create() de arriba, aquí sí conviene: es lectura pura, sin insert que
   // proteger de una population prematura.
   async listByTrainer(trainerId) {
-    const templates = await workoutSchema.find({ trainerId }).sort({ createdAt: -1 }).lean();
+    // populate EXPLÍCITO y no autopopulate: el plugin no actúa sobre
+    // consultas .lean(), así que `exercises` llegaba como ObjectId pelado,
+    // sin `blockId`. buildBlockFromWorkout los tomaba entonces por
+    // huérfanos y los volcaba TODOS en su bloque de recogida final: cada
+    // plantilla se listaba con sus bloques reales vacíos y uno extra con
+    // todo dentro (el picker del planificador pinta ese recuento).
+    const templates = await workoutSchema
+      .find({ trainerId })
+      .sort({ createdAt: -1 })
+      .populate({ path: "exercises", populate: { path: "sets" } })
+      .lean();
     return templates.map((t) => ({ ...t, blocks: buildBlockFromWorkout(t) }));
   },
 

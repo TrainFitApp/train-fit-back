@@ -3,16 +3,13 @@ const trainerClientDto = require("./trainer-client-dto");
 const trainerClientDao = require("./trainer-client-dao");
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
-const checkinDao = require("../trainerCheckins/checkin-dao");
-const planAssignmentService = require("../planAssignments/plan-assignment-service");
-const { isCheckinDue } = require("../coachDashboard/coach-dashboard-controller");
+const coachAlertDao = require("../coachAlerts/coach-alert-dao");
 
-// Dashboard trainer, "Requiere tu atención" — orden de prioridad entre
-// tipos: cuestionario por revisar primero (bloquea el alta del cliente),
-// luego plan a punto de caducar (por daysLeft ascendente: lo más urgente
-// arriba), luego check-in vencido (sin urgencia relativa entre sí, no hay
-// "cuánto de vencido" calculado, solo el booleano de isCheckinDue).
-const ATTENTION_TYPE_PRIORITY = { pending_review: 0, plan_ending_soon: 1, checkin_overdue: 2 };
+// Los 3 únicos tipos que este endpoint devolvía antes de la Fase 1 Coach
+// Pro. CoachAlert produce 8; los 5 restantes se filtran aquí a propósito
+// —ver getAttentionItems— para no cambiar el contrato de un cliente ya
+// desplegado.
+const LEGACY_ATTENTION_TYPES = ["pending_review", "plan_ending_soon", "checkin_overdue"];
 
 function handleKnownError(res, e) {
   if (e.code === "OVERLAP" || e.code === "DUPLICATE_INVITE" || e.code === "NOT_A_USER_ACCOUNT") {
@@ -142,68 +139,37 @@ const controller = {
     return res.send(summary);
   },
 
-  // GET /trainer/dashboard/attention-items — clientes que requieren acción
-  // del profesional AHORA MISMO (cuestionario por revisar, check-in
-  // vencido, plan de nutrición a punto de caducar). 3 fuentes en paralelo,
-  // cada una una consulta indexada barata — nunca un fan-out calculando algo
-  // (p.ej. adherencia) cliente a cliente, eso queda fuera de esta agregación
-  // a propósito. Mismo criterio que getPaymentsSummary.
+  // GET /trainer/dashboard/attention-items — SUPERSEDIDO por
+  // GET /trainer/alerts (ver coachAlerts/). Se mantiene, y con el mismo
+  // contrato exacto, porque esta app se distribuye también como build nativa
+  // (build:i:t / build:a:t) y hay instalaciones que seguirán llamando aquí
+  // hasta que actualicen.
+  //
+  // Lo que SÍ cambia es de dónde salen los datos: antes recalculaba las 3
+  // señales al vuelo en cada petición; ahora lee las alertas que ya calculó
+  // el evaluador nocturno. Mantener las dos implementaciones habría sido
+  // exactamente la duplicación de lógica que este trabajo evita — y con el
+  // agravante de que podrían discrepar entre sí (dos definiciones de "check-in
+  // vencido" divergiendo con el tiempo).
+  //
+  // Se filtran los 3 tipos originales: un cliente antiguo no sabe pintar los
+  // 5 nuevos y su `attentionLabel()` devolvería cadena vacía para ellos —
+  // filas en blanco. El orden lo da el DAO (prioridad, luego más reciente),
+  // que es el mismo criterio de urgencia que aplicaba el sort anterior.
   async getAttentionItems(req, res) {
-    const trainerId = req.auth.userId;
+    const alerts = await coachAlertDao.listForTrainer(req.auth.userId, { status: "open" });
 
-    const [pendingReview, checkinConfigs, latestResponses, endingSoon] = await Promise.all([
-      trainerClientDao.findByTrainerAndStatusWithClient(trainerId, "en_revision"),
-      checkinDao.getAppliedConfigsForTrainer(trainerId),
-      checkinDao.getLatestResponseByClient(trainerId),
-      planAssignmentService.listEndingSoonForTrainer(trainerId, 7),
-    ]);
-
-    const items = [];
-
-    for (const relation of pendingReview) {
-      if (!relation.clientId) continue;
-      items.push({
-        type: "pending_review",
-        clientId: relation.clientId._id,
-        clientName: `${relation.clientId.name} ${relation.clientId.lastname}`.trim(),
-      });
-    }
-
-    const latestResponseByClient = new Map(
-      latestResponses.map((r) => [String(r._id), r.respondedAt])
-    );
-    for (const config of checkinConfigs) {
-      if (!config.clientId) continue;
-      const clientKey = String(config.clientId._id);
-      const lastResponse = latestResponseByClient.has(clientKey)
-        ? { respondedAt: latestResponseByClient.get(clientKey) }
-        : null;
-      if (isCheckinDue(config, lastResponse ? [lastResponse] : [])) {
-        items.push({
-          type: "checkin_overdue",
-          clientId: config.clientId._id,
-          clientName: `${config.clientId.name} ${config.clientId.lastname}`.trim(),
-        });
-      }
-    }
-
-    for (const assignment of endingSoon) {
-      if (!assignment.clientId) continue;
-      items.push({
-        type: "plan_ending_soon",
-        clientId: assignment.clientId._id,
-        clientName: `${assignment.clientId.name} ${assignment.clientId.lastname}`.trim(),
-        daysLeft: assignment.daysLeft,
-      });
-    }
-
-    items.sort((a, b) => {
-      if (ATTENTION_TYPE_PRIORITY[a.type] !== ATTENTION_TYPE_PRIORITY[b.type]) {
-        return ATTENTION_TYPE_PRIORITY[a.type] - ATTENTION_TYPE_PRIORITY[b.type];
-      }
-      if (a.type === "plan_ending_soon") return (a.daysLeft ?? 0) - (b.daysLeft ?? 0);
-      return 0;
-    });
+    const items = alerts
+      .filter((alert) => LEGACY_ATTENTION_TYPES.includes(alert.type))
+      .map((alert) => ({
+        type: alert.type,
+        clientId: alert.clientId,
+        clientName: alert.client
+          ? `${alert.client.name} ${alert.client.lastname}`.trim()
+          : "Cliente",
+        // Solo lo llevaba plan_ending_soon; ahora vive dentro de context.
+        ...(alert.type === "plan_ending_soon" ? { daysLeft: alert.context?.daysLeft ?? 0 } : {}),
+      }));
 
     return res.send(items);
   },

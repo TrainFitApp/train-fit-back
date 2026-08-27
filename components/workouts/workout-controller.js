@@ -1,6 +1,7 @@
 const workoutModel = require("./workout-service");
 const tableSchema = require("../tables/table-schema");
 const tableAccess = require("../tables/table-access");
+const { sanitizeSoreness } = require("./soreness-catalog");
 
 const BLOCK_TYPES = new Set(["straight", "superset", "circuit", "warmup", "finisher"]);
 
@@ -172,7 +173,18 @@ module.exports = {
 
   async modifyWorkout(req, res) {
     if (!(await assertCanAccessWorkoutId(req, res, req.body?._id))) return;
-    const workout = await workoutModel.modifyWorkout(req.body);
+
+    // Movimiento 2 Coach Pro — las agujetas viajan por aquí (junto a
+    // readinessPre, en el mismo guardado que arranca la sesión), así que se
+    // saneen aquí mismo. modifyWorkout escribe con $set y sin
+    // runValidators, de modo que los min/max del esquema no llegarían a
+    // ejecutarse: mismo motivo por el que ya existe sanitizeWorkoutBlocks.
+    const body = { ...req.body };
+    if (Object.prototype.hasOwnProperty.call(body, "sorenessPre")) {
+      body.sorenessPre = sanitizeSoreness(body.sorenessPre);
+    }
+
+    const workout = await workoutModel.modifyWorkout(body);
     return res.send(workout);
   },
 

@@ -15,27 +15,23 @@ const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("./trainer-client-dao");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
+const dietDaysDao = require("../dietDays/diet-days-dao");
+const { buildShoppingList } = require("../dietDays/shopping-list-service");
 const planResolver = require("../planAssignments/plan-resolver");
+const planChangeService = require("../planChanges/plan-change-service");
 
 // MVP-trainers F20 — margen de tolerancia único, no repetido inline en varios
 // sitios (sección 9 del doc). ±15% sobre el objetivo de kcal del día.
 const ADHERENCE_TOLERANCE = 0.15;
 
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function addDaysToIsoDate(isoDate, deltaDays) {
-  const d = new Date(`${isoDate}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + deltaDays);
-  return d.toISOString().slice(0, 10);
-}
-
-function daysBetweenIsoDates(fromIso, toIso) {
-  const from = new Date(`${fromIso}T00:00:00.000Z`);
-  const to = new Date(`${toIso}T00:00:00.000Z`);
-  return Math.max(1, Math.round((to.getTime() - from.getTime()) / 86400000) + 1);
-}
+// Fase 7 Coach Pro — los tres helpers de fecha que vivían aquí ahora salen
+// de util/date-util.js. `daysBetweenIsoDates` pasa a llamarse `daysInRange`
+// porque eso es lo que hacía (contar ambos extremos: mismo día = 1), a
+// diferencia de la función homónima de plan-resolver.js, que contaba días
+// transcurridos (mismo día = 0). Dos nombres iguales con resultados que
+// difieren en 1 no fallan nunca de forma visible: solo hacen que un
+// denominador salga corrido.
+const { todayIsoDate, addDaysToIsoDate, daysInRange } = require("../util/date-util");
 
 // F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
 // YA EXISTEN como documento; la resolución de un plan es LAZY
@@ -58,7 +54,7 @@ async function getTrackingDaysForClient(clientId, dietId, from, to) {
   const materializedDates = new Set(materialized.map((d) => d.date));
 
   const days = [...materialized];
-  const totalDays = daysBetweenIsoDates(from, to);
+  const totalDays = daysInRange(from, to);
   for (let i = 0; i < totalDays; i++) {
     const date = addDaysToIsoDate(from, i);
     if (materializedDates.has(date)) continue;
@@ -138,6 +134,53 @@ function handleKnownError(res, e) {
 // mealToPaste que le pasa el llamador — no se repite ese patrón aquí).
 // Extraído a diet-day-resolver.js (2026-08-01) para reutilizarlo también en F28.
 const resolveOwnedMeal = resolveOwnedDietDay;
+
+// Fibra: vacío/ausente significa "este objetivo no la pauta", que no es lo
+// mismo que 0 g. Number(null) y Number("") son 0, así que hay que descartar
+// "sin valor" ANTES de convertir — mismo cuidado que toFiniteOrNull en
+// workouts/workout-controller.js.
+function toFiberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/**
+ * Movimiento 5 Coach Pro — reparto del día en intercambios.
+ *
+ * Se descarta lo que no encaje en vez de rechazar la petición entera: esto
+ * viaja junto a los gramos, y un grupo mal formado no puede impedir que se
+ * guarde un objetivo calórico. Un reparto vacío es el estado normal de todos
+ * los objetivos que existían antes de esta función.
+ */
+function sanitizeMealExchanges(meals) {
+  return (Array.isArray(meals) ? meals : [])
+    .map((meal) => {
+      const name = String(meal?.name || "").trim().slice(0, 60);
+      if (!name) return null;
+
+      const seen = new Set();
+      const exchanges = (Array.isArray(meal?.exchanges) ? meal.exchanges : [])
+        .map((exchange) => {
+          const groupId = exchange?.groupId;
+          const groupName = String(exchange?.groupName || "").trim().slice(0, 100);
+          const count = Number(exchange?.count);
+          if (!groupId || !groupName) return null;
+          if (!Number.isFinite(count) || count <= 0) return null;
+          // Un grupo repetido en la misma comida son dos filas que suman lo
+          // mismo que una con el doble: se queda la primera.
+          const key = String(groupId);
+          if (seen.has(key)) return null;
+          seen.add(key);
+          return { groupId, groupName, count };
+        })
+        .filter(Boolean);
+
+      // Una comida sin ninguna ración no es una pauta, es un nombre suelto.
+      return exchanges.length ? { name, exchanges } : null;
+    })
+    .filter(Boolean);
+}
 
 module.exports = {
   // GET /trainer/clients/:clientId/tables — F09, requireActiveClient("training")
@@ -274,6 +317,14 @@ module.exports = {
     const clientId = req.params.clientId;
     const trainerId = req.auth.userId;
 
+    // Fase 4 Coach Pro — el objetivo que regía ANTES, leído antes de tocar
+    // nada: es la mitad de la entrada del historial ("2200 -> 2100"), y una
+    // vez actualizado goalInUse ya no hay forma de saber cuál era.
+    const client = await userSchema.findById(clientId).select("goalInUse").lean();
+    const previousGoal = client?.goalInUse
+      ? await nutritionalGoalService.getById(client.goalInUse)
+      : null;
+
     const goal = await nutritionalGoalService.create({
       userId: clientId,
       assignedByTrainerId: trainerId,
@@ -282,6 +333,16 @@ module.exports = {
       proteinsGTotal: req.body.proteinsGTotal || 0,
       carbohydratesGTotal: req.body.carbohydratesGTotal || 0,
       fatGTotal: req.body.fatGTotal || 0,
+      // La fibra se añadió al esquema en la Fase 5 y al formulario del
+      // profesional, pero NO a esta lista: el valor que escribía el
+      // entrenador se descartaba aquí en silencio y el objetivo se guardaba
+      // sin fibra. `|| 0` no vale — vacío significa "este objetivo no pauta
+      // fibra", que no es lo mismo que 0 g (ver nutritional-goal-schema.js).
+      fiberGTotal: toFiberOrNull(req.body.fiberGTotal),
+      // Movimiento 5 Coach Pro — reparto del día en intercambios. Viaja en
+      // la MISMA petición que los gramos porque son dos formas de pautar el
+      // mismo objetivo.
+      mealExchanges: sanitizeMealExchanges(req.body.mealExchanges),
     });
 
     // A diferencia del flujo del propio cliente (nutritional-goal-controller.js
@@ -299,6 +360,17 @@ module.exports = {
       kcalTotal: goal.kcalTotal,
     });
 
+    // Fase 4 — historial con el motivo que el coach haya escrito. `reason`
+    // es opcional: si no lo pone, se registra igual el qué y el cuánto.
+    await planChangeService.recordGoalChange({
+      trainerId,
+      clientId,
+      previousGoal,
+      newGoal: goal,
+      action: previousGoal ? "replaced" : "assigned",
+      reason: req.body.reason,
+    });
+
     return res.status(201).send(goal);
   },
 
@@ -313,7 +385,25 @@ module.exports = {
       return res.status(404).send({ message: "Objetivo no encontrado para este cliente" });
     }
 
+    const client = await userSchema.findById(clientId).select("goalInUse").lean();
+    const previousGoal = client?.goalInUse
+      ? await nutritionalGoalService.getById(client.goalInUse)
+      : null;
+
     await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
+
+    // Fase 4 — cambiar de objetivo activo es un cambio de prescripción tanto
+    // como crear uno nuevo, aunque aquí no se edite ningún valor.
+    if (String(previousGoal?._id) !== String(goal._id)) {
+      await planChangeService.recordGoalChange({
+        trainerId: req.auth.userId,
+        clientId,
+        previousGoal,
+        newGoal: goal,
+        action: "replaced",
+        reason: req.body?.reason,
+      });
+    }
 
     return res.send({ _id: goal._id });
   },
@@ -428,7 +518,10 @@ module.exports = {
 
     const to = req.query.to || todayIsoDate();
     const from = req.query.from || addDaysToIsoDate(to, -30);
-    const daysInRange = daysBetweenIsoDates(from, to);
+    // La variable se llama distinto que la función para no sombrearla: el
+    // campo de la respuesta sigue siendo `daysInRange` (ya lo consume el
+    // frontend), pero aquí dentro necesita otro nombre.
+    const rangeDays = daysInRange(from, to);
 
     // F20-undecies: getTrackingDaysForClient (materializados + resueltos al
     // vuelo para fechas sin DietDay real) en vez de leer solo lo ya
@@ -444,13 +537,32 @@ module.exports = {
       });
 
     const daysWithinMargin = dailyBreakdown.filter((d) => d.withinMargin).length;
-    const percentage = daysInRange > 0 ? Math.round((daysWithinMargin / daysInRange) * 100) : 0;
+    const daysCounted = dailyBreakdown.length;
+
+    // Fase 1 Coach Pro — BUG corregido: el denominador eran TODOS los días
+    // del calendario del rango, no los días que realmente tenían algo
+    // pautado. Un cliente con un plan de 10 días dentro de un rango de 30
+    // salía con un 33% como máximo aunque hubiera cumplido los 10 a la
+    // perfección — un número que hacía parecer mal a clientes que iban bien,
+    // y sobre el que además ahora se apoyan las alertas.
+    //
+    // Se devuelven DOS números en vez de uno, porque son dos preguntas
+    // distintas y un solo porcentaje oculta cuál de las dos falla:
+    //   - percentage: de los días con plan, cuántos cuadraron. `null` si no
+    //     hubo ninguno — no es un 0%, es "no hay nada que medir todavía".
+    //   - coveragePercentage: qué parte del rango tenía plan.
+    // `daysInRange` y `daysCounted` se mantienen tal cual: ya los consume el
+    // frontend y siguen significando exactamente lo mismo.
+    const percentage = daysCounted > 0 ? Math.round((daysWithinMargin / daysCounted) * 100) : null;
+    const coveragePercentage =
+      rangeDays > 0 ? Math.round((daysCounted / rangeDays) * 100) : 0;
 
     return res.send({
       status: "ok",
       percentage,
-      daysCounted: dailyBreakdown.length,
-      daysInRange,
+      coveragePercentage,
+      daysCounted,
+      daysInRange: rangeDays,
       dailyBreakdown,
     });
   },
@@ -543,6 +655,42 @@ module.exports = {
     }
 
     return res.send({ status: "ok", dailyTracking });
+  },
+
+  // GET /trainer/clients/:clientId/shopping-list?from=&to= — Movimiento 5
+  // Coach Pro. Lo que el cliente tiene que comprar para cumplir el plan de
+  // ese rango, sumado por producto.
+  //
+  // No hay modelo nuevo: es otra lectura de los MISMOS DietDay que ya sirven
+  // el calendario y la adherencia. Guardarla como entidad la dejaría
+  // desfasada en cuanto el entrenador cambiara una comida, que es lo normal.
+  //
+  // Se leen solo los días MATERIALIZADOS (getFullyPopulatedDietDaysForDiet),
+  // no se resuelve el plan al vuelo para los que falten: mismo criterio y
+  // mismo motivo que en el evaluador nocturno de alertas — resolver cada
+  // fecha son 3 consultas más con la cascada entera de autopopulate, y aquí
+  // el rango puede ser un mes.
+  async getClientShoppingList(req, res) {
+    const clientId = req.params.clientId;
+    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+    if (!client?.dietInUse) {
+      return res.send({ items: [], daysWithPlan: 0, period: null });
+    }
+
+    const from = req.query.from || todayIsoDate();
+    // Una semana por defecto: es como se hace la compra.
+    const to = req.query.to || addDaysToIsoDate(from, 6);
+
+    const days = await dietDaysDao.getFullyPopulatedDietDaysForDiet(
+      client.dietInUse,
+      from,
+      to
+    );
+
+    return res.send({
+      ...buildShoppingList(days),
+      period: { from, to },
+    });
   },
 
   // GET /trainer/clients/:clientId/payments — F26, requireActiveClient() sin scope

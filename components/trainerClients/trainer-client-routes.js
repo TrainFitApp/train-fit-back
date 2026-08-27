@@ -135,6 +135,15 @@ router.getAsync(
   requireActiveClient("nutrition"),
   dataController.getClientNutritionTracking
 );
+// Movimiento 5 Coach Pro — lista de la compra del plan. requireActiveClient
+// CON scope "nutrition", igual que sus vecinas de arriba: es contenido del
+// plan nutricional, y un entrenador solo de entrenamiento no lo pauta.
+router.getAsync(
+  "/clients/:clientId/shopping-list",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.getClientShoppingList
+);
 router.getAsync(
   "/clients/:clientId/payments",
   auth(["trainer"]),

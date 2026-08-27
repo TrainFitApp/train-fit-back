@@ -161,3 +161,44 @@ test("buildBlockFromWorkout", async (t) => {
     assert.deepEqual(leftoverExerciseIds, ["ex-loose", "ex-orphan"]);
   });
 });
+
+// Los tests de arriba construyen el workout a mano, con los ejercicios YA
+// poblados — que es justo lo que ocultó un fallo real: listByTrainer
+// consultaba con .lean(), donde mongoose-autopopulate no actúa, así que la
+// función recibía referencias peladas, sin `blockId`. Este test fija esa
+// frontera: si alguien vuelve a quitar el populate explícito del dao, aquí
+// se ve QUÉ pasa. (Ids como cadena, igual que el resto del fichero: lo que
+// importa es que sean escalares sin blockId, no que sean ObjectId.)
+test("buildBlockFromWorkout con ejercicios sin poblar", async (t) => {
+  await t.test("una referencia pelada no tiene blockId y cae en el bloque de recogida", () => {
+    const workout = {
+      blocks: [{ _id: "bloque-1", name: "Principal", type: "straight", order: 0 }],
+      exercises: ["ref-1", "ref-2"],
+    };
+
+    const blocks = buildBlockFromWorkout(workout);
+
+    // El bloque real se queda VACÍO y aparece uno extra con todo dentro:
+    // exactamente el síntoma que enseñaba el picker del planificador.
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[0].name, "Principal");
+    assert.equal(blocks[0].exercises.length, 0);
+    assert.equal(blocks[1].name, "");
+    assert.equal(blocks[1].exercises.length, 2);
+  });
+
+  await t.test("con los mismos ejercicios poblados, el reparto es el correcto", () => {
+    const workout = {
+      blocks: [{ _id: "bloque-1", name: "Principal", type: "straight", order: 0 }],
+      exercises: [
+        { blockId: "bloque-1", exercise: "ex-1", order: 0, sets: [] },
+        { blockId: "bloque-1", exercise: "ex-2", order: 1, sets: [] },
+      ],
+    };
+
+    const blocks = buildBlockFromWorkout(workout);
+
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].exercises.length, 2);
+  });
+});

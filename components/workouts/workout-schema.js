@@ -23,6 +23,18 @@ const WorkoutBlockSchema = Schema({
   instructions: { type: String, trim: true, maxlength: 500, default: "" },
 });
 
+// Movimiento 2 Coach Pro — agujetas al llegar a la sesión, por grupo
+// muscular. Solo se guardan los grupos que el cliente marca por encima de
+// "nada": ver sanitizeSoreness en soreness-catalog.js, que es también donde
+// está explicado por qué se pregunta al empezar y no al terminar.
+const WorkoutSorenessSchema = Schema(
+  {
+    muscle: { type: String, required: true },
+    level: { type: Number, min: 1, max: 5, required: true },
+  },
+  { _id: false }
+);
+
 const WorkoutSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
   notes: { type: String, trim: true, maxlength: 500 },
@@ -40,6 +52,9 @@ const WorkoutSchema = Schema({
   // el profesional junto al historial de entrenamientos del cliente (F09).
   readinessPre: { type: Number, min: 1, max: 5, default: null },
   perceivedEffortPost: { type: Number, min: 1, max: 5, default: null },
+  // Movimiento 2 Coach Pro — se recoge en el MISMO aviso que readinessPre
+  // ("¿cómo llegas hoy?"), no en uno nuevo. Vacío = nada reportado.
+  sorenessPre: { type: [WorkoutSorenessSchema], default: [] },
   blocks: { type: [WorkoutBlockSchema], default: [] },
   exercises: [
     {
