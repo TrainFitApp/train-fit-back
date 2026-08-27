@@ -8,6 +8,7 @@ const { startCheckinReminderCron } = require("../components/trainerCheckins/chec
 const {
   startAnthropometryRequestReminderCron,
 } = require("../components/anthropometryRequests/anthropometry-request-reminder-cron");
+const { startCoachAlertCron } = require("../components/coachAlerts/coach-alert-cron");
 
 // -------------------------------------------------------
 // 🧩 Normalización del puerto
@@ -62,6 +63,9 @@ function connectWithRetry() {
       // construido pero inerte. Arrancado aquí junto al nuevo de medidas.
       startCheckinReminderCron();
       startAnthropometryRequestReminderCron();
+      // Fase 1 Coach Pro — evaluador nocturno de señales que alimenta las
+      // alertas del panel del profesional (05:00, ver coach-alert-cron.js).
+      startCoachAlertCron();
     })
     .catch((err) => {
       console.error("❌ MongoDB error:", err.message);

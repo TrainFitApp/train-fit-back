@@ -29,7 +29,7 @@ const trainerCheckins = require("../components/trainerCheckins/checkin-routes");
 const anthropometryRequests = require("../components/anthropometryRequests/anthropometry-request-routes");
 const mealProposalClientRoutes = require("../components/mealProposals/meal-proposal-client-routes");
 const nutritionPreferencesClientRoutes = require("../components/nutritionPreferences/nutrition-preferences-client-routes");
-const coachDashboardRoutes = require("../components/coachDashboard/coach-dashboard-routes");
+const clientCoachViewRoutes = require("../components/clientCoachView/client-coach-view-routes");
 const notificationRoutes = require("../components/notifications/notification-routes");
 const trainerTaskRoutes = require("../components/trainerTasks/trainer-task-routes");
 const dietTemplateRoutes = require("../components/dietTemplates/diet-template-routes");
@@ -37,6 +37,15 @@ const mealSnippetRoutes = require("../components/mealSnippets/meal-snippet-route
 const planAssignmentRoutes = require("../components/planAssignments/plan-assignment-routes");
 const workoutTemplateRoutes = require("../components/workoutTemplates/workout-template-routes");
 const trainerIntakeConfigRoutes = require("../components/trainerIntakeConfig/trainer-intake-config-routes");
+const coachAlertRoutes = require("../components/coachAlerts/coach-alert-routes");
+const coachTaskRoutes = require("../components/coachTasks/coach-task-routes");
+const clientProgressRoutes = require("../components/clientProgress/client-progress-routes");
+const coachRuleRoutes = require("../components/coachRules/coach-rule-routes");
+const coachProtocolRoutes = require("../components/coachProtocols/coach-protocol-routes");
+const foodExchangeRoutes = require("../components/foodExchanges/food-exchange-routes");
+const painRoutes = require("../components/painLog/pain-routes");
+const supplementRoutes = require("../components/supplements/supplement-routes");
+const exerciseScoreRoutes = require("../components/exerciseScores/exercise-score-routes");
 
 const router = express.Router();
 
@@ -47,9 +56,17 @@ router.use("/diets", diets);
 router.use("/dietdays", dietDays);
 router.use("/diets", mealProposalClientRoutes);
 router.use(nutritionPreferencesClientRoutes);
-router.use(coachDashboardRoutes);
+router.use(clientCoachViewRoutes);
 router.use(notificationRoutes);
 router.use(trainerTaskRoutes);
+// Movimiento 3 Coach Pro — sin prefijo, como trainerTaskRoutes: este
+// componente sirve a los DOS lados (el cliente apunta su dolor en /pain/mine,
+// el profesional lo lee en /trainer/clients/:id/pain) y sus rutas ya llevan
+// escrito el prefijo que le toca a cada una.
+router.use(painRoutes);
+// Movimiento 5 Coach Pro — misma razón que painRoutes: sirve a los dos lados
+// y sus rutas ya llevan escrito el prefijo que le toca a cada una.
+router.use(supplementRoutes);
 router.use(dietTemplateRoutes);
 router.use(mealSnippetRoutes);
 router.use(planAssignmentRoutes);
@@ -78,5 +95,15 @@ router.use("/trainer", trainerClients);
 router.use("/trainer", trainerCheckins);
 router.use("/trainer", anthropometryRequests);
 router.use("/trainer", trainerIntakeConfigRoutes);
+router.use("/trainer", coachAlertRoutes);
+router.use("/trainer", coachTaskRoutes);
+router.use("/trainer", clientProgressRoutes);
+router.use("/trainer", coachRuleRoutes);
+router.use("/trainer", coachProtocolRoutes);
+router.use("/trainer", foodExchangeRoutes);
+// Movimiento 6 Coach Pro — puntuaciones músculo/articulación por ejercicio.
+// Bajo /trainer y sin :clientId: no son de un cliente, son del método del
+// profesional.
+router.use("/trainer", exerciseScoreRoutes);
 
 module.exports = router;
