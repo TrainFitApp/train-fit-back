@@ -31,6 +31,24 @@ module.exports = {
     return Anthropometry.find({ userId }).sort({ date: -1 }).lean();
   },
 
+  // Fase 1 Coach Pro — la ventana de análisis de TODOS los clientes de un
+  // profesional en UNA consulta, no una por cliente. El evaluador nocturno
+  // de alertas necesita 28 días de medidas de 30 clientes: con
+  // getAnthropometriesByUserIdBetweenDates serían 30 idas y vueltas a Mongo
+  // por cada profesional. El índice { userId: 1, date: -1 } cubre este
+  // $in + $gte igual que cubre la consulta de un solo usuario.
+  // Orden ASC (no DESC como el resto de este DAO) porque el cálculo de
+  // tendencias recorre la serie cronológicamente.
+  async listForUsersSince(userIds, sinceDate) {
+    if (!userIds?.length) return [];
+    return Anthropometry.find({
+      userId: { $in: userIds },
+      date: { $gte: sinceDate },
+    })
+      .sort({ date: 1 })
+      .lean();
+  },
+
   // Corregido (MVP-trainers F17, 2026-08-01): un `update` sin operador `$`
   // top-level es tratado por MongoDB como REEMPLAZO del documento entero, no
   // como actualización parcial — cualquier caller que enviara solo un

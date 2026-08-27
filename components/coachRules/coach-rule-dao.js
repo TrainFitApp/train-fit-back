@@ -1,0 +1,48 @@
+const CoachRule = require("./coach-rule-schema");
+
+module.exports = {
+  async create(trainerId, data) {
+    return CoachRule.create({ trainerId, ...data });
+  },
+
+  async listForTrainer(trainerId) {
+    return CoachRule.find({ trainerId }).sort({ createdAt: -1 }).lean();
+  },
+
+  async listEnabledForTrainer(trainerId) {
+    return CoachRule.find({ trainerId, enabled: true }).lean();
+  },
+
+  async findOwned(trainerId, id) {
+    return CoachRule.findOne({ _id: id, trainerId }).lean();
+  },
+
+  // trainerId siempre en el filtro, nunca solo el _id — mismo criterio que
+  // el resto de DAOs del módulo.
+  async update(trainerId, id, updates) {
+    return CoachRule.findOneAndUpdate(
+      { _id: id, trainerId },
+      { $set: { ...updates, updatedAt: new Date() } },
+      { new: true, runValidators: true }
+    ).lean();
+  },
+
+  async remove(trainerId, id) {
+    return CoachRule.findOneAndDelete({ _id: id, trainerId });
+  },
+
+  async markEvaluated(id, when) {
+    return CoachRule.updateOne({ _id: id }, { $set: { lastEvaluatedAt: when } });
+  },
+
+  // Freno de emergencia: la regla afectó a más clientes de la cuenta en una
+  // sola pasada. Se apaga sola y guarda el motivo para que la pantalla de
+  // reglas pueda explicarlo en vez de mostrar un interruptor apagado sin
+  // más.
+  async disableWithReason(id, reason) {
+    return CoachRule.updateOne(
+      { _id: id },
+      { $set: { enabled: false, disabledReason: reason, updatedAt: new Date() } }
+    );
+  },
+};

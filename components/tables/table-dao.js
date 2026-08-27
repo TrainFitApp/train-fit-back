@@ -343,6 +343,220 @@ module.exports = {
     return tableSchema.countDocuments({ userId, assignedByTrainerId: null }).exec();
   },
 
+  // Fase 2 Coach Pro — actividad de entrenamiento de un cliente en un rango,
+  // para la dimensión "entrenamiento" de la adherencia multidimensional.
+  //
+  // Vía agregación y NO vía getTables + recorrido en Node por dos motivos:
+  // Table lleva mongoose-autopopulate en cascada (splits -> workouts ->
+  // customExercises -> sets), así que una simple lectura del documento
+  // arrastra la rutina ENTERA con todas sus series solo para contar fechas;
+  // y una agregación ignora el plugin por completo. Devuelve únicamente las
+  // fechas — el reparto por semanas se hace en el servicio.
+  //
+  // `rest: true` son días de descanso del microciclo: existen como Workout
+  // pero no son una sesión que el cliente deba completar, así que quedan
+  // fuera del numerador igual que del denominador (ver countPlannedSessionsPerMicrocycle).
+  async listCompletedWorkoutDates(userId, fromDate, toDate) {
+    const { ObjectId } = require("mongoose").Types;
+    const rows = await tableSchema.aggregate([
+      { $match: { userId: ObjectId(userId) } },
+      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
+      { $unwind: "$splitDocs" },
+      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
+      { $unwind: "$workoutDocs" },
+      {
+        $match: {
+          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
+          "workoutDocs.rest": { $ne: true },
+        },
+      },
+      { $project: { _id: 0, date: "$workoutDocs.date" } },
+    ]);
+    return rows.map((row) => row.date);
+  },
+
+  // Fase 6 Coach Pro — la misma consulta que listCompletedWorkoutDates pero
+  // para VARIOS clientes de una vez. Es lo que permite que el evaluador
+  // nocturno ofrezca "sesiones entrenadas" como métrica de regla sin pasar
+  // de ~7 consultas por profesional a 7 + N.
+  async listCompletedWorkoutDatesForUsers(userIds, fromDate, toDate) {
+    const { ObjectId } = require("mongoose").Types;
+    if (!userIds?.length) return [];
+    const rows = await tableSchema.aggregate([
+      { $match: { userId: { $in: userIds.map((id) => ObjectId(String(id))) } } },
+      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
+      { $unwind: "$splitDocs" },
+      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
+      { $unwind: "$workoutDocs" },
+      {
+        $match: {
+          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
+          "workoutDocs.rest": { $ne: true },
+        },
+      },
+      { $project: { _id: 0, userId: 1, date: "$workoutDocs.date" } },
+    ]);
+    return rows;
+  },
+
+  // Fase 6 Coach Pro — cada SERIE COMPLETADA de un cliente en un rango, con
+  // su fecha, ejercicio, repeticiones y peso. Es la materia prima de
+  // volumen, PRs y evolución de cargas (§17).
+  //
+  // Deliberadamente NO se usa en el evaluador nocturno: una serie por
+  // documento significa miles de filas por cliente y trimestre, asequible
+  // para UNA ficha abierta y ruinoso multiplicado por toda la cartera. Las
+  // reglas usan el recuento de sesiones (listCompletedWorkoutDatesForUsers),
+  // que sí es barato.
+  //
+  // `sets.doned` filtra a lo realmente hecho: una serie planificada y no
+  // ejecutada no es volumen.
+  async listCompletedSetsForUser(userId, fromDate, toDate) {
+    const { ObjectId } = require("mongoose").Types;
+    return tableSchema.aggregate([
+      { $match: { userId: ObjectId(String(userId)) } },
+      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
+      { $unwind: "$splitDocs" },
+      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
+      { $unwind: "$workoutDocs" },
+      {
+        $match: {
+          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
+          "workoutDocs.rest": { $ne: true },
+        },
+      },
+      {
+        $lookup: {
+          from: "customexercises",
+          localField: "workoutDocs.exercises",
+          foreignField: "_id",
+          as: "customExercises",
+        },
+      },
+      { $unwind: "$customExercises" },
+      {
+        $lookup: {
+          from: "exercises",
+          localField: "customExercises.exercise",
+          foreignField: "_id",
+          as: "exerciseInfo",
+        },
+      },
+      { $unwind: { path: "$exerciseInfo", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "sets", localField: "customExercises.sets", foreignField: "_id", as: "setDocs" } },
+      { $unwind: "$setDocs" },
+      { $match: { "setDocs.doned": true } },
+      {
+        $project: {
+          _id: 0,
+          date: "$workoutDocs.date",
+          // Movimiento 3 Coach Pro — a qué microciclo pertenece la serie.
+          // Va en la MISMA agregación (el $unwind de splits ya está hecho
+          // arriba, solo hay que proyectar dos campos más) para que comparar
+          // bloque contra bloque no cueste una segunda consulta cara.
+          splitId: "$splitDocs._id",
+          splitName: "$splitDocs.name",
+          // El nombre del ejercicio del catálogo; si el CustomExercise no
+          // apunta a ninguno (ejercicio propio del usuario), se cae a su
+          // propio nombre para no perder la serie del agregado.
+          exerciseName: { $ifNull: ["$exerciseInfo.name", "$customExercises.name"] },
+          reps: "$setDocs.reps",
+          weight: "$setDocs.weight",
+        },
+      },
+    ]);
+  },
+
+  // Sesiones que el cliente TIENE que hacer en un microciclo: los workouts
+  // no-descanso del último microciclo de la rutina que usa ahora mismo. Es
+  // el denominador honesto de "adherencia al entrenamiento": el modelo no
+  // guarda en qué día de calendario tocaba cada sesión, así que la frecuencia
+  // semanal prescrita es lo único que se puede afirmar sin inventar un
+  // calendario que no existe.
+  async countPlannedSessionsPerMicrocycle(tableId) {
+    const { ObjectId } = require("mongoose").Types;
+    const [row] = await tableSchema.aggregate([
+      { $match: { _id: ObjectId(tableId) } },
+      { $project: { lastSplit: { $arrayElemAt: ["$splits", -1] } } },
+      { $lookup: { from: "splits", localField: "lastSplit", foreignField: "_id", as: "splitDoc" } },
+      { $unwind: "$splitDoc" },
+      { $lookup: { from: "workouts", localField: "splitDoc.workouts", foreignField: "_id", as: "workoutDocs" } },
+      {
+        $project: {
+          _id: 0,
+          planned: {
+            $size: {
+              $filter: { input: "$workoutDocs", cond: { $ne: ["$$this.rest", true] } },
+            },
+          },
+        },
+      },
+    ]);
+    return row?.planned || 0;
+  },
+
+  // Movimiento 1 Coach Pro — lo mismo que countPlannedSessionsPerMicrocycle
+  // pero para VARIAS rutinas de una vez, para que la vista de Cartera pueda
+  // calcular la adherencia al entrenamiento de toda la cartera sin una
+  // agregación por cliente. Devuelve un Map tableId(string) -> nº de
+  // sesiones; una rutina sin microciclos simplemente no aparece, y quien
+  // pregunta lo trata como 0 igual que arriba.
+  /**
+   * Progreso del plan: cuántas sesiones tiene la rutina entera y cuántas se
+   * han hecho ya (Workout con fecha).
+   *
+   * Sustituye a countPlannedSessionsPerMicrocycleForTables, que solo miraba
+   * el ÚLTIMO microciclo y lo multiplicaba por las semanas del periodo. Un
+   * microciclo se mide en sesiones y `Split` no guarda duración, así que esa
+   * multiplicación era una suposición: con 2 microciclos de 2 sesiones
+   * anunciaba 8 esperadas donde el plan tiene 4.
+   *
+   * Los workouts marcados como descanso (`rest`) no cuentan como sesión.
+   */
+  async getPlanSessionProgressForTables(tableIds) {
+    const { ObjectId } = require("mongoose").Types;
+    if (!tableIds?.length) return new Map();
+    const rows = await tableSchema.aggregate([
+      { $match: { _id: { $in: tableIds.map((id) => ObjectId(String(id))) } } },
+      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
+      {
+        $project: {
+          workoutIds: {
+            $reduce: {
+              input: "$splitDocs",
+              initialValue: [],
+              in: { $concatArrays: ["$$value", { $ifNull: ["$$this.workouts", []] }] },
+            },
+          },
+        },
+      },
+      { $lookup: { from: "workouts", localField: "workoutIds", foreignField: "_id", as: "workoutDocs" } },
+      {
+        $project: {
+          sesiones: {
+            $filter: { input: "$workoutDocs", cond: { $ne: ["$$this.rest", true] } },
+          },
+        },
+      },
+      {
+        $project: {
+          plannedTotal: { $size: "$sesiones" },
+          completedTotal: {
+            $size: {
+              $filter: { input: "$sesiones", cond: { $ne: [{ $ifNull: ["$$this.date", null] }, null] } },
+            },
+          },
+        },
+      },
+    ]);
+    return new Map(
+      rows.map((row) => [
+        String(row._id),
+        { plannedTotal: row.plannedTotal || 0, completedTotal: row.completedTotal || 0 },
+      ])
+    );
+  },
+
   async getExerciseHistoryStats(userId, exerciseId, exerciseName) {
     const { ObjectId } = require("mongoose").Types;
 

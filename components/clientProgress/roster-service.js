@@ -1,0 +1,239 @@
+const {
+  loadTrainerContext,
+  buildClientSnapshots,
+} = require("../coachAlerts/coach-alert-service");
+const { SIGNAL_THRESHOLDS } = require("../coachAlerts/coach-signals-service");
+const { computeAdherence } = require("./adherence-service");
+const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
+const { taskLabel } = require("../trainerTasks/task-label");
+const tableDao = require("../tables/table-dao");
+const CoachAlert = require("../coachAlerts/coach-alert-schema");
+
+/**
+ * Movimiento 1 Coach Pro — la CARTERA: una fila por cliente, ordenable, con
+ * las cinco cosas que un entrenador mira para decidir a quién atiende hoy.
+ *
+ * El problema que resuelve: hasta ahora la única forma de comparar clientes
+ * entre sí era abrir sus fichas de una en una y acordarse. El panel Hoy
+ * enseña lo urgente, pero lo urgente no es lo mismo que el estado general —
+ * un cliente al 45% de adherencia que todavía no ha disparado ninguna alerta
+ * es invisible en Hoy y evidente aquí.
+ *
+ * NADA de lo que se calcula aquí es nuevo:
+ *   - loadTrainerContext + buildClientSnapshots son literalmente los del
+ *     evaluador nocturno de alertas. Reusarlos garantiza que el "62%" de la
+ *     Cartera es el mismo número que disparó la alerta, no otro parecido.
+ *   - computeAdherence es el mismo cálculo puro que la pestaña Resumen de la
+ *     ficha, con la misma ventana de 28 días.
+ *
+ * Coste: el de loadTrainerContext (6 consultas fijas + 2 por cliente con
+ * dieta) más 4 agrupadas. Es UN profesional bajo demanda, mirando su propia
+ * cartera — el mismo trabajo que el job nocturno hace por él cada noche, no
+ * un fan-out sobre la plataforma. La parte cara sigue siendo el bucle
+ * secuencial de adherencia nutricional de loadTrainerContext; si algún día
+ * molesta, se arregla allí y las dos vistas mejoran a la vez.
+ */
+
+// Misma ventana que el resumen de la ficha y que el evaluador de alertas.
+// Tres números distintos para "la adherencia de este cliente" según qué
+// pantalla mires sería peor que no tener ninguno.
+const ROSTER_WINDOW_DAYS = SIGNAL_THRESHOLDS.analysisWindowDays;
+
+function isoDate(date) {
+  return new Date(date).toISOString().slice(0, 10);
+}
+
+function addDays(isoDay, days) {
+  const date = new Date(`${isoDay}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function round(value, decimals) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+/**
+ * Variación de peso dentro de la ventana: primera medición contra la última.
+ *
+ * No reutiliza buildWeightTrend (progress-service) a propósito: aquélla
+ * trabaja sobre series semanales ya agregadas, que en la Cartera no hacen
+ * falta y costarían montarlas para 30 clientes. Aquí las mediciones bastan
+ * porque la pregunta es más simple — "¿sube o baja?", no "¿cómo de rápido?".
+ *
+ * `entries` llega en orden ASC (anthropometryDao.listForUsersSince).
+ */
+function weightChangeFor(entries) {
+  const withWeight = (entries || []).filter(
+    (entry) => typeof entry.weight === "number" && Number.isFinite(entry.weight)
+  );
+  if (withWeight.length < 2) return null;
+
+  const first = withWeight[0];
+  const last = withWeight[withWeight.length - 1];
+  const absolute = round(last.weight - first.weight, 2);
+
+  return {
+    absolute,
+    percentage: first.weight ? round((absolute / first.weight) * 100, 2) : null,
+    from: { date: first.date, weight: first.weight },
+    to: { date: last.date, weight: last.weight },
+    measurements: withWeight.length,
+  };
+}
+
+function daysSince(date, now) {
+  if (!date) return null;
+  return Math.floor((now.getTime() - new Date(date).getTime()) / 86400000);
+}
+
+/**
+ * Alertas abiertas por cliente, en una sola agregación.
+ *
+ * Aparte del DAO de alertas porque es una consulta de RECUENTO para la
+ * cartera entera; listForClient devuelve documentos completos de un cliente y
+ * traerlos todos para contarlos sería mover kilobytes para producir enteros.
+ */
+async function countOpenAlertsByClient(trainerId) {
+  const mongoose = require("mongoose");
+  const rows = await CoachAlert.aggregate([
+    {
+      $match: {
+        trainerId: new mongoose.Types.ObjectId(String(trainerId)),
+        status: "open",
+      },
+    },
+    {
+      $group: {
+        _id: "$clientId",
+        total: { $sum: 1 },
+        // La prioridad se guarda como string; aquí solo hace falta saber si
+        // hay alguna urgente, así que se cuenta directamente en Mongo.
+        high: { $sum: { $cond: [{ $eq: ["$priority", "high"] }, 1, 0] } },
+      },
+    },
+  ]);
+  return new Map(rows.map((row) => [String(row._id), { total: row.total, high: row.high }]));
+}
+
+// Días que un hábito lleva activo dentro de la ventana. Mismo criterio que
+// client-progress-controller#diasActivos.
+function diasActivosDeTarea(task, periodDays, now) {
+  const desdeCreacion = Math.floor((now.getTime() - new Date(task.createdAt).getTime()) / 86400000) + 1;
+  return Math.max(0, Math.min(periodDays, desdeCreacion));
+}
+
+async function buildRoster(trainerId, now = new Date()) {
+  const to = isoDate(now);
+  const from = addDays(to, -(ROSTER_WINDOW_DAYS - 1));
+
+  const context = await loadTrainerContext(trainerId, now);
+  const snapshots = buildClientSnapshots(context, now);
+
+  // Solo los clientes con relación activa: los que están "en_revision"
+  // todavía no tienen nada que medir, y su sitio es el aviso de alta del
+  // panel Hoy, no una fila de adherencia vacía aquí.
+  const activeSnapshots = snapshots.filter((snapshot) => snapshot.relationStatus === "active");
+  const clientIds = activeSnapshots.map((snapshot) => snapshot.clientId);
+
+  const tableIds = [...context.tableIdByClient.values()];
+
+  const [activeTasks, progresoPorTabla, alertsByClient] = await Promise.all([
+    trainerTaskDao.listForClients(trainerId, clientIds),
+    tableDao.getPlanSessionProgressForTables(tableIds),
+    countOpenAlertsByClient(trainerId),
+  ]);
+
+  const taskIds = activeTasks.map((task) => task._id);
+  const completions = await trainerTaskDao.listCompletionsForTasksInRange(taskIds, from, to);
+
+  // Marcas por TAREA, no por cliente: cada hábito se mide contra sus propios
+  // días activos, así que ya no vale un total por cliente.
+  // Mismo criterio que la ficha: una marca anterior a la creación del
+  // hábito no cuenta (ver client-progress-controller#buildAdherenceInput).
+  const creacionPorTarea = new Map(
+    activeTasks.map((task) => [String(task._id), isoDate(task.createdAt)])
+  );
+  const marcasPorTarea = new Map();
+  for (const completion of completions) {
+    const key = String(completion.taskId);
+    const desde = creacionPorTarea.get(key);
+    if (desde && completion.date < desde) continue;
+    marcasPorTarea.set(key, (marcasPorTarea.get(key) || 0) + 1);
+  }
+  const tareasPorCliente = new Map();
+  for (const task of activeTasks) {
+    const key = String(task.clientId);
+    tareasPorCliente.set(key, [...(tareasPorCliente.get(key) || []), task]);
+  }
+
+  return activeSnapshots.map((snapshot) => {
+    const clientKey = String(snapshot.clientId);
+    const tableId = context.tableIdByClient.get(clientKey);
+
+    const adherence = computeAdherence({
+      // El snapshot ya trae la adherencia nutricional calculada por
+      // loadTrainerContext con computeRangeAdherence — la misma función que
+      // usa la ficha del cliente.
+      nutrition: snapshot.adherence,
+      training: (() => {
+        const progreso = (tableId && progresoPorTabla.get(String(tableId))) || null;
+        return {
+          completedSessions: progreso?.completedTotal || 0,
+          plannedTotal: progreso?.plannedTotal || 0,
+        };
+      })(),
+      habits: {
+        habits: (tareasPorCliente.get(clientKey) || []).map((task) => ({
+          id: String(task._id),
+          label: taskLabel(task),
+          target: task.target,
+          unit: task.unit,
+          completions: marcasPorTarea.get(String(task._id)) || 0,
+          activeDays: diasActivosDeTarea(task, ROSTER_WINDOW_DAYS, now),
+        })),
+      },
+      checkins: {
+        respondedAt: (snapshot.checkinResponses || []).map((r) => r.respondedAt),
+        cadence: snapshot.checkinConfig?.cadence,
+        periodDays: ROSTER_WINDOW_DAYS,
+        now,
+      },
+    });
+
+    const alerts = alertsByClient.get(clientKey) || { total: 0, high: 0 };
+
+    return {
+      clientId: snapshot.clientId,
+      clientName: snapshot.clientName,
+      clientEmail: snapshot.clientEmail || "",
+      adherence: {
+        overall: adherence.overall,
+        weakest: adherence.weakest,
+        // El desglose entero, no solo la media: la Cartera enseña la media y
+        // el punto débil, pero la fila desplegada necesita los cuatro
+        // números y sus motivos de "no aplica" sin una segunda petición.
+        dimensions: adherence.dimensions,
+      },
+      weightChange: weightChangeFor(snapshot.entries),
+      lastCheckinAt: snapshot.lastResponseAt || null,
+      daysSinceCheckin: daysSince(snapshot.lastResponseAt, now),
+      checkinCadence: snapshot.checkinConfig?.cadence || null,
+      lastActivityAt: snapshot.lastActivityAt || null,
+      daysSinceActivity: daysSince(snapshot.lastActivityAt, now),
+      sessions: (snapshot.workoutDates || []).length,
+      openAlerts: alerts.total,
+      urgentAlerts: alerts.high,
+      planEndingSoon: snapshot.planEndingSoon || null,
+    };
+  });
+}
+
+module.exports = {
+  ROSTER_WINDOW_DAYS,
+  buildRoster,
+  // Exportadas para test unitario — son las dos piezas con criterio propio.
+  weightChangeFor,
+  daysSince,
+};
