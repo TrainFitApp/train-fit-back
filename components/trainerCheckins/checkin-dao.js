@@ -5,8 +5,14 @@ const CheckinResponse = require("./checkin-response-schema");
 
 module.exports = {
   // --- CheckinTemplateDefinition (plantillas maestras) ---
-  async createDefinition(trainerId, name, enabledFields, cadence) {
-    return CheckinTemplateDefinition.create({ trainerId, name, enabledFields, cadence });
+  async createDefinition(trainerId, name, enabledFields, cadence, customQuestions = []) {
+    return CheckinTemplateDefinition.create({
+      trainerId,
+      name,
+      enabledFields,
+      cadence,
+      customQuestions,
+    });
   },
 
   async listDefinitions(trainerId) {
@@ -39,6 +45,14 @@ module.exports = {
         $set: {
           enabledFields: definition.enabledFields,
           cadence: definition.cadence,
+          // Fase 5 — las preguntas propias se copian igual que el resto,
+          // CONSERVANDO su _id: la respuesta viaja con la clave
+          // "custom:<id>" (ver checkin-custom-question.js), así que
+          // regenerar los ids al reaplicar dejaría huérfanas todas las
+          // respuestas anteriores, que aparecerían sin enunciado.
+          customQuestions: (definition.customQuestions || []).map((q) =>
+            typeof q.toObject === "function" ? q.toObject() : q
+          ),
           sourceTemplateId: definition._id,
           updatedAt: new Date(),
         },
@@ -58,6 +72,27 @@ module.exports = {
   // --- CheckinResponse (histórico, solo campos wellbeing-backed) ---
   async createResponse(trainerId, clientId, values) {
     return CheckinResponse.create({ trainerId, clientId, values });
+  },
+
+  // La respuesta de ESTE ciclo, si ya existe. Un ciclo es la ventana de
+  // `cadenceDays` días que acaba ahora: con cadencia semanal, los últimos 7.
+  async findResponseInCurrentCycle(trainerId, clientId, cadenceDays, now = new Date()) {
+    const desde = new Date(now.getTime() - cadenceDays * 86400000);
+    return CheckinResponse.findOne({
+      trainerId,
+      clientId,
+      respondedAt: { $gte: desde, $lte: now },
+    }).sort({ respondedAt: -1 });
+  },
+
+  // Reescribe los valores de una respuesta ya enviada. `respondedAt` NO se
+  // toca: mueve la respuesta de ciclo y falsearía la adherencia.
+  async updateResponseValues(responseId, values) {
+    return CheckinResponse.findByIdAndUpdate(
+      responseId,
+      { $set: { values, seenByTrainer: false } },
+      { new: true }
+    );
   },
 
   async listResponses(trainerId, clientId) {
@@ -99,6 +134,21 @@ module.exports = {
       { $sort: { respondedAt: -1 } },
       { $group: { _id: "$clientId", respondedAt: { $first: "$respondedAt" } } },
     ]);
+  },
+
+  // Fase 3 Coach Pro — respuestas de TODOS los clientes de un profesional
+  // desde una fecha, con sus valores. Una sola consulta para toda la
+  // cartera, a diferencia de listResponses (un cliente) y de
+  // getLatestResponseByClient (solo la fecha de la última).
+  //
+  // El motor de reglas necesita los VALORES (estrés, sueño, pasos…), no solo
+  // saber cuándo respondió: sin esto, una regla sobre bienestar exigiría una
+  // consulta por cliente cada noche.
+  async listResponsesForTrainerSince(trainerId, since) {
+    return CheckinResponse.find({ trainerId, respondedAt: { $gte: since } })
+      .select("clientId respondedAt values")
+      .sort({ respondedAt: 1 })
+      .lean();
   },
 
   // TASK-024 (MASTER_BACKLOG.md)

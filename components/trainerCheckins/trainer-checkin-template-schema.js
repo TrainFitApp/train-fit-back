@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const { CHECKIN_FIELD_KEYS } = require("./checkin-field-catalog");
+const { CustomCheckinQuestionSchema } = require("./checkin-custom-question");
 
 // Configuración YA APLICADA a un cliente concreto — copia independiente de la
 // CheckinTemplateDefinition en el momento de aplicar, nunca una referencia
@@ -23,6 +24,11 @@ const TrainerCheckinTemplateSchema = new Schema({
   // Informativo únicamente ("aplicado desde: Pro") — nunca se lee para
   // resolver el contenido real, ver modelos-de-datos/03-trainercheckintemplate.md.
   sourceTemplateId: { type: Schema.Types.ObjectId, ref: "CheckinTemplateDefinition", default: null },
+  // Fase 5 Coach Pro — copia profunda de las preguntas propias de la
+  // definición, igual que enabledFields/cadence: editar la plantilla maestra
+  // NO debe alterar el check-in que un cliente ya tiene aplicado (ver
+  // modelos-de-datos/03-trainercheckintemplate.md, principio de copia).
+  customQuestions: { type: [CustomCheckinQuestionSchema], default: () => [] },
   updatedAt: { type: Date, default: Date.now },
   // TASK-025 (MASTER_BACKLOG.md) — última vez que se envió un recordatorio
   // por este cadence. Evita reenviar el mismo día si el cron corre más de

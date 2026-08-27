@@ -1,9 +1,35 @@
 const checkinDao = require("./checkin-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
-const notificationDao = require("../notifications/notification-dao");
+const notificationDao = require("../notifications/notification-dao");
+const { cadenceDays } = require("./checkin-due");
 const userSchema = require("../users/schema");
-const { CHECKIN_FIELDS_BY_KEY, CHECKIN_FIELD_KEYS } = require("./checkin-field-catalog");
+const {
+  CHECKIN_FIELDS_BY_KEY,
+  CHECKIN_FIELD_KEYS,
+  scaleLevelsFor,
+  isPlausibleValue,
+} = require("./checkin-field-catalog");
+const {
+  isCustomKey,
+  questionIdFromKey,
+  validateCustomAnswer,
+  normalizeCustomAnswer,
+  validateQuestionDefinition,
+} = require("./checkin-custom-question");
+
+// Fase 5 Coach Pro — comprueba la forma de TODAS las preguntas propias antes
+// de guardar la plantilla. Devuelve el primer error o null.
+function validateCustomQuestions(questions) {
+  if (questions === undefined) return null;
+  if (!Array.isArray(questions)) return "customQuestions debe ser una lista";
+  if (questions.length > 20) return "Una plantilla admite como mucho 20 preguntas propias";
+  for (const question of questions) {
+    const error = validateQuestionDefinition(question);
+    if (error) return error;
+  }
+  return null;
+}
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -24,19 +50,23 @@ module.exports = {
   },
 
   async createDefinition(req, res) {
-    const { name, enabledFields, cadence } = req.body || {};
+    const { name, enabledFields, cadence, customQuestions } = req.body || {};
     if (!name || !name.trim()) {
       return res.status(400).send({ message: "name es obligatorio" });
     }
     if (!validEnabledFields(enabledFields || [])) {
       return res.status(400).send({ message: "enabledFields contiene una clave no reconocida en el catálogo" });
     }
+    const questionError = validateCustomQuestions(customQuestions);
+    if (questionError) return res.status(400).send({ message: questionError });
+
     try {
       const definition = await checkinDao.createDefinition(
         req.auth.userId,
         name.trim(),
         enabledFields || [],
-        cadence || "weekly"
+        cadence || "weekly",
+        customQuestions || []
       );
       return res.status(201).send(definition);
     } catch (e) {
@@ -48,14 +78,18 @@ module.exports = {
   },
 
   async updateDefinition(req, res) {
-    const { name, enabledFields, cadence } = req.body || {};
+    const { name, enabledFields, cadence, customQuestions } = req.body || {};
     if (enabledFields && !validEnabledFields(enabledFields)) {
       return res.status(400).send({ message: "enabledFields contiene una clave no reconocida en el catálogo" });
     }
+    const questionError = validateCustomQuestions(customQuestions);
+    if (questionError) return res.status(400).send({ message: questionError });
+
     const updates = {};
     if (name !== undefined) updates.name = name.trim();
     if (enabledFields !== undefined) updates.enabledFields = enabledFields;
     if (cadence !== undefined) updates.cadence = cadence;
+    if (customQuestions !== undefined) updates.customQuestions = customQuestions;
 
     try {
       const definition = await checkinDao.updateDefinition(req.auth.userId, req.params.id, updates);
@@ -123,11 +157,36 @@ module.exports = {
   // name/lastname/email — se aplana a `client` para que el frontend no
   // tenga que distinguir entre el campo crudo y el objeto poblado.
   async getMyCheckinResponses(req, res) {
-    const responses = await checkinDao.listResponsesForTrainer(req.auth.userId);
+    const [responses, configs] = await Promise.all([
+      checkinDao.listResponsesForTrainer(req.auth.userId),
+      // Una sola consulta para TODAS las plantillas del trainer: sin esto
+      // las respuestas a preguntas propias se listaban con su clave cruda
+      // ("custom:6a9033db…") en vez del enunciado, porque el enunciado no
+      // está en el catálogo — vive en la plantilla aplicada a ese cliente.
+      checkinDao.getAppliedConfigsForTrainer(req.auth.userId),
+    ]);
+
+    const preguntasPorCliente = new Map();
+    for (const config of configs) {
+      const clientKey = String(config.clientId?._id || config.clientId);
+      const previas = preguntasPorCliente.get(clientKey) || [];
+      preguntasPorCliente.set(clientKey, [...previas, ...(config.customQuestions || [])]);
+    }
+
     return res.send(
       responses.map(({ clientId, ...rest }) => ({
         ...rest,
         client: clientId && typeof clientId === "object" ? clientId : null,
+        // Solo lo que hace falta para pintar la respuesta.
+        customQuestions: (preguntasPorCliente.get(String(clientId?._id || clientId)) || []).map(
+          (question) => ({
+            _id: question._id,
+            label: question.label,
+            type: question.type,
+            unit: question.unit || "",
+            options: question.options || [],
+          })
+        ),
       }))
     );
   },
@@ -211,10 +270,47 @@ module.exports = {
     const config = await checkinDao.getAppliedConfig(trainerId, clientId);
     const enabledFields = new Set(config?.enabledFields || []);
 
+    // Fase 5 — preguntas propias activas de ESTE cliente (las de su copia
+    // aplicada, no las de la plantilla maestra, que puede haber cambiado
+    // desde entonces).
+    const customQuestions = new Map(
+      (config?.customQuestions || [])
+        .filter((q) => q.enabled)
+        .map((q) => [String(q._id), q])
+    );
+
     const values = req.body?.values || {};
     const submittedKeys = Object.keys(values);
 
+    // Las obligatorias se comprueban ANTES que nada: si falta una, el
+    // check-in entero se rechaza sin guardar la mitad de las respuestas.
+    for (const [questionId, question] of customQuestions) {
+      if (!question.required) continue;
+      const key = `custom:${questionId}`;
+      const value = values[key];
+      if (value === null || value === undefined || value === "") {
+        return res.status(400).send({
+          message: `"${question.label}" es obligatoria`,
+          code: "CHECKIN_REQUIRED_MISSING",
+        });
+      }
+    }
+
     for (const key of submittedKeys) {
+      if (isCustomKey(key)) {
+        const question = customQuestions.get(questionIdFromKey(key));
+        if (!question) {
+          return res.status(400).send({
+            message: "Esa pregunta ya no está activa en este check-in",
+            code: "CHECKIN_FIELD_NOT_ACTIVE",
+          });
+        }
+        const error = validateCustomAnswer(question, values[key]);
+        if (error) return res.status(400).send({ message: error });
+        values[key] = normalizeCustomAnswer(question, values[key]);
+        continue;
+      }
+
       if (!enabledFields.has(key)) {
         return res.status(400).send({
           message: `El campo "${key}" no está activo para este check-in`,
@@ -223,11 +319,29 @@ module.exports = {
       }
       const fieldDef = CHECKIN_FIELDS_BY_KEY.get(key);
       const value = values[key];
-      if (fieldDef.type === "scale_1_5" && (value < 1 || value > 5)) {
-        return res.status(400).send({ message: `"${key}" debe estar entre 1 y 5` });
+      // El máximo sale de las anclas del campo, no de un 5 fijo: el color de
+      // orina tiene 8 niveles y el resto 5, sin que ninguno necesite un tipo
+      // propio. Ver checkin-field-catalog.js#scaleLevelsFor.
+      if (fieldDef.type === "scale_1_5") {
+        const levels = scaleLevelsFor(fieldDef);
+        if (value < 1 || value > levels) {
+          return res.status(400).send({ message: `"${key}" debe estar entre 1 y ${levels}` });
+        }
       }
-      if (fieldDef.type === "number" && value < 0) {
-        return res.status(400).send({ message: `"${key}" no puede ser negativo` });
+      // Cotas de plausibilidad: un ombligo de 44 cm no es una medida, es un
+      // dedo que ha resbalado. Se rechaza AQUÍ, al teclearlo, que es el único
+      // momento en que alguien puede corregirlo. Ver el comentario de min/max
+      // en checkin-field-catalog.js para el fallo real que originó esto.
+      if (fieldDef.type === "number" && !isPlausibleValue(fieldDef, value)) {
+        const unit = fieldDef.unit ? ` ${fieldDef.unit}` : "";
+        const range =
+          fieldDef.min !== undefined && fieldDef.max !== undefined
+            ? ` Debe estar entre ${fieldDef.min}${unit} y ${fieldDef.max}${unit}.`
+            : "";
+        return res.status(400).send({
+          message: `"${fieldDef.label}" no parece una medida real.${range}`,
+          code: "CHECKIN_VALUE_IMPLAUSIBLE",
+        });
       }
       if (fieldDef.type === "text") {
         if (typeof value !== "string" || !value.trim()) {
@@ -242,6 +356,9 @@ module.exports = {
 
     const anthropometryFields = {};
     for (const key of submittedKeys) {
+      // Una pregunta propia nunca escribe en Anthropometry: no tiene
+      // semántica conocida (ver checkin-custom-question.js).
+      if (isCustomKey(key)) continue;
       const fieldDef = CHECKIN_FIELDS_BY_KEY.get(key);
       if (fieldDef.storage === "anthropometry") {
         anthropometryFields[fieldDef.anthropometryField] = values[key];
@@ -267,12 +384,38 @@ module.exports = {
     // renderizar el frontend del trainer (checkinFieldLabel/Unit), así que
     // los campos de composición se ven ahí con su etiqueta y unidad
     // correctas sin tocar el frontend.
+    // UN check-in por ciclo. Antes cada envío creaba un CheckinResponse
+    // nuevo sin mirar si ya había uno esa semana, así que un cliente podía
+    // acumular siete respuestas donde la cadencia pedía una — de ahí el
+    // "7 de 4" de la ficha. Si ya respondió su ciclo, el envío no crea otra:
+    // reescribe la suya, para que pueda corregirse sin perder el registro.
+    //
+    // `respondedAt` no se toca al reescribir: moverlo cambiaría el ciclo al
+    // que pertenece la respuesta y falsearía la adherencia.
     let responseDoc = null;
+    let updated = false;
     if (submittedKeys.length) {
-      responseDoc = await checkinDao.createResponse(trainerId, clientId, values);
+      const existente =
+        config?.cadence === "once"
+          ? null
+          : await checkinDao.findResponseInCurrentCycle(
+              trainerId,
+              clientId,
+              cadenceDays(config?.cadence),
+              new Date()
+            );
+
+      if (existente) {
+        responseDoc = await checkinDao.updateResponseValues(existente._id, values);
+        updated = true;
+      } else {
+        responseDoc = await checkinDao.createResponse(trainerId, clientId, values);
+      }
       await notificationDao.createForTrainer(trainerId, clientId, "checkin_responded", {});
     }
 
-    return res.status(201).send({ anthropometry: anthropometryDoc, response: responseDoc });
+    return res
+      .status(updated ? 200 : 201)
+      .send({ anthropometry: anthropometryDoc, response: responseDoc, updated });
   },
 };

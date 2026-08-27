@@ -1,6 +1,7 @@
 const TrainerCheckinTemplate = require("./trainer-checkin-template-schema");
 const CheckinResponse = require("./checkin-response-schema");
 const { sendMailSES } = require("../util/mail");
+const { CHECKIN_CADENCE_DAYS } = require("./checkin-due");
 
 // TASK-025 (MASTER_BACKLOG.md) — antes `cadence` ("weekly"/"biweekly") era
 // puramente decorativo: se guardaba al aplicar una plantilla de check-in a
@@ -9,7 +10,12 @@ const { sendMailSES } = require("../util/mail");
 // aplicada, si el cliente "toca" (han pasado suficientes días desde su
 // última respuesta, o desde que se le aplicó la plantilla si nunca
 // respondió) y envía un recordatorio por email si es así.
-const CADENCE_DAYS = { weekly: 7, biweekly: 14 };
+//
+// Fase 1 Coach Pro — la tabla de cadencias vive ahora en checkin-due.js
+// (única fuente para este módulo, el dashboard del cliente, el de "requiere
+// tu atención" del trainer y el evaluador de alertas). Se mantiene el alias
+// local y su export para no tocar la firma pública de este servicio.
+const CADENCE_DAYS = CHECKIN_CADENCE_DAYS;
 
 function addDays(date, days) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
