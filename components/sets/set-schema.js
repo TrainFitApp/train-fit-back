@@ -34,6 +34,23 @@ const SetSchema = Schema(
     expectedDistance: { type: Number, min: 0, max: 100000 },
     distance: { type: Number, min: 0, max: 100000 },
     velocity: { type: Number, min: 0, max: 50 },
+    // Movimiento 6 Coach Pro — prescripción por porcentaje del 1RM.
+    //
+    // Convive con `weight`, no lo sustituye: hay entrenadores que pautan
+    // "80 kg" y otros que pautan "80% del RM", y el segundo necesita que el
+    // número se guarde como porcentaje para que siga significando lo mismo
+    // cuando el RM del cliente suba. Ausente = ese entrenador pauta en kilos.
+    //
+    // Hasta 120: un pautaje excéntrico o isométrico por encima del 100% del
+    // RM concéntrico es real, y topar en 100 lo haría imposible de escribir.
+    expectedPercentRm: { type: Number, min: 0, max: 120 },
+    // Tempo de ejecución, formato "E-P1-C-P2" (excéntrica, pausa abajo,
+    // concéntrica, pausa arriba) en segundos: "3-1-1-0". Texto y no cuatro
+    // números porque así es como se escribe y como se lee en cualquier
+    // programa; partirlo en campos obligaría a recomponerlo en cada pantalla.
+    // "X" en la concéntrica (explosiva) es notación estándar y por eso no se
+    // valida como numérico.
+    tempo: { type: String, trim: true, maxlength: 15 },
   },
   { versionKey: false },
 );
