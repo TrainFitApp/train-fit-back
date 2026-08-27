@@ -5,10 +5,37 @@ const planAssignmentService = require("../planAssignments/plan-assignment-servic
 const planResolver = require("../planAssignments/plan-resolver");
 const DietTemplate = require("../dietTemplates/diet-template-schema");
 const userSchema = require("../users/schema");
+const dietDaysDao = require("./diet-days-dao");
+const { buildShoppingList } = require("./shopping-list-service");
+const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const controller = {
+  // GET /diet-days/shopping-list?from=&to= — Movimiento 5 Coach Pro.
+  //
+  // La lista del PROPIO cliente: qué tiene que comprar para cumplir su plan
+  // en ese rango. Sin :userId en la ruta — el usuario del token es el dueño
+  // de la dieta, y aceptar un id sería abrir la puerta a leer el plan de
+  // otro (mismo criterio que /pain/mine y /supplements/mine).
+  //
+  // Comparte servicio con la versión del entrenador
+  // (trainer-client-data-controller#getClientShoppingList): la lista es la
+  // misma, solo cambia de quién.
+  async getMyShoppingList(req, res) {
+    const user = await userSchema.findById(req.user.id).select("dietInUse").lean();
+    if (!user?.dietInUse) {
+      return res.send({ items: [], daysWithPlan: 0, period: null });
+    }
+
+    const from = req.query.from || todayIsoDate();
+    // Una semana por defecto: es como se hace la compra.
+    const to = req.query.to || addDaysToIsoDate(from, 6);
+
+    const days = await dietDaysDao.getFullyPopulatedDietDaysForDiet(user.dietInUse, from, to);
+    return res.send({ ...buildShoppingList(days), period: { from, to } });
+  },
+
   async getDietDays(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 10).toString(), 10);

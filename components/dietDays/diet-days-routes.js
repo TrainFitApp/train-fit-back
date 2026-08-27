@@ -5,6 +5,15 @@ const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
+// Movimiento 5 Coach Pro — la lista de la compra del PROPIO cliente. Va
+// antes que "/" para que el router no la trate como un id (mismo criterio
+// que el resto del proyecto: lo más específico primero).
+//
+// El cliente es quien va al supermercado, así que la ruta existe en los dos
+// lados. La lógica está en un servicio puro compartido
+// (shopping-list-service.js), no duplicada en cada controller.
+router.getAsync("/shopping-list", auth(["admin", "user"]), controller.getMyShoppingList);
+
 router.getAsync("/", auth(["admin", "user"]), controller.getDietDays);
 router.postAsync(
   "/between/:id",

@@ -224,6 +224,38 @@ function computeDayTracking(meals) {
   );
 }
 
+// Fase 1 Coach Pro — adherencia nutricional de un RANGO, no de un día.
+// Vive aquí (junto a computeDayCompletion, del que se alimenta) y no en un
+// módulo nuevo porque es exactamente la misma aritmética una capa más
+// arriba.
+//
+// Dos números, nunca uno solo:
+//   - `percentage`: media de cumplimiento sobre los días QUE TIENEN PLAN.
+//     Responde "cuando tiene algo que hacer, ¿lo hace?".
+//   - `coverage`: qué parte del rango tenía plan.
+//     Responde "¿de cuántos días estamos hablando?".
+// Un único porcentaje que mezcle ambos oculta el problema real —
+// exactamente lo que hay que evitar según la especificación de adherencia:
+// un cliente perfecto con plan de 10 días dentro de un rango de 30 no es un
+// cliente al 33%.
+function computeRangeAdherence(days, periodDays) {
+  const perDay = (days || [])
+    .map((day) => computeDayCompletion(day.meals))
+    .filter((result) => result.hasPlan);
+
+  const daysWithData = perDay.length;
+  const totalDays = periodDays || daysWithData;
+
+  return {
+    percentage: daysWithData
+      ? Math.round(perDay.reduce((acc, d) => acc + d.completionPercentage, 0) / daysWithData)
+      : null,
+    daysWithData,
+    periodDays: totalDays,
+    coveragePercentage: totalDays ? Math.round((daysWithData / totalDays) * 100) : 0,
+  };
+}
+
 module.exports = {
   mergeRecipeIngredients,
   kcalForCustomRecipe,
@@ -232,4 +264,5 @@ module.exports = {
   countMealItems,
   computeDayCompletion,
   computeDayTracking,
+  computeRangeAdherence,
 };

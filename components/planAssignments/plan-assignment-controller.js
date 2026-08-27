@@ -3,6 +3,7 @@ const dietTemplateDao = require("../dietTemplates/diet-template-dao");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysService = require("../dietDays/diet-days-service");
 const userSchema = require("../users/schema");
+const planChangeService = require("../planChanges/plan-change-service");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -36,15 +37,42 @@ module.exports = {
     const plan = await dietTemplateDao.findOwnedByTrainer(trainerId, planId);
     if (!plan) return res.status(404).send({ message: "Plan no encontrado" });
 
-    const assignment = await planAssignmentService.applyPlan({
+    // Fase 4 Coach Pro — la asignación que regía antes, leída ANTES de
+    // aplicar: applyPlan la marca "superseded" por dentro, así que después
+    // ya no se distingue de cualquier otra del histórico.
+    const previousAssignment = await planAssignmentService.getActiveForClient(clientId);
+
+    let assignment;
+    try {
+      assignment = await planAssignmentService.applyPlan({
+        trainerId,
+        clientId,
+        planId,
+        startDate,
+        endMode,
+        fixedEndDate,
+        durationValue,
+        durationUnit,
+      });
+    } catch (error) {
+      // 409 y no 400: la petición está bien formada, lo que falla es el
+      // estado actual del cliente. El frontend necesita distinguirlo para
+      // señalar las fechas en vez de dar un error genérico de formulario.
+      if (error.code === "PLAN_OVERLAP") {
+        return res
+          .status(409)
+          .send({ message: error.message, code: error.code, conflict: error.conflict });
+      }
+      throw error;
+    }
+
+    await planChangeService.recordPlanAssignment({
       trainerId,
       clientId,
-      planId,
-      startDate,
-      endMode,
-      fixedEndDate,
-      durationValue,
-      durationUnit,
+      previousAssignment,
+      newAssignment: assignment,
+      planName: plan.name,
+      reason: req.body?.reason,
     });
 
     return res.status(201).send(assignment);

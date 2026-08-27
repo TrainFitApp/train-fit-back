@@ -18,6 +18,28 @@ module.exports = {
     }).sort({ startDate: -1 });
   },
 
+  /**
+   * Asignaciones cuyo rango se cruza con [startDate, endDate].
+   *
+   * `endDate: null` significa "indefinido", o sea que llega hasta el
+   * infinito: hay que tratarlo como tal en los dos lados de la comparación,
+   * porque una fase abierta solapa con todo lo que venga después.
+   *
+   * Dos rangos se cruzan si cada uno empieza antes de que el otro acabe.
+   */
+  async findOverlapping(clientId, startDate, endDate, { excludeId } = {}) {
+    const query = {
+      clientId,
+      status: { $ne: "ended" },
+      // La existente empieza antes de que acabe la nueva.
+      ...(endDate ? { startDate: { $lte: endDate } } : {}),
+      // Y acaba después de que empiece la nueva (o no acaba nunca).
+      $or: [{ endDate: null }, { endDate: { $gte: startDate } }],
+    };
+    if (excludeId) query._id = { $ne: excludeId };
+    return PlanAssignment.find(query).sort({ startDate: 1 });
+  },
+
   // La asignación "activa" tal cual la entiende el entrenador ahora mismo —
   // a lo sumo una por cliente, mantenida por supersede().
   async findActiveForClient(clientId) {

@@ -2,11 +2,11 @@ const DietTemplate = require("../dietTemplates/diet-template-schema");
 const planAssignmentService = require("./plan-assignment-service");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 
-function daysBetweenIsoDates(fromIso, toIso) {
-  const from = new Date(`${fromIso}T00:00:00.000Z`);
-  const to = new Date(`${toIso}T00:00:00.000Z`);
-  return Math.round((to.getTime() - from.getTime()) / 86400000);
-}
+// Fase 7 Coach Pro — antes se llamaba daysBetweenIsoDates, igual que una
+// función de trainer-client-data-controller.js que devolvía un día MÁS
+// (contaba ambos extremos). Aquí lo que hace falta son días transcurridos
+// —el día 0 de un plan es su fecha de inicio—, y ahora el nombre lo dice.
+const { daysElapsed } = require("../util/date-util");
 
 // getDay(): 0=domingo … 6=sábado, mismo criterio que DayPattern.appliesTo.
 function weekdayOf(isoDate) {
@@ -63,7 +63,7 @@ async function resolvePlanForDate(clientId, date, { chosenPatternName } = {}) {
     // (plantilla en borrador, sin validación mínima en el controller) sigue
     // sin resolución, igual que antes — % por longitud 0 rompería.
     const daysCount = (plan.days || []).length;
-    const day = daysCount ? plan.days[daysBetweenIsoDates(assignment.startDate, date) % daysCount] : null;
+    const day = daysCount ? plan.days[daysElapsed(assignment.startDate, date) % daysCount] : null;
     if (day) mealsForDay = day.meals;
   }
 
