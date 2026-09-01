@@ -3,7 +3,6 @@ const dietDayModel = require("./diet-days-service");
 const { resolveOwnedDietDay, applyResolvedPlanToDietDay } = require("./diet-day-resolver");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const planResolver = require("../planAssignments/plan-resolver");
-const DietTemplate = require("../dietTemplates/diet-template-schema");
 const userSchema = require("../users/schema");
 const dietDaysDao = require("./diet-days-dao");
 const { buildShoppingList } = require("./shopping-list-service");
@@ -192,10 +191,7 @@ const controller = {
       return res.status(400).send({ message: "Fecha inválida (YYYY-MM-DD)" });
     }
 
-    const assignment = await planAssignmentService.findCoveringDate(userId, date);
-    if (!assignment) return res.send({ needsChoice: false, selected: null, options: [] });
-
-    const plan = await DietTemplate.findById(assignment.planId).select("mode dayPatterns").lean();
+    const plan = await planAssignmentService.findCoveringDate(userId, date);
     if (!plan || plan.mode !== "choice") {
       return res.send({ needsChoice: false, selected: null, options: [] });
     }
@@ -221,12 +217,11 @@ const controller = {
       return res.status(400).send({ message: "patternName es obligatorio" });
     }
 
-    const assignment = await planAssignmentService.findCoveringDate(userId, date);
-    if (!assignment) {
+    const plan = await planAssignmentService.findCoveringDate(userId, date);
+    if (!plan) {
       return res.status(400).send({ message: "No hay ningún plan activo para esta fecha" });
     }
-    const plan = await DietTemplate.findById(assignment.planId);
-    if (!plan || plan.mode !== "choice" || !(plan.dayPatterns || []).some((p) => p.name === patternName)) {
+    if (plan.mode !== "choice" || !(plan.dayPatterns || []).some((p) => p.name === patternName)) {
       return res.status(400).send({ message: "Ese tipo de día no existe en el plan activo" });
     }
 

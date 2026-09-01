@@ -10,14 +10,15 @@ const LOG_PREFIX = "[verify-user-cascade-full]";
 const log = (...args) => console.log(LOG_PREFIX, ...args);
 const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 
-// Confirma la cascada completa añadida hoy a users/schema.js: crea contenido
-// en las 13 colecciones que antes quedaban huérfanas (TrainerClient,
+// Confirma la cascada completa de users/schema.js: crea contenido en las
+// colecciones que dependen del trainer o del cliente (TrainerClient,
 // TrainerNote, TrainerPayment, TrainerTask+TaskCompletion, ClientIntake,
 // TrainerIntakeConfig, CheckinResponse, TrainerCheckinTemplate,
-// CheckinTemplateDefinition, PlanAssignment+DietException, Notification,
-// Recipe, BillingCustomer, BillingEvent), borra al TRAINER, y confirma que
-// todo desaparece — incluido lo que dependía del CLIENTE en la relación
-// (para probar el lado $or), y que borrar al cliente después limpia el resto.
+// CheckinTemplateDefinition, DietTemplate(copia)+DietException,
+// Notification, Recipe, BillingCustomer, BillingEvent), borra al TRAINER, y
+// confirma que todo desaparece — incluido lo que dependía del CLIENTE en la
+// relación (para probar el lado $or), y que borrar al cliente después limpia
+// el resto.
 async function main() {
   const mongoUri = buildMongoUri();
   log(`connecting ${redactMongoUri(mongoUri)}`);
@@ -35,7 +36,7 @@ async function main() {
   const checkinResponseSchema = require("../components/trainerCheckins/checkin-response-schema");
   const trainerCheckinTemplateSchema = require("../components/trainerCheckins/trainer-checkin-template-schema");
   const checkinTemplateDefinitionSchema = require("../components/trainerCheckins/checkin-template-definition-schema");
-  const planAssignmentSchema = require("../components/planAssignments/plan-assignment-schema");
+  const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
   const dietExceptionSchema = require("../components/dietExceptions/diet-exception-schema");
   const notificationSchema = require("../components/notifications/notification-schema");
   const recipeSchema = require("../components/recipes/recipe-schema");
@@ -69,12 +70,12 @@ async function main() {
     docs.checkinTemplateApplied = await trainerCheckinTemplateSchema.create({
       trainerId: trainer._id, clientId: client._id, enabledFields: [],
     });
-    docs.planAssignment = await planAssignmentSchema.create({
-      planId: new mongoose.Types.ObjectId(), clientId: client._id, trainerId: trainer._id,
-      startDate: "2026-01-01", endMode: "indefinite",
+    docs.dietTemplateCopy = await dietTemplateSchema.create({
+      trainerId: trainer._id, clientId: client._id, name: "Copia verificación",
+      startDate: "2026-01-01", endMode: "indefinite", status: "active",
     });
     docs.dietException = await dietExceptionSchema.create({
-      assignmentId: docs.planAssignment._id, clientId: client._id, date: "2026-01-05", action: "skip",
+      assignmentId: docs.dietTemplateCopy._id, clientId: client._id, date: "2026-01-05", action: "skip",
     });
     docs.notification = await notificationSchema.create({
       trainerId: trainer._id, clientId: client._id, type: "payment_created",
@@ -104,7 +105,7 @@ async function main() {
       ["CheckinResponse", checkinResponseSchema, docs.checkinResponse._id],
       ["CheckinTemplateDefinition", checkinTemplateDefinitionSchema, docs.checkinTemplateDef._id],
       ["TrainerCheckinTemplate", trainerCheckinTemplateSchema, docs.checkinTemplateApplied._id],
-      ["PlanAssignment", planAssignmentSchema, docs.planAssignment._id],
+      ["DietTemplate (copia)", dietTemplateSchema, docs.dietTemplateCopy._id],
       ["DietException", dietExceptionSchema, docs.dietException._id],
       ["Notification", notificationSchema, docs.notification._id],
       ["Recipe", recipeSchema, docs.recipe._id],

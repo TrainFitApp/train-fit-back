@@ -29,7 +29,6 @@ const trainerIntakeConfigSchema = require("../trainerIntakeConfig/trainer-intake
 const checkinResponseSchema = require("../trainerCheckins/checkin-response-schema");
 const trainerCheckinTemplateSchema = require("../trainerCheckins/trainer-checkin-template-schema");
 const checkinTemplateDefinitionSchema = require("../trainerCheckins/checkin-template-definition-schema");
-const planAssignmentSchema = require("../planAssignments/plan-assignment-schema");
 const notificationSchema = require("../notifications/notification-schema");
 const recipeSchema = require("../recipes/recipe-schema");
 const billingCustomerSchema = require("../billing/billing-customer-schema");
@@ -187,10 +186,10 @@ UserSchema.pre("deleteOne", async function (next) {
       // referencie) — el hook pre('deleteMany') de meal-schema.js ya
       // cascada el borrado de sus CustomProduct/CustomRecipe.
       await mealSchema.deleteMany({ trainerId: user._id });
-      // Plantillas de dieta del trainer — hueco preexistente (nunca se
-      // limpiaban al borrar la cuenta). El hook pre('deleteMany') de
-      // diet-template-schema.js ya cascada el borrado de sus
-      // CustomProduct/CustomRecipe.
+      // Plantillas de dieta del trainer, y copias congeladas de asignaciones
+      // que él creó (mismo documento — ver diet-template-schema.js). El hook
+      // pre('deleteMany') de ese schema ya cascada CustomProduct/CustomRecipe
+      // y, para las copias, sus DietException.
       await dietTemplateSchema.deleteMany({ trainerId: user._id });
 
       // El usuario puede ser el trainer O el cliente de cada una de estas
@@ -221,11 +220,9 @@ UserSchema.pre("deleteOne", async function (next) {
       await notificationSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
-      // deleteMany (no deleteOne) dispara el hook en cascada de
-      // plan-assignment-schema.js que borra las DietException de cada plan.
-      await planAssignmentSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
+      // Copias congeladas asignadas a este usuario COMO CLIENTE (el lado
+      // trainerId ya se cubrió arriba, junto con sus plantillas reales).
+      await dietTemplateSchema.deleteMany({ clientId: user._id });
 
       // Config/biblioteca solo del lado trainer (sin clientId).
       await trainerIntakeConfigSchema.deleteMany({ trainerId: user._id });

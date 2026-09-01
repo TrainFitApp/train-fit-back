@@ -25,13 +25,11 @@ async function main() {
   const userSchema = require("../components/users/schema");
   const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
   const dietTemplateDao = require("../components/dietTemplates/diet-template-dao");
-  const planAssignmentDao = require("../components/planAssignments/plan-assignment-dao");
   const dietDayResolver = require("../components/dietDays/diet-day-resolver");
   const dietSchema = require("../components/diets/diet-schema");
   const dietDaySchema = require("../components/dietDays/diet-days-schema");
   const mealSchema = require("../components/meals/meal-schema");
   const customProductSchema = require("../components/customProducts/custom-product-schema");
-  const planAssignmentSchema = require("../components/planAssignments/plan-assignment-schema");
 
   const runId = new mongoose.Types.ObjectId().toString();
   const DATE = "2026-08-11";
@@ -95,15 +93,15 @@ async function main() {
       "sequential",
       []
     );
-    created.assignment = await planAssignmentDao.create({
-      planId: created.template._id,
-      clientId: created.client._id,
-      trainerId: created.trainer._id,
+    // La copia ES la asignación (ver diet-template-schema.js) — se congela
+    // igual que hace plan-assignment-service.js#applyPlan.
+    created.assignment = await dietTemplateDao.cloneForAssignment(created.template, created.client._id, {
       startDate: DATE,
       endMode: "indefinite",
       endDate: null,
+      status: "active",
     });
-    ok("plantilla + PlanAssignment creados, empieza justo en la fecha del día ya vacío");
+    ok("plantilla + copia-asignación creadas, empieza justo en la fecha del día ya vacío");
 
     // 3. Antes del fix: volver a leer el mismo día devolvía el mismo día
     //    vacío de siempre — el plan nunca se aplicaba retroactivamente.
@@ -153,7 +151,7 @@ async function main() {
         await dietSchema.deleteOne({ _id: clientDoc.dietInUse });
       }
     }
-    if (created.assignment) await planAssignmentSchema.deleteOne({ _id: created.assignment._id });
+    if (created.assignment) await dietTemplateSchema.deleteOne({ _id: created.assignment._id });
     if (created.template) await dietTemplateSchema.deleteOne({ _id: created.template._id });
     if (created.client) await userSchema.deleteOne({ _id: created.client._id });
     if (created.trainer) await userSchema.deleteOne({ _id: created.trainer._id });

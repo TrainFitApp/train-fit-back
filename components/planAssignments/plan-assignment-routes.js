@@ -11,6 +11,12 @@ router.postAsync(
   requireActiveClient("nutrition"),
   controller.applyPlan
 );
+router.postAsync(
+  "/trainer/clients/:clientId/nutrition-plans",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.createDirect
+);
 router.getAsync(
   "/trainer/clients/:clientId/nutrition-plans/active",
   auth(["trainer"]),

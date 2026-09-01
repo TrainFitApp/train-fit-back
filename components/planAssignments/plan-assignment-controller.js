@@ -1,5 +1,10 @@
 const planAssignmentService = require("./plan-assignment-service");
 const dietTemplateDao = require("../dietTemplates/diet-template-dao");
+const {
+  sanitizeDays,
+  sanitizeMode,
+  sanitizeDayPatterns,
+} = require("../dietTemplates/diet-template-controller");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysService = require("../dietDays/diet-days-service");
 const userSchema = require("../users/schema");
@@ -11,28 +16,54 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Compartida por applyPlan y createDirect — mismos campos de fecha/duración
+// en los dos, solo cambia de dónde sale el contenido de la dieta.
+function validateScheduleFields({ startDate, endMode, fixedEndDate, durationValue }) {
+  if (!ISO_DATE.test(startDate || "")) return "startDate inválida (YYYY-MM-DD)";
+  if (!["fixedDate", "duration", "indefinite"].includes(endMode)) {
+    return "endMode debe ser fixedDate, duration o indefinite";
+  }
+  if (endMode === "fixedDate" && !ISO_DATE.test(fixedEndDate || "")) return "fixedEndDate inválida (YYYY-MM-DD)";
+  if (endMode === "duration" && !(Number(durationValue) > 0)) return "durationValue debe ser mayor que 0";
+  return null;
+}
+
+// La copia congelada de DietTemplate ES la asignación (ver
+// diet-template-schema.js), así que trae days/dayPatterns con todo su
+// contenido de comidas — nadie en el frontend necesita eso para pintar "qué
+// plan tiene este cliente y desde cuándo", solo lo engordaría. Esta
+// proyección es la única que sale por la red, usada por los 3 endpoints que
+// devuelven una asignación.
+function toAssignmentResponse(doc, extra = {}) {
+  return {
+    _id: doc._id,
+    clientId: doc.clientId,
+    trainerId: doc.trainerId,
+    startDate: doc.startDate,
+    endMode: doc.endMode,
+    endDate: doc.endDate,
+    status: doc.status,
+    supersededBy: doc.supersededBy,
+    sourceTemplateId: doc.sourceTemplateId,
+    createdAt: doc.createdAt,
+    planName: doc.name,
+    mode: doc.mode,
+    ...extra,
+  };
+}
+
 module.exports = {
   // POST /trainer/clients/:clientId/nutrition-plans/:planId/apply
   // body: { startDate, endMode: "fixedDate"|"duration"|"indefinite", fixedEndDate?, durationValue?, durationUnit? }
-  // Crea UNA PlanAssignment — no recorre días. Si el cliente ya tenía una
-  // asignación activa, esta la sustituye (encadenado de fases).
+  // Crea UNA copia-asignación — no recorre días. Si el cliente ya tenía una
+  // activa, esta la sustituye (encadenado de fases).
   async applyPlan(req, res) {
     const trainerId = req.auth.userId;
     const { clientId, planId } = req.params;
     const { startDate, endMode, fixedEndDate, durationValue, durationUnit } = req.body || {};
 
-    if (!ISO_DATE.test(startDate || "")) {
-      return res.status(400).send({ message: "startDate inválida (YYYY-MM-DD)" });
-    }
-    if (!["fixedDate", "duration", "indefinite"].includes(endMode)) {
-      return res.status(400).send({ message: "endMode debe ser fixedDate, duration o indefinite" });
-    }
-    if (endMode === "fixedDate" && !ISO_DATE.test(fixedEndDate || "")) {
-      return res.status(400).send({ message: "fixedEndDate inválida (YYYY-MM-DD)" });
-    }
-    if (endMode === "duration" && !(Number(durationValue) > 0)) {
-      return res.status(400).send({ message: "durationValue debe ser mayor que 0" });
-    }
+    const scheduleError = validateScheduleFields(req.body || {});
+    if (scheduleError) return res.status(400).send({ message: scheduleError });
 
     const plan = await dietTemplateDao.findOwnedByTrainer(trainerId, planId);
     if (!plan) return res.status(404).send({ message: "Plan no encontrado" });
@@ -47,7 +78,7 @@ module.exports = {
       assignment = await planAssignmentService.applyPlan({
         trainerId,
         clientId,
-        planId,
+        template: plan,
         startDate,
         endMode,
         fixedEndDate,
@@ -75,23 +106,75 @@ module.exports = {
       reason: req.body?.reason,
     });
 
-    return res.status(201).send(assignment);
+    return res.status(201).send(toAssignmentResponse(assignment));
+  },
+
+  // POST /trainer/clients/:clientId/nutrition-plans
+  // body: { name, days, mode, dayPatterns, startDate, endMode, fixedEndDate?, durationValue?, durationUnit? }
+  // "Crear dieta" — igual que applyPlan pero sin plantilla de origen: el
+  // contenido lo construye el trainer aquí mismo, directo para este cliente.
+  async createDirect(req, res) {
+    const trainerId = req.auth.userId;
+    const { clientId } = req.params;
+    const { name, days, mode, dayPatterns, startDate, endMode, fixedEndDate, durationValue, durationUnit } =
+      req.body || {};
+
+    const trimmedName = (name || "").trim();
+    if (!trimmedName) return res.status(400).send({ message: "El nombre es obligatorio" });
+
+    const scheduleError = validateScheduleFields(req.body || {});
+    if (scheduleError) return res.status(400).send({ message: scheduleError });
+
+    const previousAssignment = await planAssignmentService.getActiveForClient(clientId);
+
+    let assignment;
+    try {
+      assignment = await planAssignmentService.createDirectPlan({
+        trainerId,
+        clientId,
+        name: trimmedName,
+        days: sanitizeDays(days),
+        mode: sanitizeMode(mode),
+        dayPatterns: sanitizeDayPatterns(dayPatterns),
+        startDate,
+        endMode,
+        fixedEndDate,
+        durationValue,
+        durationUnit,
+      });
+    } catch (error) {
+      if (error.code === "PLAN_OVERLAP") {
+        return res
+          .status(409)
+          .send({ message: error.message, code: error.code, conflict: error.conflict });
+      }
+      throw error;
+    }
+
+    await planChangeService.recordPlanAssignment({
+      trainerId,
+      clientId,
+      previousAssignment,
+      newAssignment: assignment,
+      planName: assignment.name,
+      reason: req.body?.reason,
+    });
+
+    return res.status(201).send(toAssignmentResponse(assignment));
   },
 
   // GET /trainer/clients/:clientId/nutrition-plans/active
-  // TASK-044 (MASTER_BACKLOG.md) — expone `mode` (ya existía en el plan,
-  // simplemente no viajaba) y, solo para planes "choice", `stuckDaysCount`:
-  // cuántos días desde que empezó a regir esta asignación el cliente nunca
-  // eligió menú (DietDay.dayTypeName sigue null). Antes de esto no había
-  // ninguna forma de que el trainer se enterase de un plan "choice" atascado.
+  // TASK-044 (MASTER_BACKLOG.md) — expone `mode` y, solo para planes
+  // "choice", `stuckDaysCount`: cuántos días desde que empezó a regir esta
+  // asignación el cliente nunca eligió menú (DietDay.dayTypeName sigue
+  // null). Antes de esto no había ninguna forma de que el trainer se
+  // enterase de un plan "choice" atascado.
   async getActive(req, res) {
     const assignment = await planAssignmentService.getActiveForClient(req.params.clientId);
     if (!assignment) return res.send(null);
 
-    const plan = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, assignment.planId);
-
     let stuckDaysCount = null;
-    if (plan?.mode === "choice") {
+    if (assignment.mode === "choice") {
       const client = await userSchema.findById(assignment.clientId).select("dietInUse");
       if (client?.dietInUse) {
         stuckDaysCount = await dietDaysService.countDaysWithoutChoice(
@@ -110,39 +193,22 @@ module.exports = {
     // solo "qué días tienen algo pautado" (ver TASK del 2026-08-24,
     // "si tiene varios patrones habría que indicarlos").
     const recurringPatterns =
-      plan?.mode === "recurring"
-        ? (plan.dayPatterns || [])
+      assignment.mode === "recurring"
+        ? (assignment.dayPatterns || [])
             .filter((p) => (p.appliesTo || []).length)
             .map((p) => ({ name: p.name, appliesTo: [...(p.appliesTo || [])].sort() }))
         : null;
 
-    return res.send({
-      ...assignment.toObject(),
-      planName: plan?.name || null,
-      mode: plan?.mode || null,
-      stuckDaysCount,
-      recurringPatterns,
-    });
+    return res.send(toAssignmentResponse(assignment, { stuckDaysCount, recurringPatterns }));
   },
 
   // GET /trainer/clients/:clientId/nutrition-plans/history
   // TASK-045 (MASTER_BACKLOG.md) — este endpoint ya existía completo pero
   // sin consumidor en el frontend (mismo patrón que TASK-020/historial de
-  // ejercicio). Se aprovecha para adjuntar planName por lote — antes cada
-  // asignación solo traía el planId crudo.
+  // ejercicio).
   async getHistory(req, res) {
     const assignments = await planAssignmentService.listForClient(req.params.clientId);
-    const planIds = [...new Set(assignments.map((a) => a.planId?.toString()).filter(Boolean))];
-    const plans = planIds.length
-      ? await dietTemplateDao.findManyByIds(req.auth.userId, planIds)
-      : [];
-    const planNameById = new Map(plans.map((p) => [p._id.toString(), p.name]));
-
-    const enriched = assignments.map((a) => ({
-      ...a.toObject(),
-      planName: planNameById.get(a.planId?.toString()) || null,
-    }));
-    return res.send(enriched);
+    return res.send(assignments.map((a) => toAssignmentResponse(a)));
   },
 
   // GET /trainer/clients/:clientId/diet-exceptions
