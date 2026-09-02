@@ -14,11 +14,32 @@ function sanitizeCustomAnswers(customAnswers) {
     }));
 }
 
+// Tarea 3 — el cliente envía lo que quiera en el body, igual que
+// sanitizeCustomAnswers: nunca se confía un array/valor tal cual, se filtra
+// contra el catálogo cerrado del propio modelo.
+function sanitizeTrainingLocation(value) {
+  return ClientIntake.TRAINING_LOCATIONS.includes(value) ? value : null;
+}
+
+function sanitizeEquipmentTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  const unique = new Set(tags.filter((t) => ClientIntake.EQUIPMENT_TAGS.includes(t)));
+  return [...unique];
+}
+
 module.exports = {
   async upsert(
     trainerId,
     clientId,
-    { goals, healthConditions, experienceLevel, availability, equipment, customAnswers }
+    {
+      goals,
+      healthConditions,
+      experienceLevel,
+      availability,
+      trainingLocation,
+      equipmentTags,
+      customAnswers,
+    }
   ) {
     return ClientIntake.findOneAndUpdate(
       { trainerId, clientId },
@@ -28,7 +49,8 @@ module.exports = {
           healthConditions: healthConditions || "",
           experienceLevel: experienceLevel || null,
           availability: availability || "",
-          equipment: equipment || "",
+          trainingLocation: sanitizeTrainingLocation(trainingLocation),
+          equipmentTags: sanitizeEquipmentTags(equipmentTags),
           customAnswers: sanitizeCustomAnswers(customAnswers),
           submittedAt: new Date(),
         },

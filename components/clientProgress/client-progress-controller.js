@@ -17,6 +17,7 @@ const {
   buildVolumeComparison,
   buildBlockTraining,
   buildBlockComparison,
+  buildBlockMuscleGroups,
 } = require("./training-service");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
@@ -35,6 +36,26 @@ const SUMMARY_WINDOW_DAYS = 28;
 // pedir 520 semanas y tumbar la agregación de entrenamiento.
 const ALLOWED_WEEKS = [4, 8, 12];
 const DEFAULT_WEEKS = 4;
+
+// Tarea 4 (2026-09) — comparación por microciclo en Entrenamiento: el
+// entrenador elige un rango libre en un calendario, no una de las 3
+// ventanas fijas de arriba. Mismo criterio de "no dejar pedir 520 semanas"
+// que ALLOWED_WEEKS, pero como límite de días en vez de lista cerrada,
+// porque un rango libre no tiene un conjunto finito de valores válidos.
+const MAX_CUSTOM_RANGE_DAYS = 366;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseCustomRange(query) {
+  const { from, to } = query;
+  if (!from || !to || !ISO_DATE_RE.test(from) || !ISO_DATE_RE.test(to)) return null;
+  if (from > to) return null;
+  const days =
+    Math.round(
+      (new Date(`${to}T00:00:00.000Z`).getTime() - new Date(`${from}T00:00:00.000Z`).getTime()) / 86400000
+    ) + 1;
+  if (days > MAX_CUSTOM_RANGE_DAYS) return null;
+  return { from, to };
+}
 
 function addDays(isoDay, days) {
   const date = new Date(`${isoDay}T00:00:00.000Z`);
@@ -238,21 +259,40 @@ module.exports = {
   },
 
   // GET /trainer/clients/:clientId/training-progress?weeks=4|8|12 — Fase 6.
+  //   ó ?from=YYYY-MM-DD&to=YYYY-MM-DD — Tarea 4 (2026-09).
   //
   // Endpoint aparte de /progress a propósito: su consulta devuelve una fila
   // POR SERIE COMPLETADA (miles en un trimestre) y es con diferencia la más
   // cara del módulo. Fundirla en /progress la haría pagar también a quien
   // solo mira el peso y la adherencia, que es el caso normal al abrir la
   // ficha.
+  //
+  // Dos modos, un único endpoint (mismo shape de fondo, distinto relleno):
+  //   - `weeks` (o ninguno) — ventana fija terminando HOY. Es lo que pide
+  //     Resumen, y necesita `weekly`/`loadEvolution`/`personalRecords` para
+  //     poder hablar de "esta semana" con sentido.
+  //   - `from`/`to` — rango libre elegido a mano en el calendario de
+  //     Entrenamiento (comparación por microciclo). Un rango libre no tiene
+  //     un "ahora" desde el que contar semanas hacia atrás, así que esos
+  //     campos no se calculan — solo lo agregado por microciclo, que no
+  //     depende de ninguna ventana semanal.
   async getTrainingProgress(req, res) {
     const clientId = req.params.clientId;
-
-    const requestedWeeks = Number(req.query.weeks);
-    const weeks = ALLOWED_WEEKS.includes(requestedWeeks) ? requestedWeeks : DEFAULT_WEEKS;
+    const customRange = parseCustomRange(req.query);
 
     const now = new Date();
-    const to = isoDate(now);
-    const from = addDays(to, -(weeks * 7 - 1));
+    let from, to, weeks;
+
+    if (customRange) {
+      from = customRange.from;
+      to = customRange.to;
+      weeks = null;
+    } else {
+      const requestedWeeks = Number(req.query.weeks);
+      weeks = ALLOWED_WEEKS.includes(requestedWeeks) ? requestedWeeks : DEFAULT_WEEKS;
+      to = isoDate(now);
+      from = addDays(to, -(weeks * 7 - 1));
+    }
 
     const sets = await tableDao.listCompletedSetsForUser(
       clientId,
@@ -260,22 +300,28 @@ module.exports = {
       new Date(`${to}T23:59:59.999Z`)
     );
 
-    const weekly = buildWeeklyTraining(sets, weeks, now);
-    // Movimiento 3 Coach Pro — los MISMOS datos agrupados por microciclo. No
-    // cuesta ninguna consulta más: la agregación ya proyecta el split (ver
+    // Movimiento 3 / Tarea 4 — agrupado por microciclo. No cuesta ninguna
+    // consulta más: la agregación ya proyecta split y grupos musculares (ver
     // tableDao.listCompletedSetsForUser), y agrupar es puro.
     const blocks = buildBlockTraining(sets);
 
-    return res.send({
-      weeks,
+    const response = {
       period: { from, to },
-      weekly,
-      volumeComparison: buildVolumeComparison(weekly),
       blocks,
       blockComparison: buildBlockComparison(blocks),
-      personalRecords: buildPersonalRecords(sets),
-      loadEvolution: buildLoadEvolution(sets, weeks, now),
+      blockMuscleGroups: buildBlockMuscleGroups(sets),
       totalSets: sets.length,
-    });
+    };
+
+    if (weeks) {
+      const weekly = buildWeeklyTraining(sets, weeks, now);
+      response.weeks = weeks;
+      response.weekly = weekly;
+      response.volumeComparison = buildVolumeComparison(weekly);
+      response.personalRecords = buildPersonalRecords(sets);
+      response.loadEvolution = buildLoadEvolution(sets, weeks, now);
+    }
+
+    return res.send(response);
   },
 };

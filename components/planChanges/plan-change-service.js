@@ -23,6 +23,12 @@ const PLAN_ASSIGNMENT_FIELDS = [
   { field: "endDate", label: "Fin" },
 ];
 
+// Activar una rutina no edita ningún valor (a diferencia de un objetivo
+// nutricional) — el único "campo" que cambia de verdad es CUÁL rutina rige,
+// así que se diffea por nombre, igual de simple que como ya se lee la fila
+// en el historial de nutrición.
+const ROUTINE_FIELDS = [{ field: "name", label: "Rutina" }];
+
 /**
  * Diferencias entre dos versiones, solo de los campos declarados.
  *
@@ -83,6 +89,20 @@ async function recordGoalChange({ trainerId, clientId, previousGoal, newGoal, ac
   });
 }
 
+/** Cambio de rutina activa: cuál regía antes -> cuál rige ahora. */
+async function recordRoutineChange({ trainerId, clientId, previousTable, newTable, reason }) {
+  return record({
+    trainerId,
+    clientId,
+    entity: "routine",
+    entityId: newTable?._id,
+    entityName: newTable?.name,
+    action: previousTable ? "replaced" : "assigned",
+    changes: diffFields(previousTable, newTable, ROUTINE_FIELDS),
+    reason,
+  });
+}
+
 async function recordPlanAssignment({ trainerId, clientId, previousAssignment, newAssignment, planName, reason }) {
   return record({
     trainerId,
@@ -105,9 +125,11 @@ async function listForClient(trainerId, clientId, { entity, limit = 100 } = {}) 
 module.exports = {
   NUTRITIONAL_GOAL_FIELDS,
   PLAN_ASSIGNMENT_FIELDS,
+  ROUTINE_FIELDS,
   diffFields,
   record,
   recordGoalChange,
+  recordRoutineChange,
   recordPlanAssignment,
   listForClient,
 };

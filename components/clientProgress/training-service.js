@@ -223,6 +223,64 @@ function buildBlockComparison(blockTraining) {
   };
 }
 
+/**
+ * Tarea 4 (2026-09) — carga por grupo muscular, por microciclo: qué está
+ * trabajando más un cliente y qué se le está quedando corto, mirando los
+ * ejercicios que de verdad ha hecho (no la ficha teórica de la rutina).
+ *
+ * El grupo muscular no está en el Set, está en el Exercise del catálogo
+ * (muscleGroups1/2, ver exercise-schema.js) — listCompletedSetsForUser ya lo
+ * proyecta. Un ejercicio propio del cliente sin ficha en el catálogo no
+ * aporta grupo: se ignora en vez de inventarle uno.
+ *
+ * Reparto: el volumen COMPLETO de la serie se suma a CADA grupo implicado
+ * (primario, o secundario si el ejercicio no tiene primario). Dividir el
+ * volumen entre grupos fingiría una precisión biomecánica ("este ejercicio
+ * trabaja 60% pecho, 40% tríceps") que ningún dato del sistema respalda.
+ */
+function buildBlockMuscleGroups(sets) {
+  const blocks = new Map();
+
+  for (const set of sets || []) {
+    if (!set.splitId) continue;
+    const groups = set.muscleGroups1?.length ? set.muscleGroups1 : set.muscleGroups2 || [];
+    if (!groups.length) continue;
+
+    const key = String(set.splitId);
+    if (!blocks.has(key)) {
+      blocks.set(key, {
+        splitId: key,
+        name: set.splitName || "Microciclo",
+        start: null,
+        end: null,
+        muscleGroups: new Map(),
+      });
+    }
+
+    const block = blocks.get(key);
+    const day = isoDate(set.date);
+    if (!block.start || day < block.start) block.start = day;
+    if (!block.end || day > block.end) block.end = day;
+
+    const volume = volumeOf(set);
+    for (const group of groups) {
+      block.muscleGroups.set(group, (block.muscleGroups.get(group) || 0) + volume);
+    }
+  }
+
+  return [...blocks.values()]
+    .sort((a, b) => (a.start || "").localeCompare(b.start || ""))
+    .map((block) => ({
+      splitId: block.splitId,
+      name: block.name,
+      start: block.start,
+      end: block.end,
+      muscleGroups: [...block.muscleGroups.entries()]
+        .map(([group, volume]) => ({ group, volume: Math.round(volume) }))
+        .sort((a, b) => b.volume - a.volume),
+    }));
+}
+
 module.exports = {
   TOP_EXERCISES,
   MIN_TRACKED_WEIGHT,
@@ -232,4 +290,5 @@ module.exports = {
   buildVolumeComparison,
   buildBlockTraining,
   buildBlockComparison,
+  buildBlockMuscleGroups,
 };

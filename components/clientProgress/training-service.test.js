@@ -9,6 +9,7 @@ const {
   buildVolumeComparison,
   buildBlockTraining,
   buildBlockComparison,
+  buildBlockMuscleGroups,
 } = require("./training-service");
 
 const NOW = new Date("2026-08-23T10:00:00.000Z");
@@ -269,5 +270,95 @@ test("buildBlockComparison", async (t) => {
       { name: "B", volumePerSession: 1500, sessions: 1, start: "2026-08-10", end: "2026-08-10" },
     ];
     assert.equal(buildBlockComparison(blocks), null);
+  });
+});
+
+// --- Tarea 4 (2026-09): carga por grupo muscular, por microciclo ---
+// Comparar entrenamiento no es solo "cuánto peso", es "qué está trabajando":
+// un cliente puede subir el volumen total a base de piernas mientras
+// abandona empuje sin que ningún número de arriba lo diga.
+
+function muscleGroupSet(daysAgoValue, splitId, splitName, reps, weight, muscleGroups1, muscleGroups2) {
+  return {
+    date: daysAgo(daysAgoValue),
+    splitId,
+    splitName,
+    exerciseName: "Ejercicio",
+    reps,
+    weight,
+    muscleGroups1,
+    muscleGroups2,
+  };
+}
+
+test("buildBlockMuscleGroups", async (t) => {
+  await t.test("suma el volumen de la serie a cada grupo primario implicado", () => {
+    const blocks = buildBlockMuscleGroups([
+      muscleGroupSet(2, "a", "Semana 1", 10, 100, ["pecho", "triceps"]),
+    ]);
+    assert.equal(blocks.length, 1);
+    assert.deepEqual(
+      blocks[0].muscleGroups.map((g) => g.group).sort(),
+      ["pecho", "triceps"]
+    );
+    // 10x100 = 1000, completo en los dos grupos, no repartido a 500 cada uno.
+    assert.ok(blocks[0].muscleGroups.every((g) => g.volume === 1000));
+  });
+
+  await t.test("sin grupo primario, cae al secundario", () => {
+    const blocks = buildBlockMuscleGroups([
+      muscleGroupSet(1, "a", "Semana 1", 10, 50, [], ["core"]),
+    ]);
+    assert.deepEqual(
+      blocks[0].muscleGroups.map((g) => g.group),
+      ["core"]
+    );
+  });
+
+  await t.test("un ejercicio sin ficha en el catálogo (sin grupos) no aporta nada", () => {
+    const blocks = buildBlockMuscleGroups([muscleGroupSet(1, "a", "Semana 1", 10, 50, [], [])]);
+    assert.deepEqual(blocks, []);
+  });
+
+  await t.test("agrega varias series del mismo grupo dentro del microciclo", () => {
+    const blocks = buildBlockMuscleGroups([
+      muscleGroupSet(3, "a", "Semana 1", 10, 100, ["pierna"]),
+      muscleGroupSet(1, "a", "Semana 1", 8, 100, ["pierna"]),
+    ]);
+    assert.equal(blocks[0].muscleGroups[0].volume, 1000 + 800);
+  });
+
+  await t.test("ordena los grupos de más a menos volumen", () => {
+    const blocks = buildBlockMuscleGroups([
+      muscleGroupSet(1, "a", "Semana 1", 10, 100, ["espalda"]),
+      muscleGroupSet(1, "a", "Semana 1", 10, 20, ["biceps"]),
+    ]);
+    assert.deepEqual(
+      blocks[0].muscleGroups.map((g) => g.group),
+      ["espalda", "biceps"]
+    );
+  });
+
+  await t.test("ordena los bloques por primera sesión, igual que buildBlockTraining", () => {
+    const blocks = buildBlockMuscleGroups([
+      muscleGroupSet(2, "b", "Segundo", 10, 100, ["pecho"]),
+      muscleGroupSet(20, "a", "Primero", 10, 100, ["pecho"]),
+    ]);
+    assert.deepEqual(
+      blocks.map((b) => b.name),
+      ["Primero", "Segundo"]
+    );
+  });
+
+  await t.test("una serie sin microciclo se ignora", () => {
+    const blocks = buildBlockMuscleGroups([
+      { date: daysAgo(1), exerciseName: "A", reps: 10, weight: 50, muscleGroups1: ["pecho"] },
+    ]);
+    assert.deepEqual(blocks, []);
+  });
+
+  await t.test("sin series no hay bloques", () => {
+    assert.deepEqual(buildBlockMuscleGroups([]), []);
+    assert.deepEqual(buildBlockMuscleGroups(null), []);
   });
 });

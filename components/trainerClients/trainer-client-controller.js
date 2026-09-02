@@ -245,8 +245,9 @@ const controller = {
 
   // POST /trainer/intake — cliente envía su cuestionario inicial para un
   // profesional concreto. body: { trainerId, goals, healthConditions,
-  // experienceLevel, availability, equipment, allergies, favoriteFoods,
-  // dislikedFoods, cooksAtHome, customAnswers: [{ questionId, label, value }] }
+  // experienceLevel, availability, trainingLocation, equipmentTags,
+  // allergies, favoriteFoods, dislikedFoods, cooksAtHome,
+  // customAnswers: [{ questionId, label, value }] }
   async submitIntake(req, res) {
     try {
       const { trainerId, ...intakeData } = req.body || {};

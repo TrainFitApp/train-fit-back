@@ -31,6 +31,18 @@ router.getAsync(
   dataController.getAvailableTemplates
 );
 router.getAsync(
+  "/clients/:clientId/training-goal",
+  auth(["trainer"]),
+  requireActiveClient("training"),
+  dataController.getTrainingGoal
+);
+router.putAsync(
+  "/clients/:clientId/training-goal",
+  auth(["trainer"]),
+  requireActiveClient("training"),
+  dataController.updateTrainingGoal
+);
+router.getAsync(
   "/clients/:clientId/tables",
   auth(["trainer"]),
   requireActiveClient("training"),
@@ -41,6 +53,12 @@ router.postAsync(
   auth(["trainer"]),
   requireActiveClient("training"),
   dataController.assignTable
+);
+router.putAsync(
+  "/clients/:clientId/tables/:tableId/activate",
+  auth(["trainer"]),
+  requireActiveClient("training"),
+  dataController.activateTable
 );
 router.getAsync(
   "/clients/:clientId/workouts/history",

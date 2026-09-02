@@ -74,6 +74,14 @@ module.exports = {
     return tableSchema.findById(id).exec();
   },
 
+  // MVP-trainers — comprobación de propiedad para activateTableForClient:
+  // igual que nutritionalGoalDao.findByIdAndUserId, evita activar una tabla
+  // que no es de este cliente (ver auditoría de seguridad de exercises,
+  // mismo criterio: nunca confiar en un id de ruta sin verificar dueño).
+  async getTableByIdAndUserId(id, userId) {
+    return tableSchema.findOne({ _id: id, userId }).exec();
+  },
+
   async copyTable(idUser, idTable) {
     try {
       const tableD = await tableSchema.findById(idTable);
@@ -276,6 +284,18 @@ module.exports = {
     }
   },
 
+  // MVP-trainers — paso 2 de F11 punto 7.7: activar una rutina ya asignada.
+  // Mismo `$set`/`$unset` que ya usa createTableToUser (self-service): fijar
+  // tableInUse SIEMPRE desactiva implícitamente cualquier otra rutina — es
+  // un puntero único en User, no un booleano por Table, así que no hace
+  // falta (ni existe el riesgo de) desincronizar "las demás" al activar una.
+  async setTableInUseForClient(clientId, tableId) {
+    await userSchema.findByIdAndUpdate(clientId, {
+      $set: { tableInUse: tableId },
+      $unset: { workoutInUse: "" },
+    });
+  },
+
   // MVP-trainers F11: crea una rutina NUEVA directamente para un cliente,
   // asignada por su profesional. A diferencia de createTableToUser, NO
   // activa la rutina (no toca tableInUse/workoutInUse) — ver F11 punto 7.7.
@@ -462,6 +482,11 @@ module.exports = {
           exerciseName: { $ifNull: ["$exerciseInfo.name", "$customExercises.name"] },
           reps: "$setDocs.reps",
           weight: "$setDocs.weight",
+          // Tarea 4 (2026-09) — grupos musculares implicados, del catálogo.
+          // Solo lo que ya guarda Exercise; no se infiere nada para un
+          // ejercicio propio del cliente sin ficha en el catálogo.
+          muscleGroups1: "$exerciseInfo.muscleGroups1",
+          muscleGroups2: "$exerciseInfo.muscleGroups2",
         },
       },
     ]);

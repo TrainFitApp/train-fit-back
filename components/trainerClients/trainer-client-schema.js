@@ -41,6 +41,21 @@ const TrainerClientSchema = new Schema(
     // `null` debe estar en la lista del enum explícitamente — Mongoose no
     // exime automáticamente el default:null de la validación de enum.
     revokedBy: { type: String, enum: ["trainer", "client", null], default: null },
+    // Tarea 3 bis (2026-08) — "Objetivo de entrenamiento", paridad con
+    // Nutrición pero en su versión mínima: un tipo de objetivo + una
+    // frecuencia declarada, editable por el entrenador en cualquier momento
+    // (no un cuestionario de una sola vez como ClientIntake.goals). La
+    // frecuencia declarada es también el denominador de "adherencia de
+    // entrenamiento" (sesiones reales/semana ÷ esto) — mismo campo sirve a
+    // las dos piezas, no se duplica el concepto. Solo tiene sentido en el
+    // documento scope:"training" de este par, igual que ya hacía
+    // trainingFrequencyTarget en documentos anteriores de este mismo diseño.
+    trainingGoalType: {
+      type: String,
+      enum: ["strength", "hypertrophy", "endurance", "mobility", "general", null],
+      default: null,
+    },
+    trainingFrequencyTarget: { type: Number, min: 1, max: 14, default: null },
   },
   { collection: "trainerclients" }
 );

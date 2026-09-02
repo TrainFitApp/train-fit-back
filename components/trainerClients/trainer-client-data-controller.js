@@ -182,13 +182,88 @@ function sanitizeMealExchanges(meals) {
     .filter(Boolean);
 }
 
+const TRAINING_GOAL_TYPES = ["strength", "hypertrophy", "endurance", "mobility", "general"];
+
 module.exports = {
+  // GET /trainer/clients/:clientId/training-goal — Tarea 3 bis,
+  // requireActiveClient("training"). req.trainerClientRelation ya trae los
+  // valores actuales (lo pobló el middleware) — sin consulta aparte.
+  async getTrainingGoal(req, res) {
+    const relation = req.trainerClientRelation;
+    return res.send({
+      trainingGoalType: relation.trainingGoalType || null,
+      trainingFrequencyTarget: relation.trainingFrequencyTarget ?? null,
+    });
+  },
+
+  // PUT /trainer/clients/:clientId/training-goal — Tarea 3 bis,
+  // requireActiveClient("training"). body: { trainingGoalType, trainingFrequencyTarget }
+  async updateTrainingGoal(req, res) {
+    const { trainingGoalType, trainingFrequencyTarget } = req.body || {};
+    const sanitizedType = TRAINING_GOAL_TYPES.includes(trainingGoalType) ? trainingGoalType : null;
+    const parsedFrequency = Number(trainingFrequencyTarget);
+    const sanitizedFrequency =
+      Number.isFinite(parsedFrequency) && parsedFrequency >= 1 && parsedFrequency <= 14
+        ? parsedFrequency
+        : null;
+
+    await trainerClientDao.updateTrainingGoal(req.trainerClientRelation._id, {
+      trainingGoalType: sanitizedType,
+      trainingFrequencyTarget: sanitizedFrequency,
+    });
+
+    return res.send({ trainingGoalType: sanitizedType, trainingFrequencyTarget: sanitizedFrequency });
+  },
+
   // GET /trainer/clients/:clientId/tables — F09, requireActiveClient("training")
   async getClientTables(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 20).toString(), 10);
-    const tables = await tableModel.getTables(page, limit, true, req.params.clientId);
-    return res.send(tables);
+    const [tables, client] = await Promise.all([
+      tableModel.getTables(page, limit, true, req.params.clientId),
+      userSchema.findById(req.params.clientId).select("tableInUse").lean(),
+    ]);
+    // Mismo criterio que getClientNutritionalGoals#isInUse: la tabla en uso
+    // se resuelve contra User.tableInUse (puntero único), no contra un campo
+    // propio de Table — así activar una desactiva las demás por construcción.
+    const tableInUseId = String(client?.tableInUse || "");
+    const enriched = tables.map((table) => ({
+      ...(typeof table.toObject === "function" ? table.toObject() : table),
+      isActive: String(table._id) === tableInUseId,
+    }));
+    return res.send(enriched);
+  },
+
+  // PUT /trainer/clients/:clientId/tables/:tableId/activate — poner en uso
+  // una rutina ya asignada (o cualquier tabla del cliente). Tocar una fila ya
+  // existente la activa — sin crear ni editar nada, a diferencia de
+  // assignTable (crea + NO activa, ver F11 punto 7.7).
+  async activateTable(req, res) {
+    const { clientId, tableId } = req.params;
+
+    const table = await tableModel.getTableForClient(tableId, clientId);
+    if (!table) {
+      return res.status(404).send({ message: "Rutina no encontrada para este cliente" });
+    }
+
+    const client = await userSchema.findById(clientId).select("tableInUse").lean();
+    const previousTable = client?.tableInUse
+      ? await tableModel.getTableForClient(client.tableInUse, clientId)
+      : null;
+
+    await tableModel.activateTableForClient(clientId, table._id);
+
+    if (String(previousTable?._id) !== String(table._id)) {
+      await planChangeService.recordRoutineChange({
+        trainerId: req.auth.userId,
+        clientId,
+        previousTable,
+        newTable: table,
+        reason: req.body?.reason,
+      });
+    }
+
+    return res.send({ _id: table._id });
   },
 
   // GET /trainer/clients/:clientId/tables/available-templates — F11, requireActiveClient("training")

@@ -201,6 +201,17 @@ module.exports = {
     return TrainerClient.findByIdAndUpdate(id, { $set: { status, ...extra } }, { new: true });
   },
 
+  // Tarea 3 bis — "Objetivo de entrenamiento". `id` es siempre
+  // req.trainerClientRelation._id (ya verificado por requireActiveClient
+  // ("training")), nunca un id de body/query sin comprobar propiedad.
+  async updateTrainingGoal(id, { trainingGoalType, trainingFrequencyTarget }) {
+    return TrainerClient.findByIdAndUpdate(
+      id,
+      { $set: { trainingGoalType: trainingGoalType ?? null, trainingFrequencyTarget: trainingFrequencyTarget ?? null } },
+      { new: true }
+    );
+  },
+
   async countByTrainer(trainerId, { status } = {}) {
     const query = { trainerId };
     if (status) query.status = Array.isArray(status) ? { $in: status } : status;
