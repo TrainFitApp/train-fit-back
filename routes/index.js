@@ -35,6 +35,7 @@ const trainerTaskRoutes = require("../components/trainerTasks/trainer-task-route
 const dietTemplateRoutes = require("../components/dietTemplates/diet-template-routes");
 const mealSnippetRoutes = require("../components/mealSnippets/meal-snippet-routes");
 const planAssignmentRoutes = require("../components/planAssignments/plan-assignment-routes");
+const routineAssignmentRoutes = require("../components/routineAssignments/routine-assignment-routes");
 const workoutTemplateRoutes = require("../components/workoutTemplates/workout-template-routes");
 const trainerIntakeConfigRoutes = require("../components/trainerIntakeConfig/trainer-intake-config-routes");
 const coachAlertRoutes = require("../components/coachAlerts/coach-alert-routes");
@@ -70,6 +71,7 @@ router.use(supplementRoutes);
 router.use(dietTemplateRoutes);
 router.use(mealSnippetRoutes);
 router.use(planAssignmentRoutes);
+router.use(routineAssignmentRoutes);
 router.use(workoutTemplateRoutes);
 router.use("/meals", meals);
 router.use("/customproducts", customProducts);

@@ -7,6 +7,8 @@ const { computeAdherence } = require("./adherence-service");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { taskLabel } = require("../trainerTasks/task-label");
 const tableDao = require("../tables/table-dao");
+const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
+const { computeWindowedTrainingProgress } = require("../routineAssignments/routine-assignment-schedule");
 const CoachAlert = require("../coachAlerts/coach-alert-schema");
 
 /**
@@ -137,13 +139,24 @@ async function buildRoster(trainerId, now = new Date()) {
   const activeSnapshots = snapshots.filter((snapshot) => snapshot.relationStatus === "active");
   const clientIds = activeSnapshots.map((snapshot) => snapshot.clientId);
 
-  const tableIds = [...context.tableIdByClient.values()];
-
-  const [activeTasks, progresoPorTabla, alertsByClient] = await Promise.all([
+  // Tarea 5 (2026-09) — entrenamiento por ventana+fase: la fuente de verdad
+  // es el historial de RoutineAssignment de cada cliente, no
+  // context.tableIdByClient (el tableInUse de loadTrainerContext, que puede
+  // quedarse desfasado para fases futuras — ver client-data-loader.js#
+  // loadTrainingWindow, mismo criterio). Un único listByClients + un único
+  // getSplitsForTables para toda la cartera, no una consulta por cliente.
+  const [activeTasks, phasesByClient, alertsByClient] = await Promise.all([
     trainerTaskDao.listForClients(trainerId, clientIds),
-    tableDao.getPlanSessionProgressForTables(tableIds),
+    routineAssignmentDao.listByClients(clientIds),
     countOpenAlertsByClient(trainerId),
   ]);
+
+  const allTableIds = [
+    ...new Set([...phasesByClient.values()].flat().map((phase) => String(phase.tableId))),
+  ];
+  const splitsByTableId = allTableIds.length
+    ? await tableDao.getSplitsForTables(allTableIds)
+    : new Map();
 
   const taskIds = activeTasks.map((task) => task._id);
   const completions = await trainerTaskDao.listCompletionsForTasksInRange(taskIds, from, to);
@@ -170,20 +183,18 @@ async function buildRoster(trainerId, now = new Date()) {
 
   return activeSnapshots.map((snapshot) => {
     const clientKey = String(snapshot.clientId);
-    const tableId = context.tableIdByClient.get(clientKey);
 
     const adherence = computeAdherence({
       // El snapshot ya trae la adherencia nutricional calculada por
       // loadTrainerContext con computeRangeAdherence — la misma función que
       // usa la ficha del cliente.
       nutrition: snapshot.adherence,
-      training: (() => {
-        const progreso = (tableId && progresoPorTabla.get(String(tableId))) || null;
-        return {
-          completedSessions: progreso?.completedTotal || 0,
-          plannedTotal: progreso?.plannedTotal || 0,
-        };
-      })(),
+      training: computeWindowedTrainingProgress(
+        phasesByClient.get(clientKey) || [],
+        splitsByTableId,
+        from,
+        to
+      ),
       habits: {
         habits: (tareasPorCliente.get(clientKey) || []).map((task) => ({
           id: String(task._id),

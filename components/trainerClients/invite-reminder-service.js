@@ -37,7 +37,7 @@ function buildReminderEmail(relation) {
   const html = generateMail(
     "Invitación pendiente",
     `${trainerName} te invitó a TrainFit para llevar tu ${scopeLabel} hace unos días y todavía no has respondido. Abre la app para aceptarla o rechazarla.`,
-    "https://www.trainfit.net/#/Mas",
+    "https://trainfit.net/descargar/",
     "Abrir TrainFit"
   );
   return { subject, html };

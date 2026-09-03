@@ -27,7 +27,15 @@ const PLAN_ASSIGNMENT_FIELDS = [
 // nutricional) — el único "campo" que cambia de verdad es CUÁL rutina rige,
 // así que se diffea por nombre, igual de simple que como ya se lee la fila
 // en el historial de nutrición.
-const ROUTINE_FIELDS = [{ field: "name", label: "Rutina" }];
+// Tarea 4 (2026-09) — startDate no vive en Table (vive en RoutineAssignment);
+// el controller que llama a recordRoutineChange arma una vista fusionada
+// {...table, startDate} antes de pasarla aquí. diffFields tolera campos
+// ausentes en cualquiera de los dos lados, así que la llamada existente
+// desde activateTable (sin startDate en ninguno) sigue funcionando igual.
+const ROUTINE_FIELDS = [
+  { field: "name", label: "Rutina" },
+  { field: "startDate", label: "Inicio" },
+];
 
 /**
  * Diferencias entre dos versiones, solo de los campos declarados.

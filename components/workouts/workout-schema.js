@@ -47,6 +47,13 @@ const WorkoutSchema = Schema({
   // always derived as (date ?? now) - startedAt, never accumulated server-side.
   startedAt: Date,
   rest: Boolean,
+  // Tarea 4 (2026-09) — descanso PAUTADO por el entrenador al construir la
+  // rutina, distinto de `rest` (que es el cliente saltando esta sesión en
+  // ejecución). Un microciclo con esta fila marcada nunca la ofrece como
+  // sesión a hacer; se inserta con el mismo mecanismo de "añadir día" que
+  // cualquier otra fila (misma fila en todos los microciclos a la vez), así
+  // que nunca desalinea el conteo de filas entre microciclos.
+  isPlannedRestDay: { type: Boolean, default: false },
   // MVP-trainers F18 — pulso de readiness/esfuerzo por sesión, opcionales, no
   // configurables (a diferencia del catálogo togglable de F17). Visibles para
   // el profesional junto al historial de entrenamientos del cliente (F09).

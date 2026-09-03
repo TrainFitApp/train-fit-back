@@ -4,7 +4,25 @@ const checkinDao = require("../trainerCheckins/checkin-dao");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const tableDao = require("../tables/table-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
+const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
+const { sortPhasesAscending, computeWindowedTrainingProgress } = require("../routineAssignments/routine-assignment-schedule");
 const { isoDate } = require("./progress-service");
+const { todayIsoDate } = require("../util/date-util");
+
+// Tarea 5 (2026-09) — progreso de entrenamiento por VENTANA + FASE: la
+// fuente de verdad es el historial de RoutineAssignment, nunca
+// `client.tableInUse` (puede quedarse desfasado para fases futuras hasta
+// que se abre la pestaña de Tablas — ver routine-assignment-service.js#
+// syncTableInUseIfDue, que aquí no se llama). Sin ninguna fase que cubra la
+// ventana, plannedTotal sale 0 de forma natural y trainingDimension ya lo
+// resuelve (`applicable:false, reason:"sin_plan"`) sin cambios.
+async function loadTrainingWindow(clientId, from, to) {
+  const phases = sortPhasesAscending(await routineAssignmentDao.listByClient(clientId));
+  const tableIds = [...new Set(phases.map((phase) => String(phase.tableId)))];
+  const splitsByTableId = tableIds.length ? await tableDao.getSplitsForTables(tableIds) : new Map();
+  const periodEndClamped = to < todayIsoDate() ? to : todayIsoDate();
+  return computeWindowedTrainingProgress(phases, splitsByTableId, from, periodEndClamped);
+}
 
 // Fase 2 Coach Pro — todo lo que hace falta de UN cliente para calcular su
 // adherencia y su progreso, cargado una sola vez.
@@ -34,7 +52,7 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     checkinConfig,
     dietDays,
     workoutDates,
-    planProgress,
+    trainingWindow,
     activeTasks,
   ] = await Promise.all([
     anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, from, to),
@@ -48,11 +66,9 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
       new Date(`${from}T00:00:00.000Z`),
       new Date(`${to}T23:59:59.999Z`)
     ),
-    // Progreso del plan entero (sesiones hechas / sesiones que tiene la
-    // rutina), no una extrapolación del último microciclo por semanas.
-    client.tableInUse
-      ? tableDao.getPlanSessionProgressForTables([client.tableInUse])
-      : new Map(),
+    // Progreso de la ventana pedida, por fase (RoutineAssignment) — no de
+    // toda la vida de la tabla. Ver loadTrainingWindow arriba.
+    loadTrainingWindow(clientId, from, to),
     trainerTaskDao.listForClient(trainerId, clientId),
   ]);
 
@@ -78,7 +94,7 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     checkinConfig,
     dietDays,
     workoutDates,
-    planProgress: planProgress.get(String(client.tableInUse)) || { plannedTotal: 0, completedTotal: 0 },
+    planProgress: { plannedTotal: trainingWindow.plannedTotal, completedTotal: trainingWindow.completedSessions },
     activeTasks,
     taskCompletions,
   };

@@ -388,6 +388,7 @@ module.exports = {
         $match: {
           "workoutDocs.date": { $gte: fromDate, $lte: toDate },
           "workoutDocs.rest": { $ne: true },
+          "workoutDocs.isPlannedRestDay": { $ne: true },
         },
       },
       { $project: { _id: 0, date: "$workoutDocs.date" } },
@@ -412,6 +413,7 @@ module.exports = {
         $match: {
           "workoutDocs.date": { $gte: fromDate, $lte: toDate },
           "workoutDocs.rest": { $ne: true },
+          "workoutDocs.isPlannedRestDay": { $ne: true },
         },
       },
       { $project: { _id: 0, userId: 1, date: "$workoutDocs.date" } },
@@ -443,6 +445,7 @@ module.exports = {
         $match: {
           "workoutDocs.date": { $gte: fromDate, $lte: toDate },
           "workoutDocs.rest": { $ne: true },
+          "workoutDocs.isPlannedRestDay": { $ne: true },
         },
       },
       {
@@ -511,7 +514,12 @@ module.exports = {
           _id: 0,
           planned: {
             $size: {
-              $filter: { input: "$workoutDocs", cond: { $ne: ["$$this.rest", true] } },
+              $filter: {
+                input: "$workoutDocs",
+                cond: {
+                  $and: [{ $ne: ["$$this.rest", true] }, { $ne: ["$$this.isPlannedRestDay", true] }],
+                },
+              },
             },
           },
         },
@@ -559,7 +567,12 @@ module.exports = {
       {
         $project: {
           sesiones: {
-            $filter: { input: "$workoutDocs", cond: { $ne: ["$$this.rest", true] } },
+            $filter: {
+              input: "$workoutDocs",
+              cond: {
+                $and: [{ $ne: ["$$this.rest", true] }, { $ne: ["$$this.isPlannedRestDay", true] }],
+              },
+            },
           },
         },
       },
@@ -579,6 +592,74 @@ module.exports = {
         String(row._id),
         { plannedTotal: row.plannedTotal || 0, completedTotal: row.completedTotal || 0 },
       ])
+    );
+  },
+
+  // Tarea 5 (2026-09) — splits+workouts de VARIAS rutinas de una vez, para
+  // la adherencia de entrenamiento por ventana+fase (routine-assignment-
+  // schedule.js#computeWindowedTrainingProgress necesita proyectar sobre la
+  // estructura real de cada tabla que gobernó algún tramo de la ventana).
+  //
+  // Por agregación (mismo motivo que getPlanSessionProgressForTables: el
+  // autopopulate en cascada de Table arrastra ejercicios/series enteras solo
+  // para leer nombre+fecha+flags de cada Workout) pero SIN copiar tal cual
+  // su $lookup: aquí SÍ importa el orden (día N de la proyección = posición
+  // N en splits[].workouts[] aplanado), y $lookup con un array en
+  // localField NO garantiza devolver `as` en el mismo orden que ese array
+  // — a diferencia del autopopulate de Mongoose, que sí lo preserva (por
+  // eso getActiveSchedule usa getTableById, no una agregación). Aquí se
+  // proyectan también los ids ORDENADOS (splits de la tabla, workouts de
+  // cada split — campos reales del documento, no tocados por el $lookup) y
+  // se reconstruye el orden en JS con un Map por _id antes de devolver.
+  async getSplitsForTables(tableIds) {
+    const { ObjectId } = require("mongoose").Types;
+    if (!tableIds?.length) return new Map();
+    const rows = await tableSchema.aggregate([
+      { $match: { _id: { $in: tableIds.map((id) => ObjectId(String(id))) } } },
+      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
+      {
+        $project: {
+          splitIds: "$splits",
+          splitDocs: { _id: 1, workouts: 1 },
+        },
+      },
+      {
+        $project: {
+          splitIds: 1,
+          splitDocs: 1,
+          workoutIds: {
+            $reduce: {
+              input: "$splitDocs",
+              initialValue: [],
+              in: { $concatArrays: ["$$value", { $ifNull: ["$$this.workouts", []] }] },
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "workouts",
+          localField: "workoutIds",
+          foreignField: "_id",
+          as: "workoutDocs",
+          pipeline: [{ $project: { _id: 1, name: 1, isPlannedRestDay: 1, date: 1, rest: 1 } }],
+        },
+      },
+      { $project: { splitIds: 1, splitDocs: 1, workoutDocs: 1 } },
+    ]);
+
+    return new Map(
+      rows.map((row) => {
+        const workoutById = new Map((row.workoutDocs || []).map((w) => [String(w._id), w]));
+        const splitById = new Map((row.splitDocs || []).map((s) => [String(s._id), s]));
+        const splits = (row.splitIds || [])
+          .map((id) => splitById.get(String(id)))
+          .filter(Boolean)
+          .map((split) => ({
+            workouts: (split.workouts || []).map((wid) => workoutById.get(String(wid))).filter(Boolean),
+          }));
+        return [String(row._id), { splits }];
+      })
     );
   },
 
@@ -605,6 +686,7 @@ module.exports = {
       { $lookup: { from: "workouts", localField: "splits.workouts", foreignField: "_id", as: "workouts" } },
       { $unwind: { path: "$workouts", preserveNullAndEmptyArrays: false } },
       { $match: { $or: [{ "workouts.rest": { $ne: true } }, { "workouts.rest": { $exists: false } }] } },
+      { $match: { $or: [{ "workouts.isPlannedRestDay": { $ne: true } }, { "workouts.isPlannedRestDay": { $exists: false } }] } },
       { $lookup: { from: "customexercises", localField: "workouts.exercises", foreignField: "_id", as: "customExercises" } },
       { $unwind: { path: "$customExercises", preserveNullAndEmptyArrays: false } },
       { $lookup: { from: "exercises", localField: "customExercises.exercise", foreignField: "_id", as: "exerciseInfo" } },

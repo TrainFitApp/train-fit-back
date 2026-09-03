@@ -116,6 +116,7 @@ module.exports = {
       name: req.body.name,
       date: req.body.date,
       exercises: req.body.exercises,
+      isPlannedRestDay: req.body.isPlannedRestDay,
     });
     return res.send(workout);
   },
@@ -149,6 +150,7 @@ module.exports = {
       name: req.body.name,
       date: req.body.date,
       exercises: req.body.exercises,
+      isPlannedRestDay: req.body.isPlannedRestDay,
     });
     return res.send(workout);
   },

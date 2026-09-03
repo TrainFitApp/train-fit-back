@@ -6,6 +6,7 @@ class Workout {
     this.cronometer = data.cronometer;
     this.paused = data.paused;
     this.exercises = data.exercises;
+    this.isPlannedRestDay = data.isPlannedRestDay;
   }
 
   //   static async create(data) {

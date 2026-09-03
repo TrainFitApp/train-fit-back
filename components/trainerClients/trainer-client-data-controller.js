@@ -19,6 +19,7 @@ const dietDaysDao = require("../dietDays/diet-days-dao");
 const { buildShoppingList } = require("../dietDays/shopping-list-service");
 const planResolver = require("../planAssignments/plan-resolver");
 const planChangeService = require("../planChanges/plan-change-service");
+const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
 
 // MVP-trainers F20 — margen de tolerancia único, no repetido inline en varios
 // sitios (sección 9 del doc). ±15% sobre el objetivo de kcal del día.
@@ -219,6 +220,13 @@ module.exports = {
   async getClientTables(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 20).toString(), 10);
+
+    // Tarea 4 (2026-09) — sin cron a medianoche (mismo criterio que
+    // nutrición), una fase de rutina programada para hoy se resuelve aquí,
+    // en el punto de lectura más frecuente del trainer, antes de leer
+    // tableInUse — si no, esta misma respuesta serviría el puntero viejo.
+    await routineAssignmentService.syncTableInUseIfDue(req.params.clientId);
+
     const [tables, client] = await Promise.all([
       tableModel.getTables(page, limit, true, req.params.clientId),
       userSchema.findById(req.params.clientId).select("tableInUse").lean(),
