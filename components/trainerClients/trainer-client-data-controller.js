@@ -193,27 +193,20 @@ module.exports = {
     const relation = req.trainerClientRelation;
     return res.send({
       trainingGoalType: relation.trainingGoalType || null,
-      trainingFrequencyTarget: relation.trainingFrequencyTarget ?? null,
     });
   },
 
   // PUT /trainer/clients/:clientId/training-goal — Tarea 3 bis,
-  // requireActiveClient("training"). body: { trainingGoalType, trainingFrequencyTarget }
+  // requireActiveClient("training"). body: { trainingGoalType }
   async updateTrainingGoal(req, res) {
-    const { trainingGoalType, trainingFrequencyTarget } = req.body || {};
+    const { trainingGoalType } = req.body || {};
     const sanitizedType = TRAINING_GOAL_TYPES.includes(trainingGoalType) ? trainingGoalType : null;
-    const parsedFrequency = Number(trainingFrequencyTarget);
-    const sanitizedFrequency =
-      Number.isFinite(parsedFrequency) && parsedFrequency >= 1 && parsedFrequency <= 14
-        ? parsedFrequency
-        : null;
 
     await trainerClientDao.updateTrainingGoal(req.trainerClientRelation._id, {
       trainingGoalType: sanitizedType,
-      trainingFrequencyTarget: sanitizedFrequency,
     });
 
-    return res.send({ trainingGoalType: sanitizedType, trainingFrequencyTarget: sanitizedFrequency });
+    return res.send({ trainingGoalType: sanitizedType });
   },
 
   // GET /trainer/clients/:clientId/tables — F09, requireActiveClient("training")

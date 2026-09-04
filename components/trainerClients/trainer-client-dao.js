@@ -204,10 +204,10 @@ module.exports = {
   // Tarea 3 bis — "Objetivo de entrenamiento". `id` es siempre
   // req.trainerClientRelation._id (ya verificado por requireActiveClient
   // ("training")), nunca un id de body/query sin comprobar propiedad.
-  async updateTrainingGoal(id, { trainingGoalType, trainingFrequencyTarget }) {
+  async updateTrainingGoal(id, { trainingGoalType }) {
     return TrainerClient.findByIdAndUpdate(
       id,
-      { $set: { trainingGoalType: trainingGoalType ?? null, trainingFrequencyTarget: trainingFrequencyTarget ?? null } },
+      { $set: { trainingGoalType: trainingGoalType ?? null } },
       { new: true }
     );
   },

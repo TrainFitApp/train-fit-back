@@ -499,10 +499,9 @@ async function sembrarRutinas(trainerId, clientes) {
               expectedRir: [2, 1],
               restSeconds: esBasico ? 150 : 90,
             };
-            // %RM y tempo: la prescripción del Movimiento 6. Solo en los
-            // básicos, que es donde un entrenador los usa de verdad.
+            // Tempo: la prescripción del Movimiento 6. Solo en los básicos,
+            // que es donde un entrenador lo usa de verdad.
             if (esBasico) {
-              doc.expectedPercentRm = micro.purpose === "intensification" ? 85 : 75;
               doc.tempo = "3-1-X-0";
             }
             if (entrenado) {
