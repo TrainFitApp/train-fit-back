@@ -296,6 +296,17 @@ module.exports = {
     });
   },
 
+  // Borrado coherente de fases/rutinas — vacía tableInUse/workoutInUse SIN
+  // fijar una tabla nueva, para cuando se quita la fase que el cliente tenía
+  // en curso y no hay ninguna anterior que restaurar (era la primera fase de
+  // su historia). Mismo $unset que ya usa setTableInUseForClient, sin el
+  // $set de una tabla nueva.
+  async clearTableInUseForClient(clientId) {
+    await userSchema.findByIdAndUpdate(clientId, {
+      $unset: { tableInUse: "", workoutInUse: "" },
+    });
+  },
+
   // MVP-trainers F11: crea una rutina NUEVA directamente para un cliente,
   // asignada por su profesional. A diferencia de createTableToUser, NO
   // activa la rutina (no toca tableInUse/workoutInUse) — ver F11 punto 7.7.

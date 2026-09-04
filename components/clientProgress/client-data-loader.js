@@ -5,23 +5,42 @@ const dietDaysDao = require("../dietDays/diet-days-dao");
 const tableDao = require("../tables/table-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
-const { sortPhasesAscending, computeWindowedTrainingProgress } = require("../routineAssignments/routine-assignment-schedule");
+const { computeWindowedTrainingProgress } = require("../routineAssignments/routine-assignment-schedule");
 const { isoDate } = require("./progress-service");
 const { todayIsoDate } = require("../util/date-util");
 
-// Tarea 5 (2026-09) — progreso de entrenamiento por VENTANA + FASE: la
-// fuente de verdad es el historial de RoutineAssignment, nunca
-// `client.tableInUse` (puede quedarse desfasado para fases futuras hasta
-// que se abre la pestaña de Tablas — ver routine-assignment-service.js#
-// syncTableInUseIfDue, que aquí no se llama). Sin ninguna fase que cubra la
-// ventana, plannedTotal sale 0 de forma natural y trainingDimension ya lo
-// resuelve (`applicable:false, reason:"sin_plan"`) sin cambios.
-async function loadTrainingWindow(clientId, from, to) {
-  const phases = sortPhasesAscending(await routineAssignmentDao.listByClient(clientId));
-  const tableIds = [...new Set(phases.map((phase) => String(phase.tableId)))];
-  const splitsByTableId = tableIds.length ? await tableDao.getSplitsForTables(tableIds) : new Map();
+// Tarea 5bis (2026-09) — progreso de entrenamiento de la FASE EN CURSO, no
+// de una ventana de días arbitraria. Antes se recorría TODO el historial de
+// RoutineAssignment del cliente (fases pasadas incluidas) para repartir
+// plannedTotal/completedSessions por tramos dentro de la ventana. Se
+// simplifica a propósito: "¿sigue mi cliente el programa que le di AHORA?"
+// es la pregunta real (decisión del usuario), no un cociente que mezcla
+// programas ya sustituidos. Efecto colateral deseado: ya no depende de que
+// las fases pasadas sigan existiendo — borrar una fase antigua (ver
+// routine-assignment-service.js#cancelPhase, generalizada para admitir
+// cualquier fase) no puede desviar en silencio ningún número de adherencia,
+// porque la adherencia nunca mira fases pasadas.
+//
+// `client.tableInUse` no sirve como atajo (puede quedarse desfasado para
+// fases futuras hasta que se abre la pestaña de Tablas — ver
+// routine-assignment-service.js#syncTableInUseIfDue, que aquí no se llama);
+// `findCoveringDate` ya resuelve "qué fase rige HOY" por fecha, igual que ya
+// hace el frontend (client-detail.page.ts#currentRoutinePhase). Sin ninguna
+// fase que cubra hoy, plannedTotal sale 0 de forma natural y
+// trainingDimension ya lo resuelve (`applicable:false, reason:"sin_plan"`)
+// sin cambios.
+async function loadTrainingWindow(clientId, to) {
   const periodEndClamped = to < todayIsoDate() ? to : todayIsoDate();
-  return computeWindowedTrainingProgress(phases, splitsByTableId, from, periodEndClamped);
+  const currentPhase = await routineAssignmentDao.findCoveringDate(clientId, periodEndClamped);
+  if (!currentPhase) return { plannedTotal: 0, completedSessions: 0 };
+
+  const splitsByTableId = await tableDao.getSplitsForTables([String(currentPhase.tableId)]);
+  return computeWindowedTrainingProgress(
+    [currentPhase],
+    splitsByTableId,
+    currentPhase.startDate,
+    periodEndClamped
+  );
 }
 
 // Fase 2 Coach Pro — todo lo que hace falta de UN cliente para calcular su
@@ -66,9 +85,9 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
       new Date(`${from}T00:00:00.000Z`),
       new Date(`${to}T23:59:59.999Z`)
     ),
-    // Progreso de la ventana pedida, por fase (RoutineAssignment) — no de
-    // toda la vida de la tabla. Ver loadTrainingWindow arriba.
-    loadTrainingWindow(clientId, from, to),
+    // Progreso de la fase EN CURSO, no de la ventana pedida. Ver
+    // loadTrainingWindow arriba.
+    loadTrainingWindow(clientId, to),
     trainerTaskDao.listForClient(trainerId, clientId),
   ]);
 

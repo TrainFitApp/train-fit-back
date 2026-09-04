@@ -18,6 +18,8 @@ const {
   buildBlockTraining,
   buildBlockComparison,
   buildBlockMuscleGroups,
+  buildBlockExerciseProgress,
+  listTrackedExerciseNames,
 } = require("./training-service");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
@@ -305,13 +307,23 @@ module.exports = {
     // tableDao.listCompletedSetsForUser), y agrupar es puro.
     const blocks = buildBlockTraining(sets);
 
+    // Comparar por ejercicio (2026-09) — exerciseNames siempre va (barato,
+    // alimenta el selector sin que el frontend tenga que pedir nada aparte);
+    // blockExercise solo se calcula si se pidió un ejercicio concreto.
+    const exerciseName = typeof req.query.exercise === "string" ? req.query.exercise.trim() : "";
+
     const response = {
       period: { from, to },
       blocks,
       blockComparison: buildBlockComparison(blocks),
       blockMuscleGroups: buildBlockMuscleGroups(sets),
+      exerciseNames: listTrackedExerciseNames(sets),
       totalSets: sets.length,
     };
+
+    if (exerciseName) {
+      response.blockExercise = buildBlockExerciseProgress(sets, exerciseName);
+    }
 
     if (weeks) {
       const weekly = buildWeeklyTraining(sets, weeks, now);

@@ -157,3 +157,39 @@ test("formatDuration", async (t) => {
     assert.equal(formatDuration(null), "0 min");
   });
 });
+
+// Los tests de arriba construyen los ejercicios a mano, con `exercise` YA
+// poblado — que es justo lo que ocultó un fallo real durante meses:
+// exercise-score-controller.js#getSessionLoad consultaba el workout con
+// .lean(), y mongoose-autopopulate NO actúa sobre consultas lean, así que
+// estas funciones recibían referencias peladas. El endpoint devolvía
+// SIEMPRE un reparto vacío y una duración de 0, y el panel del planificador
+// le pedía al entrenador que puntuara ejercicios que ya tenía puntuados.
+// Este test fija esa frontera: si alguien vuelve a quitar el populate
+// explícito del controller, aquí se ve QUÉ pasa.
+test("sesión con ejercicios sin poblar (regresión del .lean())", async (t) => {
+  await t.test("buildSessionLoad no reparte nada y no cuenta ni un ejercicio", () => {
+    const load = buildSessionLoad(["ref-1", "ref-2"], SCORES);
+
+    assert.deepEqual(load.muscles, []);
+    assert.deepEqual(load.joints, []);
+    assert.equal(load.totalExercises, 0);
+    // El 0 es lo más dañino: la plantilla lo trata como falsy y ni siquiera
+    // avisa de "X de Y sin puntuar" — el panel afirma en positivo que no hay
+    // nada que repartir.
+    assert.equal(load.unscoredExercises, 0);
+  });
+
+  await t.test("estimateSessionSeconds devuelve 0, no una estimación parcial", () => {
+    assert.equal(estimateSessionSeconds(["ref-1", "ref-2"], SCORES), 0);
+  });
+
+  await t.test("con los mismos ejercicios poblados sí hay reparto y duración", () => {
+    const poblados = [exercise("press", 3, 90), exercise("curl", 2, 60)];
+
+    const load = buildSessionLoad(poblados, SCORES);
+    assert.equal(load.totalExercises, 2);
+    assert.ok(load.muscles.length > 0);
+    assert.ok(estimateSessionSeconds(poblados, SCORES) > 0);
+  });
+});

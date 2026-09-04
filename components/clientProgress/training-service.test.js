@@ -10,6 +10,8 @@ const {
   buildBlockTraining,
   buildBlockComparison,
   buildBlockMuscleGroups,
+  buildBlockExerciseProgress,
+  listTrackedExerciseNames,
 } = require("./training-service");
 
 const NOW = new Date("2026-08-23T10:00:00.000Z");
@@ -360,5 +362,95 @@ test("buildBlockMuscleGroups", async (t) => {
   await t.test("sin series no hay bloques", () => {
     assert.deepEqual(buildBlockMuscleGroups([]), []);
     assert.deepEqual(buildBlockMuscleGroups(null), []);
+  });
+});
+
+// Comparar por ejercicio (2026-09) — "ejercicios por micros": el mismo
+// ejercicio, microciclo a microciclo. Un entrenador decide si sube la carga
+// mirando estos números; un PR de 0 kg o mezclar dos ejercicios distintos en
+// el mismo bloque le haría decidir mal, igual que ya vigilan los tests de
+// buildPersonalRecords/buildBlockTraining de arriba.
+
+function exerciseSet(daysAgoValue, splitId, splitName, exerciseName, weight) {
+  return { date: daysAgo(daysAgoValue), splitId, splitName, exerciseName, weight, reps: 5 };
+}
+
+test("buildBlockExerciseProgress", async (t) => {
+  await t.test("filtra por ejercicio y calcula peso máximo, volumen y series por bloque", () => {
+    const sets = [
+      exerciseSet(10, "a", "Semana 1", "Press banca", 80),
+      exerciseSet(9, "a", "Semana 1", "Press banca", 82.5),
+      exerciseSet(9, "a", "Semana 1", "Sentadilla", 100), // otro ejercicio, no cuenta
+      exerciseSet(3, "b", "Semana 2", "Press banca", 85),
+    ];
+
+    const blocks = buildBlockExerciseProgress(sets, "Press banca");
+
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[0].name, "Semana 1");
+    assert.equal(blocks[0].maxWeight, 82.5);
+    assert.equal(blocks[0].sets, 2);
+    // 5×80 + 5×82.5 = 812.5, redondeado a 813 (Math.round, igual que
+    // buildBlockTraining con el volumen total).
+    assert.equal(blocks[0].volume, 813);
+    assert.equal(blocks[1].maxWeight, 85);
+  });
+
+  await t.test("ordena los bloques por primera sesión, igual que buildBlockTraining", () => {
+    const blocks = buildBlockExerciseProgress(
+      [
+        exerciseSet(2, "b", "Segundo", "Sentadilla", 100),
+        exerciseSet(20, "a", "Primero", "Sentadilla", 90),
+      ],
+      "Sentadilla"
+    );
+    assert.deepEqual(
+      blocks.map((b) => b.name),
+      ["Primero", "Segundo"]
+    );
+  });
+
+  await t.test("respeta MIN_TRACKED_WEIGHT igual que buildPersonalRecords", () => {
+    const blocks = buildBlockExerciseProgress(
+      [exerciseSet(1, "a", "Semana 1", "Peso corporal", MIN_TRACKED_WEIGHT - 0.1)],
+      "Peso corporal"
+    );
+    assert.deepEqual(blocks, []);
+  });
+
+  await t.test("una serie sin microciclo se ignora en vez de crear un bloque fantasma", () => {
+    const blocks = buildBlockExerciseProgress(
+      [{ date: daysAgo(1), exerciseName: "Press banca", weight: 80, reps: 5 }],
+      "Press banca"
+    );
+    assert.deepEqual(blocks, []);
+  });
+
+  await t.test("sin series no hay bloques", () => {
+    assert.deepEqual(buildBlockExerciseProgress([], "Press banca"), []);
+    assert.deepEqual(buildBlockExerciseProgress(null, "Press banca"), []);
+  });
+});
+
+test("listTrackedExerciseNames", async (t) => {
+  await t.test("nombres únicos, sin repetidos, ordenados alfabéticamente", () => {
+    const names = listTrackedExerciseNames([
+      exerciseSet(1, "a", "Semana 1", "Sentadilla", 100),
+      exerciseSet(1, "a", "Semana 1", "Press banca", 80),
+      exerciseSet(2, "a", "Semana 1", "Sentadilla", 105),
+    ]);
+    assert.deepEqual(names, ["Press banca", "Sentadilla"]);
+  });
+
+  await t.test("un ejercicio por debajo de MIN_TRACKED_WEIGHT no se ofrece", () => {
+    const names = listTrackedExerciseNames([
+      exerciseSet(1, "a", "Semana 1", "Zancadas sin peso", MIN_TRACKED_WEIGHT - 0.1),
+    ]);
+    assert.deepEqual(names, []);
+  });
+
+  await t.test("sin series no hay nombres", () => {
+    assert.deepEqual(listTrackedExerciseNames([]), []);
+    assert.deepEqual(listTrackedExerciseNames(null), []);
   });
 });

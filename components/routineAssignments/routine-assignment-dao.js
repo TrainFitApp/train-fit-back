@@ -9,11 +9,16 @@ module.exports = {
   // "qué regía tal día del pasado" con la misma consulta: status no se
   // filtra, porque una asignación "superseded" sigue siendo la respuesta
   // correcta para fechas anteriores a cuando fue sustituida.
+  //
+  // Desempate por createdAt (borrado coherente de fases/rutinas) — dos
+  // fases con el MISMO startDate (aplicar A y luego B el mismo día, el
+  // escenario que motivó ese rediseño) hacían esta consulta no determinista
+  // sin él.
   async findCoveringDate(clientId, date) {
     return RoutineAssignment.findOne({
       clientId,
       startDate: { $lte: date },
-    }).sort({ startDate: -1 });
+    }).sort({ startDate: -1, createdAt: -1 });
   },
 
   // Asignaciones que colisionan con una nueva que empieza en `startDate`.
@@ -36,8 +41,11 @@ module.exports = {
     return RoutineAssignment.findOne({ clientId, status: "active" });
   },
 
+  // Mismo desempate por createdAt que findCoveringDate — el borrado
+  // coherente de fases usa el primer elemento de esta lista como "nuevo
+  // tip" tras quitar el que lo era.
   async listByClient(clientId) {
-    return RoutineAssignment.find({ clientId }).sort({ startDate: -1 });
+    return RoutineAssignment.find({ clientId }).sort({ startDate: -1, createdAt: -1 });
   },
 
   // Tarea 5 (2026-09) — historial de fases de VARIOS clientes de una vez,
@@ -71,6 +79,14 @@ module.exports = {
 
   async findByIdAndClient(id, clientId) {
     return RoutineAssignment.findOne({ _id: id, clientId });
+  },
+
+  // Borrado coherente de fases/rutinas — todas las fases (0, 1 o varias;
+  // una tabla se puede reasignar más de una vez) que referencian una tabla
+  // concreta para un cliente. La usa deleteTable para limpiarlas antes de
+  // borrar la Table de verdad.
+  async findByTableAndClient(tableId, clientId) {
+    return RoutineAssignment.find({ tableId, clientId });
   },
 
   // Tarea 4bis (2026-09) — la fase que esta ID sustituyó, si la hay. Al

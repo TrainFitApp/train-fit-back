@@ -1,6 +1,7 @@
 const tableDao = require("./table-dao");
 const tableUtil = require("./table-util");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
 
 module.exports = {
   async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
@@ -61,7 +62,16 @@ module.exports = {
     return tableDao.updateTable(id, name, userId, adminMode);
   },
 
+  // Borrado coherente de fases/rutinas — limpia cualquier RoutineAssignment
+  // que referenciara esta tabla para este dueño ANTES de borrarla de
+  // verdad, así tableInUse/workoutInUse nunca quedan apuntando a un _id ya
+  // borrado, ni siquiera transitoriamente entre pasos. No-op real (no solo
+  // improbable) para autoservicio: RoutineAssignment solo se crea desde el
+  // flujo del entrenador (routine-assignment-controller.js#applyRoutine),
+  // así que findByTableAndClient siempre devuelve [] para un idUser sin
+  // entrenador de por medio.
   async deleteTable(idUser, idTable, adminMode = false) {
+    await routineAssignmentService.removeAssignmentsForTable(idUser, idTable);
     return tableDao.deleteTable(idUser, idTable, adminMode);
   },
 

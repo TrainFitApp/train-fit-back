@@ -12,6 +12,7 @@ const {
 } = require("./exercise-score-catalog");
 const { buildSessionLoad, estimateSessionSeconds } = require("./session-load-service");
 const workoutSchema = require("../workouts/workout-schema");
+const tableAccess = require("../tables/table-access");
 
 // Tope de la carga masiva. 500 cubre de sobra un catálogo de ejercicios
 // completo; sin tope, una petición podría intentar escribir cien mil
@@ -137,13 +138,35 @@ module.exports = {
    * puntuaciones del entrenador, y bajarse las 200 del catálogo para sumar
    * las 6 de la sesión abierta sería mover mucho para calcular poco.
    *
-   * No comprueba propiedad del workout: solo devuelve agregados de las
-   * puntuaciones DEL PROPIO entrenador que consulta (los ejercicios que no
-   * ha puntuado no aportan nada), así que no expone datos de nadie más.
+   * Comprueba propiedad (2026-09): antes no lo hacía, argumentando que solo
+   * devolvía agregados de las puntuaciones del propio entrenador. Ese
+   * argumento dejó de valer al arreglar el populate de abajo —
+   * `estimatedSeconds` depende ahora de los restSeconds REALES del workout
+   * consultado, es decir, de datos del cliente, no solo de puntuaciones
+   * propias. Se usa el chokepoint que ya existe (table-access.js), no una
+   * comprobación ad-hoc.
    */
   async getSessionLoad(req, res) {
-    const workout = await workoutSchema.findById(req.params.workoutId).lean();
+    // populate EXPLÍCITO y no autopopulate: el plugin mongoose-autopopulate
+    // NO actúa sobre consultas .lean() (sale por return antes de poblar), así
+    // que `exercises` llegaba como array de ObjectId pelados: exerciseIds
+    // salía vacío, buildSessionLoad descartaba todos los ejercicios por su
+    // guard de `exercise?._id`, y este endpoint devolvía SIEMPRE
+    // {muscles:[], joints:[], unscoredExercises:0, totalExercises:0,
+    // estimatedSeconds:0} — el panel de carga del planificador llevaba
+    // pidiendo "puntúa los ejercicios" a entrenadores que ya los tenían
+    // puntuados. Mismo fallo y mismo remedio que
+    // workout-template-dao.js#listByTrainer.
+    const workout = await workoutSchema
+      .findById(req.params.workoutId)
+      .populate({ path: "exercises", populate: { path: "sets" } })
+      .lean();
     if (!workout) return res.status(404).send({ message: "Sesión no encontrada" });
+
+    const table = await tableAccess.findTableOwningWorkout(req.params.workoutId);
+    if (!table || !(await tableAccess.canAccessUserTable(req, table.userId))) {
+      return res.status(403).send({ message: "No tienes acceso a esta sesión" });
+    }
 
     const customExercises = workout.exercises || [];
     const exerciseIds = customExercises

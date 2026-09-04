@@ -102,23 +102,22 @@ module.exports = {
   },
 
   // DELETE /trainer/clients/:clientId/routine-assignments/:assignmentId
-  // Tarea 4bis (2026-09) — "me he equivocado" / cliente lesionado: quitar
-  // una fase PROGRAMADA (aún no en curso). La fase que sustituía se
-  // reactiva sola (ver service) para que el cliente nunca se quede sin
-  // ninguna fase "active".
+  // Tarea 4bis (2026-09, generalizada — borrado coherente de fases/rutinas)
+  // — "me he equivocado" / cliente lesionado: quitar CUALQUIER fase
+  // (futura, pasada/sustituida, o la vigente ahora mismo). La fase que
+  // regía antes se restaura sola (ver service) para que el cliente nunca
+  // se quede sin ninguna fase "active" salvo que fuera la primera de su
+  // historia, en cuyo caso tableInUse se limpia sin más.
   async cancelPhase(req, res) {
     const trainerId = req.auth.userId;
     const { clientId, assignmentId } = req.params;
 
     let result;
     try {
-      result = await routineAssignmentService.cancelScheduledPhase(clientId, assignmentId);
+      result = await routineAssignmentService.cancelPhase(clientId, assignmentId);
     } catch (error) {
       if (error.code === "ROUTINE_PHASE_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
-      }
-      if (error.code === "ROUTINE_PHASE_ALREADY_STARTED") {
-        return res.status(400).send({ message: error.message, code: error.code });
       }
       throw error;
     }

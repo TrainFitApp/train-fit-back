@@ -19,6 +19,58 @@ function blocksNewPhase(existing, startDate) {
   return existing.startDate > startDate;
 }
 
+/**
+ * Borrado coherente de fases/rutinas — repara, tras borrar UNA
+ * RoutineAssignment ya cargada, las dos invariantes que el resto del
+ * sistema da por hechas:
+ *
+ * 1. El "tip" de la cadena (status:"active" crudo en BD) — qué fase es la
+ *    más recientemente aplicada, la usa applyRoutine para saber a quién
+ *    marcar "superseded" la próxima vez.
+ * 2. Lo que rige HOY (User.tableInUse/workoutInUse) — se calcula por
+ *    FECHA (findCoveringDate), nunca por status (mismo criterio que ya
+ *    usa syncTableInUseIfDue). Una fase futura ya es "active" en BD en
+ *    cuanto se crea, aunque otra siga rigiendo hoy — por eso status y
+ *    "qué rige hoy" pueden ser filas distintas y hay que repararlas por
+ *    separado.
+ *
+ * Se recalcula cada invariante desde cero (por fecha / por listado
+ * ordenado) en vez de seguir el puntero supersededBy a mano: seguir el
+ * puntero se rompe si ya se había borrado un eslabón intermedio de la
+ * cadena (el puntero acabaría apuntando a un _id inexistente).
+ *
+ * No comprueba pertenencia (clientId/assignmentId válidos) — eso lo hace
+ * quien llama (cancelPhase, removeAssignmentsForTable).
+ */
+async function removeAssignmentAndReconcile(clientId, assignment) {
+  const today = isoToday();
+  const wasCovering = await routineAssignmentDao.findCoveringDate(clientId, today);
+  const isCurrent = !!wasCovering && String(wasCovering._id) === String(assignment._id);
+
+  await routineAssignmentDao.deleteById(assignment._id);
+
+  // Invariante 1 (tip): solo hace falta reparar si la fase borrada lo era.
+  if (assignment.status === "active") {
+    const [newTip] = await routineAssignmentDao.listByClient(clientId);
+    if (newTip) await routineAssignmentDao.reactivate(newTip._id);
+  }
+
+  // Invariante 2 (qué rige hoy): solo se toca si la fase borrada era la
+  // vigente — borrar una fase futura o ya sustituida nunca cambia lo que
+  // el cliente tiene activo ahora mismo.
+  let restored = null;
+  if (isCurrent) {
+    restored = await routineAssignmentDao.findCoveringDate(clientId, today);
+    if (restored) {
+      await tableDao.setTableInUseForClient(clientId, restored.tableId);
+    } else {
+      await tableDao.clearTableInUseForClient(clientId);
+    }
+  }
+
+  return { cancelled: assignment, restored, tableInUseChanged: isCurrent };
+}
+
 module.exports = {
   // Exportada para test unitario.
   blocksNewPhase,
@@ -83,44 +135,48 @@ module.exports = {
     await tableDao.setTableInUseForClient(clientId, covering.tableId);
   },
 
-  // Tarea 4bis (2026-09) — "me he equivocado" / "el cliente se ha
-  // lesionado y hay que replantear lo que viene": quitar una fase que
-  // TODAVÍA NO ha empezado. Solo programada, nunca en curso ni pasada — una
-  // fase que ya rige se cambia APLICANDO una nueva encima (preserva el
-  // historial), nunca borrando lo que ya pasó.
-  //
-  // Si esta fase había sustituido a otra (supersededBy apuntaba a ella),
-  // esa otra se reactiva: si no, el cliente se quedaría sin ninguna fase
-  // "active" — un estado que el resto del sistema (findActiveForClient) no
-  // espera nunca.
-  async cancelScheduledPhase(clientId, assignmentId) {
+  // Tarea 4bis (2026-09, generalizada — borrado coherente de fases/rutinas)
+  // — "me he equivocado" / "el cliente se ha lesionado y hay que replantear
+  // lo que viene": quitar CUALQUIER fase (futura, pasada/sustituida, o la
+  // vigente ahora mismo). Antes solo admitía fases futuras
+  // (ROUTINE_PHASE_ALREADY_STARTED en cualquier otro caso) — ese guard
+  // bloqueaba también fases YA sustituidas por otra más reciente, que nunca
+  // deberían haber contado como "en curso" (bug real: aplicar la rutina A
+  // hoy, luego la B también hoy, dejaba A imposible de quitar aunque B, no
+  // A, fuera la que de verdad regía).
+  async cancelPhase(clientId, assignmentId) {
     const assignment = await routineAssignmentDao.findByIdAndClient(assignmentId, clientId);
     if (!assignment) {
       const error = new Error("Fase no encontrada");
       error.code = "ROUTINE_PHASE_NOT_FOUND";
       throw error;
     }
-    if (assignment.startDate <= isoToday()) {
-      const error = new Error("No se puede quitar una fase que ya ha empezado");
-      error.code = "ROUTINE_PHASE_ALREADY_STARTED";
-      throw error;
-    }
 
-    const restored = await routineAssignmentDao.findSupersededBy(assignmentId);
-    await routineAssignmentDao.deleteById(assignmentId);
-    if (restored) {
-      await routineAssignmentDao.reactivate(restored._id);
-    }
+    return removeAssignmentAndReconcile(clientId, assignment);
+  },
 
-    return { cancelled: assignment, restored: restored || null };
+  // Borrado coherente de fases/rutinas — la usa tables/table-service.js
+  // antes de borrar una Table de verdad: limpia TODAS las fases (0, 1 o
+  // varias — la misma tabla se puede reasignar más de una vez) que la
+  // referenciaban para este cliente, con la MISMA lógica que quitar una
+  // fase suelta. Secuencial (no Promise.all): cada borrado depende del
+  // estado que deja el anterior (qué fase queda como tip / qué rige hoy).
+  async removeAssignmentsForTable(clientId, tableId) {
+    const assignments = await routineAssignmentDao.findByTableAndClient(tableId, clientId);
+    const results = [];
+    for (const assignment of assignments) {
+      results.push(await removeAssignmentAndReconcile(clientId, assignment));
+    }
+    return results;
   },
 
   // Tarea 4ter (2026-09) — mover la fecha de una fase PROGRAMADA, p.ej. para
   // alargar la vigencia de la rutina en curso sin cancelar y reprogramar
-  // desde cero. Mismo límite que cancelScheduledPhase: solo fases que
-  // TODAVÍA no han empezado (una que ya rige se cambia aplicando una nueva
-  // encima, nunca reescribiendo su fecha). El supersededBy no se toca —
-  // sigue siendo la misma asignación, solo cambia cuándo entra en vigor.
+  // desde cero. A diferencia de cancelPhase (generalizada para cualquier
+  // fase), esta sigue limitada a fases que TODAVÍA no han empezado (una que
+  // ya rige se cambia aplicando una nueva encima, nunca reescribiendo su
+  // fecha). El supersededBy no se toca — sigue siendo la misma asignación,
+  // solo cambia cuándo entra en vigor.
   async rescheduleScheduledPhase(clientId, assignmentId, startDate) {
     const assignment = await routineAssignmentDao.findByIdAndClient(assignmentId, clientId);
     if (!assignment) {

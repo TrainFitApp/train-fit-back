@@ -25,6 +25,26 @@ function sortPhasesAscending(phases) {
   });
 }
 
+// Adherencia por fase (2026-09) — "adherencia" ya no mira una ventana fija
+// de días, solo la fase EN CURSO (decisión del usuario: borrar una fase
+// antigua no debe poder alterar en silencio números de adherencia pasados,
+// y "¿sigue mi cliente el programa que le di AHORA?" es la pregunta real).
+// La fase que cubre `today` dentro de un array YA CARGADO — mismo criterio
+// que routine-assignment-dao.js#findCoveringDate (createdAt como desempate
+// de un mismo startDate), pero en memoria: la usa roster-service.js, que ya
+// carga TODAS las fases de TODA la cartera en una sola consulta y no quiere
+// una consulta más por cliente.
+function pickCurrentPhase(phases, today) {
+  const covering = (phases || []).filter((phase) => phase.startDate <= today);
+  if (!covering.length) return null;
+  return covering.reduce((latest, phase) => {
+    if (phase.startDate !== latest.startDate) {
+      return phase.startDate > latest.startDate ? phase : latest;
+    }
+    return new Date(phase.createdAt) > new Date(latest.createdAt) ? phase : latest;
+  });
+}
+
 // Por cada fase, su tramo de vigencia real DENTRO de la ventana pedida: desde
 // max(inicio de la fase, inicio de ventana) hasta el día antes de que empiece
 // la SIGUIENTE fase (o el final de la ventana, si es la última — sin
@@ -67,4 +87,4 @@ function computeWindowedTrainingProgress(phasesAsc, splitsByTableId, periodStart
   return { plannedTotal, completedSessions };
 }
 
-module.exports = { sortPhasesAscending, computeWindowedTrainingProgress };
+module.exports = { sortPhasesAscending, computeWindowedTrainingProgress, pickCurrentPhase };

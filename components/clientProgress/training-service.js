@@ -281,6 +281,68 @@ function buildBlockMuscleGroups(sets) {
     }));
 }
 
+/**
+ * Comparar por ejercicio (2026-09) — "ejercicios por micros": el mismo
+ * ejercicio, microciclo a microciclo, en vez del agregado ciego de
+ * buildBlockTraining. Mismo recorte por splitId que ya usa
+ * buildBlockTraining/buildBlockMuscleGroups — ninguna consulta nueva, es la
+ * misma `sets` que ya trae exerciseName (ver listCompletedSetsForUser).
+ *
+ * Peso máximo es la cifra PRINCIPAL (mismo criterio que buildPersonalRecords:
+ * "así es como un entrenador lee un récord"), con volumen y nº de series
+ * como contexto — no se dividen en líneas propias para no repetir el
+ * problema de escalas mezcladas que ya evita TrainingComparisonMetric al ser
+ * un selector, no varias métricas activas a la vez.
+ */
+function buildBlockExerciseProgress(sets, exerciseName) {
+  const blocks = new Map();
+
+  for (const set of sets || []) {
+    if (!set.splitId || set.exerciseName !== exerciseName) continue;
+    const weight = Number(set.weight) || 0;
+    if (weight < MIN_TRACKED_WEIGHT) continue;
+
+    const key = String(set.splitId);
+    if (!blocks.has(key)) {
+      blocks.set(key, {
+        splitId: key,
+        name: set.splitName || "Microciclo",
+        start: null,
+        end: null,
+        maxWeight: 0,
+        volume: 0,
+        sets: 0,
+      });
+    }
+
+    const block = blocks.get(key);
+    const day = isoDate(set.date);
+    if (!block.start || day < block.start) block.start = day;
+    if (!block.end || day > block.end) block.end = day;
+    block.maxWeight = Math.max(block.maxWeight, weight);
+    block.volume += volumeOf(set);
+    block.sets += 1;
+  }
+
+  return [...blocks.values()]
+    .sort((a, b) => (a.start || "").localeCompare(b.start || ""))
+    .map((block) => ({ ...block, volume: Math.round(block.volume) }));
+}
+
+// Nombres de ejercicio con carga real (mismo filtro MIN_TRACKED_WEIGHT que
+// buildPersonalRecords) disponibles en el rango pedido — alimenta el
+// selector de "comparar por ejercicio" sin que el frontend tenga que
+// adivinar qué hay que ofrecer.
+function listTrackedExerciseNames(sets) {
+  const names = new Set();
+  for (const set of sets || []) {
+    if (!set.exerciseName) continue;
+    if ((Number(set.weight) || 0) < MIN_TRACKED_WEIGHT) continue;
+    names.add(set.exerciseName);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
 module.exports = {
   TOP_EXERCISES,
   MIN_TRACKED_WEIGHT,
@@ -291,4 +353,6 @@ module.exports = {
   buildBlockTraining,
   buildBlockComparison,
   buildBlockMuscleGroups,
+  buildBlockExerciseProgress,
+  listTrackedExerciseNames,
 };
