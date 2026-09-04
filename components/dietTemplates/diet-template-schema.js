@@ -3,6 +3,7 @@ const mongooseAutopopulate = require("mongoose-autopopulate");
 const Schema = mongoose.Schema;
 const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
+const dietExceptionSchema = require("../dietExceptions/diet-exception-schema");
 
 // Replanteamiento MVP (nutrición) — plantilla de dieta reutilizable del
 // profesional, mismo espíritu que las plantillas de Table (rutinas): se
@@ -54,6 +55,36 @@ const MealStructureSchema = {
 const DietTemplateSchema = new Schema(
   {
     trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    // null (todo documento anterior a este campo lo es implícitamente) =
+    // plantilla real reutilizable del entrenador. Puesto = copia congelada
+    // exclusiva de UNA asignación (ver diet-template-dao.js#cloneForAssignment):
+    // mismo shape, misma colección, para no duplicar el modelo de datos, pero
+    // nunca aparece en listByTrainer ni se vuelve a asignar a nadie — la regla
+    // del producto es que a un cliente jamás se le asigna la plantilla en sí.
+    clientId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+    // Simplificación (2026-09) — la copia ES la asignación, ya no hay una
+    // colección PlanAssignment aparte: una copia (clientId puesto) es 1:1 con
+    // "este cliente tiene este plan desde tal fecha", así que sus campos de
+    // fecha/estado viven aquí directo, no en un documento propio. Todos
+    // quedan null en una plantilla real (clientId null), donde no significan
+    // nada. endMode determina cómo se calculó endDate al asignar: "fixedDate"
+    // = fecha exacta elegida, "duration" = startDate + N días (ya calculada),
+    // "indefinite" = endDate null, sigue vigente hasta que se sustituya.
+    startDate: { type: String, default: null }, // "YYYY-MM-DD"
+    // null explícito en el enum: Mongoose NO lo deja pasar gratis solo por
+    // tener default:null — sin esto, cualquier create() de una plantilla
+    // real (que nunca toca estos campos) revienta la validación.
+    endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null], default: null },
+    endDate: { type: String, default: null }, // "YYYY-MM-DD" o null si indefinido
+    status: { type: String, enum: ["active", "superseded", "ended", null], default: null },
+    // Encadena con la copia que la sustituyó — permite reconstruir el
+    // historial de fases sin perder rastro de lo que regía antes.
+    supersededBy: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
+    // Informativo — de qué plantilla se copió, solo para "ver plantilla
+    // aplicada" en el frontend. Nunca se lee para resolver contenido (eso ya
+    // es la copia en sí) ni para el `mode`/`days`/`dayPatterns` reales.
+    // Puede quedar huérfano si la plantilla original se borra después.
+    sourceTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
     name: { type: String, required: true, trim: true, maxlength: 100 },
     mode: { type: String, enum: ["sequential", "recurring", "choice"], default: "sequential" },
     days: [
@@ -83,6 +114,11 @@ const DietTemplateSchema = new Schema(
 );
 
 DietTemplateSchema.plugin(mongooseAutopopulate);
+
+// Resolver "¿qué plan rige hoy para este cliente?" es la consulta más
+// frecuente sobre las copias — un índice compuesto la deja en O(log n) en
+// vez de escanear toda la colección (plantillas incluidas).
+DietTemplateSchema.index({ clientId: 1, status: 1, startDate: 1 });
 
 // Recorre days[] y dayPatterns[] (mismo shape .meals[].alternatives[]) y
 // junta los ids de CustomProduct/CustomRecipe referenciados en TODO el
@@ -118,10 +154,16 @@ async function deleteContentIds({ productIds, recipeIds }) {
   if (recipeIds.length) await customRecipeSchema.deleteMany({ _id: { $in: recipeIds } });
 }
 
+// Una copia (clientId puesto) ES la asignación — sus DietException puntuales
+// se van con ella, igual que antes se iban con el PlanAssignment que ya no
+// existe. Una plantilla real (clientId null) nunca tiene excepciones propias.
 const handleDeleteOne = async function (next) {
   try {
     const doc = await this.model.findOne(this.getQuery());
-    if (doc) await deleteContentIds(collectContentIds(doc));
+    if (doc) {
+      await deleteContentIds(collectContentIds(doc));
+      if (doc.clientId) await dietExceptionSchema.deleteMany({ assignmentId: doc._id });
+    }
     next();
   } catch (error) {
     next(error);
@@ -137,12 +179,15 @@ DietTemplateSchema.pre("deleteMany", async function (next) {
     const docs = await this.model.find(this.getFilter());
     const productIds = [];
     const recipeIds = [];
+    const assignmentIds = [];
     for (const doc of docs) {
       const ids = collectContentIds(doc);
       productIds.push(...ids.productIds);
       recipeIds.push(...ids.recipeIds);
+      if (doc.clientId) assignmentIds.push(doc._id);
     }
     await deleteContentIds({ productIds, recipeIds });
+    if (assignmentIds.length) await dietExceptionSchema.deleteMany({ assignmentId: { $in: assignmentIds } });
     next();
   } catch (error) {
     next(error);

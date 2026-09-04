@@ -25,7 +25,6 @@ async function main() {
   const dietSchema = require("../components/diets/diet-schema");
   const dietDaySchema = require("../components/dietDays/diet-days-schema");
   const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
-  const planAssignmentSchema = require("../components/planAssignments/plan-assignment-schema");
   const dietDaysService = require("../components/dietDays/diet-days-service");
 
   const runId = new mongoose.Types.ObjectId().toString();
@@ -34,7 +33,6 @@ async function main() {
     trainer: null,
     diet: null,
     dietDays: [],
-    template: null,
     assignment: null,
   };
 
@@ -62,20 +60,18 @@ async function main() {
 
     await userSchema.findByIdAndUpdate(created.client._id, { dietInUse: created.diet._id });
 
-    created.template = await dietTemplateSchema.create({
+    // La copia ES la asignación (ver diet-template-schema.js) — un solo
+    // documento con clientId puesto en vez de plantilla + PlanAssignment
+    // por separado.
+    created.assignment = await dietTemplateSchema.create({
       trainerId: created.trainer._id,
+      clientId: created.client._id,
       name: `Plantilla choice de prueba ${runId}`,
       mode: "choice",
       dayPatterns: [
         { name: "Entrenamiento", appliesTo: [], meals: [] },
         { name: "Descanso", appliesTo: [], meals: [] },
       ],
-    });
-
-    created.assignment = await planAssignmentSchema.create({
-      planId: created.template._id,
-      clientId: created.client._id,
-      trainerId: created.trainer._id,
       startDate: "2026-08-01",
       endMode: "indefinite",
       endDate: null,
@@ -115,8 +111,7 @@ async function main() {
     console.log(`${LOG_PREFIX} PASS`);
   } finally {
     log("limpiando datos de prueba...");
-    if (created.assignment) await planAssignmentSchema.deleteOne({ _id: created.assignment._id });
-    if (created.template) await dietTemplateSchema.deleteOne({ _id: created.template._id });
+    if (created.assignment) await dietTemplateSchema.deleteOne({ _id: created.assignment._id });
     if (created.diet) await dietSchema.deleteOne({ _id: created.diet._id });
     if (created.dietDays.length) {
       await dietDaySchema.deleteMany({ _id: { $in: created.dietDays.map((dd) => dd._id) } });

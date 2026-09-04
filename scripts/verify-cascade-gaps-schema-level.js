@@ -10,9 +10,9 @@ const LOG_PREFIX = "[verify-cascade-gaps-schema-level]";
 const log = (...args) => console.log(LOG_PREFIX, ...args);
 const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 
-// Confirma las 3 cascadas padre->hijo añadidas hoy (huecos preexistentes):
-// PlanAssignment -> DietException, Table -> PinnedExerciseNote,
-// TrainerTask -> TaskCompletion. Prueba deleteOne en cada una.
+// Confirma 3 cascadas padre->hijo: DietTemplate (copia) -> DietException,
+// Table -> PinnedExerciseNote, TrainerTask -> TaskCompletion. Prueba
+// deleteOne en cada una.
 async function main() {
   const mongoUri = buildMongoUri();
   log(`connecting ${redactMongoUri(mongoUri)}`);
@@ -20,7 +20,7 @@ async function main() {
   ok("connected");
 
   const userSchema = require("../components/users/schema");
-  const planAssignmentSchema = require("../components/planAssignments/plan-assignment-schema");
+  const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
   const dietExceptionSchema = require("../components/dietExceptions/diet-exception-schema");
   const tableSchema = require("../components/tables/table-schema");
   const pinnedExerciseNoteSchema = require("../components/pinnedExerciseNotes/pinned-exercise-note-schema");
@@ -35,13 +35,14 @@ async function main() {
     created.client = await userSchema.create({ email: `verify-cascade-client-${runId}@test.local` });
     ok("trainer/cliente de prueba creados");
 
-    // --- 1) PlanAssignment -> DietException ---
-    created.assignment = await planAssignmentSchema.create({
-      planId: new mongoose.Types.ObjectId(),
-      clientId: created.client._id,
+    // --- 1) DietTemplate (copia-asignación) -> DietException ---
+    created.assignment = await dietTemplateSchema.create({
       trainerId: created.trainer._id,
+      clientId: created.client._id,
+      name: "Copia verificación",
       startDate: "2026-01-01",
       endMode: "indefinite",
+      status: "active",
     });
     created.exception = await dietExceptionSchema.create({
       assignmentId: created.assignment._id,
@@ -49,10 +50,10 @@ async function main() {
       date: "2026-01-05",
       action: "skip",
     });
-    await planAssignmentSchema.deleteOne({ _id: created.assignment._id });
+    await dietTemplateSchema.deleteOne({ _id: created.assignment._id });
     const exceptionAfter = await dietExceptionSchema.findById(created.exception._id);
-    assert.equal(exceptionAfter, null, "DietException debe borrarse en cascada al borrar su PlanAssignment");
-    ok("PlanAssignment -> DietException cascada correctamente");
+    assert.equal(exceptionAfter, null, "DietException debe borrarse en cascada al borrar la copia-asignación");
+    ok("DietTemplate (copia) -> DietException cascada correctamente");
     created.assignment = null;
     created.exception = null;
 
@@ -91,7 +92,7 @@ async function main() {
   } finally {
     log("limpiando datos de prueba...");
     if (created.exception) await dietExceptionSchema.deleteOne({ _id: created.exception._id });
-    if (created.assignment) await planAssignmentSchema.deleteOne({ _id: created.assignment._id });
+    if (created.assignment) await dietTemplateSchema.deleteOne({ _id: created.assignment._id });
     if (created.pinnedNote) await pinnedExerciseNoteSchema.deleteOne({ _id: created.pinnedNote._id });
     if (created.table) await tableSchema.deleteOne({ _id: created.table._id });
     if (created.completion) await taskCompletionSchema.deleteOne({ _id: created.completion._id });

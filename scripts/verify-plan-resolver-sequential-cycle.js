@@ -33,7 +33,6 @@ async function main() {
   const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
   const dietTemplateDao = require("../components/dietTemplates/diet-template-dao");
   const planAssignmentService = require("../components/planAssignments/plan-assignment-service");
-  const planAssignmentSchema = require("../components/planAssignments/plan-assignment-schema");
   const planResolver = require("../components/planAssignments/plan-resolver");
 
   const runId = new mongoose.Types.ObjectId().toString();
@@ -82,11 +81,11 @@ async function main() {
     created.assignment = await planAssignmentService.applyPlan({
       trainerId: created.trainer._id,
       clientId: created.client._id,
-      planId: created.template._id,
+      template: created.template,
       startDate,
       endMode: "indefinite",
     });
-    ok("PlanAssignment indefinite creada, cubre desde", startDate);
+    ok("copia-asignación indefinite creada, cubre desde", startDate);
 
     const expected = [111, 222, 111, 222]; // día 0,1,2,3 -> A,B,A(ciclo),B(ciclo)
     for (let i = 0; i < expected.length; i++) {
@@ -107,7 +106,7 @@ async function main() {
     console.log(`${LOG_PREFIX} PASS`);
   } finally {
     log("limpiando datos de prueba...");
-    if (created.assignment) await planAssignmentSchema.deleteOne({ _id: created.assignment._id });
+    if (created.assignment) await dietTemplateSchema.deleteOne({ _id: created.assignment._id });
     if (created.template) await dietTemplateSchema.deleteOne({ _id: created.template._id });
     if (created.trainer) await userSchema.deleteOne({ _id: created.trainer._id });
     if (created.client) await userSchema.deleteOne({ _id: created.client._id });

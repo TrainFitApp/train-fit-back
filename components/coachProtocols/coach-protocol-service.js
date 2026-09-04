@@ -89,7 +89,7 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
     const assignment = await planAssignmentService.applyPlan({
       trainerId,
       clientId,
-      planId: protocol.dietTemplateId,
+      template: plan,
       startDate: startDate || new Date().toISOString().slice(0, 10),
       endMode: "indefinite",
     });

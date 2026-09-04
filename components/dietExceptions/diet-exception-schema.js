@@ -8,7 +8,10 @@ const Schema = mongoose.Schema;
 // comida concreta.
 const DietExceptionSchema = new Schema(
   {
-    assignmentId: { type: Schema.Types.ObjectId, ref: "PlanAssignment", required: true, index: true },
+    // Simplificación (2026-09) — la "asignación" es la copia congelada de
+    // DietTemplate (clientId puesto), ya no una colección PlanAssignment
+    // aparte. Ver diet-template-schema.js.
+    assignmentId: { type: Schema.Types.ObjectId, ref: "DietTemplate", required: true, index: true },
     clientId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     date: { type: String, required: true }, // "YYYY-MM-DD"
     mealSlot: { type: String, default: null },

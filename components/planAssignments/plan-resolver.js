@@ -1,4 +1,3 @@
-const DietTemplate = require("../dietTemplates/diet-template-schema");
 const planAssignmentService = require("./plan-assignment-service");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 
@@ -34,10 +33,12 @@ function weekdayOf(isoDate) {
 // la lista completa para que diet-day-resolver.js decida: 1 alternativa se
 // pastea directa, 2+ generan una MealProposal para que el cliente elija.
 async function resolvePlanForDate(clientId, date, { chosenPatternName } = {}) {
-  const assignment = await planAssignmentService.findCoveringDate(clientId, date);
-  if (!assignment) return null;
-
-  const plan = await DietTemplate.findById(assignment.planId);
+  // La copia congelada ES el plan (ver diet-template-schema.js) — ya no hace
+  // falta un segundo lookup, ni el null-check de "la plantilla referenciada
+  // se borró": borrar la copia borra la asignación con ella (cascada en
+  // diet-template-schema.js), así que si `assignment` existe, su contenido
+  // también.
+  const plan = await planAssignmentService.findCoveringDate(clientId, date);
   if (!plan) return null;
 
   let mealsForDay = null;
@@ -63,7 +64,7 @@ async function resolvePlanForDate(clientId, date, { chosenPatternName } = {}) {
     // (plantilla en borrador, sin validación mínima en el controller) sigue
     // sin resolución, igual que antes — % por longitud 0 rompería.
     const daysCount = (plan.days || []).length;
-    const day = daysCount ? plan.days[daysElapsed(assignment.startDate, date) % daysCount] : null;
+    const day = daysCount ? plan.days[daysElapsed(plan.startDate, date) % daysCount] : null;
     if (day) mealsForDay = day.meals;
   }
 
@@ -112,7 +113,7 @@ async function resolvePlanForDate(clientId, date, { chosenPatternName } = {}) {
     }
   }
 
-  return { resolved, trainerId: assignment.trainerId };
+  return { resolved, trainerId: plan.trainerId };
 }
 
 module.exports = { resolvePlanForDate };
