@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node ./bin/www",
     "serve": "node --watch bin/www",
+    "serve:open": "CORS_OPEN=1 node --watch bin/www",
     "rebuild:search-indexes": "node scripts/rebuild-search-indexes.js",
     "migrate:dietday-dates": "node scripts/migrate-dietday-dates.js",
     "migrate:dietday-dates:dry-run": "node scripts/migrate-dietday-dates.js --dry-run",

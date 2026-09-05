@@ -32,18 +32,25 @@ const allowedOrigins = [
   "https://localhost",
   "http://localhost",
   "http://localhost:8100",
-  // livereload en dispositivo FISICO con `ionic cap run --external`: el
-  // origen que manda el WKWebView es la IP LAN real del Mac, no
-  // "localhost" (eso solo pasa en simulador, que comparte el loopback del
-  // host). Confirmado por el log "[CORS] Rechazado origin" mas abajo. Es
-  // una IP de DHCP: si el router la reasigna, actualizar aqui tambien
-  // (mismo valor que --public-host en npm run live:i / live:i:t / live:i:m).
-  "http://192.168.1.19:8100"
+  "http://localhost:8101",
 ];
 const useCredentials = true;
 
+// CORS_OPEN=1 (ver npm run serve:open) refleja CUALQUIER origen — para
+// developeo local cuando la IP de turno (simulador/dispositivo fisico/otro
+// puerto de livereload) no vale la pena mantener en el allowlist a mano.
+// Nunca activo por defecto ("npm start"/"npm run serve" siguen con el
+// allowlist normal) — esto es un modo explicito, no el comportamiento base.
+const corsFullyOpen = process.env.CORS_OPEN === "1";
+if (corsFullyOpen) {
+  console.warn(
+    "[CORS] CORS_OPEN=1 — cualquier origen aceptado. Modo dev, no usar en produccion."
+  );
+}
+
 const corsOptions = {
   origin(origin, callback) {
+    if (corsFullyOpen) return callback(null, true);
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     // TEMPORAL: origen exacto que se esta rechazando (quitar en cuanto se
