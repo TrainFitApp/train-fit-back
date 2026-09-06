@@ -787,7 +787,16 @@ module.exports = {
 
     const user = await userModel.getUserById(req.params.idUser);
 
-    await userModel.playStopDiet(req.params.idUser, req.params.dietInUse);
+    // La ruta antigua traía el id del wrapper en :idDietInUse (presente =
+    // activar, ausente = parar). Ahora es un booleano: se acepta el body
+    // {enabled} si viene, y si no se conserva el gesto de siempre —
+    // alternar respecto al estado actual.
+    const enabled =
+      typeof req.body?.enabled === "boolean"
+        ? req.body.enabled
+        : !(user?.dietEnabled ?? true);
+
+    await userModel.playStopDiet(req.params.idUser, enabled);
 
     const user2 = await userModel.getUserById(req.params.idUser);
 

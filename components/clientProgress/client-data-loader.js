@@ -60,7 +60,7 @@ async function loadTrainingWindow(clientId, to) {
 async function loadClientWindow(trainerId, clientId, { from, to }) {
   const client = await userSchema
     .findById(clientId)
-    .select("name lastname dietInUse goalInUse tableInUse")
+    .select("name lastname goalInUse tableInUse")
     .lean();
 
   if (!client) return null;
@@ -77,8 +77,8 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, from, to),
     checkinDao.listResponses(trainerId, clientId),
     checkinDao.getAppliedConfig(trainerId, clientId),
-    client.dietInUse
-      ? dietDaysDao.getFullyPopulatedDietDaysForDiet(client.dietInUse, from, to)
+    client._id
+      ? dietDaysDao.getFullyPopulatedDietDaysForUser(client._id, from, to)
       : [],
     tableDao.listCompletedWorkoutDates(
       clientId,

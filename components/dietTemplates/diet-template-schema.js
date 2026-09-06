@@ -3,7 +3,6 @@ const mongooseAutopopulate = require("mongoose-autopopulate");
 const Schema = mongoose.Schema;
 const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
-const dietExceptionSchema = require("../dietExceptions/diet-exception-schema");
 
 // Replanteamiento MVP (nutrición) — plantilla de dieta reutilizable del
 // profesional, mismo espíritu que las plantillas de Table (rutinas): se
@@ -154,15 +153,15 @@ async function deleteContentIds({ productIds, recipeIds }) {
   if (recipeIds.length) await customRecipeSchema.deleteMany({ _id: { $in: recipeIds } });
 }
 
-// Una copia (clientId puesto) ES la asignación — sus DietException puntuales
-// se van con ella, igual que antes se iban con el PlanAssignment que ya no
-// existe. Una plantilla real (clientId null) nunca tiene excepciones propias.
+// Refactor nutrición (2026-09) — ya no hay DietException que arrastrar: una
+// desviación es una marca en el DietDay/Meal real del cliente (skipped /
+// wasOverridden), y esos documentos son suyos, no de la asignación: siguen
+// siendo su historial aunque el plan que regía entonces se borre.
 const handleDeleteOne = async function (next) {
   try {
     const doc = await this.model.findOne(this.getQuery());
     if (doc) {
       await deleteContentIds(collectContentIds(doc));
-      if (doc.clientId) await dietExceptionSchema.deleteMany({ assignmentId: doc._id });
     }
     next();
   } catch (error) {
@@ -187,7 +186,6 @@ DietTemplateSchema.pre("deleteMany", async function (next) {
       if (doc.clientId) assignmentIds.push(doc._id);
     }
     await deleteContentIds({ productIds, recipeIds });
-    if (assignmentIds.length) await dietExceptionSchema.deleteMany({ assignmentId: { $in: assignmentIds } });
     next();
   } catch (error) {
     next(error);

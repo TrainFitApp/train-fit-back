@@ -50,7 +50,7 @@ const { todayIsoDate, addDaysToIsoDate, daysInRange } = require("../util/date-ut
 // día—, pero eso es justo lo correcto: hasPlan=true, 0% consumido.
 async function getTrackingDaysForClient(clientId, dietId, from, to) {
   const materialized = dietId
-    ? await dietDaysService.getFullyPopulatedDietDaysForDiet(dietId, from, to)
+    ? await dietDaysService.getFullyPopulatedDietDaysForUser(dietId, from, to)
     : [];
   const materializedDates = new Set(materialized.map((d) => d.date));
 
@@ -365,9 +365,10 @@ module.exports = {
     // el DietDay) para poder pedir productos/recetas recientes de esta
     // comida vía GET /diets/:id/recent-products|recipes (mismo endpoint que
     // ya usa el propio consumidor, indexado por dietId+mealIndex).
-    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+    const client = await userSchema.findById(clientId).select("_id").lean();
     const dietDayObj = typeof dietDay.toObject === "function" ? dietDay.toObject() : dietDay;
-    return res.send({ ...dietDayObj, dietId: client?.dietInUse?.toString() || null });
+    // Sin wrapper, el "dietId" que espera el front ES el id del cliente.
+    return res.send({ ...dietDayObj, dietId: client?._id?.toString() || null });
   },
 
   // GET /trainer/clients/:clientId/nutritional-goals — F10, requireActiveClient("nutrition")
@@ -582,7 +583,7 @@ module.exports = {
   // GET /trainer/clients/:clientId/adherence?from=&to= — F20, requireActiveClient("nutrition")
   async getClientAdherence(req, res) {
     const clientId = req.params.clientId;
-    const client = await userSchema.findById(clientId).select("dietInUse goalInUse").lean();
+    const client = await userSchema.findById(clientId).select("goalInUse").lean();
 
     if (!client?.goalInUse) {
       return res.send({ status: "no_goal" });
@@ -602,7 +603,7 @@ module.exports = {
     // F20-undecies: getTrackingDaysForClient (materializados + resueltos al
     // vuelo para fechas sin DietDay real) en vez de leer solo lo ya
     // materializado — si no, un plan recién aplicado salía casi sin datos.
-    const dietDays = await getTrackingDaysForClient(clientId, client.dietInUse, from, to);
+    const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
 
     const dailyBreakdown = dietDays
       .filter((d) => (d.meals || []).length)
@@ -651,12 +652,12 @@ module.exports = {
   // calendario del tab de nutrición del profesional (una celda por día).
   async getClientNutritionCompliance(req, res) {
     const clientId = req.params.clientId;
-    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+    const client = await userSchema.findById(clientId).select("_id").lean();
 
     const to = req.query.to || todayIsoDate();
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
-    const dietDays = await getTrackingDaysForClient(clientId, client?.dietInUse, from, to);
+    const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
 
     const exceptions = await dietExceptionDao.findAllForClient(clientId, 200);
     const exceptionByDate = new Map();
@@ -694,12 +695,12 @@ module.exports = {
   // los 3 macros, para el gráfico de comparación del tab de nutrición.
   async getClientNutritionTracking(req, res) {
     const clientId = req.params.clientId;
-    const client = await userSchema.findById(clientId).select("dietInUse").lean();
+    const client = await userSchema.findById(clientId).select("_id").lean();
 
     const to = req.query.to || todayIsoDate();
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
-    const dietDays = await getTrackingDaysForClient(clientId, client?.dietInUse, from, to);
+    const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
     const byDate = new Map(dietDays.map((d) => [d.date, d]));
 
     // F20-octodecies — antes solo se listaban los días con documento (real
@@ -748,8 +749,8 @@ module.exports = {
   // el rango puede ser un mes.
   async getClientShoppingList(req, res) {
     const clientId = req.params.clientId;
-    const client = await userSchema.findById(clientId).select("dietInUse").lean();
-    if (!client?.dietInUse) {
+    const client = await userSchema.findById(clientId).select("_id").lean();
+    if (!client?._id) {
       return res.send({ items: [], daysWithPlan: 0, period: null });
     }
 
@@ -757,8 +758,8 @@ module.exports = {
     // Una semana por defecto: es como se hace la compra.
     const to = req.query.to || addDaysToIsoDate(from, 6);
 
-    const days = await dietDaysDao.getFullyPopulatedDietDaysForDiet(
-      client.dietInUse,
+    const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(
+      client._id,
       from,
       to
     );

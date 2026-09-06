@@ -38,7 +38,13 @@ const single = async (resource, authUser) => ({
   weight: resource.weight,
   goalInUse: resource.goalInUse,
   workoutInUse: resource.workoutInUse,
-  dietInUse: resource.dietInUse,
+  // Refactor nutrición (2026-09) — `dietInUse` (puntero al wrapper Diet) ya
+  // no existe. Se sigue enviando como booleano-compatible para que las apps
+  // instaladas, que solo lo usan como "¿tiene dieta activa?", no dejen de
+  // pintar la sección de dieta de golpe.
+  dietInUse: resource.dietEnabled === false ? null : resource._id,
+  dietEnabled: resource.dietEnabled !== false,
+  dietPinnedNote: resource.dietPinnedNote,
   tableInUse: resource.tableInUse,
   tables: resource.tables,
   archivedProducts: resource.archivedProducts,
