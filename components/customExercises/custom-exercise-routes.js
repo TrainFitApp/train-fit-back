@@ -31,6 +31,14 @@ router.putAsync(
   auth(["admin", "user", "trainer"]),
   controller.setCustomExerciseBlock
 );
+// 2026-09 — vía dedicada para la nota del CLIENTE (distinta de "notes", la
+// del entrenador): mismo criterio que "consumido" en Nutrición, nunca
+// bloqueada por assignedByTrainerId aunque updateCustomExercise sí lo esté.
+router.putAsync(
+  "/:id/client-notes",
+  auth(["admin", "user", "trainer"]),
+  controller.updateClientNotes
+);
 router.deleteAsync(
   "/:id",
   auth(["admin", "user", "trainer"]),

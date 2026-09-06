@@ -11,7 +11,9 @@ const {
   sanitizeJointScores,
 } = require("./exercise-score-catalog");
 const { buildSessionLoad, estimateSessionSeconds } = require("./session-load-service");
+const { getDefaultScoreForName } = require("./exercise-score-defaults");
 const workoutSchema = require("../workouts/workout-schema");
+const exerciseSchema = require("../exercises/exercise-schema");
 const tableAccess = require("../tables/table-access");
 
 // Tope de la carga masiva. 500 cubre de sobra un catálogo de ejercicios
@@ -42,6 +44,29 @@ module.exports = {
       muscleAnchors: MUSCLE_SCORE_ANCHORS,
       jointAnchors: JOINT_SCORE_ANCHORS,
     });
+  },
+
+  /**
+   * GET /trainer/exercise-scores/default/:exerciseId — sugerencia inicial
+   * para el editor cuando el entrenador todavía no ha puntuado este
+   * ejercicio (ver exercise-score-defaults.js: por patrón de movimiento,
+   * emparejado por el NOMBRE real del ejercicio, nunca por
+   * muscleGroups1/2 — vocabularios incompatibles, ver el porqué ahí).
+   *
+   * Sigue siendo solo una sugerencia editable: no escribe nada, el guardado
+   * real sigue siendo upsert() cuando el entrenador confirma o ajusta.
+   * `null` cuando ningún patrón conocido encaja — mejor eso que inventar un
+   * valor sin ninguna base.
+   */
+  async getDefault(req, res) {
+    const exerciseId = req.params.exerciseId;
+    if (!isValidObjectId(exerciseId)) {
+      return res.status(400).send({ message: "Ejercicio no válido" });
+    }
+    const exercise = await exerciseSchema.findById(exerciseId).select("name").lean();
+    if (!exercise) return res.status(404).send({ message: "Ejercicio no encontrado" });
+
+    return res.send(getDefaultScoreForName(exercise.name));
   },
 
   async listMine(req, res) {

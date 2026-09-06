@@ -499,11 +499,6 @@ async function sembrarRutinas(trainerId, clientes) {
               expectedRir: [2, 1],
               restSeconds: esBasico ? 150 : 90,
             };
-            // Tempo: la prescripción del Movimiento 6. Solo en los básicos,
-            // que es donde un entrenador lo usa de verdad.
-            if (esBasico) {
-              doc.tempo = "3-1-X-0";
-            }
             if (entrenado) {
               doc.reps = 8 + (k % 3);
               doc.weight = Math.round((pesoBase * micro.factor + k * 2.5) * 2) / 2;

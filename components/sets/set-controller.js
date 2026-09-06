@@ -39,14 +39,38 @@ module.exports = {
     return res.send(sets);
   },
 
+  // 2026-09 — SIN rejectIfAssignedTableLockedForOwner a propósito, a
+  // diferencia del resto de módulos de esta cadena. `setService.updateSet`
+  // es como el cliente registra lo que REALMENTE hizo (reps/peso reales,
+  // doned) durante su propia sesión, no como se edita lo pautado (eso pasa
+  // por custom-exercise-controller.js#updateCustomExercise, sí protegido).
+  // Un cliente con rutina asignada tiene que poder seguir entrenándola —
+  // bloquear esto le impedía marcar series como hechas. Mismo criterio que
+  // ya usa Nutrición: "consumido" nunca pasa por assertMealEditable.
+  //
+  // 2026-09 bis — se intentó primero un bloqueo CONDICIONAL aquí (solo si el
+  // payload tocaba campos de pauta como expectedReps/expectedRir), para
+  // cerrar el hueco real de custom-exercise.component.ts#configSet (ver
+  // abajo). Descartado: `this.set` en el frontend es el documento COMPLETO,
+  // así que el payload de un guardado normal de logging YA trae esas claves
+  // presentes (con su valor sin tocar) — un `hasOwnProperty` las habría
+  // pillado también, bloqueando marcar series hechas en rutinas asignadas.
+  // El fix real va en el frontend: configSet ya no pasa por aquí.
   async updateSet(req, res) {
     if (!(await assertCanAccessSetId(req, res, req.body?._id))) return;
     const set = await setModel.updateSet(req.body);
     return res.send(set);
   },
 
+  // 2026-09 bis — a diferencia de updateSet, SIEMPRE bloqueado en rutina
+  // asignada: borrar una serie entera no es "registrar lo que hice", es
+  // mutar la pauta de forma permanente (el Set es el documento prescrito,
+  // no un registro de sesión aparte) — no hay guardado de logging legítimo
+  // que necesite borrar la serie completa, solo marcarla no hecha.
   async deleteById(req, res) {
-    if (!(await assertCanAccessSetId(req, res, req.params.id))) return;
+    const table = await assertCanAccessSetId(req, res, req.params.id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await setModel.deleteSet(req.params.id);
     res.sendStatus(204);
   },

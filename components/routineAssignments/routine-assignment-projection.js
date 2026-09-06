@@ -25,4 +25,23 @@ function projectionInRange(startDate, splits, from, to) {
   return projectSchedule(startDate, splits).filter((row) => row.date >= from && row.date <= to);
 }
 
-module.exports = { projectSchedule, projectionInRange };
+// 2026-09 — "cuándo se acabaría esta fase", para el tab Entrenamiento de
+// Plan. Mismo mecanismo que ya usa la adherencia (routine-assignment-
+// schedule.js#computeWindowedTrainingProgress): projectSchedule aplana
+// TODOS los splits de la tabla en una sola sesión por día empezando en
+// startDate — el ÚLTIMO día de esa proyección es, por definición, cuando se
+// completaría la rutina entera una vez, al ritmo con el que está montada.
+//
+// Es una ESTIMACIÓN de planificación, no una fecha real: RoutineAssignment
+// sigue sin endDate propio (una fase rige hasta que otra la sustituye, ver
+// routine-assignment.model.ts en el frontend) — esto no cambia eso, solo
+// calcula "si entrena un día tras otro sin saltarse ninguno, ¿cuándo
+// tocaría el último día de la tabla?". null si la tabla no tiene ningún
+// entrenamiento.
+function getProjectedPhaseEndDate(startDate, splits) {
+  const schedule = projectSchedule(startDate, splits);
+  if (!schedule.length) return null;
+  return schedule[schedule.length - 1].date;
+}
+
+module.exports = { projectSchedule, projectionInRange, getProjectedPhaseEndDate };

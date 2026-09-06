@@ -37,7 +37,7 @@ function sanitizeWorkoutBlocks(blocks) {
 // abrir el módulo a "trainer": mismo criterio en todos los sitios (dueño
 // real, admin, o profesional con relación "training" activa con el dueño).
 async function assertCanAccessTableId(req, res, idTable) {
-  const table = await tableSchema.findById(idTable).select("_id userId");
+  const table = await tableSchema.findById(idTable).select("_id userId assignedByTrainerId");
   if (!table) {
     res.status(404).send({ message: "Rutina no encontrada" });
     return null;
@@ -84,7 +84,9 @@ module.exports = {
   },
 
   async pasteWorkout(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.body?.workoutToPaste?._id))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.body?.workoutToPaste?._id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await workoutModel.pasteWorkout(
       req.body.workoutClipboard,
       req.body.workoutToPaste,
@@ -93,7 +95,9 @@ module.exports = {
   },
 
   async duplicateWorkoutRow(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.params.idTable))) return;
+    const table = await assertCanAccessTableId(req, res, req.params.idTable);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const splits = await workoutModel.duplicateWorkoutRow(
       req.params.idTable,
       req.params.idWorkout,
@@ -103,7 +107,9 @@ module.exports = {
   },
 
   async reorderWorkoutRows(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.params.idTable))) return;
+    const table = await assertCanAccessTableId(req, res, req.params.idTable);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const splits = await workoutModel.reorderWorkoutRows(
       req.params.idTable,
       req.body?.workoutIdsOrder,
@@ -122,7 +128,9 @@ module.exports = {
   },
 
   async addWorkoutsToSplits(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.params.idTable))) return;
+    const tableForAccess = await assertCanAccessTableId(req, res, req.params.idTable);
+    if (!tableForAccess) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableForAccess)) return;
     const table = await workoutModel.addWorkoutsToSplits(req.params.idTable, req.body);
     return res.send(table);
   },
@@ -130,7 +138,9 @@ module.exports = {
   async addExerciseToWorkouts(req, res) {
     const { workoutIds, exerciseId } = req.body;
     for (const idWorkout of workoutIds || []) {
-      if (!(await assertCanAccessWorkoutId(req, res, idWorkout))) return;
+      const table = await assertCanAccessWorkoutId(req, res, idWorkout);
+      if (!table) return;
+      if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     }
     const result = await workoutModel.addExerciseToWorkouts(workoutIds, exerciseId);
     return res.send(result);
@@ -155,7 +165,14 @@ module.exports = {
     return res.send(workout);
   },
 
+  // Bug preexistente cerrado de paso (2026-09): este endpoint no comprobaba
+  // propiedad en absoluto — cualquier usuario autenticado podía añadir un
+  // ejercicio a un workout ajeno. Mismo chequeo de 3 líneas que ya usan
+  // los demás endpoints de este archivo.
   async addWorkoutExercise(req, res) {
+    const table = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await workoutModel.addWorkoutExercise(
       req.params.idWorkout,
       req.params.idExercise,
@@ -164,7 +181,9 @@ module.exports = {
   },
 
   async addWorkoutsExercises(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.params.idTable))) return;
+    const tableForAccess = await assertCanAccessTableId(req, res, req.params.idTable);
+    if (!tableForAccess) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableForAccess)) return;
     const table = await workoutModel.addWorkoutsExercises(
       req.params.idTable,
       req.params.idExercise,
@@ -173,6 +192,20 @@ module.exports = {
     return res.send(table);
   },
 
+  // 2026-09 — SIN rejectIfAssignedTableLockedForOwner, a propósito. Bug real
+  // encontrado al probar: modifyWorkout escribe CUALQUIER campo que venga en
+  // el body ($set literal, sin lista blanca — workout-dao.js#modifyWorkout,
+  // "for (const key in workout) update.$set[key] = workout[key]"), y
+  // current-workout.page.ts lo usa para guardar readinessPre/
+  // perceivedEffortPost/sorenessPre/startedAt/paused — el estado de la
+  // sesión EN CURSO del propio cliente. Bloquearlo le impedía puntuar cómo
+  // se sentía o arrancar el cronómetro en una rutina asignada: peor que el
+  // problema original. Mismo criterio que set-controller.js#updateSet — un
+  // cliente con rutina asignada tiene que poder seguir entrenándola. Queda
+  // como riesgo aceptado y menor (puede seguir editando notas/nombre del
+  // WORKOUT vía este mismo endpoint) frente a romper la ejecución en vivo;
+  // añadir/quitar ejercicios, entrenamientos y microciclos sigue bloqueado
+  // en el resto de este archivo.
   async modifyWorkout(req, res) {
     if (!(await assertCanAccessWorkoutId(req, res, req.body?._id))) return;
 
@@ -198,6 +231,7 @@ module.exports = {
   async copyWorkoutToSplit(req, res) {
     const sourceTable = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
     if (!sourceTable) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, sourceTable)) return;
 
     const targetTable = await tableAccess.findTableOwningSplit(req.params.idSplit);
     if (!targetTable) return res.status(404).send({ message: "Split de destino no encontrado" });
@@ -225,6 +259,7 @@ module.exports = {
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     try {
       const splits = await workoutModel.reorderWorkoutsInSplit(
@@ -241,7 +276,9 @@ module.exports = {
 
   // PUT /workouts/:idWorkout/blocks — reemplaza el array de bloques completo.
   async updateWorkoutBlocks(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.params.idWorkout))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const blocks = sanitizeWorkoutBlocks(req.body?.blocks);
     const workout = await workoutModel.updateWorkoutBlocks(req.params.idWorkout, blocks);
     return res.send(workout);
@@ -272,7 +309,9 @@ module.exports = {
   },
 
   async updateWorkout(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.body?.workout?._id))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.body?.workout?._id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await workoutModel.updateWorkout(
       req.body.workout,
       req.body.customExercise,
@@ -281,7 +320,9 @@ module.exports = {
   },
 
   async addDataExerciseToWorkout(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.params.idWorkout))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await workoutModel.addDataExerciseToWorkout(
       req.params.idWorkout,
       req.body,
@@ -290,7 +331,9 @@ module.exports = {
   },
 
   async updateWorkoutsOrder(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.params.idTable))) return;
+    const table = await assertCanAccessTableId(req, res, req.params.idTable);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await workoutModel.updateWorkoutsOrder(
       req.params.idWorkout,
       req.params.idTable,
@@ -300,7 +343,9 @@ module.exports = {
   },
 
   async updateCustomExercises(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.params.idTable))) return;
+    const tableForAccess = await assertCanAccessTableId(req, res, req.params.idTable);
+    if (!tableForAccess) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableForAccess)) return;
     const table = await workoutModel.updateCustomExercises(
       req.params.idTable,
       req.params.idWorkout,
@@ -311,7 +356,9 @@ module.exports = {
   },
 
   async updateWorkoutsName(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.params.idTable))) return;
+    const table = await assertCanAccessTableId(req, res, req.params.idTable);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await workoutModel.updateWorkoutsName(
       req.params.idTable,
       req.params.idWorkout,
@@ -323,7 +370,9 @@ module.exports = {
   async deleteWorkouts(req, res) {
     const workouts = Array.isArray(req.body) ? req.body : [];
     for (const workoutTemp of workouts) {
-      if (!(await assertCanAccessWorkoutId(req, res, workoutTemp?._id))) return;
+      const table = await assertCanAccessWorkoutId(req, res, workoutTemp?._id);
+      if (!table) return;
+      if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     }
     await workoutModel.deleteWorkouts(req.body);
     res.sendStatus(204);
@@ -333,13 +382,17 @@ module.exports = {
   // endpoint fallara siempre. La comprobación de propiedad que faltaba se
   // añade ahora (ver assertCanAccessWorkoutId) al abrir este módulo a "trainer".
   async deleteWorkout(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.params.id))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.params.id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await workoutModel.deleteWorkout(req.params.id);
     res.sendStatus(204);
   },
 
   async deleteWorkoutExercise(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.params.idWorkout))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await workoutModel.deleteWorkoutExercise(
       req.params.idWorkout,
       req.params.idExercise,
@@ -348,7 +401,9 @@ module.exports = {
   },
 
   async pasteExercises(req, res) {
-    if (!(await assertCanAccessTableId(req, res, req.body.tableId))) return;
+    const table = await assertCanAccessTableId(req, res, req.body.tableId);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const result = await workoutModel.pasteExercises(
       req.body.tableId,
       req.body.sourceWorkoutId,
@@ -359,7 +414,9 @@ module.exports = {
   },
 
   async deleteWorkoutCustomExercises(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.params.id))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.params.id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await workoutModel.deleteWorkoutCustomExercises(req.params.id);
     res.sendStatus(204);
   },

@@ -17,9 +17,17 @@ const {
   buildVolumeComparison,
   buildBlockTraining,
   buildBlockComparison,
+  buildBlockReadiness,
   buildBlockMuscleGroups,
   buildBlockExerciseProgress,
+  buildSessionTraining,
+  buildSessionMuscleGroups,
+  buildSessionReadiness,
+  buildSessionExerciseProgress,
+  buildSessionAdherence,
+  buildBlockAdherence,
   listTrackedExerciseNames,
+  listTrackedWorkoutNames,
 } = require("./training-service");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
@@ -38,6 +46,25 @@ const SUMMARY_WINDOW_DAYS = 28;
 // pedir 520 semanas y tumbar la agregación de entrenamiento.
 const ALLOWED_WEEKS = [4, 8, 12];
 const DEFAULT_WEEKS = 4;
+
+// Comparación de VARIOS ejercicios a la vez (2026-09) — mismo tope que
+// TOP_EXERCISES en training-service.js ("evolución de cargas" de Resumen):
+// más de 5 líneas en la misma gráfica deja de leerse.
+const MAX_COMPARED_EXERCISES = 5;
+
+// Parámetros repetidos (?exercises=A&exercises=B), no una lista separada por
+// comas: un nombre de ejercicio con una coma literal rompería el split sin
+// forma de distinguirla del separador. Express da un string con UNA
+// aparición y un array con dos o más — hay que normalizar los dos casos.
+function parseExerciseList(query) {
+  const raw = query.exercises;
+  const values = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const names = values
+    .filter((name) => typeof name === "string")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  return [...new Set(names)].slice(0, MAX_COMPARED_EXERCISES);
+}
 
 // Tarea 4 (2026-09) — comparación por microciclo en Entrenamiento: el
 // entrenador elige un rango libre en un calendario, no una de las 3
@@ -296,33 +323,76 @@ module.exports = {
       from = addDays(to, -(weeks * 7 - 1));
     }
 
-    const sets = await tableDao.listCompletedSetsForUser(
-      clientId,
-      new Date(`${from}T00:00:00.000Z`),
-      new Date(`${to}T23:59:59.999Z`)
-    );
+    const [allSets, allSessionAdherenceRows] = await Promise.all([
+      tableDao.listCompletedSetsForUser(
+        clientId,
+        new Date(`${from}T00:00:00.000Z`),
+        new Date(`${to}T23:59:59.999Z`)
+      ),
+      tableDao.listSessionAdherenceForUser(
+        clientId,
+        new Date(`${from}T00:00:00.000Z`),
+        new Date(`${to}T23:59:59.999Z`)
+      ),
+    ]);
+
+    // "Elegir el workout a ver" (2026-09) — filtro por NOMBRE de
+    // entrenamiento (p.ej. "Día de pierna"), aplicado ANTES de calcular
+    // cualquier agregado: así el filtro alcanza por igual a las vistas por
+    // microciclo y por sesión sin tocar ninguna de las funciones de
+    // training-service.js. workoutNames sale del conjunto SIN filtrar, para
+    // que el selector siga ofreciendo todos los workouts aunque ya haya uno
+    // elegido.
+    const workoutName = typeof req.query.workout === "string" ? req.query.workout.trim() : "";
+    const sets = workoutName ? allSets.filter((set) => set.workoutName === workoutName) : allSets;
+    const sessionAdherenceRows = workoutName
+      ? allSessionAdherenceRows.filter((row) => row.workoutName === workoutName)
+      : allSessionAdherenceRows;
 
     // Movimiento 3 / Tarea 4 — agrupado por microciclo. No cuesta ninguna
     // consulta más: la agregación ya proyecta split y grupos musculares (ver
     // tableDao.listCompletedSetsForUser), y agrupar es puro.
     const blocks = buildBlockTraining(sets);
+    const sessionAdherence = buildSessionAdherence(sessionAdherenceRows);
 
-    // Comparar por ejercicio (2026-09) — exerciseNames siempre va (barato,
-    // alimenta el selector sin que el frontend tenga que pedir nada aparte);
-    // blockExercise solo se calcula si se pidió un ejercicio concreto.
-    const exerciseName = typeof req.query.exercise === "string" ? req.query.exercise.trim() : "";
+    // Comparar por ejercicio (2026-09), varios a la vez (2026-09 bis) —
+    // exerciseNames siempre va (barato, alimenta el selector sin que el
+    // frontend tenga que pedir nada aparte); blockExerciseByName/
+    // sessionExerciseByName solo se calculan si se pidió al menos un
+    // ejercicio. Un nombre por elemento, no una función nueva: la misma
+    // buildBlockExerciseProgress/buildSessionExerciseProgress de siempre,
+    // llamada una vez por ejercicio — no hay nada que agregar entre
+    // ejercicios distintos, así que no hace falta una versión "múltiple".
+    const exerciseNames = parseExerciseList(req.query);
 
     const response = {
       period: { from, to },
       blocks,
       blockComparison: buildBlockComparison(blocks),
+      blockReadiness: buildBlockReadiness(sets),
       blockMuscleGroups: buildBlockMuscleGroups(sets),
+      blockAdherence: buildBlockAdherence(sessionAdherence),
+      // 2026-09 — granularidad "Por sesión" del comparador: los mismos
+      // agregados que arriba pero sin colapsar por microciclo (ver
+      // training-service.js#buildSessionTraining). No es una consulta
+      // nueva salvo sessionAdherence, que necesita las series NO hechas
+      // (listCompletedSetsForUser las descarta).
+      sessionTraining: buildSessionTraining(sets),
+      sessionMuscleGroups: buildSessionMuscleGroups(sets),
+      sessionReadiness: buildSessionReadiness(sets),
+      sessionAdherence,
       exerciseNames: listTrackedExerciseNames(sets),
+      workoutNames: listTrackedWorkoutNames(allSets),
       totalSets: sets.length,
     };
 
-    if (exerciseName) {
-      response.blockExercise = buildBlockExerciseProgress(sets, exerciseName);
+    if (exerciseNames.length) {
+      response.blockExerciseByName = {};
+      response.sessionExerciseByName = {};
+      for (const name of exerciseNames) {
+        response.blockExerciseByName[name] = buildBlockExerciseProgress(sets, name);
+        response.sessionExerciseByName[name] = buildSessionExerciseProgress(sets, name);
+      }
     }
 
     if (weeks) {

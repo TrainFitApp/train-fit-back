@@ -28,7 +28,9 @@ module.exports = {
   },
 
   async updateCustomExercise(req, res) {
-    if (!(await assertCanAccessCustomExerciseId(req, res, req.body.customExercise?._id))) return;
+    const table = await assertCanAccessCustomExerciseId(req, res, req.body.customExercise?._id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const customExercise = await customExerciseModel.updateCustomExercise(
       req.body.customExercise,
       req.body.setsToCreate,
@@ -40,7 +42,9 @@ module.exports = {
   },
 
   async addSetToCustomExercise(req, res) {
-    if (!(await assertCanAccessCustomExerciseId(req, res, req.params.id))) return;
+    const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const customExercise = await customExerciseModel.addSetToCustomExercise(
       req.params.id,
       req.body
@@ -50,7 +54,9 @@ module.exports = {
   },
 
   async copySetOnCustomExercise(req, res) {
-    if (!(await assertCanAccessCustomExerciseId(req, res, req.body?._id))) return;
+    const table = await assertCanAccessCustomExerciseId(req, res, req.body?._id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const customExercise = await customExerciseModel.copySetOnCustomExercise(
       req.params.order,
       req.body
@@ -61,7 +67,9 @@ module.exports = {
 
   // PUT /customexercises/:id/block — body: { blockId: string|null }
   async setCustomExerciseBlock(req, res) {
-    if (!(await assertCanAccessCustomExerciseId(req, res, req.params.id))) return;
+    const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     try {
       const customExercise = await customExerciseModel.setCustomExerciseBlock(
         req.params.id,
@@ -75,8 +83,28 @@ module.exports = {
     }
   },
 
-  async deleteCustomExercise(req, res) {
+  // PUT /customexercises/:id/client-notes — body: { clientNotes: string }
+  // 2026-09 — bug real: current-workout.page.ts (custom-exercise.component
+  // .ts) guardaba la nota del CLIENTE reutilizando updateCustomExercise
+  // entero (mismo endpoint que la edición de sets), así que quedó bloqueada
+  // sin querer junto con la edición real de la pauta. Vía propia, mínima
+  // ($set/$unset de un solo campo), que NUNCA comprueba
+  // rejectIfAssignedTableLockedForOwner — mismo criterio que "consumido" en
+  // Nutrición: la nota del cliente es suya, no toca lo que pautó el
+  // entrenador.
+  async updateClientNotes(req, res) {
     if (!(await assertCanAccessCustomExerciseId(req, res, req.params.id))) return;
+    const customExercise = await customExerciseModel.updateClientNotes(
+      req.params.id,
+      req.body?.clientNotes
+    );
+    return res.send(customExercise);
+  },
+
+  async deleteCustomExercise(req, res) {
+    const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
+    if (!table) return;
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await customExerciseModel.deleteCustomExercise(req.params.id);
     res.sendStatus(204);
   },
@@ -84,7 +112,9 @@ module.exports = {
   async deleteCustomExercises(req, res) {
     const ids = Array.isArray(req.body) ? req.body : [];
     for (const idCustomExercise of ids) {
-      if (!(await assertCanAccessCustomExerciseId(req, res, idCustomExercise))) return;
+      const table = await assertCanAccessCustomExerciseId(req, res, idCustomExercise);
+      if (!table) return;
+      if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     }
     await customExerciseModel.deleteCustomExercises(req.body);
     res.sendStatus(204);

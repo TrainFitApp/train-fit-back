@@ -19,6 +19,15 @@ router.getAsync(
   auth(["trainer"]),
   controller.getSessionLoad
 );
+// 2026-09 — sugerencia inicial para el editor cuando el entrenador todavía
+// no ha puntuado ESTE ejercicio (ver exercise-score-defaults.js). Tres
+// segmentos, no choca con "/exercise-scores/:exerciseId" aunque fuera
+// después.
+router.getAsync(
+  "/exercise-scores/default/:exerciseId",
+  auth(["trainer"]),
+  controller.getDefault
+);
 
 router.getAsync("/exercise-scores", auth(["trainer"]), controller.listMine);
 router.putAsync("/exercise-scores/:exerciseId", auth(["trainer"]), controller.upsert);

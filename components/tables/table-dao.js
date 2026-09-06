@@ -5,7 +5,42 @@ const splitSchema = require("../splits/split-schema");
 const setSchema = require("../sets/set-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const workoutSchema = require("../workouts/workout-schema");
+const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
 const serverDomain = process.env.SERVER_DOMAIN;
+
+// 2026-09, revertido 2026-09 bis — "Mis rutinas" enseñaba TODO lo que un
+// entrenador hubiera creado alguna vez para el cliente (borradores nunca
+// aplicados, fases ya sustituidas). Se acotó a solo la vigente/programada,
+// pero el cliente pidió volver a ver TODO lo asignado — quiere poder mirar
+// atrás su propia progresión, no solo la fase de hoy. `assignedByTrainerId`
+// se estampa en el momento de COPIAR una plantilla al cliente
+// (copyTableForClient), antes e independientemente de que se llegue a
+// programar con una RoutineAssignment — así que no sirve por sí solo para
+// decidir qué enseñar: colaría también las copias que el entrenador dejó a
+// medias y nunca llegó a aplicar.
+//
+// listByClient trae TODAS las fases (activa, superseded, ended) — el
+// denominador correcto de "asignado de verdad alguna vez" es "tiene fila en
+// RoutineAssignment", no "está vigente ahora": eso es justo lo que separa
+// un borrador nunca aplicado (sin fila, se sigue sin ver) de una fase ya
+// terminada (con fila, ahora SÍ se ve, para poder repasarla).
+//
+// No hace falta distinguir "cliente con entrenador" de "autoservicio puro":
+// para un cliente sin entrenador, assignedByTrainerId es null en TODAS sus
+// tablas (nunca se estampó), así que la primera rama del $or ya las cubre
+// todas — el filtro es un no-op exacto para ese caso, sin necesitar una
+// consulta aparte para averiguar si hay relación con un entrenador.
+async function buildOwnTablesMatch(idUser) {
+  const assignments = await routineAssignmentDao.listByClient(idUser);
+  const assignedTableIds = assignments.map((assignment) => assignment.tableId);
+  return {
+    userId: mongoose.Types.ObjectId(idUser),
+    $or: [
+      { assignedByTrainerId: null },
+      ...(assignedTableIds.length ? [{ _id: { $in: assignedTableIds } }] : []),
+    ],
+  };
+}
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -45,7 +80,7 @@ module.exports = {
   async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
     if (own && idUser) {
       return tableSchema
-        .find({ userId: mongoose.Types.ObjectId(idUser) })
+        .find(await buildOwnTablesMatch(idUser))
         .skip(page * limit)
         .limit(limit)
         .exec();
@@ -238,9 +273,8 @@ module.exports = {
       ];
 
       if (isOwn) {
-        return await tableSchema.aggregate(
-          buildLightSearchPipeline({ userId: mongoose.Types.ObjectId(idUser) })
-        );
+        const ownMatch = await buildOwnTablesMatch(idUser);
+        return await tableSchema.aggregate(buildLightSearchPipeline(ownMatch));
       }
 
       if (defaultOnly) {
@@ -501,6 +535,69 @@ module.exports = {
           // ejercicio propio del cliente sin ficha en el catálogo.
           muscleGroups1: "$exerciseInfo.muscleGroups1",
           muscleGroups2: "$exerciseInfo.muscleGroups2",
+          // 2026-09 — pulso de readiness/esfuerzo (1-5) de LA SESIÓN, no de
+          // la serie: se repite en cada set de la misma sesión a propósito
+          // (mismo criterio que splitId/splitName arriba, misma agregación
+          // ya hecha, sin consulta nueva). buildBlockReadiness deduplica por
+          // fecha antes de promediar, igual que buildBlockTraining ya hace
+          // para contar sesiones.
+          readinessPre: "$workoutDocs.readinessPre",
+          perceivedEffortPost: "$workoutDocs.perceivedEffortPost",
+          // 2026-09 — "elegir el workout a ver": nombre del Workout (p.ej.
+          // "Día de pierna") tal cual está en ESA sesión concreta. Se
+          // empareja por NOMBRE, no por posición en splits[].workouts (que es
+          // el criterio que sí usa el comparador del Planner, ver
+          // planner-compare.ts) — para este selector es el mismo criterio que
+          // ya usa "comparar por ejercicio" (exerciseName), y evita
+          // reconstruir el índice del array dentro de la agregación.
+          workoutName: "$workoutDocs.name",
+        },
+      },
+    ]);
+  },
+
+  // 2026-09 — una fila por SESIÓN (Workout), con nº total de series y
+  // cuántas se marcaron hechas. Alimenta la métrica "Adherencia" del
+  // comparador de Entrenamiento: a diferencia de listCompletedSetsForUser,
+  // aquí NO se filtra `doned:true` antes de agrupar — hace falta contar
+  // también las series pautadas que no se llegaron a hacer, porque
+  // finishWorkout no exige tenerlas todas para dar la sesión por terminada
+  // (ver current-workout.page.ts#finishWorkout en el frontend).
+  async listSessionAdherenceForUser(userId, fromDate, toDate) {
+    const { ObjectId } = require("mongoose").Types;
+    return tableSchema.aggregate([
+      { $match: { userId: ObjectId(String(userId)) } },
+      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
+      { $unwind: "$splitDocs" },
+      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
+      { $unwind: "$workoutDocs" },
+      {
+        $match: {
+          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
+          "workoutDocs.rest": { $ne: true },
+          "workoutDocs.isPlannedRestDay": { $ne: true },
+        },
+      },
+      {
+        $lookup: {
+          from: "customexercises",
+          localField: "workoutDocs.exercises",
+          foreignField: "_id",
+          as: "customExercises",
+        },
+      },
+      { $unwind: "$customExercises" },
+      { $lookup: { from: "sets", localField: "customExercises.sets", foreignField: "_id", as: "setDocs" } },
+      { $unwind: "$setDocs" },
+      {
+        $group: {
+          _id: "$workoutDocs._id",
+          date: { $first: "$workoutDocs.date" },
+          splitId: { $first: "$splitDocs._id" },
+          splitName: { $first: "$splitDocs.name" },
+          workoutName: { $first: "$workoutDocs.name" },
+          totalSets: { $sum: 1 },
+          donedSets: { $sum: { $cond: ["$setDocs.doned", 1, 0] } },
         },
       },
     ]);

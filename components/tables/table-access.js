@@ -65,6 +65,31 @@ async function findTableOwningSet(setId) {
   return findTableOwningCustomExercise(customExercise._id);
 }
 
+// 2026-09 — hueco real: canAccessUserTable deja mutar al DUEÑO de la tabla
+// sin mirar assignedByTrainerId, así que un cliente podía editar/borrar por
+// completo una rutina que le asignó su entrenador (renombrar, añadir/quitar
+// microciclos, entrenamientos, ejercicios, series). Mismo problema que ya
+// resuelve meal-service.js#assertMealEditable para Nutrición — aquí como
+// boolean que envía la respuesta, para encajar con el estilo de los
+// chokepoints locales de cada controller (assertCanAccessTableId y
+// compañía), no con el estilo de excepción de Meals.
+//
+// Solo bloquea MUTACIONES (los controllers deciden cuándo llamar a esto,
+// nunca en las lecturas) y solo cuando quien escribe es el propio DUEÑO
+// (cliente) de la tabla — nunca al entrenador que la asignó, que sigue
+// editándola desde su Planificador por estas mismas rutas genéricas (a
+// diferencia de Meals, aquí no hay una ruta trainer-only separada).
+function rejectIfAssignedTableLockedForOwner(req, res, table) {
+  if (!table?.assignedByTrainerId) return false;
+  if (isAdmin(req)) return false;
+  if (String(req.user?.id) !== String(table.userId)) return false;
+  res.status(403).send({
+    message: "Esta rutina te la asignó tu entrenador. Pídele el cambio en vez de editarla tú mismo.",
+    code: "TABLE_ASSIGNED_BY_TRAINER",
+  });
+  return true;
+}
+
 module.exports = {
   isAdmin,
   isTrainer,
@@ -73,4 +98,5 @@ module.exports = {
   findTableOwningWorkout,
   findTableOwningCustomExercise,
   findTableOwningSet,
+  rejectIfAssignedTableLockedForOwner,
 };

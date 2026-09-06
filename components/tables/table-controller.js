@@ -134,6 +134,7 @@ async copyTable(req, res) {
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const tableName = await tableModel.updateTable(req.body._id, req.body.name, table.userId, true);
     return res.send(tableName);
@@ -144,6 +145,9 @@ async copyTable(req, res) {
     if (!(await tableAccess.canAccessUserTable(req, idUser))) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
+
+    const table = await tableModel.getTableById(req.params.idTable);
+    if (table && tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const result = await tableModel.deleteTable(idUser, req.params.idTable, true);
     if (result.deletedCount === 0) {
@@ -160,6 +164,7 @@ async copyTable(req, res) {
     if (!(await tableAccess.canAccessUserTable(req, tableDoc.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableDoc)) return;
 
     const table = await tableModel.deleteTableSplit(
       req.params.idTable,

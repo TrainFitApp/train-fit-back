@@ -64,6 +64,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
       const limit = featureAccessService.getLimits(
         req.user,
@@ -92,6 +93,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     if (!featureAccessService.canAddMicrocycle(req.user, table.splits.length)) {
       const limit = featureAccessService.getLimits(
         req.user,
@@ -114,7 +116,7 @@ module.exports = {
   async addTableSplit(req, res) {
     const tableDoc = await tableSchema
       .findById(req.params.idTable)
-      .select("_id userId");
+      .select("_id userId assignedByTrainerId");
     if (!tableDoc)
       return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, tableDoc.userId))) {
@@ -122,6 +124,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableDoc)) return;
 
     const table = await splitService.addTableSplit(
       req.params.idTable,
@@ -142,6 +145,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const split = await splitService.addWorkoutsSplit(
       req.params.idSplit,
@@ -164,6 +168,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     await splitService.updateSplit(req.params.id, req.body);
 
@@ -174,7 +179,7 @@ module.exports = {
   async reorderSplits(req, res) {
     const table = await tableSchema
       .findById(req.params.idTable)
-      .select("_id userId");
+      .select("_id userId assignedByTrainerId");
     if (!table)
       return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
@@ -182,6 +187,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     try {
       const splits = await splitService.reorderSplits(
@@ -202,7 +208,7 @@ module.exports = {
   async createBlankSplitAndAddToTable(req, res) {
     const table = await tableSchema
       .findById(req.params.idTable)
-      .select("_id userId");
+      .select("_id userId assignedByTrainerId");
     if (!table)
       return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
@@ -210,6 +216,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const isExempt = await isMicrocycleExempt(table);
     const fullTable = await tableSchema
@@ -239,7 +246,7 @@ module.exports = {
   async deleteSplit(req, res) {
     const table = await tableSchema
       .findById(req.params.idTable)
-      .select("_id userId");
+      .select("_id userId assignedByTrainerId");
     if (!table)
       return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
@@ -247,6 +254,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     await splitService.deleteSplit(req.params.idTable, req.params.idSplit);
     res.sendStatus(204);
@@ -278,7 +286,7 @@ module.exports = {
 
     const table = await tableSchema
       .findById(req.params.idTable)
-      .select("_id userId splits");
+      .select("_id userId splits assignedByTrainerId");
 
     if (!table)
       return res.status(404).send({ message: "Rutina no encontrada" });
@@ -287,6 +295,7 @@ module.exports = {
         message: "No tienes permiso para esta rutina",
       });
     }
+    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const tableSplitIds = new Set(
       (table.splits || []).map((split) => (split?._id || split)?.toString()),

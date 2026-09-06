@@ -9,9 +9,17 @@ const {
   buildVolumeComparison,
   buildBlockTraining,
   buildBlockComparison,
+  buildBlockReadiness,
   buildBlockMuscleGroups,
   buildBlockExerciseProgress,
+  buildSessionTraining,
+  buildSessionMuscleGroups,
+  buildSessionReadiness,
+  buildSessionExerciseProgress,
+  buildSessionAdherence,
+  buildBlockAdherence,
   listTrackedExerciseNames,
+  listTrackedWorkoutNames,
 } = require("./training-service");
 
 const NOW = new Date("2026-08-23T10:00:00.000Z");
@@ -275,6 +283,76 @@ test("buildBlockComparison", async (t) => {
   });
 });
 
+// --- 2026-09: readiness/esfuerzo promediado por microciclo ---
+// El pulso es opcional (el cliente puede saltárselo): una sesión sin
+// ninguno de los dos no debe contar como un cero que hunda el promedio.
+
+function pulseSet(daysAgoValue, splitId, splitName, readinessPre, perceivedEffortPost) {
+  return {
+    date: daysAgo(daysAgoValue),
+    splitId,
+    splitName,
+    exerciseName: "Sentadilla",
+    reps: 5,
+    weight: 100,
+    readinessPre,
+    perceivedEffortPost,
+  };
+}
+
+test("buildBlockReadiness", async (t) => {
+  await t.test("promedia por SESIÓN, no por serie (varias series del mismo día no pesan de más)", () => {
+    const blocks = buildBlockReadiness([
+      pulseSet(5, "a", "Bloque 1", 4, 3),
+      pulseSet(5, "a", "Bloque 1", 4, 3), // misma sesión (mismo día), no debe duplicar
+      pulseSet(3, "a", "Bloque 1", 2, 5),
+    ]);
+    // (4 + 2) / 2 = 3, no (4+4+2)/3
+    assert.equal(blocks[0].avgReadinessPre, 3);
+    assert.equal(blocks[0].avgPerceivedEffortPost, (3 + 5) / 2);
+    assert.equal(blocks[0].sessionsWithPulse, 2);
+  });
+
+  await t.test("una sesión sin ninguno de los dos valores no cuenta ni resta", () => {
+    const blocks = buildBlockReadiness([
+      pulseSet(5, "a", "Bloque 1", 5, 5),
+      { date: daysAgo(4), splitId: "a", splitName: "Bloque 1", readinessPre: null, perceivedEffortPost: null },
+    ]);
+    // La sesión sin pulso ni se cuela en el bloque (se descarta antes de agrupar).
+    assert.equal(blocks[0].avgReadinessPre, 5);
+    assert.equal(blocks[0].sessionsWithPulse, 1);
+  });
+
+  await t.test("readinessPre y perceivedEffortPost se promedian de forma independiente", () => {
+    // Una sesión trae solo readiness, otra solo esfuerzo: cada métrica
+    // promedia únicamente sobre las sesiones que SÍ la trajeron.
+    const blocks = buildBlockReadiness([
+      pulseSet(5, "a", "Bloque 1", 4, null),
+      pulseSet(3, "a", "Bloque 1", null, 2),
+    ]);
+    assert.equal(blocks[0].avgReadinessPre, 4);
+    assert.equal(blocks[0].avgPerceivedEffortPost, 2);
+  });
+
+  await t.test("varios microciclos, ordenados por primera sesión", () => {
+    const blocks = buildBlockReadiness([
+      pulseSet(3, "b", "Bloque 2", 5, 5),
+      pulseSet(20, "a", "Bloque 1", 1, 1),
+    ]);
+    assert.equal(blocks[0].name, "Bloque 1");
+    assert.equal(blocks[1].name, "Bloque 2");
+  });
+
+  await t.test("series sin splitId no cuentan (dato viejo, no comparable)", () => {
+    assert.deepEqual(buildBlockReadiness([{ date: daysAgo(1), readinessPre: 5, perceivedEffortPost: 5 }]), []);
+  });
+
+  await t.test("sin sets tampoco", () => {
+    assert.deepEqual(buildBlockReadiness([]), []);
+    assert.deepEqual(buildBlockReadiness(null), []);
+  });
+});
+
 // --- Tarea 4 (2026-09): carga por grupo muscular, por microciclo ---
 // Comparar entrenamiento no es solo "cuánto peso", es "qué está trabajando":
 // un cliente puede subir el volumen total a base de piernas mientras
@@ -452,5 +530,180 @@ test("listTrackedExerciseNames", async (t) => {
   await t.test("sin series no hay nombres", () => {
     assert.deepEqual(listTrackedExerciseNames([]), []);
     assert.deepEqual(listTrackedExerciseNames(null), []);
+  });
+});
+
+// 2026-09 — granularidad "Por sesión" del comparador: los mismos agregados
+// de arriba pero sin colapsar por microciclo. Lo único que hay que vigilar
+// aquí es que agrupen por FECHA (no por serie) y que dos sesiones del mismo
+// microciclo salgan como dos filas distintas, no una.
+
+test("buildSessionTraining", async (t) => {
+  await t.test("agrupa por fecha, no por serie", () => {
+    const sessions = buildSessionTraining([
+      set(5, "Sentadilla", 5, 100),
+      set(5, "Press banca", 8, 60),
+      set(2, "Sentadilla", 5, 100),
+    ]);
+    assert.equal(sessions.length, 2);
+    assert.equal(sessions[0].sets, 2);
+    assert.equal(sessions[0].volume, 5 * 100 + 8 * 60);
+    assert.equal(sessions[1].sets, 1);
+  });
+
+  await t.test("ordena por fecha ascendente", () => {
+    const sessions = buildSessionTraining([exerciseSet(1, "a", "S1", "X", 50), exerciseSet(10, "a", "S1", "X", 50)]);
+    assert.ok(sessions[0].date < sessions[1].date);
+  });
+
+  await t.test("sin series no hay sesiones", () => {
+    assert.deepEqual(buildSessionTraining([]), []);
+    assert.deepEqual(buildSessionTraining(null), []);
+  });
+});
+
+test("buildSessionMuscleGroups", async (t) => {
+  await t.test("agrupa por sesión, no por microciclo", () => {
+    const sessions = buildSessionMuscleGroups([
+      muscleGroupSet(5, "a", "Semana 1", 10, 100, ["pecho"]),
+      muscleGroupSet(2, "a", "Semana 1", 10, 100, ["pierna"]),
+    ]);
+    assert.equal(sessions.length, 2);
+    assert.deepEqual(sessions[0].muscleGroups.map((g) => g.group), ["pecho"]);
+    assert.deepEqual(sessions[1].muscleGroups.map((g) => g.group), ["pierna"]);
+  });
+
+  await t.test("sin grupo muscular no aporta nada", () => {
+    assert.deepEqual(buildSessionMuscleGroups([muscleGroupSet(1, "a", "S1", 10, 50, [], [])]), []);
+  });
+});
+
+test("buildSessionReadiness", async (t) => {
+  await t.test("no promedia: el pulso ya es un dato por sesión", () => {
+    const sessions = buildSessionReadiness([
+      pulseSet(5, "a", "Bloque 1", 4, 3),
+      pulseSet(5, "a", "Bloque 1", 4, 3), // misma sesión, no duplica fila
+      pulseSet(3, "a", "Bloque 1", 2, 5),
+    ]);
+    assert.equal(sessions.length, 2);
+    // Orden ascendente por fecha: la sesión de hace 5 días va antes que la de hace 3.
+    assert.equal(sessions[0].readinessPre, 4);
+    assert.equal(sessions[1].readinessPre, 2);
+  });
+
+  await t.test("una sesión sin ningún pulso no aparece", () => {
+    assert.deepEqual(
+      buildSessionReadiness([{ date: daysAgo(1), splitId: "a", readinessPre: null, perceivedEffortPost: null }]),
+      []
+    );
+  });
+});
+
+test("buildSessionExerciseProgress", async (t) => {
+  await t.test("una fila por sesión con peso máximo de ESE día", () => {
+    const sessions = buildSessionExerciseProgress(
+      [
+        exerciseSet(10, "a", "Semana 1", "Press banca", 80),
+        exerciseSet(10, "a", "Semana 1", "Press banca", 82.5), // misma sesión, se queda el máximo
+        exerciseSet(3, "b", "Semana 2", "Press banca", 85),
+      ],
+      "Press banca"
+    );
+    assert.equal(sessions.length, 2);
+    assert.equal(sessions[0].maxWeight, 82.5);
+    assert.equal(sessions[0].sets, 2);
+    assert.equal(sessions[1].maxWeight, 85);
+  });
+
+  await t.test("filtra por ejercicio y respeta MIN_TRACKED_WEIGHT", () => {
+    const sessions = buildSessionExerciseProgress(
+      [exerciseSet(1, "a", "S1", "Peso corporal", MIN_TRACKED_WEIGHT - 0.1)],
+      "Peso corporal"
+    );
+    assert.deepEqual(sessions, []);
+  });
+});
+
+// 2026-09 — adherencia de sesión: series hechas frente a las pautadas EN ESA
+// SESIÓN. A diferencia del resto, entra ya agregado por Workout (una fila
+// por sesión, como devuelve tableDao.listSessionAdherenceForUser), no una
+// lista de series.
+function adherenceRow(daysAgoValue, splitId, splitName, totalSets, donedSets) {
+  return { date: daysAgo(daysAgoValue), splitId, splitName, totalSets, donedSets };
+}
+
+test("buildSessionAdherence", async (t) => {
+  await t.test("calcula el porcentaje hechas/pautadas por sesión", () => {
+    const sessions = buildSessionAdherence([adherenceRow(2, "a", "Semana 1", 20, 15)]);
+    assert.equal(sessions[0].adherence, 75);
+  });
+
+  await t.test("una sesión sin series pautadas no da división por cero", () => {
+    const sessions = buildSessionAdherence([adherenceRow(1, "a", "Semana 1", 0, 0)]);
+    assert.equal(sessions[0].adherence, null);
+  });
+
+  await t.test("ordena por fecha ascendente", () => {
+    const sessions = buildSessionAdherence([
+      adherenceRow(1, "a", "S1", 10, 10),
+      adherenceRow(10, "a", "S1", 10, 10),
+    ]);
+    assert.ok(sessions[0].date < sessions[1].date);
+  });
+
+  await t.test("sin filas no hay sesiones", () => {
+    assert.deepEqual(buildSessionAdherence([]), []);
+    assert.deepEqual(buildSessionAdherence(null), []);
+  });
+});
+
+test("buildBlockAdherence", async (t) => {
+  await t.test("suma series hechas/pautadas de todo el bloque antes de dividir (no promedia %)", () => {
+    // Sesión de 40 series al 50% + sesión de 4 series al 100%: una media de
+    // porcentajes daría 75%, pero sumando primero da (20+4)/(40+4) = 54.5%.
+    const blocks = buildBlockAdherence(
+      buildSessionAdherence([adherenceRow(5, "a", "Bloque 1", 40, 20), adherenceRow(2, "a", "Bloque 1", 4, 4)])
+    );
+    assert.equal(blocks[0].adherence, Math.round((24 / 44) * 100));
+    assert.equal(blocks[0].sessions, 2);
+  });
+
+  await t.test("ordena por primera sesión, igual que el resto de buildBlock*", () => {
+    const blocks = buildBlockAdherence(
+      buildSessionAdherence([adherenceRow(2, "b", "Segundo", 10, 10), adherenceRow(20, "a", "Primero", 10, 10)])
+    );
+    assert.deepEqual(blocks.map((b) => b.name), ["Primero", "Segundo"]);
+  });
+
+  await t.test("una sesión sin microciclo se ignora", () => {
+    const blocks = buildBlockAdherence(buildSessionAdherence([{ date: daysAgo(1), totalSets: 10, donedSets: 5 }]));
+    assert.deepEqual(blocks, []);
+  });
+
+  await t.test("sin sesiones no hay bloques", () => {
+    assert.deepEqual(buildBlockAdherence([]), []);
+    assert.deepEqual(buildBlockAdherence(null), []);
+  });
+});
+
+test("listTrackedWorkoutNames", async (t) => {
+  await t.test("nombres únicos, ordenados alfabéticamente, sin filtro de carga", () => {
+    const names = listTrackedWorkoutNames([
+      { ...set(1, "Sentadilla", 5, 0), workoutName: "Pierna" },
+      { ...set(1, "Press banca", 5, 80), workoutName: "Empuje" },
+      { ...set(2, "Sentadilla", 5, 0), workoutName: "Pierna" },
+    ]);
+    // Sentadilla a 0 kg (día de movilidad, por ejemplo) cuenta igual: esto
+    // no es listTrackedExerciseNames, no hay MIN_TRACKED_WEIGHT.
+    assert.deepEqual(names, ["Empuje", "Pierna"]);
+  });
+
+  await t.test("sin nombre de workout no aporta nada", () => {
+    assert.deepEqual(listTrackedWorkoutNames([set(1, "X", 5, 50)]), []);
+  });
+
+  await t.test("sin series no hay nombres", () => {
+    assert.deepEqual(listTrackedWorkoutNames([]), []);
+    assert.deepEqual(listTrackedWorkoutNames(null), []);
   });
 });

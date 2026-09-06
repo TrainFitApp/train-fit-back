@@ -370,6 +370,19 @@ module.exports = {
     );
   },
 
+  // 2026-09 — vía dedicada para la nota del CLIENTE, separada de
+  // updateCustomExercise (que sí queda bloqueado en rutinas asignadas).
+  // Mismo criterio de vaciar-con-cadena-vacía que ya usaba updateCustomExercise
+  // para este mismo campo (ver comentario ahí: la pantalla del cliente manda
+  // "" para vaciar la nota, no ausencia del campo).
+  async updateClientNotes(id, clientNotes) {
+    const trimmed = (clientNotes || "").toString().trim();
+    const update = trimmed
+      ? { $set: { clientNotes: trimmed } }
+      : { $unset: { clientNotes: 1 } };
+    return customExerciseSchema.findByIdAndUpdate(id, update, { new: true });
+  },
+
   async deleteCustomExercise(id) {
     try {
       const customExercise = await customExerciseSchema.findById(id);

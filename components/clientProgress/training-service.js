@@ -224,6 +224,68 @@ function buildBlockComparison(blockTraining) {
 }
 
 /**
+ * 2026-09 — readiness pre-entreno y esfuerzo post-entreno (1-5), promediados
+ * por microciclo, para comparar bloque contra bloque igual que el resto de
+ * métricas de este archivo. Ambos son un pulso OPCIONAL de la sesión (el
+ * cliente puede saltárselo): una sesión sin ninguno de los dos no cuenta ni
+ * suma ni resta al promedio, no se trata como 0.
+ *
+ * Igual que buildBlockTraining, entra `sets` (con readinessPre/
+ * perceivedEffortPost proyectados por sesión en tableDao
+ * .listCompletedSetsForUser) — el valor se repite en cada set de la misma
+ * sesión a propósito, así que hay que deduplicar por fecha ANTES de
+ * promediar, o una sesión con 40 series pesaría 40 veces más que una de 4.
+ */
+function buildBlockReadiness(sets) {
+  const blocks = new Map();
+
+  for (const set of sets || []) {
+    if (!set.splitId) continue;
+    if (set.readinessPre == null && set.perceivedEffortPost == null) continue;
+
+    const key = String(set.splitId);
+    if (!blocks.has(key)) {
+      blocks.set(key, {
+        splitId: key,
+        name: set.splitName || "Microciclo",
+        start: null,
+        sessions: new Map(), // fecha -> {readinessPre, perceivedEffortPost}
+      });
+    }
+
+    const block = blocks.get(key);
+    const day = isoDate(set.date);
+    if (!block.start || day < block.start) block.start = day;
+    if (!block.sessions.has(day)) {
+      block.sessions.set(day, {
+        readinessPre: set.readinessPre ?? null,
+        perceivedEffortPost: set.perceivedEffortPost ?? null,
+      });
+    }
+  }
+
+  const average = (values) => {
+    const present = values.filter((v) => v != null);
+    if (!present.length) return null;
+    return Math.round((present.reduce((sum, v) => sum + v, 0) / present.length) * 10) / 10;
+  };
+
+  return [...blocks.values()]
+    .sort((a, b) => (a.start || "").localeCompare(b.start || ""))
+    .map((block) => {
+      const sessions = [...block.sessions.values()];
+      return {
+        splitId: block.splitId,
+        name: block.name,
+        start: block.start,
+        avgReadinessPre: average(sessions.map((s) => s.readinessPre)),
+        avgPerceivedEffortPost: average(sessions.map((s) => s.perceivedEffortPost)),
+        sessionsWithPulse: sessions.length,
+      };
+    });
+}
+
+/**
  * Tarea 4 (2026-09) — carga por grupo muscular, por microciclo: qué está
  * trabajando más un cliente y qué se le está quedando corto, mirando los
  * ejercicios que de verdad ha hecho (no la ficha teórica de la rutina).
@@ -329,6 +391,214 @@ function buildBlockExerciseProgress(sets, exerciseName) {
     .map((block) => ({ ...block, volume: Math.round(block.volume) }));
 }
 
+/**
+ * 2026-09 — los mismos agregados de buildBlockTraining/buildBlockMuscleGroups/
+ * buildBlockReadiness/buildBlockExerciseProgress, pero por SESIÓN individual
+ * en vez de por microciclo. No es una consulta nueva: es la misma `sets`
+ * (tableDao.listCompletedSetsForUser) agrupada por fecha en vez de por
+ * splitId. Sirve al selector de granularidad "Por sesión" del comparador:
+ * un microciclo promedia y por tanto esconde la sesión suelta en la que el
+ * cliente entrenó mal o llegó muy cansado — verlo sesión a sesión es lo que
+ * responde "¿qué día concreto se torció esto?".
+ *
+ * splitId/splitName se llevan de contexto (para la etiqueta "12 ene ·
+ * Semana 2" en el frontend), no para agrupar.
+ */
+function buildSessionTraining(sets) {
+  const sessions = new Map();
+
+  for (const set of sets || []) {
+    const day = isoDate(set.date);
+    if (!day) continue;
+
+    if (!sessions.has(day)) {
+      sessions.set(day, {
+        date: day,
+        splitId: set.splitId ? String(set.splitId) : null,
+        splitName: set.splitName || null,
+        volume: 0,
+        sets: 0,
+      });
+    }
+
+    const session = sessions.get(day);
+    session.volume += volumeOf(set);
+    session.sets += 1;
+  }
+
+  return [...sessions.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((session) => ({ ...session, volume: Math.round(session.volume) }));
+}
+
+/** Igual que buildSessionTraining, pero por grupo muscular — espejo de buildBlockMuscleGroups. */
+function buildSessionMuscleGroups(sets) {
+  const sessions = new Map();
+
+  for (const set of sets || []) {
+    const groups = set.muscleGroups1?.length ? set.muscleGroups1 : set.muscleGroups2 || [];
+    if (!groups.length) continue;
+
+    const day = isoDate(set.date);
+    if (!day) continue;
+
+    if (!sessions.has(day)) {
+      sessions.set(day, {
+        date: day,
+        splitId: set.splitId ? String(set.splitId) : null,
+        splitName: set.splitName || null,
+        muscleGroups: new Map(),
+      });
+    }
+
+    const session = sessions.get(day);
+    const volume = volumeOf(set);
+    for (const group of groups) {
+      session.muscleGroups.set(group, (session.muscleGroups.get(group) || 0) + volume);
+    }
+  }
+
+  return [...sessions.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((session) => ({
+      date: session.date,
+      splitId: session.splitId,
+      splitName: session.splitName,
+      muscleGroups: [...session.muscleGroups.entries()]
+        .map(([group, volume]) => ({ group, volume: Math.round(volume) }))
+        .sort((a, b) => b.volume - a.volume),
+    }));
+}
+
+/**
+ * Igual que buildBlockReadiness pero sin promediar: el pulso YA es un dato
+ * por sesión (se repite en cada set de la misma sesión a propósito, ver
+ * tableDao.listCompletedSetsForUser), así que aquí basta con el primero que
+ * se encuentre por fecha — no hay nada que promediar dentro de una sesión.
+ */
+function buildSessionReadiness(sets) {
+  const sessions = new Map();
+
+  for (const set of sets || []) {
+    if (set.readinessPre == null && set.perceivedEffortPost == null) continue;
+
+    const day = isoDate(set.date);
+    if (!day || sessions.has(day)) continue;
+
+    sessions.set(day, {
+      date: day,
+      splitId: set.splitId ? String(set.splitId) : null,
+      splitName: set.splitName || null,
+      readinessPre: set.readinessPre ?? null,
+      perceivedEffortPost: set.perceivedEffortPost ?? null,
+    });
+  }
+
+  return [...sessions.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Igual que buildBlockExerciseProgress pero por sesión — espejo de buildSessionTraining. */
+function buildSessionExerciseProgress(sets, exerciseName) {
+  const sessions = new Map();
+
+  for (const set of sets || []) {
+    if (set.exerciseName !== exerciseName) continue;
+    const weight = Number(set.weight) || 0;
+    if (weight < MIN_TRACKED_WEIGHT) continue;
+
+    const day = isoDate(set.date);
+    if (!day) continue;
+
+    if (!sessions.has(day)) {
+      sessions.set(day, {
+        date: day,
+        splitId: set.splitId ? String(set.splitId) : null,
+        splitName: set.splitName || null,
+        maxWeight: 0,
+        volume: 0,
+        sets: 0,
+      });
+    }
+
+    const session = sessions.get(day);
+    session.maxWeight = Math.max(session.maxWeight, weight);
+    session.volume += volumeOf(set);
+    session.sets += 1;
+  }
+
+  return [...sessions.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((session) => ({ ...session, volume: Math.round(session.volume) }));
+}
+
+/**
+ * 2026-09 — adherencia de sesión: series realmente hechas frente a las
+ * pautadas EN ESA SESIÓN concreta. Distinto de "adherencia por microciclo"
+ * (nunca implementada porque no hay calendario planificado, ver
+ * tableDao.countPlannedSessionsPerMicrocycle): aquí sí hay un denominador
+ * honesto, porque la sesión ya existe con sus series reales desde que se le
+ * asignó al cliente — terminarla (finishWorkout) no exige tenerlas todas
+ * hechas, así que "cuántas de las pautadas se hicieron" es un hecho, no una
+ * estimación.
+ *
+ * Entra el resultado crudo de tableDao.listSessionAdherenceForUser (una fila
+ * por Workout, no por set — esa consulta no filtra `doned`, a diferencia de
+ * listCompletedSetsForUser).
+ */
+function buildSessionAdherence(sessions) {
+  return (sessions || [])
+    .map((session) => ({
+      date: isoDate(session.date),
+      splitId: session.splitId ? String(session.splitId) : null,
+      splitName: session.splitName || null,
+      totalSets: session.totalSets,
+      donedSets: session.donedSets,
+      adherence: session.totalSets ? Math.round((session.donedSets / session.totalSets) * 100) : null,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * La misma adherencia agregada por microciclo — SUMANDO series hechas y
+ * pautadas de todas las sesiones del bloque antes de dividir, no
+ * promediando los porcentajes de cada sesión: una media de porcentajes
+ * pesaría igual una sesión de 4 series que una de 40.
+ */
+function buildBlockAdherence(sessionAdherence) {
+  const blocks = new Map();
+
+  for (const session of sessionAdherence || []) {
+    if (!session.splitId) continue;
+
+    if (!blocks.has(session.splitId)) {
+      blocks.set(session.splitId, {
+        splitId: session.splitId,
+        name: session.splitName || "Microciclo",
+        start: null,
+        totalSets: 0,
+        donedSets: 0,
+        sessions: 0,
+      });
+    }
+
+    const block = blocks.get(session.splitId);
+    if (!block.start || session.date < block.start) block.start = session.date;
+    block.totalSets += session.totalSets;
+    block.donedSets += session.donedSets;
+    block.sessions += 1;
+  }
+
+  return [...blocks.values()]
+    .sort((a, b) => (a.start || "").localeCompare(b.start || ""))
+    .map((block) => ({
+      splitId: block.splitId,
+      name: block.name,
+      start: block.start,
+      adherence: block.totalSets ? Math.round((block.donedSets / block.totalSets) * 100) : null,
+      sessions: block.sessions,
+    }));
+}
+
 // Nombres de ejercicio con carga real (mismo filtro MIN_TRACKED_WEIGHT que
 // buildPersonalRecords) disponibles en el rango pedido — alimenta el
 // selector de "comparar por ejercicio" sin que el frontend tenga que
@@ -343,6 +613,21 @@ function listTrackedExerciseNames(sets) {
   return [...names].sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * 2026-09 — "elegir el workout a ver": nombres de entrenamiento (p.ej. "Día
+ * de pierna") con al menos una sesión completada en el rango, para alimentar
+ * ese selector. Sin filtro de carga (a diferencia de listTrackedExerciseNames
+ * con MIN_TRACKED_WEIGHT): aquí no se trata de peso, un día de cardio o
+ * movilidad es un workout tan elegible como cualquier otro.
+ */
+function listTrackedWorkoutNames(sets) {
+  const names = new Set();
+  for (const set of sets || []) {
+    if (set.workoutName) names.add(set.workoutName);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
 module.exports = {
   TOP_EXERCISES,
   MIN_TRACKED_WEIGHT,
@@ -352,7 +637,15 @@ module.exports = {
   buildVolumeComparison,
   buildBlockTraining,
   buildBlockComparison,
+  buildBlockReadiness,
   buildBlockMuscleGroups,
   buildBlockExerciseProgress,
+  buildSessionTraining,
+  buildSessionMuscleGroups,
+  buildSessionReadiness,
+  buildSessionExerciseProgress,
+  buildSessionAdherence,
+  buildBlockAdherence,
   listTrackedExerciseNames,
+  listTrackedWorkoutNames,
 };

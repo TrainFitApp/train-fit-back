@@ -34,13 +34,6 @@ const SetSchema = Schema(
     expectedDistance: { type: Number, min: 0, max: 100000 },
     distance: { type: Number, min: 0, max: 100000 },
     velocity: { type: Number, min: 0, max: 50 },
-    // Tempo de ejecución, formato "E-P1-C-P2" (excéntrica, pausa abajo,
-    // concéntrica, pausa arriba) en segundos: "3-1-1-0". Texto y no cuatro
-    // números porque así es como se escribe y como se lee en cualquier
-    // programa; partirlo en campos obligaría a recomponerlo en cada pantalla.
-    // "X" en la concéntrica (explosiva) es notación estándar y por eso no se
-    // valida como numérico.
-    tempo: { type: String, trim: true, maxlength: 15 },
   },
   { versionKey: false },
 );

@@ -31,6 +31,10 @@ module.exports = {
     return customExerciseDao.setCustomExerciseBlock(id, blockId);
   },
 
+  async updateClientNotes(id, clientNotes) {
+    return customExerciseDao.updateClientNotes(id, clientNotes);
+  },
+
   async deleteCustomExercise(id) {
     return customExerciseDao.deleteCustomExercise(id);
   },

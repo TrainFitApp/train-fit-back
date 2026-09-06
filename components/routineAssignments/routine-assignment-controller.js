@@ -2,7 +2,7 @@ const routineAssignmentService = require("./routine-assignment-service");
 const tableService = require("../tables/table-service");
 const tableDao = require("../tables/table-dao");
 const planChangeService = require("../planChanges/plan-change-service");
-const { projectionInRange } = require("./routine-assignment-projection");
+const { projectionInRange, getProjectedPhaseEndDate } = require("./routine-assignment-projection");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -65,7 +65,11 @@ module.exports = {
     const assignment = await routineAssignmentService.getActiveForClient(req.params.clientId);
     if (!assignment) return res.send(null);
     const table = await tableDao.getTableById(assignment.tableId);
-    return res.send({ ...assignment.toObject(), tableName: table?.name || null });
+    return res.send({
+      ...assignment.toObject(),
+      tableName: table?.name || null,
+      estimatedEndDate: table ? getProjectedPhaseEndDate(assignment.startDate, table.splits) : null,
+    });
   },
 
   // GET /trainer/clients/:clientId/routine-assignments/history
@@ -73,12 +77,16 @@ module.exports = {
     const assignments = await routineAssignmentService.listForClient(req.params.clientId);
     const tableIds = [...new Set(assignments.map((a) => String(a.tableId)))];
     const tables = await Promise.all(tableIds.map((id) => tableDao.getTableById(id)));
-    const nameById = new Map(tables.filter(Boolean).map((t) => [String(t._id), t.name]));
+    const tableById = new Map(tables.filter(Boolean).map((t) => [String(t._id), t]));
 
-    const enriched = assignments.map((a) => ({
-      ...a.toObject(),
-      tableName: nameById.get(String(a.tableId)) || null,
-    }));
+    const enriched = assignments.map((a) => {
+      const table = tableById.get(String(a.tableId));
+      return {
+        ...a.toObject(),
+        tableName: table?.name || null,
+        estimatedEndDate: table ? getProjectedPhaseEndDate(a.startDate, table.splits) : null,
+      };
+    });
     return res.send(enriched);
   },
 
