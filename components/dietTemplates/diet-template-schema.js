@@ -76,7 +76,14 @@ const DietTemplateSchema = new Schema(
     // Invariante: nunca puestos los dos a la vez. clientId puesto = copia
     // asignada (puede venir de una plantilla general o de una propia);
     // ownerClientId puesto = plantilla propia sin asignar.
-    ownerClientId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+    //
+    // Sin `default: null` a propósito: en una plantilla general el campo
+    // directamente NO EXISTE en el documento, en vez de guardarse como null.
+    // Las consultas no cambian — en MongoDB `{campo: null}` y `$in:[x,null]`
+    // casan igual con "null explícito" que con "campo ausente" — así que
+    // listByTrainer sigue funcionando para los documentos anteriores a este
+    // campo, que tampoco lo tienen.
+    ownerClientId: { type: Schema.Types.ObjectId, ref: "User", index: true },
     // Simplificación (2026-09) — la copia ES la asignación, ya no hay una
     // colección PlanAssignment aparte: una copia (clientId puesto) es 1:1 con
     // "este cliente tiene este plan desde tal fecha", así que sus campos de

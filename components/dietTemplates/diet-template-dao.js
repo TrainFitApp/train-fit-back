@@ -195,7 +195,9 @@ module.exports = {
     const created = await DietTemplate.create({
       trainerId,
       name,
-      ownerClientId: ownerClientId || null,
+      // Solo se escribe si hay dueño — una plantilla general no lleva la
+      // clave en absoluto (ver diet-template-schema.js).
+      ...(ownerClientId ? { ownerClientId } : {}),
       days: await materializeDays(days),
       mode: mode || "sequential",
       dayPatterns: await materializeDayPatterns(dayPatterns),
