@@ -60,7 +60,7 @@ const DietTemplateSchema = new Schema(
     // mismo shape, misma colección, para no duplicar el modelo de datos, pero
     // nunca aparece en listByTrainer ni se vuelve a asignar a nadie — la regla
     // del producto es que a un cliente jamás se le asigna la plantilla en sí.
-    clientId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+    clientId: { type: Schema.Types.ObjectId, ref: "User", index: true },
     // Dueño de una plantilla REUTILIZABLE acotada a un cliente ("las dietas
     // de Pepe"), distinto de `clientId` de arriba: aquí no hay fechas ni
     // status, esto no rige nada — es material de biblioteca que solo tiene
@@ -87,26 +87,35 @@ const DietTemplateSchema = new Schema(
     // Simplificación (2026-09) — la copia ES la asignación, ya no hay una
     // colección PlanAssignment aparte: una copia (clientId puesto) es 1:1 con
     // "este cliente tiene este plan desde tal fecha", así que sus campos de
-    // fecha/estado viven aquí directo, no en un documento propio. Todos
-    // quedan null en una plantilla real (clientId null), donde no significan
-    // nada. endMode determina cómo se calculó endDate al asignar: "fixedDate"
-    // = fecha exacta elegida, "duration" = startDate + N días (ya calculada),
-    // "indefinite" = endDate null, sigue vigente hasta que se sustituya.
-    startDate: { type: String, default: null }, // "YYYY-MM-DD"
-    // null explícito en el enum: Mongoose NO lo deja pasar gratis solo por
-    // tener default:null — sin esto, cualquier create() de una plantilla
-    // real (que nunca toca estos campos) revienta la validación.
-    endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null], default: null },
-    endDate: { type: String, default: null }, // "YYYY-MM-DD" o null si indefinido
-    status: { type: String, enum: ["active", "superseded", "ended", null], default: null },
+    // fecha/estado viven aquí directo, no en un documento propio. En una
+    // plantilla (sin clientId) no significan nada y por eso NO EXISTEN en el
+    // documento — ninguno lleva `default: null`, así que solo aparecen donde
+    // tienen sentido: las escribe explícitamente quien crea la asignación
+    // (cloneForAssignment / createDirectAssignment). endMode determina cómo se
+    // calculó endDate al asignar: "fixedDate" = fecha exacta elegida,
+    // "duration" = startDate + N días (ya calculada), "indefinite" = endDate
+    // null, sigue vigente hasta que se sustituya.
+    //
+    // Ojo con endDate: ahí null SÍ es un valor con significado ("indefinido",
+    // ver blocksNewPhase en plan-assignment-service.js), no un hueco — una
+    // asignación lo escribe siempre, incluso null.
+    startDate: { type: String }, // "YYYY-MM-DD"
+    // null sigue en el enum: una asignación indefinida escribe endMode
+    // explícito y Mongoose no lo deja pasar gratis si no está listado.
+    endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null] },
+    endDate: { type: String }, // "YYYY-MM-DD" o null si indefinido
+    status: { type: String, enum: ["active", "superseded", "ended", null] },
     // Encadena con la copia que la sustituyó — permite reconstruir el
-    // historial de fases sin perder rastro de lo que regía antes.
-    supersededBy: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
+    // historial de fases sin perder rastro de lo que regía antes. Ausente
+    // mientras no la sustituya nada (se escribe en markSuperseded).
+    supersededBy: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
     // Informativo — de qué plantilla se copió, solo para "ver plantilla
     // aplicada" en el frontend. Nunca se lee para resolver contenido (eso ya
     // es la copia en sí) ni para el `mode`/`days`/`dayPatterns` reales.
-    // Puede quedar huérfano si la plantilla original se borra después.
-    sourceTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
+    // Puede quedar huérfano si la plantilla original se borra después, y
+    // está ausente en una asignación creada de cero ("Crear dieta"), que no
+    // sale de ninguna plantilla.
+    sourceTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
     name: { type: String, required: true, trim: true, maxlength: 100 },
     mode: { type: String, enum: ["sequential", "recurring", "choice"], default: "sequential" },
     days: [
