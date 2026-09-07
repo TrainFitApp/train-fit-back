@@ -235,8 +235,13 @@ UserSchema.pre("deleteOne", async function (next) {
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
       // Copias congeladas asignadas a este usuario COMO CLIENTE (el lado
-      // trainerId ya se cubrió arriba, junto con sus plantillas reales).
-      await dietTemplateSchema.deleteMany({ clientId: user._id });
+      // trainerId ya se cubrió arriba, junto con sus plantillas reales), y
+      // las plantillas de biblioteca que eran exclusivas suyas
+      // (ownerClientId): sin el cliente no significan nada, mismo criterio
+      // que sus fases asignadas.
+      await dietTemplateSchema.deleteMany({
+        $or: [{ clientId: user._id }, { ownerClientId: user._id }],
+      });
 
       // Config/biblioteca solo del lado trainer (sin clientId).
       await trainerIntakeConfigSchema.deleteMany({ trainerId: user._id });

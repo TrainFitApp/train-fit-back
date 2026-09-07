@@ -61,6 +61,22 @@ const DietTemplateSchema = new Schema(
     // nunca aparece en listByTrainer ni se vuelve a asignar a nadie — la regla
     // del producto es que a un cliente jamás se le asigna la plantilla en sí.
     clientId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+    // Dueño de una plantilla REUTILIZABLE acotada a un cliente ("las dietas
+    // de Pepe"), distinto de `clientId` de arriba: aquí no hay fechas ni
+    // status, esto no rige nada — es material de biblioteca que solo tiene
+    // sentido para ese cliente, y se aplica como fase igual que cualquier
+    // otra plantilla (creando entonces su copia con clientId puesto).
+    //
+    // Campo aparte y no un `clientId` con status null a propósito: ese campo
+    // ya significa "esto ES una asignación congelada" en el resolver de
+    // fases, en su índice compuesto y en listByTrainer. Mezclar los dos
+    // conceptos en un campo obligaría a auditar cada consulta que hoy da por
+    // hecho "clientId puesto = asignación".
+    //
+    // Invariante: nunca puestos los dos a la vez. clientId puesto = copia
+    // asignada (puede venir de una plantilla general o de una propia);
+    // ownerClientId puesto = plantilla propia sin asignar.
+    ownerClientId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
     // Simplificación (2026-09) — la copia ES la asignación, ya no hay una
     // colección PlanAssignment aparte: una copia (clientId puesto) es 1:1 con
     // "este cliente tiene este plan desde tal fecha", así que sus campos de
