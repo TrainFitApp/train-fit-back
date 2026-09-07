@@ -66,6 +66,11 @@ const CustomRecipeSchema = new Schema(
     // CustomProduct.assignedByTrainerId (ver esos comentarios). Permanente,
     // protege de borrado/edición directa del cliente.
     assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    // Cantidad ORIGINAL pautada (gramos) — mismo criterio que
+    // CustomProduct.assignedQuantity (ver ese comentario): se estampa una
+    // vez junto con assignedByTrainerId y no vuelve a tocarse; `quantity`
+    // pasa a ser la cantidad consumida, editable por el cliente.
+    assignedQuantity: { type: Number, min: 0, default: null },
     // El cliente lo marca como tomado — nunca bloqueado por assignedByTrainerId.
     consumed: { type: Boolean, default: false },
   },

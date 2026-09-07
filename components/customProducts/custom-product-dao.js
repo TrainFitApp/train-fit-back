@@ -261,4 +261,15 @@ module.exports = {
       { new: true },
     );
   },
+
+  // Cantidad realmente consumida — mismo criterio que setConsumed: nunca
+  // bloqueado por assignedByTrainerId, solo toca `quantity`.
+  // assignedQuantity (la referencia pautada) nunca se escribe aquí.
+  async setQuantity(id, quantity) {
+    return customProductSchema.findByIdAndUpdate(
+      id,
+      { $set: { quantity } },
+      { new: true },
+    );
+  },
 };

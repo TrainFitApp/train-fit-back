@@ -339,4 +339,53 @@ module.exports = {
       throw e;
     }
   },
+
+  // Ajustar cuánto de un producto pautado tomó realmente el cliente — mismo
+  // IDOR-guard y mismo criterio que setCustomProductConsumed (nunca pasa
+  // por assertMealEditable). No exige assignedByTrainerId: un producto
+  // propio ya se edita libre por otra vía, esta es solo la vía rápida de
+  // seguimiento.
+  async setCustomProductQuantity(req, res) {
+    try {
+      const quantity = Number(req.body?.quantity);
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        return res.status(400).send({ message: "Cantidad inválida" });
+      }
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
+      const target = (existing.customProducts || []).find(
+        (cp) => String(cp._id) === String(req.params.idProduct)
+      );
+      if (!target) {
+        return res.status(400).send({ message: "Producto no encontrado en esta comida" });
+      }
+      const updated = await mealService.setCustomProductQuantity(target._id, quantity);
+      return res.send(updated);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
+  },
+
+  async setCustomRecipeQuantity(req, res) {
+    try {
+      const quantity = Number(req.body?.quantity);
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        return res.status(400).send({ message: "Cantidad inválida" });
+      }
+      const existing = await resolveOwnedMealById(req.auth.userId, req.params.idMeal);
+      const target = (existing.customRecipes || []).find(
+        (cr) => String(cr._id) === String(req.params.idCustomRecipe)
+      );
+      if (!target) {
+        return res.status(400).send({ message: "Receta no encontrada en esta comida" });
+      }
+      const updated = await mealService.setCustomRecipeQuantity(target._id, quantity);
+      return res.send(updated);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
+  },
 };
