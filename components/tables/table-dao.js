@@ -518,6 +518,7 @@ module.exports = {
         $project: {
           _id: 0,
           date: "$workoutDocs.date",
+          workoutId: "$workoutDocs._id",
           // Movimiento 3 Coach Pro — a qué microciclo pertenece la serie.
           // Va en la MISMA agregación (el $unwind de splits ya está hecho
           // arriba, solo hay que proyectar dos campos más) para que comparar
@@ -530,6 +531,7 @@ module.exports = {
           exerciseName: { $ifNull: ["$exerciseInfo.name", "$customExercises.name"] },
           reps: "$setDocs.reps",
           weight: "$setDocs.weight",
+          rir: "$setDocs.rir",
           // Tarea 4 (2026-09) — grupos musculares implicados, del catálogo.
           // Solo lo que ya guarda Exercise; no se infiere nada para un
           // ejercicio propio del cliente sin ficha en el catálogo.

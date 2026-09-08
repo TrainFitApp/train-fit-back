@@ -28,9 +28,10 @@ const publicKey = loadKeyFromEnv("PUBLIC_KEY");
 const privateKey = loadKeyFromEnv("PRIVATE_KEY");
 const ISSUER = process.env.JWT_ISSUER || "trainfit-auth";
 const REFRESH_COOKIE_NAME = process.env.REFRESH_COOKIE_NAME || "tfRefreshToken";
+const COOKIE_CLIENT_FAMILIES = new Set(["trainfit-front", "train-fit-management", "trainfit-trainers"]);
 const DEFAULT_ALLOWED_AUDIENCES = (
   process.env.JWT_ALLOWED_AUDIENCES ||
-  "trainfit-front,train-fit-management"
+  "trainfit-front,train-fit-management,trainfit-trainers"
 )
   .split(",")
   .map((audience) => audience.trim())
@@ -181,17 +182,27 @@ class TokenService {
     return new Date(payload.exp * 1000);
   }
 
-  static setRefreshTokenCookie(res, refreshToken) {
+  static getRefreshCookieName(clientFamily) {
+    return COOKIE_CLIENT_FAMILIES.has(clientFamily)
+      ? `${REFRESH_COOKIE_NAME}-${clientFamily}`
+      : REFRESH_COOKIE_NAME;
+  }
+
+  static setRefreshTokenCookie(res, refreshToken, clientFamily) {
+    const expiration = TokenService.getExpirationDate(refreshToken);
+    const maxAge = expiration
+      ? Math.max(0, expiration.getTime() - Date.now())
+      : TokenService.REFRESH_TOKEN_TTL_SECONDS * 1000;
     res.cookie(
-      REFRESH_COOKIE_NAME,
+      TokenService.getRefreshCookieName(clientFamily),
       refreshToken,
-      TokenService.getRefreshCookieOptions()
+      TokenService.getRefreshCookieOptions(maxAge)
     );
   }
 
-  static clearRefreshTokenCookie(res) {
+  static clearRefreshTokenCookie(res, clientFamily) {
     res.cookie(
-      REFRESH_COOKIE_NAME,
+      TokenService.getRefreshCookieName(clientFamily),
       "",
       TokenService.getRefreshCookieOptions(0)
     );
@@ -253,10 +264,18 @@ class TokenService {
       return { token: String(headerToken), source: "header" };
     }
 
-    const cookieValues = TokenService.getCookieValues(req, REFRESH_COOKIE_NAME);
+    const clientFamily = String(req.headers?.["x-client-family"] || "trainfit-front").trim();
+    const scopedName = TokenService.getRefreshCookieName(clientFamily);
+    const cookieValues = TokenService.getCookieValues(req, scopedName);
     if (cookieValues.length > 0) {
       return { token: cookieValues[0], source: "cookie" };
     }
+
+    // Migración compatible: una cookie antigua solo sirve a SU app. La firma,
+    // audiencia y sesión se verifican después en el controlador como siempre.
+    const legacyToken = TokenService.getCookieValues(req, REFRESH_COOKIE_NAME)
+      .find((token) => TokenService.decode(token)?.aud === clientFamily);
+    if (legacyToken) return { token: legacyToken, source: "cookie" };
 
     return { token: null, source: null };
   }

@@ -132,7 +132,7 @@ async function clearUserAuthIfCurrent(userId, sessionId) {
 function clearRefreshArtifacts(req, res) {
   const clientContext = resolveClientContext(req);
   if (!clientContext.isNativeClient) {
-    TokenService.clearRefreshTokenCookie(res);
+    TokenService.clearRefreshTokenCookie(res, clientContext.clientFamily);
   }
 }
 
@@ -212,7 +212,7 @@ async function issueSession(user, req, res, sessionOptions = {}) {
   );
 
   if (!clientContext.isNativeClient) {
-    TokenService.setRefreshTokenCookie(res, refreshToken);
+    TokenService.setRefreshTokenCookie(res, refreshToken, clientContext.clientFamily);
   }
 
   console.info("[AUTH] auth_session_issued", {
@@ -439,6 +439,11 @@ module.exports = {
         { $set: { "auth.lastUsedAt": new Date() } },
         { new: true }
       );
+
+      // Separa cookies entre apps sin rotar ni ampliar la sesión existente.
+      if (!clientContext.isNativeClient) {
+        TokenService.setRefreshTokenCookie(res, extracted.token, clientContext.clientFamily);
+      }
 
       return res.send(
         buildRefreshResponse(

@@ -24,6 +24,36 @@ const {
 
 const NOW = new Date("2026-08-23T10:00:00.000Z");
 
+test('dos sesiones el mismo día cuentan por workout, no por fecha', () => {
+  const base = { splitId: 'a', date: NOW, reps: 10, weight: 50 };
+  const [block] = buildBlockTraining([{ ...base, workoutId: 'one' }, { ...base, workoutId: 'one' }, { ...base, workoutId: 'two' }]);
+  assert.equal(block.sessions, 2);
+  assert.equal(block.volumePerSession, 750);
+});
+
+test('carga, reps y RIR conservan la misma serie; cero es un RIR válido', () => {
+  const base = { splitId: 'a', date: NOW, exerciseName: 'Press' };
+  const [block] = buildBlockExerciseProgress([
+    { ...base, weight: 80, reps: 12, rir: [3] },
+    { ...base, weight: 90, reps: 5, rir: [2] },
+    { ...base, weight: 90, reps: 6, rir: [0] },
+    { ...base, weight: 100, reps: 0, rir: [1] },
+  ], 'Press');
+  assert.deepEqual(block.bestSet, { weight: 90, reps: 6, rir: [0] });
+  assert.equal(block.totalReps, 23);
+  assert.equal(block.sets, 3);
+});
+
+test('RIR ausente no se convierte en cero ni en el esperado', () => {
+  const [block] = buildBlockExerciseProgress([{ splitId: 'a', date: NOW, exerciseName: 'Press', weight: 80, reps: 8, expectedRir: [2] }], 'Press');
+  assert.deepEqual(block.bestSet.rir, []);
+});
+
+test('series por grupo no duplican etiquetas repetidas ni excluyen peso corporal', () => {
+  const [block] = buildBlockMuscleGroups([{ splitId: 'a', date: NOW, weight: 0, reps: 10, muscleGroups1: ['core', 'core'] }]);
+  assert.equal(block.muscleGroups[0].sets, 1);
+});
+
 function daysAgo(days) {
   return new Date(NOW.getTime() - days * 86400000);
 }

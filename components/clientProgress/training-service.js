@@ -178,7 +178,7 @@ function buildBlockTraining(sets) {
     if (!block.end || day > block.end) block.end = day;
     block.volume += volumeOf(set);
     block.sets += 1;
-    block.sessionDates.add(day);
+    block.sessionDates.add(set.workoutId ? String(set.workoutId) : day);
   }
 
   return [...blocks.values()]
@@ -325,8 +325,9 @@ function buildBlockMuscleGroups(sets) {
     if (!block.end || day > block.end) block.end = day;
 
     const volume = volumeOf(set);
-    for (const group of groups) {
-      block.muscleGroups.set(group, (block.muscleGroups.get(group) || 0) + volume);
+    for (const group of new Set(groups)) {
+      const current = block.muscleGroups.get(group) || { volume: 0, sets: 0 };
+      block.muscleGroups.set(group, { volume: current.volume + volume, sets: current.sets + 1 });
     }
   }
 
@@ -338,7 +339,7 @@ function buildBlockMuscleGroups(sets) {
       start: block.start,
       end: block.end,
       muscleGroups: [...block.muscleGroups.entries()]
-        .map(([group, volume]) => ({ group, volume: Math.round(volume) }))
+        .map(([group, data]) => ({ group, volume: Math.round(data.volume), sets: data.sets }))
         .sort((a, b) => b.volume - a.volume),
     }));
 }
@@ -361,8 +362,9 @@ function buildBlockExerciseProgress(sets, exerciseName) {
 
   for (const set of sets || []) {
     if (!set.splitId || set.exerciseName !== exerciseName) continue;
-    const weight = Number(set.weight) || 0;
-    if (weight < MIN_TRACKED_WEIGHT) continue;
+    const weight = Number(set.weight);
+    const reps = Number(set.reps);
+    if (!Number.isFinite(weight) || weight < MIN_TRACKED_WEIGHT || !Number.isFinite(reps) || reps <= 0) continue;
 
     const key = String(set.splitId);
     if (!blocks.has(key)) {
@@ -374,6 +376,8 @@ function buildBlockExerciseProgress(sets, exerciseName) {
         maxWeight: 0,
         volume: 0,
         sets: 0,
+        totalReps: 0,
+        bestSet: null,
       });
     }
 
@@ -382,8 +386,17 @@ function buildBlockExerciseProgress(sets, exerciseName) {
     if (!block.start || day < block.start) block.start = day;
     if (!block.end || day > block.end) block.end = day;
     block.maxWeight = Math.max(block.maxWeight, weight);
+    // Carga, repeticiones y RIR pertenecen a la MISMA serie realizada.
+    // No combinar máximos de series diferentes ni usar el RIR pautado.
+    if (!block.bestSet || weight > block.bestSet.weight ||
+        (weight === block.bestSet.weight && reps > block.bestSet.reps)) {
+      const rir = (Array.isArray(set.rir) ? set.rir : [set.rir])
+        .filter((value) => typeof value === "number" && Number.isFinite(value) && value >= -1 && value <= 20);
+      block.bestSet = { weight, reps, rir };
+    }
     block.volume += volumeOf(set);
     block.sets += 1;
+    block.totalReps += reps;
   }
 
   return [...blocks.values()]
@@ -607,7 +620,8 @@ function listTrackedExerciseNames(sets) {
   const names = new Set();
   for (const set of sets || []) {
     if (!set.exerciseName) continue;
-    if ((Number(set.weight) || 0) < MIN_TRACKED_WEIGHT) continue;
+    if (!Number.isFinite(Number(set.weight)) || Number(set.weight) < MIN_TRACKED_WEIGHT ||
+        !Number.isFinite(Number(set.reps)) || Number(set.reps) <= 0 || !set.splitId) continue;
     names.add(set.exerciseName);
   }
   return [...names].sort((a, b) => a.localeCompare(b));
