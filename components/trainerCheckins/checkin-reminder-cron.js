@@ -10,6 +10,18 @@ const { runReminderJob } = require("./checkin-reminder-service");
 // operativo sin necesitar un deploy (p. ej. si el envío de emails empieza
 // a fallar en producción y hay que cortarlo mientras se investiga).
 function startCheckinReminderCron() {
+  if (process.env.DISABLE_CHECKIN_SCHEDULE_CRON !== "true") {
+    let running = false;
+    cron.schedule("* * * * *", async () => {
+      if (running) return;
+      running = true;
+      try {
+        await require("./checkin-calendar-service").processCalendar();
+        await require("../notifications/push-service").dispatchPending();
+      } catch (error) { console.error("[checkin-calendar] Error al procesar la agenda", error.message); }
+      finally { running = false; }
+    });
+  }
   if (process.env.DISABLE_CHECKIN_REMINDER_CRON === "true") {
     console.log("[checkin-reminder] cron desactivado por DISABLE_CHECKIN_REMINDER_CRON");
     return null;

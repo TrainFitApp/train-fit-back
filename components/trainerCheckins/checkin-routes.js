@@ -1,9 +1,18 @@
 const express = require("@awaitjs/express");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./checkin-controller");
+const calendar = require("./checkin-calendar-controller");
 const { requireActiveClient } = require("../trainerClients/require-active-client");
 
 const router = express.Router();
+
+router.getAsync("/clients/:clientId/checkin-calendar", auth(["trainer"]), requireActiveClient(), calendar.calendar);
+router.postAsync("/clients/:clientId/checkin-schedules", auth(["trainer"]), requireActiveClient(), calendar.saveSchedule);
+router.putAsync("/clients/:clientId/checkin-schedules/:scheduleId", auth(["trainer"]), requireActiveClient(), calendar.saveSchedule);
+router.patchAsync("/clients/:clientId/checkin-schedules/:scheduleId/active", auth(["trainer"]), requireActiveClient(), calendar.setActive);
+router.postAsync("/clients/:clientId/checkin-schedules/:scheduleId/request", auth(["trainer"]), requireActiveClient(), calendar.requestNow);
+router.postAsync("/clients/:clientId/checkin-requests/:requestId/review", auth(["trainer"]), requireActiveClient(), calendar.review);
+router.postAsync("/checkins/requests/:requestId/respond", auth(["user", "admin"]), calendar.respond);
 
 // --- Lado profesional: plantillas maestras ---
 router.getAsync("/checkin-templates", auth(["trainer"]), controller.listDefinitions);

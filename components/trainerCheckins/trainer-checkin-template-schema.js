@@ -30,6 +30,7 @@ const TrainerCheckinTemplateSchema = new Schema({
   // modelos-de-datos/03-trainercheckintemplate.md, principio de copia).
   customQuestions: { type: [CustomCheckinQuestionSchema], default: () => [] },
   updatedAt: { type: Date, default: Date.now },
+  calendarManaged: { type: Boolean, default: false },
   // TASK-025 (MASTER_BACKLOG.md) — última vez que se envió un recordatorio
   // por este cadence. Evita reenviar el mismo día si el cron corre más de
   // una vez, y evita reenviar mientras el cliente sigue "al día" (se compara

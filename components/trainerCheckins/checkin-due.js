@@ -29,7 +29,8 @@ function cadenceDays(cadence) {
 // fija, reevaluar un histórico) decidía "pendiente" con otro reloj distinto
 // al que luego contaba los ciclos.
 function isCheckinDue(config, responses, now = new Date()) {
-  const lastResponse = responses[0];
+  if (config.calendarManaged) return false;
+  const lastResponse = responses.find(response => !response.scheduleId);
   // "once": pendiente únicamente si nunca se ha respondido — a diferencia de
   // weekly/biweekly, una vez respondida no vuelve a estar pendiente.
   if (config.cadence === "once") return !lastResponse;
@@ -45,7 +46,7 @@ function isCheckinDue(config, responses, now = new Date()) {
 // devuelve 1 cuando está pendiente (no hay ciclos que acumular).
 function checkinOverdueCycles(config, responses, now = new Date()) {
   if (!isCheckinDue(config, responses, now)) return 0;
-  const lastResponse = responses[0];
+  const lastResponse = responses.find(response => !response.scheduleId);
   if (config.cadence === "once" || !lastResponse) return 1;
   const elapsedDays = (now.getTime() - new Date(lastResponse.respondedAt).getTime()) / 86400000;
   return Math.max(1, Math.floor(elapsedDays / cadenceDays(config.cadence)));

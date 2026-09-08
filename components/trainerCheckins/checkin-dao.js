@@ -45,6 +45,7 @@ module.exports = {
         $set: {
           enabledFields: definition.enabledFields,
           cadence: definition.cadence,
+          calendarManaged: false,
           // Fase 5 — las preguntas propias se copian igual que el resto,
           // CONSERVANDO su _id: la respuesta viaja con la clave
           // "custom:<id>" (ver checkin-custom-question.js), así que
@@ -81,6 +82,7 @@ module.exports = {
     return CheckinResponse.findOne({
       trainerId,
       clientId,
+      scheduleId: { $exists: false },
       respondedAt: { $gte: desde, $lte: now },
     }).sort({ respondedAt: -1 });
   },
@@ -96,7 +98,11 @@ module.exports = {
   },
 
   async listResponses(trainerId, clientId) {
-    return CheckinResponse.find({ trainerId, clientId }).sort({ respondedAt: -1 }).lean();
+    const [legacy, scheduled] = await Promise.all([
+      CheckinResponse.find({ trainerId, clientId }).sort({ respondedAt: -1 }).lean(),
+      require("./checkin-request-schema").find({ trainerId, clientId, status: { $in: ["responded", "reviewed"] } }).sort({ respondedAt: -1 }).lean(),
+    ]);
+    return [...new Map([...legacy, ...scheduled].map(r => [String(r._id), r])).values()].sort((a, b) => new Date(b.respondedAt) - new Date(a.respondedAt));
   },
 
   // TASK-002 (MASTER_BACKLOG.md) — "Reportes": a diferencia de listResponses,

@@ -178,7 +178,7 @@ module.exports = {
         ...rest,
         client: clientId && typeof clientId === "object" ? clientId : null,
         // Solo lo que hace falta para pintar la respuesta.
-        customQuestions: (preguntasPorCliente.get(String(clientId?._id || clientId)) || []).map(
+        customQuestions: (rest.customQuestions || preguntasPorCliente.get(String(clientId?._id || clientId)) || []).map(
           (question) => ({
             _id: question._id,
             label: question.label,
@@ -215,7 +215,15 @@ module.exports = {
       const relation = await trainerClientDao.findActiveByTrainerAndClient(config.trainerId, req.auth.userId);
       if (relation) activeTrainerIds.add(String(config.trainerId));
     }
-    const visible = configs.filter((c) => activeTrainerIds.has(String(c.trainerId)));
+    const now = new Date();
+    const pending = await require("./checkin-request-schema").find({ clientId: req.auth.userId, status: "pending", scheduledAt: { $lte: now }, $or: [{ closesAt: null }, { closesAt: { $gt: now } }] }).lean();
+    for (const request of pending) {
+      if (await trainerClientDao.findActiveByTrainerAndClient(request.trainerId, req.auth.userId)) activeTrainerIds.add(String(request.trainerId));
+    }
+    const visible = [
+      ...configs.filter((c) => !c.calendarManaged && activeTrainerIds.has(String(c.trainerId))),
+      ...pending.filter(r => activeTrainerIds.has(String(r.trainerId))).map(r => ({ ...r, requestId: r._id, cadence: "once" })),
+    ];
 
     const trainerIds = [...new Set(visible.map((c) => String(c.trainerId)))];
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
@@ -241,6 +249,8 @@ module.exports = {
       if (relation) activeTrainerIds.add(String(config.trainerId));
     }
 
+    const activeRelations = await trainerClientDao.findActiveByClient(clientId);
+    for (const relation of activeRelations) activeTrainerIds.add(String(relation.trainerId));
     const trainerIds = [...activeTrainerIds];
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
@@ -268,6 +278,7 @@ module.exports = {
     }
 
     const config = await checkinDao.getAppliedConfig(trainerId, clientId);
+    if (config?.calendarManaged) return res.status(409).send({ message: "Abre el check-in pendiente desde Mis check-ins" });
     const enabledFields = new Set(config?.enabledFields || []);
 
     // Fase 5 — preguntas propias activas de ESTE cliente (las de su copia
