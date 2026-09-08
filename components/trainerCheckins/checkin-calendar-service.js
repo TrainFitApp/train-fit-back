@@ -60,7 +60,6 @@ async function queueNotice(request, type = "checkin_requested", recipient = "cli
   const notice = await Notification.findOneAndUpdate({ dedupeKey }, { $setOnInsert: {
     dedupeKey, clientId: request.clientId, trainerId: request.trainerId, recipient, type,
     payload: { requestId: String(request._id), templateName: request.name, route: "/my-checkins" },
-    pushPending: recipient === "client", pushNextAttemptAt: new Date(),
   } }, { upsert: true, new: true, setDefaultsOnInsert: true });
   if (type === "checkin_requested") await Request.updateOne({ _id: request._id }, { $set: { notificationQueuedAt: new Date() } });
   return notice;

@@ -17,7 +17,6 @@ function startCheckinReminderCron() {
       running = true;
       try {
         await require("./checkin-calendar-service").processCalendar();
-        await require("../notifications/push-service").dispatchPending();
       } catch (error) { console.error("[checkin-calendar] Error al procesar la agenda", error.message); }
       finally { running = false; }
     });

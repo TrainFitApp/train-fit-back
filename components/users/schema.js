@@ -233,7 +233,6 @@ UserSchema.pre("deleteOne", async function (next) {
       });
       await require("../trainerCheckins/checkin-schedule-schema").deleteMany({ $or: [{ trainerId: user._id }, { clientId: user._id }] });
       await require("../trainerCheckins/checkin-request-schema").deleteMany({ $or: [{ trainerId: user._id }, { clientId: user._id }] });
-      await require("../notifications/push-device-schema").deleteMany({ userId: user._id });
       await notificationSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });

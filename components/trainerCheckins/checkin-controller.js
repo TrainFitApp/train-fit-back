@@ -1,7 +1,7 @@
 const checkinDao = require("./checkin-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
-const notificationDao = require("../notifications/notification-dao");
+const notificationDao = require("../notifications/notification-dao");
 const { cadenceDays } = require("./checkin-due");
 const userSchema = require("../users/schema");
 const {
@@ -222,7 +222,10 @@ module.exports = {
     }
     const visible = [
       ...configs.filter((c) => !c.calendarManaged && activeTrainerIds.has(String(c.trainerId))),
-      ...pending.filter(r => activeTrainerIds.has(String(r.trainerId))).map(r => ({ ...r, requestId: r._id, cadence: "once" })),
+      // Sin "cadence": un CheckinRequest es una ocurrencia puntual del
+      // sistema de calendario (frequency/interval viven en CheckinSchedule,
+      // no aquí) — inventar "once" mentía sobre la periodicidad real.
+      ...pending.filter(r => activeTrainerIds.has(String(r.trainerId))).map(r => ({ ...r, requestId: r._id })),
     ];
 
     const trainerIds = [...new Set(visible.map((c) => String(c.trainerId)))];

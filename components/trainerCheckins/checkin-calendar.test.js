@@ -10,7 +10,6 @@ const Notification = require("../notifications/notification-schema");
 const relations = require("../trainerClients/trainer-client-dao");
 const anthropometry = require("../anthropometry/anthropometry-dao");
 const { isCheckinDue } = require("./checkin-due");
-const push = require("../notifications/push-service");
 const timing = { startDate: "2026-03-22", time: "09:00", timeZone: "Europe/Madrid", frequency: "weekly", interval: 1 };
 const query = value => ({ lean: async () => value });
 const id = "aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -134,12 +133,4 @@ test("la revisión no vuelve a escribir medidas y los avisos usan claves idempot
 test("un formulario independiente no reinicia la cadencia del anterior", () => {
   assert.equal(isCheckinDue({ cadence: "weekly" }, [{ scheduleId: id, respondedAt: new Date() }]), true);
   assert.equal(isCheckinDue({ calendarManaged: true }, []), false);
-});
-
-test("push omite respuestas y comentarios de la pantalla bloqueada", () => {
-  const message = push.messageFor({ type: "checkin_reviewed", payload: { requestId: id, reviewComment: "privado", weight: 80 } });
-  assert.equal(message.requestId, id);
-  assert.equal(JSON.stringify(message).includes("privado"), false);
-  assert.equal(push.configured("android", {}), false);
-  assert.equal(push.configured("ios", {}), false);
 });

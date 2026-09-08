@@ -47,11 +47,6 @@ const NotificationSchema = new Schema(
     },
     payload: { type: Schema.Types.Mixed, default: {} },
     dedupeKey: { type: String },
-    pushPending: { type: Boolean, default: false },
-    pushNextAttemptAt: { type: Date, default: null },
-    pushAttempts: { type: Number, default: 0 },
-    pushDeliveredDevices: { type: [Schema.Types.ObjectId], default: [] },
-    pushLeaseUntil: { type: Date, default: null },
     read: { type: Boolean, default: false },
     readAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now },
@@ -65,6 +60,5 @@ const NotificationSchema = new Schema(
 NotificationSchema.index({ clientId: 1, recipient: 1, read: 1, createdAt: -1 });
 NotificationSchema.index({ trainerId: 1, recipient: 1, read: 1, createdAt: -1 });
 NotificationSchema.index({ dedupeKey: 1 }, { unique: true, sparse: true });
-NotificationSchema.index({ pushPending: 1, pushNextAttemptAt: 1 });
 
 module.exports = mongoose.model("Notification", NotificationSchema);
