@@ -38,6 +38,44 @@ const MealSchema = Schema({
   // otro significado (p.ej. provenance ya tiene su propio campo:
   // assignedByTrainerId).
   trainerId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
+  // Refactor nutrición (2026-09) — absorbe la colección `mealproposals`.
+  // Vacío (el 99% del tiempo) = esta comida no tiene nada que elegir; con
+  // 2+ entradas = el profesional propuso varias opciones para este hueco.
+  //
+  // NO se vacía al elegir: el selector del cliente es persistente (puede
+  // alternar entre opciones cuantas veces quiera), así que las alternativas
+  // se quedan y lo que cambia es `chosenAlternativeIndex`. Al elegir, la
+  // opción escogida se materializa en customProducts/customRecipes vía
+  // pasteMeal, igual que antes.
+  //
+  // Sigue siendo Mixed a propósito, igual que en la colección que sustituye:
+  // es el formato "clipboard" que pasteMeal ya consume, y estas alternativas
+  // NO son documentos reales hasta que se elige una — materializarlas todas
+  // crearía CustomProducts que se borrarían al instante al cambiar de opción.
+  alternatives: {
+    type: [
+      {
+        label: { type: String, trim: true, maxlength: 100, required: true },
+        customProducts: { type: [Schema.Types.Mixed], default: [] },
+        customRecipes: { type: [Schema.Types.Mixed], default: [] },
+        _id: false,
+      },
+    ],
+    default: [],
+  },
+  // null mientras el cliente no haya elegido ninguna (equivalente al
+  // chosenIndex:null de la colección que sustituye).
+  chosenAlternativeIndex: { type: Number, default: null },
+  // Quién propuso las alternativas (null si no hay ninguna) — era
+  // MealProposal.trainerId; se conserva porque el cliente ve "te ha
+  // propuesto tu entrenador" y porque pasteMeal necesita el trainerId para
+  // marcar assignedByTrainerId al materializar la elegida.
+  alternativesTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  // Sustituye a DietException con mealSlot puesto y action:"override" —
+  // "esta comida concreta se cambió respecto a lo pautado". El contenido del
+  // cambio NO se guarda aparte: ya ES el customProducts/customRecipes real
+  // de esta misma comida.
+  wasOverridden: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 });
 

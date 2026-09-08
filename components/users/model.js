@@ -1,6 +1,5 @@
 const userDao = require("./dao");
 const userDto = require("./dto");
-const dietUtil = require("../diets/diet-util");
 const dietModel = require("../diets/diet-model");
 const dietDayModel = require("../dietDays/diet-days-service");
 const dietDayUtil = require("../dietDays/diet-days-util");
@@ -88,14 +87,12 @@ module.exports = {
   },
 
   async updateGoogleUser(user, date) {
-    const standardDietDay = dietDayUtil.getStandardDietDay(date);
-    const dietDay = await dietDayModel.createDietDay(standardDietDay);
-
-    const diet = dietUtil.getStandarDiet();
-    diet.dietsDay.push(dietDay._id);
-    const createdDiet = await dietModel.createDiet(diet);
-
-    user.dietInUse = createdDiet._id;
+      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
+      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
+      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
+      // esta creación temprana no hacía). Aquí, encima, el día se creaba
+      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
+      // dueño.
     user.theme = "dark";
 
     user.tables = [];
@@ -122,14 +119,12 @@ module.exports = {
   },
 
   async updateAppleUser(user, date) {
-    const standardDietDay = dietDayUtil.getStandardDietDay(date);
-    const dietDay = await dietDayModel.createDietDay(standardDietDay);
-
-    const diet = dietUtil.getStandarDiet();
-    diet.dietsDay.push(dietDay._id);
-    const createdDiet = await dietModel.createDiet(diet);
-
-    user.dietInUse = createdDiet._id;
+      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
+      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
+      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
+      // esta creación temprana no hacía). Aquí, encima, el día se creaba
+      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
+      // dueño.
     user.theme = "dark";
 
     user.tables = [];

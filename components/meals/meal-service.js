@@ -171,4 +171,17 @@ module.exports = {
   async setCustomRecipeConsumed(id, consumed) {
     return customRecipeDao.setConsumed(id, consumed);
   },
+
+  // Cantidad realmente consumida de un producto/receta pautados — mismo
+  // criterio que setCustomProductConsumed/setCustomRecipeConsumed de
+  // arriba: nunca bloqueado por assertMealEditable (seguimiento, no
+  // composición). Es la vía por la que el cliente puede ajustar CUÁNTO de
+  // lo pautado tomó, sin poder tocar qué es ni de qué está hecho.
+  async setCustomProductQuantity(id, quantity) {
+    return customProductDao.setQuantity(id, quantity);
+  },
+
+  async setCustomRecipeQuantity(id, quantity) {
+    return customRecipeDao.setQuantity(id, quantity);
+  },
 };

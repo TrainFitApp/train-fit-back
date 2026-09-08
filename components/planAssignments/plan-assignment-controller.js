@@ -175,10 +175,9 @@ module.exports = {
 
     let stuckDaysCount = null;
     if (assignment.mode === "choice") {
-      const client = await userSchema.findById(assignment.clientId).select("dietInUse");
-      if (client?.dietInUse) {
+      {
         stuckDaysCount = await dietDaysService.countDaysWithoutChoice(
-          client.dietInUse,
+          assignment.clientId,
           assignment.startDate,
           todayIsoDate()
         );

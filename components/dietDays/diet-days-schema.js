@@ -4,9 +4,22 @@ const Schema = mongoose.Schema;
 const mealSchema = require("../meals/meal-schema");
 
 const DietDaySchema = Schema({
+  // Refactor nutrición (2026-09) — dueño DIRECTO del día. Antes la única
+  // forma de saber de quién era un DietDay era recorrer Diet.dietsDay[] del
+  // usuario: findByIdDietAndDate cargaba el historial ENTERO (autopopulate,
+  // o sea con todas las comidas y productos de todos los días) para filtrar
+  // en JavaScript un único día. Con este campo + el índice de abajo, esa
+  // consulta pasa a ser un findOne indexado.
+  userId: { type: Schema.Types.ObjectId, ref: "User", index: true },
   date: String,
   notes: { type: String, trim: true, maxlength: 500 },
   steps: Number,
+  // Sustituye a DietException con mealSlot:null y action:"skip" — mismo
+  // criterio que Workout.rest en entrenamiento: "el cliente se saltó este
+  // día" es un booleano del registro real, no un documento en una colección
+  // aparte. El historial de nutrición del entrenador (TASK-045) se resuelve
+  // con find({userId, skipped:true}) sobre el índice de abajo.
+  skipped: { type: Boolean, default: false },
   // Fase 9 — qué patrón/menú de un plan "mode: choice" eligió el cliente
   // para ESTE día concreto (p. ej. "Entrenamiento"/"Descanso"). null en el
   // 100% de los días sin un plan de este tipo — ver diet-days-controller.js
@@ -22,6 +35,13 @@ const DietDaySchema = Schema({
 });
 
 DietDaySchema.plugin(mongooseAutopopulate);
+
+// "El día de tal fecha de este usuario" es LA consulta del módulo (se hace en
+// cada apertura de la pantalla de dieta). Compuesto y en este orden porque
+// también sirve para los rangos (userId + date entre X e Y) y para el
+// historial de saltos (userId + skipped), que solo añade un filtro sobre un
+// prefijo ya indexado.
+DietDaySchema.index({ userId: 1, date: 1 });
 
 const handleDeleteOne = async function (next) {
   try {

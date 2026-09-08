@@ -10,7 +10,11 @@ const { computeEndDate } = require("../util/period-util");
  * cerradas, o una abierta que empieza MÁS ADELANTE que la nueva.
  */
 function blocksNewPhase(existing, startDate) {
-  const abiertaYaEnCurso = existing.endDate === null && existing.startDate <= startDate;
+  // `== null` y no `=== null`: una asignación siempre escribe endDate
+  // explícito (null = indefinido), pero el schema ya no pone default, así
+  // que un documento sin la clave significa lo mismo — "sin fecha de fin" —
+  // y debe leerse igual.
+  const abiertaYaEnCurso = existing.endDate == null && existing.startDate <= startDate;
   return !abiertaYaEnCurso;
 }
 

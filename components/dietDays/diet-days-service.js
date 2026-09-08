@@ -8,13 +8,15 @@ module.exports = {
     return dietDayDao.findAll(page, limit);
   },
 
-  async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate, userId) {
-    const dietDays = await dietDayDao.getDietDaysBetweenDatesByIdDiet(
-      id,
+  async getDietDaysBetweenDatesByUser(userId, startDate, endDate) {
+    // El DAO ya devuelve la lista de días directamente (antes venía envuelta
+    // en [{dietDays:[...]}] porque la agregación arrancaba en el wrapper
+    // Diet), así que ya no hace falta aggregateFilter para desenvolverla.
+    const aggregatedDietDays = await dietDayDao.getDietDaysBetweenDatesByUser(
+      userId,
       startDate,
       endDate,
     );
-    const aggregatedDietDays = await aggregateService.aggregateFilter(dietDays, "dietDays");
     
     // Also fetch anthropometry weights for this date range (using userId)
     const anthropometries = await anthropometryModel.getAnthropometriesByUserIdBetweenDates(
@@ -59,25 +61,25 @@ module.exports = {
     return mergedDietDays;
   },
 
-  async findByIdDietAndDate(id, date) {
-    return dietDayDao.findByIdDietAndDate(id, date);
+  async findByUserAndDate(userId, date) {
+    return dietDayDao.findByUserAndDate(userId, date);
   },
 
-  async getFullyPopulatedDietDaysForDiet(dietId, startDate, endDate) {
-    return dietDayDao.getFullyPopulatedDietDaysForDiet(dietId, startDate, endDate);
+  async getFullyPopulatedDietDaysForUser(userId, startDate, endDate) {
+    return dietDayDao.getFullyPopulatedDietDaysForUser(userId, startDate, endDate);
   },
 
-  async countDaysWithoutChoice(dietId, startDate, endDate) {
-    return dietDayDao.countDaysWithoutChoice(dietId, startDate, endDate);
+  async countDaysWithoutChoice(userId, startDate, endDate) {
+    return dietDayDao.countDaysWithoutChoice(userId, startDate, endDate);
   },
 
   async createDietDay(dietDay) {
     return dietDayDao.createDietDay(dietDay);
   },
 
-  async createDayWeightOnNewDietDay(dayWeight, dietInUseId, currentDate, userId) {
+  async createDayWeightOnNewDietDay(dayWeight, currentDate, userId) {
     const standardDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    const dietDay = await dietDayDao.createDietDayOnNew(dietInUseId, standardDietDay);
+    const dietDay = await dietDayDao.createDietDayOnNew(userId, standardDietDay);
 
     if (dayWeight && userId) {
       await anthropometryModel.upsertAnthropometry(userId, currentDate, { weight: dayWeight });
@@ -90,7 +92,6 @@ module.exports = {
   async createCustomProductOnNewDietDay(
     customProduct,
     indexMeal,
-    dietInUseId,
     currentDate,
     idUser,
   ) {
@@ -98,7 +99,7 @@ module.exports = {
     return dietDayDao.createCustomProductOnNewDietDay(
       customProduct,
       indexMeal,
-      dietInUseId,
+      null,
       standarDietDay,
       idUser,
     );
@@ -107,14 +108,14 @@ module.exports = {
   async createCustomRecipeOnNewDietDay(
     customRecipe,
     indexMeal,
-    dietInUseId,
+    userId,
     currentDate,
   ) {
     let standarDietDay = dietDayUtil.getStandardDietDay(currentDate);
     return dietDayDao.createCustomRecipeOnNewDietDay(
       customRecipe,
       indexMeal,
-      dietInUseId,
+      userId,
       standarDietDay,
     );
   },
@@ -146,16 +147,16 @@ module.exports = {
     return dietDayDao.setDayTypeName(dietDayId, dayTypeName);
   },
 
-  async pasteDietDayByIdDiet(id, dietDayClipboard, dietDayToPaste) {
-    return dietDayDao.pasteDietDayByIdDiet(
-      id,
+  async pasteDietDayByUser(userId, dietDayClipboard, dietDayToPaste) {
+    return dietDayDao.pasteDietDayByUser(
+      userId,
       dietDayClipboard,
       dietDayToPaste,
     );
   },
 
-  async deleteDietDay(idDiet, idDietDay) {
-    return dietDayDao.deleteDietDay(idDiet, idDietDay);
+  async deleteDietDay(idDietDay) {
+    return dietDayDao.deleteDietDay(idDietDay);
   },
 
   async deleteDietDayMeal(id) {

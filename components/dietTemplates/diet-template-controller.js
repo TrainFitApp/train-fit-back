@@ -1,4 +1,5 @@
 const dietTemplateDao = require("./diet-template-dao");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { MEALS } = require("../dietDays/diet-days-util");
 
 const VALID_SLOTS = new Set(Object.values(MEALS));
@@ -66,18 +67,52 @@ module.exports = {
     const name = (req.body?.name || "").trim();
     if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
 
+    // ownerClientId opcional — plantilla exclusiva de ese cliente (ver
+    // diet-template-schema.js). Se comprueba la relación activa antes de
+    // aceptarlo: sin esto, cualquier profesional podría colgar material de
+    // biblioteca del id de un cliente que no es suyo.
+    const ownerClientId = req.body?.ownerClientId || null;
+    if (ownerClientId) {
+      const relation = await trainerClientDao.findActiveByTrainerAndClient(
+        req.auth.userId,
+        ownerClientId
+      );
+      if (!relation) return res.status(403).send({ message: "Ese cliente no es tuyo" });
+    }
+
     const template = await dietTemplateDao.create(
       req.auth.userId,
       name,
       sanitizeDays(req.body?.days),
       sanitizeMode(req.body?.mode),
-      sanitizeDayPatterns(req.body?.dayPatterns)
+      sanitizeDayPatterns(req.body?.dayPatterns),
+      ownerClientId
     );
     return res.send(template);
   },
 
+  // Sin parámetros: solo plantillas generales (lo que esperan protocolos,
+  // plantillas y cualquier selector genérico).
+  // ?forClientId=<id> acota al material aplicable a ese cliente;
+  // &onlyOwned=true deja SOLO las suyas (filtro activo del selector de
+  // "Siguiente fase").
+  // ?includeOwned=true las devuelve TODAS — lo usa la biblioteca, para que
+  // una dieta propia no quede sin sitio donde volver a editarse.
   async listTemplates(req, res) {
-    const templates = await dietTemplateDao.listByTrainer(req.auth.userId);
+    const forClientId = req.query?.forClientId || null;
+    if (forClientId) {
+      const relation = await trainerClientDao.findActiveByTrainerAndClient(
+        req.auth.userId,
+        forClientId
+      );
+      if (!relation) return res.status(403).send({ message: "Ese cliente no es tuyo" });
+    }
+
+    const templates = await dietTemplateDao.listByTrainer(req.auth.userId, {
+      forClientId,
+      onlyOwned: req.query?.onlyOwned === "true",
+      includeOwned: req.query?.includeOwned === "true",
+    });
     return res.send(templates);
   },
 

@@ -1,5 +1,4 @@
 const dietDaySchema = require("./diet-days-schema");
-const dietSchema = require("../diets/diet-schema");
 const mealSchema = require("../meals/meal-schema");
 const mealModel = require("../meals/meal-service");
 const productSchema = require("../products/product-schema");
@@ -7,8 +6,6 @@ const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const { default: mongoose } = require("mongoose");
-const dietModel = require("../diets/diet-model");
-const userSchema = require("../users/schema");
 const dietDaysUtil = require("./diet-days-util");
 
 const isBlankString = (value) =>
@@ -39,53 +36,34 @@ module.exports = {
     );
   },
 
-  async findByIdDietAndDate(id, date) {
-    return new Promise((resolve, reject) =>
-      dietSchema.findById(id, (err, doc) => {
-        if (err) return reject(err);
-        if (!doc) return resolve(null);
-
-        // Find the diet day by comparing dates using the utility function
-        const foundDietDay = doc.dietsDay.find((dd) => {
-          return dietDaysUtil.datesAreOnSameDay(dd.date, date);
-        });
-
-        return resolve(foundDietDay);
-      }),
-    );
+  // Refactor nutrición (2026-09) — antes: findById sobre el wrapper Diet, que
+  // con autopopulate arrastraba TODOS los días del usuario (con sus comidas y
+  // productos) para después filtrar uno en JavaScript. Ahora es un findOne
+  // sobre el índice (userId, date).
+  async findByUserAndDate(userId, date) {
+    return dietDaySchema.findOne({ userId, date });
   },
 
-  async getDietDaysBetweenDatesByIdDiet(id, startDate, endDate) {
+  // Refactor nutrición (2026-09) — antes arrancaba en la colección `diets`
+  // (match por _id del wrapper) y hacía $lookup contra dietdays por
+  // localField dietsDay. Ahora arranca directamente en dietdays filtrando por
+  // (userId, date), que es justo el índice nuevo — un nivel menos de
+  // indirección y sin depender del wrapper. Devuelve la lista de días
+  // directamente, no envuelta en {dietDays: [...]}.
+  async getDietDaysBetweenDatesByUser(userId, startDate, endDate) {
     const agg = [
       {
         $match: {
-          _id: new mongoose.Types.ObjectId(id),
+          userId: new mongoose.Types.ObjectId(userId),
+          date: { $gte: startDate, $lte: endDate },
         },
       },
       {
-        $lookup: {
-          from: "dietdays",
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    {
-                      $gte: ["$date", startDate],
-                    },
-                    {
-                      $lte: ["$date", endDate],
-                    },
-                  ],
-                },
-              },
-            },
-            {
-              $sort: {
-                date: 1,
-              },
-            },
-            {
+        $sort: {
+          date: 1,
+        },
+      },
+      {
               // MVP-trainers F20 (2026-08-01) — pipeline-lookup (en vez del
               // localField/foreignField anterior) para poder resolver un
               // nivel más de profundidad: cada meal.customProducts sigue
@@ -108,49 +86,34 @@ module.exports = {
                     },
                   },
                 ],
-                as: "meals",
-              },
-            },
-            {
-              $project: {
-                _id: 1,
-                name: 1,
-                date: 1,
-                notes: 1,
-                meals: {
-                  _id: 1,
-                  name: 1,
-                  notes: 1,
-                  customProducts: {
-                    quantity: 1,
-                    energyKcal100g: 1,
-                    protein100g: 1,
-                    carbohydrates100g: 1,
-                    fat100g: 1,
-                  },
-                },
-              },
-            },
-          ],
-          localField: "dietsDay",
-          foreignField: "_id",
-          as: "dietDays",
+          as: "meals",
         },
       },
       {
-        // Corregido (2026-08-01): este $project no incluía `dietDays` (el
-        // campo que el $lookup de arriba acaba de añadir), así que lo
-        // eliminaba del resultado — el endpoint devolvía el propio documento
-        // `Diet` disfrazado de "día" en vez de la lista real de días. Bug
-        // preexistente confirmado con datos reales antes de corregirlo (ver
-        // MVP-trainers/funcionalidades/F20-adherencia-nutricional.md, sección 15).
         $project: {
-          dietDays: 1,
+          _id: 1,
+          name: 1,
+          date: 1,
+          notes: 1,
+          skipped: 1,
+          meals: {
+            _id: 1,
+            name: 1,
+            notes: 1,
+            wasOverridden: 1,
+            customProducts: {
+              quantity: 1,
+              energyKcal100g: 1,
+              protein100g: 1,
+              carbohydrates100g: 1,
+              fat100g: 1,
+            },
+          },
         },
       },
     ];
 
-    return await dietSchema.aggregate(agg);
+    return await dietDaySchema.aggregate(agg);
   },
 
   // F20-bis — a diferencia de getDietDaysBetweenDatesByIdDiet (aggregate con
@@ -162,13 +125,10 @@ module.exports = {
   // ese árbol a mano en un pipeline de aggregate. Necesario para que
   // diet-days-nutrition-util.js pueda calcular kcal de recetas y
   // cumplimiento por item.
-  async getFullyPopulatedDietDaysForDiet(dietId, startDate, endDate) {
-    const diet = await dietSchema.findById(dietId).select("dietsDay").lean();
-    if (!diet?.dietsDay?.length) return [];
-
+  async getFullyPopulatedDietDaysForUser(userId, startDate, endDate) {
     return dietDaySchema
       .find({
-        _id: { $in: diet.dietsDay },
+        userId,
         date: { $gte: startDate, $lte: endDate },
       })
       .sort({ date: 1 });
@@ -212,25 +172,18 @@ module.exports = {
     // );
   },
 
-  // Crea dietDay con meals
-  async createDietDayOnNew(dietInUseId, dietDay) {
-    try {
-      // Creación dietDay
-      const dietDayDoc = await this.createDietDay(dietDay);
-      const dietDayId = dietDayDoc._id.toString();
-      // Asignación de dietDay a diet
-      await dietModel.addDietDietDay(dietInUseId, dietDayId);
-      return dietDayDoc;
-    } catch (error) {
-      throw error;
-    }
+  // Crea dietDay con meals. Antes, además de crearlo, lo enganchaba al array
+  // diets.dietsDay; ahora el vínculo con el usuario es el propio userId del
+  // documento, así que no hay segundo paso que pueda quedar a medias.
+  async createDietDayOnNew(userId, dietDay) {
+    return this.createDietDay({ ...dietDay, userId });
   },
 
   // Crea dietDay con meals y añade custom product
   async createCustomProductOnNewDietDay(
     customProduct,
     indexMeal,
-    dietInUseId,
+    _legacyDietId, // ignorado: el dueño es idUser (se mantiene la firma para no tocar la ruta pública)
     dietDay,
     idUser,
   ) {
@@ -254,17 +207,11 @@ module.exports = {
       const customProductDoc = await customProductSchema.create(
         cleanedCustomProduct,
       );
-      // Creación dietDay
-      let dietDayDoc = await this.createDietDay(dietDay);
-      const dietDayId = dietDayDoc._id.toString();
-      // Asignación de dietDay a diet
-      const dietDoc = await dietModel.addDietDietDay(dietInUseId, dietDayId);
-      // Obtención de dietDay dentro de la diet actualizada
-      const diet = dietDoc.toObject();
-      const indexDietDay = diet.dietsDay.findIndex(
-        (dietDayTemp) => dietDayTemp._id.toString() === dietDayId,
-      );
-      dietDayDoc = diet.dietsDay[indexDietDay];
+      // Creación dietDay ya con dueño. Antes había que engancharlo a la Diet
+      // y RELEER el día desde el wrapper actualizado solo para tenerlo con
+      // las meals pobladas; ahora se relee el propio día, sin intermediario.
+      const created = await this.createDietDay({ ...dietDay, userId: idUser });
+      let dietDayDoc = (await dietDaySchema.findById(created._id)).toObject();
       // Obtención de la meal actual
       let meal = dietDayDoc.meals[indexMeal];
       // Asignación de customProduct a meal
@@ -285,7 +232,7 @@ module.exports = {
   async createCustomRecipeOnNewDietDay(
     customRecipe,
     indexMeal,
-    dietInUseId,
+    userId,
     dietDay,
   ) {
     try {
@@ -297,17 +244,10 @@ module.exports = {
       // Creación customRecipe
       const customRecipeDoc =
         await customRecipeDao.createCustomRecipe(customRecipeToCreate);
-      // Creación dietDay
-      let dietDayDoc = await this.createDietDay(dietDay);
-      const dietDayId = dietDayDoc._id.toString();
-      // Asignación de dietDay a diet
-      const dietDoc = await dietModel.addDietDietDay(dietInUseId, dietDayId);
-      // Obtención de dietDay dentro de la diet actualizada
-      const diet = dietDoc.toObject();
-      const indexDietDay = diet.dietsDay.findIndex(
-        (dietDayTemp) => dietDayTemp._id.toString() === dietDayId,
-      );
-      dietDayDoc = diet.dietsDay[indexDietDay];
+      // Creación dietDay ya con dueño (ver comentario en la variante de
+      // producto: se relee el día, no el wrapper).
+      const created = await this.createDietDay({ ...dietDay, userId });
+      let dietDayDoc = (await dietDaySchema.findById(created._id)).toObject();
       // Obtención de la meal actual
       let meal = dietDayDoc.meals[indexMeal];
       // Asignación de customRecipe a meal
@@ -338,12 +278,7 @@ module.exports = {
       meals = await mealSchema.insertMany(meals);
       const mealIds = meals.map((mealTemp) => mealTemp._id);
       dietDay.meals = mealIds;
-      const dietDayDoc = await dietDaySchema.create(dietDay);
-
-      let userDoc = await userSchema.findById(idUser);
-
-      const queryUpdate = { $push: { dietsDay: dietDayDoc._id } };
-      await dietSchema.findByIdAndUpdate(userDoc.dietInUse, queryUpdate);
+      const dietDayDoc = await dietDaySchema.create({ ...dietDay, userId: idUser });
 
       let customRecipeDoc = await customRecipeSchema.create(recipeToCreate);
 
@@ -448,19 +383,18 @@ module.exports = {
 
   // TASK-044 (MASTER_BACKLOG.md) — cuenta días de un plan "mode: choice" en
   // los que el cliente nunca eligió menú (DietDay.dayTypeName sigue null)
-  // dentro de [startDate, endDate]. Mismo patrón que findByIdDietAndDate:
-  // dietSchema.findById ya trae dietsDay autopoblado, se filtra en memoria
-  // en vez de una agregación nueva — coherente con cómo ya se resuelve el
-  // resto de consultas "un día concreto de este Diet" en este archivo.
-  async countDaysWithoutChoice(dietId, startDate, endDate) {
-    const diet = await dietSchema.findById(dietId);
-    if (!diet) return 0;
-    return diet.dietsDay.filter(
-      (dd) => dd.date >= startDate && dd.date <= endDate && !dd.dayTypeName
-    ).length;
+  // dentro de [startDate, endDate]. Antes cargaba el wrapper Diet entero
+  // (autopoblado) para filtrar en memoria; ahora lo cuenta la propia base
+  // sobre el índice (userId, date).
+  async countDaysWithoutChoice(userId, startDate, endDate) {
+    return dietDaySchema.countDocuments({
+      userId,
+      date: { $gte: startDate, $lte: endDate },
+      $or: [{ dayTypeName: null }, { dayTypeName: { $exists: false } }],
+    });
   },
 
-  async pasteDietDayByIdDiet(id, dietDayClipboard, dietDayToPaste) {
+  async pasteDietDayByUser(userId, dietDayClipboard, dietDayToPaste) {
     const normalizeId = (value) => value?._id || value;
     const toPlainObject = (value) =>
       value?.toObject ? value.toObject() : { ...value };
@@ -562,8 +496,7 @@ module.exports = {
       newDietDay.meals = mealsToCreate;
       newDietDay.date = dietDayToPaste.date;
 
-      const doc6 = await dietDaySchema.create(newDietDay);
-      await dietSchema.findByIdAndUpdate(id, { $push: { dietsDay: doc6._id } });
+      const doc6 = await dietDaySchema.create({ ...newDietDay, userId });
 
       return doc6;
     } catch (err) {
@@ -571,10 +504,11 @@ module.exports = {
     }
   },
 
-  async deleteDietDay(idDiet, idDietDay) {
+  // Sin wrapper no hay que desenganchar de ningún array: borrar el día ES
+  // quitarlo de la dieta del usuario. El hook deleteOne de DietDay sigue
+  // arrastrando sus Meals (y estas su contenido).
+  async deleteDietDay(idDietDay) {
     try {
-      const unlinkDietDietDay = { $pull: { dietsDay: idDietDay } };
-      await dietSchema.findByIdAndUpdate(idDiet, unlinkDietDietDay);
       return await dietDaySchema.deleteOne({ _id: idDietDay });
     } catch (err) {
       throw err;

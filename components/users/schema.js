@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const Schema = mongoose.Schema;
-const dietSchema = require("../diets/diet-schema");
+const dietDaySchema = require("../dietDays/diet-days-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
 const tableSchema = require("../tables/table-schema");
 const productSchema = require("../products/product-schema");
@@ -79,7 +79,18 @@ const UserSchema = new Schema({
   restoreCodeDailyCount: { type: Number, default: 0 },
   restoreCode: String,
   theme: { type: String, default: "dark" },
-  dietInUse: Schema.Types.ObjectId,
+  // Refactor nutrición (2026-09) — la colección `diets` se elimina: era un
+  // wrapper 1:1 con el usuario cuyo único contenido propio era `name`
+  // (literalmente siempre "Diet", nunca renombrado desde ninguna app) y esta
+  // nota. Los días se consultan ahora directos por DietDay.userId, sin array
+  // intermedio. `dietInUse` se mantiene SOLO durante la migración y se borra
+  // en el mismo script una vez copiada la nota.
+  dietPinnedNote: { type: String, trim: true, maxlength: 500 },
+  // `dietInUse` hacía doble trabajo: puntero al wrapper Y interruptor de
+  // "dieta activada" (playStopDiet lo ponía/quitaba). El puntero desaparece
+  // con el wrapper; el interruptor se queda, ahora explícito. Por defecto
+  // activada, que es como se comportaba todo usuario existente.
+  dietEnabled: { type: Boolean, default: true },
   tableInUse: Schema.Types.ObjectId,
   workoutInUse: Schema.Types.ObjectId,
   archivedProducts: { type: [Schema.Types.ObjectId], default: [] },
@@ -163,7 +174,10 @@ UserSchema.pre("deleteOne", async function (next) {
     const user = await this.model.findOne(query);
 
     if (user) {
-      if (user.dietInUse) await dietSchema.deleteOne({ _id: user.dietInUse });
+      // Antes: deleteOne sobre el wrapper Diet, que arrastraba sus DietDay en
+      // cascada. Sin wrapper, se borran directos por dueño — y el hook
+      // deleteMany de DietDay sigue arrastrando Meals y su contenido.
+      await dietDaySchema.deleteMany({ userId: user._id });
       await tableSchema.deleteMany({ userId: user._id });
       await anthropometrySchema.deleteMany({ userId: user._id });
 
@@ -221,8 +235,13 @@ UserSchema.pre("deleteOne", async function (next) {
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
       // Copias congeladas asignadas a este usuario COMO CLIENTE (el lado
-      // trainerId ya se cubrió arriba, junto con sus plantillas reales).
-      await dietTemplateSchema.deleteMany({ clientId: user._id });
+      // trainerId ya se cubrió arriba, junto con sus plantillas reales), y
+      // las plantillas de biblioteca que eran exclusivas suyas
+      // (ownerClientId): sin el cliente no significan nada, mismo criterio
+      // que sus fases asignadas.
+      await dietTemplateSchema.deleteMany({
+        $or: [{ clientId: user._id }, { ownerClientId: user._id }],
+      });
 
       // Config/biblioteca solo del lado trainer (sin clientId).
       await trainerIntakeConfigSchema.deleteMany({ trainerId: user._id });

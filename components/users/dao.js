@@ -1,7 +1,6 @@
 const userSchema = require("./schema");
 const dietDayUtil = require("../dietDays/diet-days-util");
 const dietDayModel = require("../dietDays/diet-days-service");
-const dietUtil = require("../diets/diet-util");
 const dietModel = require("../diets/diet-model");
 const aggregateService = require("../util/aggregate-service");
 const mail = require("../util/mail");
@@ -98,14 +97,16 @@ module.exports = {
           { $lookup: { from: "exercises", localField: "_id", foreignField: "userId", as: "createdExercises" } },
           { $lookup: { from: "tables", localField: "tableInUse", foreignField: "_id", as: "tableInUseDoc" } },
           { $lookup: { from: "workouts", localField: "workoutInUse", foreignField: "_id", as: "workoutInUseDoc" } },
-          { $lookup: { from: "diets", localField: "dietInUse", foreignField: "_id", as: "dietInUseDoc" } },
+          // Refactor nutrición (2026-09) — los días cuelgan del usuario, no de un
+          // wrapper Diet: se cuentan directos por userId.
+          { $lookup: { from: "dietdays", localField: "_id", foreignField: "userId", as: "dietDayDocs" } },
           {
             $addFields: {
               productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
               exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
               hasWorkoutInUse: { $gt: ["$workoutInUse", null] },
               hasTableInUse: { $gt: ["$tableInUse", null] },
-              hasDietInUse: { $gt: ["$dietInUse", null] },
+              hasDietInUse: { $gt: [{ $size: { $ifNull: ["$dietDayDocs", []] } }, 0] },
               tableSplitsCount: {
                 $cond: [
                   { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
@@ -113,17 +114,11 @@ module.exports = {
                   0
                 ]
               },
-              dietDaysCount: {
-                $cond: [
-                  { $gt: [{ $size: { $ifNull: ["$dietInUseDoc", []] } }, 0] },
-                  { $size: { $ifNull: [{ $arrayElemAt: ["$dietInUseDoc.dietsDay", 0] }, []] } },
-                  0
-                ]
-              }
+              dietDaysCount: { $size: { $ifNull: ["$dietDayDocs", []] } }
             }
           },
           {
-            $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietInUseDoc: 0 }
+            $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietDayDocs: 0 }
           }
         ]);
 
@@ -186,14 +181,16 @@ module.exports = {
         { $lookup: { from: "exercises", localField: "_id", foreignField: "userId", as: "createdExercises" } },
         { $lookup: { from: "tables", localField: "tableInUse", foreignField: "_id", as: "tableInUseDoc" } },
         { $lookup: { from: "workouts", localField: "workoutInUse", foreignField: "_id", as: "workoutInUseDoc" } },
-        { $lookup: { from: "diets", localField: "dietInUse", foreignField: "_id", as: "dietInUseDoc" } },
+        // Refactor nutrición (2026-09) — los días cuelgan del usuario, no de un
+          // wrapper Diet: se cuentan directos por userId.
+          { $lookup: { from: "dietdays", localField: "_id", foreignField: "userId", as: "dietDayDocs" } },
         {
           $addFields: {
             productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
             exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
             hasWorkoutInUse: { $gt: ["$workoutInUse", null] },
             hasTableInUse: { $gt: ["$tableInUse", null] },
-            hasDietInUse: { $gt: ["$dietInUse", null] },
+            hasDietInUse: { $gt: [{ $size: { $ifNull: ["$dietDayDocs", []] } }, 0] },
             tableSplitsCount: {
               $cond: [
                 { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
@@ -201,17 +198,11 @@ module.exports = {
                 0
               ]
             },
-            dietDaysCount: {
-              $cond: [
-                { $gt: [{ $size: { $ifNull: ["$dietInUseDoc", []] } }, 0] },
-                { $size: { $ifNull: [{ $arrayElemAt: ["$dietInUseDoc.dietsDay", 0] }, []] } },
-                0
-              ]
-            }
+            dietDaysCount: { $size: { $ifNull: ["$dietDayDocs", []] } }
           }
         },
         {
-          $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietInUseDoc: 0 }
+          $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietDayDocs: 0 }
         }
       ]);
 
@@ -233,12 +224,12 @@ module.exports = {
 
   async createUser(user, date) {
     try {
-      const standardDietDay = dietDayUtil.getStandardDietDay(date);
-      const dietDay = await dietDayModel.createDietDay(standardDietDay);
-
-      const diet = dietUtil.getStandarDiet();
-      diet.dietsDay.push(dietDay._id);
-      const createdDiet = await dietModel.createDiet(diet);
+      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
+      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
+      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
+      // esta creación temprana no hacía). Aquí, encima, el día se creaba
+      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
+      // dueño.
 
       // const standardWorkout = workoutUtil.getStandarWorkout(date);
       // const workout = await workoutService.createWorkout(standardWorkout);
@@ -252,7 +243,6 @@ module.exports = {
       // const createdTable = await tableModel.createTable(standardtable);
 
       // user.tableInUse = createdTable._id;
-      user.dietInUse = createdDiet._id;
 
       let userDoc;
       if (user) {
@@ -286,14 +276,12 @@ module.exports = {
 
   async createUserWithGoogle(user, date) {
     try {
-      const standardDietDay = dietDayUtil.getStandardDietDay(date);
-      const dietDay = await dietDayModel.createDietDay(standardDietDay);
-
-      const diet = dietUtil.getStandarDiet();
-      diet.dietsDay.push(dietDay._id);
-      const createdDiet = await dietModel.createDiet(diet);
-
-      user.dietInUse = createdDiet._id;
+      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
+      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
+      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
+      // esta creación temprana no hacía). Aquí, encima, el día se creaba
+      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
+      // dueño.
 
       const userDoc = await userSchema.create(user);
 
@@ -305,14 +293,12 @@ module.exports = {
 
   async createUserWithApple(user, date) {
     try {
-      const standardDietDay = dietDayUtil.getStandardDietDay(date);
-      const dietDay = await dietDayModel.createDietDay(standardDietDay);
-
-      const diet = dietUtil.getStandarDiet();
-      diet.dietsDay.push(dietDay._id);
-      const createdDiet = await dietModel.createDiet(diet);
-
-      user.dietInUse = createdDiet._id;
+      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
+      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
+      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
+      // esta creación temprana no hacía). Aquí, encima, el día se creaba
+      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
+      // dueño.
 
       const userDoc = await userSchema.create(user);
 
@@ -421,10 +407,11 @@ module.exports = {
     }
   },
 
-  async addUserDiet(idUser, idDiet) {
-    const addDiet = {
-      $set: { dietInUse: idDiet },
-    };
+  // Refactor nutrición (2026-09) — sin wrapper Diet no hay nada que
+  // "asignar": los días ya cuelgan del usuario. Se mantiene el método (y su
+  // ruta) para no romper las apps instaladas, pero solo devuelve el usuario.
+  async addUserDiet(idUser, _idDiet) {
+    const addDiet = { $set: {} };
 
     return new Promise((resolve, reject) =>
       userSchema.findByIdAndUpdate(
@@ -486,7 +473,7 @@ module.exports = {
       });
 
       const update = { $set: safeInput, $unset: {} };
-      ["tableInUse", "workoutInUse", "dietInUse"].forEach((field) => {
+      ["tableInUse", "workoutInUse"].forEach((field) => {
         if (safeInput[field] === null || safeInput[field] === undefined) {
           update.$unset[field] = 1;
           delete update.$set[field];
@@ -635,8 +622,10 @@ module.exports = {
     }
   },
 
-  async playStopDiet(id, dietInUse) {
-    const update = { $set: { dietInUse } };
+  // El segundo parámetro era el id del wrapper (presente = activar, null =
+  // parar). Ahora es directamente el booleano del interruptor.
+  async playStopDiet(id, enabled) {
+    const update = { $set: { dietEnabled: !!enabled } };
 
     return new Promise((resolve, reject) =>
       userSchema.findByIdAndUpdate(id, update, { new: true }, (err, doc) => {

@@ -1,4 +1,4 @@
-const dietSchema = require("./diet-schema");
+const dietDaySchema = require("../dietDays/diet-days-schema");
 const userSchema = require("../users/schema");
 const mongoose = require("mongoose");
 
@@ -7,27 +7,32 @@ function toObjectId(id) {
   return new mongoose.Types.ObjectId(id);
 }
 
+// Refactor nutrición (2026-09) — la colección `diets` ya no existe. Este
+// componente sobrevive SOLO como capa de compatibilidad para las apps ya
+// instaladas, que siguen llamando a /diets/... con lo que ellas creen que es
+// un dietId y en realidad ya es el id del propio usuario (ver users/dto.js).
+// No tiene schema ni modelo propio: todo se resuelve contra users y dietdays.
 module.exports = {
-  async getDiets(page, limit) {
-    return new Promise((resolve, reject) =>
-      dietSchema
-        .find({})
-        .skip(page * limit)
-        .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        })
-    );
+  // El único campo del wrapper con contenido real. Vive ahora en el usuario.
+  async getDietById(id) {
+    const user = await userSchema.findById(id).select("dietPinnedNote").lean();
+    if (!user) return null;
+    return { _id: user._id, name: "Diet", pinnedNote: user.dietPinnedNote || "", dietsDay: [] };
   },
 
-  async getDietById(id) {
-    return new Promise((resolve, reject) =>
-      dietSchema.findById(id, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      })
-    );
+  async updatePinnedNote(id, notes) {
+    const user = await userSchema
+      .findByIdAndUpdate(id, { $set: { dietPinnedNote: notes } }, { new: true })
+      .select("dietPinnedNote")
+      .lean();
+    if (!user) return null;
+    return { _id: user._id, name: "Diet", pinnedNote: user.dietPinnedNote || "", dietsDay: [] };
+  },
+
+  // Sin wrapper no hay array al que enganchar el día: el día ya nace con su
+  // userId. Se mantiene para que la llamada antigua no devuelva 404.
+  async addDietDietDay(idDiet) {
+    return this.getDietById(idDiet);
   },
 
   async getRecentMealProducts(
@@ -47,19 +52,13 @@ module.exports = {
       15
     );
 
+    // Refactor nutrición (2026-09) — arranca en dietdays filtrando por dueño
+    // (el id que manda el cliente ya es el del usuario, ver users/dto.js) en
+    // vez de en el wrapper Diet. $dietDay se conserva como nombre de campo
+    // para no reescribir el resto del pipeline.
     const pipeline = [
-      { $match: { _id: dietObjectId } },
-      { $project: { dietsDay: 1 } },
-      { $unwind: "$dietsDay" },
-      {
-        $lookup: {
-          from: "dietdays",
-          localField: "dietsDay",
-          foreignField: "_id",
-          as: "dietDay",
-        },
-      },
-      { $unwind: "$dietDay" },
+      { $match: { userId: dietObjectId } },
+      { $addFields: { dietDay: "$$ROOT" } },
       {
         $addFields: {
           mealId: { $arrayElemAt: ["$dietDay.meals", normalizedMealIndex] },
@@ -125,7 +124,7 @@ module.exports = {
       { $replaceRoot: { newRoot: "$customProduct" } },
     ];
 
-    return dietSchema.aggregate(pipeline).exec();
+    return dietDaySchema.aggregate(pipeline).exec();
   },
 
   async getRecentMealRecipes(
@@ -145,19 +144,13 @@ module.exports = {
       15
     );
 
+    // Refactor nutrición (2026-09) — arranca en dietdays filtrando por dueño
+    // (el id que manda el cliente ya es el del usuario, ver users/dto.js) en
+    // vez de en el wrapper Diet. $dietDay se conserva como nombre de campo
+    // para no reescribir el resto del pipeline.
     const pipeline = [
-      { $match: { _id: dietObjectId } },
-      { $project: { dietsDay: 1 } },
-      { $unwind: "$dietsDay" },
-      {
-        $lookup: {
-          from: "dietdays",
-          localField: "dietsDay",
-          foreignField: "_id",
-          as: "dietDay",
-        },
-      },
-      { $unwind: "$dietDay" },
+      { $match: { userId: dietObjectId } },
+      { $addFields: { dietDay: "$$ROOT" } },
       {
         $addFields: {
           mealId: { $arrayElemAt: ["$dietDay.meals", normalizedMealIndex] },
@@ -206,7 +199,7 @@ module.exports = {
       { $limit: normalizedLimit },
     ];
 
-    const results = await dietSchema.aggregate(pipeline).exec();
+    const results = await dietDaySchema.aggregate(pipeline).exec();
     if (results.length === 0) return [];
 
     const topRecipeIds = results.map((r) => r.customRecipeId);
@@ -246,112 +239,5 @@ module.exports = {
       .filter(Boolean);
 
     return sorted;
-  },
-
-  async getSearchDiets(page, limit, search) {
-    return new Promise((resolve, reject) =>
-      dietSchema
-        .find({ name: { $regex: search, $options: "i" } })
-        .skip(page * limit)
-        .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        })
-    );
-  },
-
-  async createDiet(diet) {
-    return new Promise((resolve, reject) =>
-      dietSchema.create(diet, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      })
-    );
-  },
-
-  async addDietDietDay(idDiet, idDietDay) {
-    const addDietDay = {
-      $push: { dietsDay: idDietDay },
-    };
-
-    return new Promise((resolve, reject) =>
-      dietSchema.findByIdAndUpdate(
-        idDiet,
-        addDietDay,
-        { new: true },
-        (err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        }
-      )
-    );
-  },
-
-  async addDietUser(idUser, idDiet) {
-    const addDiet = {
-      $push: { diets: idDiet },
-    };
-
-    return new Promise((resolve, reject) =>
-      userSchema.findByIdAndUpdate(idUser, addDiet, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
-  },
-
-  async updateDiet(id, { name, dietsDay }) {
-    const update = { $set: { name, dietsDay } };
-
-    return new Promise((resolve, reject) =>
-      dietSchema.updateOne({ _id: id }, update, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
-  },
-
-  async updatePinnedNote(id, notes) {
-    const update = notes
-      ? { $set: { pinnedNote: notes } }
-      : { $unset: { pinnedNote: "" } };
-
-    return new Promise((resolve, reject) =>
-      dietSchema.findByIdAndUpdate(id, update, { new: true }, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      })
-    );
-  },
-
-  async deleteUser(id) {
-    return new Promise((resolve, reject) =>
-      dietSchema.deleteOne({ _id: id }, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
-  },
-
-  async deleteDietDietDay(idDiet, idDietDay) {
-    const deleteDietDay = {
-      $pull: { dietDays: idDietDay },
-    };
-
-    return new Promise((resolve, reject) =>
-      dietSchema.findByIdAndUpdate(idDiet, deleteDietDay, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      })
-    );
-  },
-
-  async deleteDiet(id) {
-    try {
-      return await dietSchema.deleteOne({ _id: id });
-    } catch (err) {
-      throw err;
-    }
   },
 };

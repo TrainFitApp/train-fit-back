@@ -22,16 +22,13 @@ const controller = {
   // (trainer-client-data-controller#getClientShoppingList): la lista es la
   // misma, solo cambia de quién.
   async getMyShoppingList(req, res) {
-    const user = await userSchema.findById(req.user.id).select("dietInUse").lean();
-    if (!user?.dietInUse) {
-      return res.send({ items: [], daysWithPlan: 0, period: null });
-    }
-
     const from = req.query.from || todayIsoDate();
     // Una semana por defecto: es como se hace la compra.
     const to = req.query.to || addDaysToIsoDate(from, 6);
 
-    const days = await dietDaysDao.getFullyPopulatedDietDaysForDiet(user.dietInUse, from, to);
+    // Refactor nutrición (2026-09) — ya no hace falta leer antes el usuario
+    // para sacar su dietInUse: los días se consultan por dueño directo.
+    const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(req.user.id, from, to);
     return res.send({ ...buildShoppingList(days), period: { from, to } });
   },
 
@@ -42,12 +39,13 @@ const controller = {
     return res.send(dietDays);
   },
 
-  async getDietDaysBetweenDatesByIdDiet(req, res) {
-    const dietDays = await dietDayModel.getDietDaysBetweenDatesByIdDiet(
-      req.params.id,
+  // La ruta sigue llevando :id (el viejo dietId) para no romper las apps ya
+  // instaladas, pero se ignora: el dueño sale del token.
+  async getDietDaysBetweenDatesByUser(req, res) {
+    const dietDays = await dietDayModel.getDietDaysBetweenDatesByUser(
+      req.user.id,
       req.body.minDate,
       req.body.maxDate,
-      req.user.id
     );
     return res.send(dietDays);
   },
@@ -79,6 +77,9 @@ const controller = {
 
   async createDietDay(req, res) {
     const dietDay = await dietDayModel.createDietDay({
+      // Sin userId el día nacería huérfano: no lo encontraría ninguna
+      // consulta por dueño y quedaría fuera de la cascada de borrado.
+      userId: req.user.id,
       date: req.body.date,
       meals: req.body.meals,
     });
@@ -90,7 +91,6 @@ const controller = {
     const userId = req.user.id;
     const dietDay = await dietDayModel.createDayWeightOnNewDietDay(
       req.body.dayWeight,
-      req.params.dietInUseId,
       req.body.currentDate,
       userId
     );
@@ -108,9 +108,10 @@ const controller = {
     const dietDay = await dietDayModel.createCustomProductOnNewDietDay(
       req.body.customProduct,
       req.body.indexMeal,
-      req.params.dietInUseId,
       req.body.currentDate,
-      req.body.idUser,
+      // El dueño es SIEMPRE el del token, nunca un id del body: si no,
+      // cualquiera podría crear días en la dieta de otro.
+      req.user.id,
     );
 
     return res.send(dietDay);
@@ -120,7 +121,7 @@ const controller = {
     const dietDay = await dietDayModel.createCustomRecipeOnNewDietDay(
       req.body.customRecipe,
       req.body.indexMeal,
-      req.params.dietInUseId,
+      req.user.id,
       req.body.currentDate,
     );
 
@@ -157,9 +158,9 @@ const controller = {
     return res.send(dietDay);
   },
 
-  async pasteDietDayByIdDiet(req, res) {
-    const dietDay = await dietDayModel.pasteDietDayByIdDiet(
-      req.params.id,
+  async pasteDietDayByUser(req, res) {
+    const dietDay = await dietDayModel.pasteDietDayByUser(
+      req.user.id,
       req.body.dietDayClipboard,
       req.body.dietDayToPaste,
     );
@@ -168,7 +169,7 @@ const controller = {
   },
 
   async deleteDietDay(req, res) {
-    await dietDayModel.deleteDietDay(req.params.idDiet, req.params.idDietDay);
+    await dietDayModel.deleteDietDay(req.params.idDietDay);
     res.sendStatus(204);
   },
 
@@ -197,8 +198,7 @@ const controller = {
     }
 
     const options = (plan.dayPatterns || []).map((p) => p.name);
-    const user = await userSchema.findById(userId).select("dietInUse").lean();
-    const dietDay = await dietDayModel.findByIdDietAndDate(user?.dietInUse, date);
+    const dietDay = await dietDayModel.findByUserAndDate(userId, date);
     const selected = dietDay?.dayTypeName || null;
     return res.send({ needsChoice: !selected, selected, options });
   },
@@ -233,8 +233,7 @@ const controller = {
       await applyResolvedPlanToDietDay(dietDayDoc, date, result.resolved, result.trainerId, userId);
     }
 
-    const user = await require("../users/schema").findById(userId).select("dietInUse").lean();
-    const updatedDietDay = await dietDayModel.findByIdDietAndDate(user?.dietInUse, date);
+    const updatedDietDay = await dietDayModel.findByUserAndDate(userId, date);
     return res.send(updatedDietDay);
   },
 };

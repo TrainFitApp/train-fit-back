@@ -836,14 +836,22 @@ module.exports = {
       const cloneCustomProductPayload = (value) => {
         const payload = toPlainObject(value);
         delete payload._id;
-        if (trainerId) payload.assignedByTrainerId = trainerId;
+        if (trainerId) {
+          payload.assignedByTrainerId = trainerId;
+          // Referencia para el delta que ve el cliente (ver
+          // CustomProduct.assignedQuantity) — la cantidad con la que se
+          // pauta es, en este instante, también la cantidad "consumida".
+          payload.assignedQuantity = payload.quantity ?? null;
+        }
         return payload;
       };
       const buildCustomRecipeClonePayload = (customRecipeObj) => ({
         recipe: normalizeId(customRecipeObj.recipe),
         quantity: customRecipeObj.quantity ?? null,
         quantityCooked: customRecipeObj.quantityCooked ?? null,
-        ...(trainerId ? { assignedByTrainerId: trainerId } : {}),
+        ...(trainerId
+          ? { assignedByTrainerId: trainerId, assignedQuantity: customRecipeObj.quantity ?? null }
+          : {}),
         addedCustomProducts: (
           customRecipeObj.addedCustomProducts ||
           customRecipeObj.additionalCustomProducts ||
@@ -884,7 +892,10 @@ module.exports = {
       const customProductsToCreate = clipboardCustomProducts.map((cp) => {
         const cpObj = toPlainObject(cp);
         delete cpObj._id;
-        if (trainerId) cpObj.assignedByTrainerId = trainerId;
+        if (trainerId) {
+          cpObj.assignedByTrainerId = trainerId;
+          cpObj.assignedQuantity = cpObj.quantity ?? null;
+        }
         return cpObj;
       });
 

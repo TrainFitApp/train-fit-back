@@ -86,6 +86,14 @@ const CustomProductSchema = Schema({
   // del cliente (ver meal-service.js#assertMealEditable, reutilizada aquí a
   // nivel de item en vez de solo a nivel de Meal completa).
   assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  // Cantidad ORIGINAL pautada (gramos) — se estampa una sola vez junto con
+  // assignedByTrainerId (meal-dao.js#pasteMeal) y nunca vuelve a tocarse.
+  // `quantity` pasa a ser la cantidad REALMENTE consumida, editable por el
+  // cliente vía setCustomProductQuantity (seguimiento, no composición: ver
+  // el mismo criterio que consumed más abajo); assignedQuantity es la
+  // referencia contra la que se calcula el delta que ve el cliente
+  // (+46/-28 sobre lo pautado). null en productos que nunca fueron pautados.
+  assignedQuantity: { type: Number, min: 0, max: 100000, default: null },
   // El cliente lo marca como tomado — nunca bloqueado por
   // assignedByTrainerId (mismo criterio que Meal.completed: seguimiento y
   // composición son conceptos distintos).

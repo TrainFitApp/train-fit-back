@@ -1,7 +1,7 @@
 const userSchema = require("../users/schema");
 const dietDaysService = require("./diet-days-service");
 const dietDaysUtil = require("./diet-days-util");
-const dietModel = require("../diets/diet-model");
+const dietDaySchema = require("./diet-days-schema");
 const mealModel = require("../meals/meal-service");
 const planResolver = require("../planAssignments/plan-resolver");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
@@ -90,20 +90,16 @@ async function trySyncEmptyDietDayWithActivePlan(dietDayDoc, date, userId) {
 // un mealId/mealSlot suelto sin resolverlo contra el dietInUse real del
 // usuario (ver el IDOR ya documentado en meal-dao.js#pasteMeal).
 async function resolveOwnedDietDay(userId, date) {
-  let user = await userSchema.findById(userId).select("dietInUse");
-  let dietId = user?.dietInUse;
-
-  if (!dietId) {
-    const diet = await dietModel.createDiet({ name: "Dieta", dietsDay: [] });
-    dietId = diet._id;
-    await userSchema.findByIdAndUpdate(userId, { $set: { dietInUse: dietId } });
-  }
-
-  let dietDay = await dietDaysService.findByIdDietAndDate(dietId, date);
+  // Refactor nutrición (2026-09) — ya no hay wrapper Diet que crear ni
+  // enganchar: un día pertenece a su usuario por su propio userId, así que
+  // "asegurar que el usuario tiene dieta" deja de existir como paso.
+  let dietDay = await dietDaysService.findByUserAndDate(userId, date);
   if (!dietDay) {
     const standardDietDay = dietDaysUtil.getStandardDietDay(date);
-    const dietDayDoc = await dietDaysService.createDietDay(standardDietDay);
-    await dietModel.addDietDietDay(dietId, dietDayDoc._id.toString());
+    const dietDayDoc = await dietDaysService.createDietDay({
+      ...standardDietDay,
+      userId,
+    });
     dietDay = dietDayDoc;
 
     // Auditoría de arquitectura (nutrición) — SOLO al crear un día nuevo: si
@@ -118,7 +114,7 @@ async function resolveOwnedDietDay(userId, date) {
     // null — el día se crea vacío hasta que el cliente elija explícitamente.
     const appliedAny = await trySyncEmptyDietDayWithActivePlan(dietDayDoc, date, userId);
     if (appliedAny) {
-      dietDay = await dietDaysService.findByIdDietAndDate(dietId, date);
+      dietDay = await dietDaysService.findByUserAndDate(userId, date);
     }
   } else if (isDietDayUntouched(dietDay)) {
     // TASK-006 — el día ya existía (se creó vacío en una visita anterior,
@@ -128,7 +124,7 @@ async function resolveOwnedDietDay(userId, date) {
     // ya asignó un plan que sí lo cubre.
     const appliedAny = await trySyncEmptyDietDayWithActivePlan(dietDay, date, userId);
     if (appliedAny) {
-      dietDay = await dietDaysService.findByIdDietAndDate(dietId, date);
+      dietDay = await dietDaysService.findByUserAndDate(userId, date);
     }
   }
 
@@ -143,13 +139,13 @@ async function resolveOwnedDietDay(userId, date) {
 // §15): un `mealToPaste`/`customProducts` controlado por el cliente nunca debe
 // usarse para identificar QUÉ comida mutar ni qué productos/recetas borrar.
 async function resolveOwnedMealById(userId, mealId) {
-  const user = await userSchema.findById(userId).select("dietInUse");
-  const diet = user?.dietInUse ? await dietModel.getDietById(user.dietInUse) : null;
-
-  for (const dietDay of diet?.dietsDay || []) {
-    const meal = (dietDay.meals || []).find((m) => String(m._id) === String(mealId));
-    if (meal) return meal;
-  }
+  // Antes: cargar la Diet entera autopoblada (todos los días, todas las
+  // comidas, todos los productos) y recorrerla en memoria. Ahora la
+  // pertenencia se comprueba con una única consulta indexada: el día que
+  // contiene esa comida Y es de este usuario.
+  const dietDay = await dietDaySchema.findOne({ userId, meals: mealId });
+  const meal = (dietDay?.meals || []).find((m) => String(m._id) === String(mealId));
+  if (meal) return meal;
 
   const err = new Error("La comida indicada no pertenece a tu dieta");
   err.code = "MEAL_NOT_FOUND";

@@ -101,7 +101,7 @@ async function loadTrainerContext(trainerId, now) {
     // aparte): la vista de Cartera lo necesita para las sesiones prescritas
     // y traerlo aquí no cuesta ni una consulta más. El evaluador nocturno lo
     // ignora — ver roster-service.js.
-    userSchema.find({ _id: { $in: clientIds } }).select("dietInUse tableInUse").lean(),
+    userSchema.find({ _id: { $in: clientIds } }).select("tableInUse").lean(),
     // Fase 6 — sesiones entrenadas de TODA la cartera en una agregación,
     // para que el motor de reglas pueda condicionar sobre entrenamiento sin
     // una consulta por cliente. El volumen y los PRs siguen fuera del job:
@@ -120,7 +120,8 @@ async function loadTrainerContext(trainerId, now) {
 
   const anthropometryByClient = groupBy(anthropometryEntries, (entry) => String(entry.userId));
   const dietIdByClient = new Map(
-    clientDiets.map((user) => [String(user._id), user.dietInUse]).filter(([, diet]) => diet)
+    // Sin wrapper, el "id de dieta" de un cliente ES su propio id.
+    clientDiets.map((user) => [String(user._id), user._id])
   );
   const tableIdByClient = new Map(
     clientDiets.map((user) => [String(user._id), user.tableInUse]).filter(([, table]) => table)
@@ -134,7 +135,7 @@ async function loadTrainerContext(trainerId, now) {
   // acumulada no le importa a nadie; un pico de conexiones sí.
   const adherenceByClient = new Map();
   for (const [clientKey, dietId] of dietIdByClient) {
-    const days = await dietDaysDao.getFullyPopulatedDietDaysForDiet(
+    const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(
       dietId,
       windowStart,
       now.toISOString().slice(0, 10)

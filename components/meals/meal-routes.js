@@ -93,4 +93,17 @@ router.patchAsync(
   controller.setCustomRecipeConsumed,
 );
 
+// Ajustar cuánto de un pautado se consumió de verdad, sin poder tocar qué
+// es (ver meal-controller.js#setCustomProductQuantity).
+router.patchAsync(
+  "/:idMeal/customproducts/:idProduct/quantity",
+  auth(["admin", "user"]),
+  controller.setCustomProductQuantity,
+);
+router.patchAsync(
+  "/:idMeal/customrecipes/:idCustomRecipe/quantity",
+  auth(["admin", "user"]),
+  controller.setCustomRecipeQuantity,
+);
+
 module.exports = router;

@@ -188,10 +188,16 @@ module.exports = {
     });
   },
 
-  async create(trainerId, name, days, mode, dayPatterns) {
+  // ownerClientId opcional — puesto, la plantilla es material de biblioteca
+  // exclusivo de ese cliente (ver diet-template-schema.js); null, es general
+  // y sirve para cualquiera.
+  async create(trainerId, name, days, mode, dayPatterns, ownerClientId = null) {
     const created = await DietTemplate.create({
       trainerId,
       name,
+      // Solo se escribe si hay dueño — una plantilla general no lleva la
+      // clave en absoluto (ver diet-template-schema.js).
+      ...(ownerClientId ? { ownerClientId } : {}),
       days: await materializeDays(days),
       mode: mode || "sequential",
       dayPatterns: await materializeDayPatterns(dayPatterns),
@@ -205,8 +211,31 @@ module.exports = {
   // clientId: null excluye las copias congeladas de asignaciones (ver
   // cloneForAssignment) — esta lista es la librería de plantillas
   // reutilizables del entrenador, nunca debe mostrar una copia ya asignada.
-  async listByTrainer(trainerId) {
-    return DietTemplate.find({ trainerId, clientId: null }).sort({ createdAt: -1 });
+  //
+  // Por defecto SOLO generales (ownerClientId: null) — es lo que esperan
+  // todos los consumidores genéricos (protocolos, plantillas, el propio
+  // builder al recargar): material aplicable a cualquiera, sin colar dietas
+  // que pertenecen a un cliente concreto.
+  //
+  // forClientId acota a un cliente y tiene las dos formas del selector de
+  // "Siguiente fase":
+  //   onlyOwned=true  -> SOLO las propias de ese cliente (filtro activo)
+  //   onlyOwned=false -> generales + las propias de ese cliente (filtro
+  //                      quitado). Nunca las propias de OTRO cliente.
+  //
+  // includeOwned lo usa la biblioteca ("Gestionar plantillas") para verlas
+  // TODAS, generales y propias de cualquier cliente — si no, una dieta
+  // propia quedaría sin sitio donde volver a editarla.
+  async listByTrainer(trainerId, { forClientId = null, onlyOwned = false, includeOwned = false } = {}) {
+    const filter = { trainerId, clientId: null };
+
+    if (forClientId) {
+      filter.ownerClientId = onlyOwned ? forClientId : { $in: [forClientId, null] };
+    } else if (!includeOwned) {
+      filter.ownerClientId = null;
+    }
+
+    return DietTemplate.find(filter).sort({ createdAt: -1 });
   },
 
   async findOwnedByTrainer(trainerId, id) {

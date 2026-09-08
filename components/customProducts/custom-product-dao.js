@@ -3,9 +3,6 @@ const mealSchema = require("../meals/meal-schema");
 const userSchema = require("../users/schema");
 const productSchema = require("../products/product-schema");
 const dietDaySchema = require("../dietDays/diet-days-schema");
-const dietDayModel = require("../dietDays/diet-days-service");
-const dietSchema = require("../diets/diet-schema");
-const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
 const dietDayUtil = require("../dietDays/diet-days-util");
 const CUSTOM_PRODUCT_NUTRITION_FIELDS = [
@@ -261,6 +258,17 @@ module.exports = {
     return customProductSchema.findByIdAndUpdate(
       id,
       { $set: { consumed: Boolean(consumed) } },
+      { new: true },
+    );
+  },
+
+  // Cantidad realmente consumida — mismo criterio que setConsumed: nunca
+  // bloqueado por assignedByTrainerId, solo toca `quantity`.
+  // assignedQuantity (la referencia pautada) nunca se escribe aquí.
+  async setQuantity(id, quantity) {
+    return customProductSchema.findByIdAndUpdate(
+      id,
+      { $set: { quantity } },
       { new: true },
     );
   },
