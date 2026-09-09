@@ -30,6 +30,40 @@ module.exports = {
     return goal;
   },
 
+  // Sugerencias de dieta — al quitar una fase/ciclo, se borra también el
+  // objetivo que ese ciclo creó, y si era el vigente (goalInUse) se repunta:
+  // al objetivo del ciclo que queda como tip, o al último objetivo del
+  // cliente que NO pertenece a una fase (el "de siempre"), o a null.
+  async cleanupCycleGoal(clientId, cycleId, { fallbackCycleId = null } = {}) {
+    const NutritionalGoal = require("./nutritional-goal-schema");
+    const toRemove = await NutritionalGoal.find({ userId: clientId, cycleId }).select("_id").lean();
+    if (!toRemove.length) return;
+    const removedIds = toRemove.map((g) => String(g._id));
+
+    await NutritionalGoal.deleteMany({ _id: { $in: removedIds } });
+
+    const client = await userSchema.findById(clientId).select("goalInUse").lean();
+    if (!client?.goalInUse || !removedIds.includes(String(client.goalInUse))) return;
+
+    let next = null;
+    if (fallbackCycleId) {
+      next = await NutritionalGoal.findOne({ userId: clientId, cycleId: fallbackCycleId })
+        .sort({ createdAt: -1 })
+        .select("_id")
+        .lean();
+    }
+    if (!next) {
+      next = await NutritionalGoal.findOne({
+        userId: clientId,
+        $or: [{ phaseId: null }, { phaseId: { $exists: false } }],
+      })
+        .sort({ createdAt: -1 })
+        .select("_id")
+        .lean();
+    }
+    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: next?._id || null } });
+  },
+
   async getById(id) {
     return nutritionalGoalDao.findById(id);
   },

@@ -347,6 +347,13 @@ module.exports = {
       if (newTip) await dietTemplateDao.reactivate(newTip._id);
     }
 
+    // Sugerencias de dieta — el ciclo pudo crear su propio NutritionalGoal
+    // (assignToClient). Se borra con él, y si era el vigente se repunta al
+    // objetivo del ciclo que queda, o al último objetivo sin fase.
+    await nutritionalGoalService.cleanupCycleGoal(clientId, phase._id, {
+      fallbackCycleId: newTip?._id || null,
+    });
+
     return { cancelled: phase, newTip };
   },
 
