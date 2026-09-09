@@ -36,6 +36,13 @@ module.exports = {
     return res.sendStatus(204);
   },
 
+  // DELETE /notifications/:id
+  async remove(req, res) {
+    const notification = await notificationDao.deleteForClient(req.auth.userId, req.params.id);
+    if (!notification) return res.status(404).send({ message: "Notificación no encontrada" });
+    return res.sendStatus(204);
+  },
+
   // --- Dashboard trainer (2026-08-18) — mismo patrón, sentido inverso: aquí
   // el destinatario es el trainer y hay que enriquecer con el CLIENTE que
   // disparó cada evento, no con el trainer (ya lo es el propio lector).

@@ -30,6 +30,10 @@ module.exports = {
     );
   },
 
+  async deleteForClient(clientId, notificationId) {
+    return Notification.findOneAndDelete({ _id: notificationId, clientId, recipient: "client" }).lean();
+  },
+
   // --- Dashboard trainer (2026-08-18) — mismo patrón, sentido inverso ---
   async createForTrainer(trainerId, clientId, type, payload = {}) {
     return Notification.create({ clientId, trainerId, recipient: "trainer", type, payload });

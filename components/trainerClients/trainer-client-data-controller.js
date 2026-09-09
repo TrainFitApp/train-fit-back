@@ -221,7 +221,7 @@ module.exports = {
     await routineAssignmentService.syncTableInUseIfDue(req.params.clientId);
 
     const [tables, client] = await Promise.all([
-      tableModel.getTables(page, limit, true, req.params.clientId),
+      tableModel.getTablesAssignedByTrainer(req.params.clientId, req.auth.userId, page, limit),
       userSchema.findById(req.params.clientId).select("tableInUse").lean(),
     ]);
     // Mismo criterio que getClientNutritionalGoals#isInUse: la tabla en uso

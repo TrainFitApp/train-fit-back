@@ -30,6 +30,24 @@ const serverDomain = process.env.SERVER_DOMAIN;
 // tablas (nunca se estampó), así que la primera rama del $or ya las cubre
 // todas — el filtro es un no-op exacto para ese caso, sin necesitar una
 // consulta aparte para averiguar si hay relación con un entrenador.
+// Bug real (2026-09): getClientTables (trainer viendo la ficha de UN
+// cliente) reutilizaba buildOwnTablesMatch/getTables(own=true) tal cual —
+// la MISMA consulta que "Mis rutinas" del cliente (table-controller.js),
+// pensada para ocultarle al cliente los borradores que su entrenador dejó
+// a medias. Pero un trainer que acaba de asignar/crear una rutina para su
+// cliente (assignTable) SIEMPRE cae en ese caso hasta que la programa como
+// fase (RoutineAssignment) — así que la rutina recién asignada desaparecía
+// de su propia ficha antes de poder programarla: no había nada que elegir
+// en "Programar", punto muerto. El trainer necesita ver TODO lo que él
+// mismo asignó a este cliente, programado o no — a diferencia de "Mis
+// rutinas" del cliente, aquí no hace falta filtrar borradores.
+async function buildAssignedByTrainerMatch(clientId, trainerId) {
+  return {
+    userId: mongoose.Types.ObjectId(clientId),
+    assignedByTrainerId: mongoose.Types.ObjectId(trainerId),
+  };
+}
+
 async function buildOwnTablesMatch(idUser) {
   const assignments = await routineAssignmentDao.listByClient(idUser);
   const assignedTableIds = assignments.map((assignment) => assignment.tableId);
@@ -77,6 +95,17 @@ async function copyHierarchy(tableDoc) {
 }
 
 module.exports = {
+  // Trainer viendo la ficha de un cliente concreto — ver comentario de
+  // buildAssignedByTrainerMatch. A diferencia de getTables(own=true), no
+  // exige que la rutina ya tenga una fase programada.
+  async getTablesAssignedByTrainer(clientId, trainerId, page, limit) {
+    return tableSchema
+      .find(await buildAssignedByTrainerMatch(clientId, trainerId))
+      .skip(page * limit)
+      .limit(limit)
+      .exec();
+  },
+
   async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
     if (own && idUser) {
       return tableSchema

@@ -4,6 +4,12 @@ const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
 
 module.exports = {
+  // Trainer viendo la ficha de un cliente concreto — ver comentario de
+  // buildAssignedByTrainerMatch en table-dao.js.
+  async getTablesAssignedByTrainer(clientId, trainerId, page, limit) {
+    return tableDao.getTablesAssignedByTrainer(clientId, trainerId, page, limit);
+  },
+
   async getTables(page, limit, own = false, idUser = null, defaultOnly = false) {
     if (own && idUser) {
       return tableDao.getTables(page, limit, true, idUser);

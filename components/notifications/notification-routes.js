@@ -8,6 +8,7 @@ router.getAsync("/notifications/mine", auth(["user", "admin"]), controller.listM
 router.getAsync("/notifications/mine/unread-count", auth(["user", "admin"]), controller.countUnread);
 router.patchAsync("/notifications/:id/read", auth(["user", "admin"]), controller.markRead);
 router.postAsync("/notifications/mark-all-read", auth(["user", "admin"]), controller.markAllRead);
+router.deleteAsync("/notifications/:id", auth(["user", "admin"]), controller.remove);
 
 // Dashboard trainer (2026-08-18) — mismo recurso, sentido inverso.
 router.getAsync("/trainer/notifications/mine", auth(["trainer"]), controller.listMineTrainer);
