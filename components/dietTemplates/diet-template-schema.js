@@ -116,6 +116,55 @@ const DietTemplateSchema = new Schema(
     // está ausente en una asignación creada de cero ("Crear dieta"), que no
     // sale de ninguna plantilla.
     sourceTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
+
+    // --- Fase / ciclo (sugerencias de dieta + progresión) ---
+    //
+    // Vocabulario: una **fase** (Hipertrofia, Minicut, Definición...) es un
+    // grupo de **ciclos** encadenados. Lo que antes era "una fase" (una copia
+    // congelada suelta) pasa a ser un ciclo; la fase es el grupo. Todos estos
+    // campos SOLO existen en copias (clientId puesto) — en una plantilla de
+    // biblioteca no significan nada, igual que startDate/status.
+    //
+    // `phaseId` apunta al PRIMER ciclo de la fase (auto-ref, mismo patrón que
+    // supersededBy). El primer ciclo se apunta a sí mismo. find({phaseId})
+    // devuelve todos los ciclos de una fase; renombrar la fase = tocar 1 doc.
+    phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate", index: true },
+    // Nombre y enfoque de la FASE — solo en el primer ciclo, se leen vía
+    // phaseId desde los demás. `phaseFocus` es la elección Déficit/
+    // Mantenimiento/Superávit del cajón de sugerencias, no un dato aparte.
+    phaseName: { type: String, trim: true, maxlength: 100 },
+    phaseFocus: { type: String, enum: ["cut", "maintain", "bulk", null] },
+    // Delta de kcal elegido en el cajón (−500 / 0 / +300...) y ritmo por
+    // defecto de la rampa (kcal por ciclo, p. ej. −100). Solo primer ciclo.
+    phaseTargetKcalDelta: { type: Number },
+    targetRatePerCycle: { type: Number },
+    // kcal / macros objetivo resueltos de ESTE ciclo — en todos los ciclos.
+    // Los necesita el cálculo de adherencia y el diff del ciclo siguiente.
+    cycleTargetKcal: { type: Number },
+    cycleTargetMacros: {
+      protein: { type: Number },
+      carbs: { type: Number },
+      fat: { type: Number },
+    },
+
+    // --- Aptitud dietética ---
+    //
+    // `suitableFor` es DERIVADO del contenido: la plantilla lleva "vegan" si
+    // TODOS sus CustomProduct tienen vegan === true (igual para vegetarian /
+    // lactoseFree / glutenFree). Se recalcula en cada guardado
+    // (diet-template-dao.js), nunca se teclea — como los campos basis legacy
+    // de FoodExchangeGroup. Un flag `null` en un producto = "desconocido",
+    // no certifica.
+    suitableFor: { type: [String], default: () => [] },
+    // Aptitudes que el entrenador FUERZA a mano cuando sabe que la dieta es
+    // apta pese a productos con el flag sin rellenar. La efectiva que ve el
+    // filtro = union(suitableFor, suitableForOverride).
+    suitableForOverride: { type: [String], default: () => [] },
+    // true = dieta predefinida de administración (mismo patrón que
+    // Product.verified / Recipe.verified). Sale en el ranking de sugerencias
+    // de todos los entrenadores. Ausente / false = dieta del entrenador.
+    verified: { type: Boolean, default: false },
+
     name: { type: String, required: true, trim: true, maxlength: 100 },
     mode: { type: String, enum: ["sequential", "recurring", "choice"], default: "sequential" },
     days: [

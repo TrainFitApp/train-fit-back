@@ -97,6 +97,14 @@ const NutritionalGoalSchema = new Schema({
   startDate: { type: String, default: null },
   endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null], default: null },
   endDate: { type: String, default: null },
+  // Sugerencias de dieta + progresión — cada ciclo de una fase crea su
+  // objetivo junto a su copia de dieta, con el mismo phaseId y las fechas
+  // del ciclo. Así la adherencia de la fase (que abarca varios ciclos con
+  // targets distintos) puede resolver "qué objetivo regía el 3 de marzo"
+  // por fecha, en vez de depender solo del puntero User.goalInUse.
+  // Ausentes en objetivos creados fuera de una fase (comportamiento de hoy).
+  phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null, index: true },
+  cycleId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
