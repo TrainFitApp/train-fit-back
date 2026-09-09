@@ -33,6 +33,14 @@ async function main() {
   await mongoose.connect(uri);
   log("connected");
 
+  // Registrar TODOS los modelos que toca el autopopulate en cascada de
+  // DietTemplate (customProducts -> product, customRecipes -> recipe, refs a
+  // User) — si no, .find() peta con MissingSchemaError "Product".
+  require("../components/users/schema");
+  require("../components/products/product-schema");
+  require("../components/customProducts/custom-product-schema");
+  require("../components/customRecipes/custom-recipe-schema");
+  require("../components/recipes/recipe-schema");
   const DietTemplate = require("../components/dietTemplates/diet-template-schema");
   const NutritionalGoal = require("../components/nutritionalGoals/nutritional-goal-schema");
   const { deriveSuitability } = require("../components/dietTemplates/diet-suitability");
