@@ -129,6 +129,12 @@ module.exports = {
     if (req.body?.days !== undefined) patch.days = sanitizeDays(req.body.days);
     if (req.body?.mode !== undefined) patch.mode = sanitizeMode(req.body.mode);
     if (req.body?.dayPatterns !== undefined) patch.dayPatterns = sanitizeDayPatterns(req.body.dayPatterns);
+    // Sugerencias de dieta — aptitudes que el entrenador fuerza a mano
+    // (cuando la deriva no basta por productos sin flag). El array derivado
+    // (suitableFor) NUNCA se acepta del body: lo recalcula el dao.
+    if (Array.isArray(req.body?.suitableForOverride)) {
+      patch.suitableForOverride = req.body.suitableForOverride;
+    }
 
     const template = await dietTemplateDao.update(req.auth.userId, req.params.id, patch);
     return res.send(template);

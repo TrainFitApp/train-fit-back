@@ -75,6 +75,11 @@ function toAssignmentResponse(doc, extra = {}) {
     createdAt: doc.createdAt,
     planName: doc.name,
     mode: doc.mode,
+    // Sugerencias de dieta — la fase a la que pertenece este ciclo.
+    phaseId: doc.phaseId || null,
+    phaseName: doc.phaseName || null,
+    phaseFocus: doc.phaseFocus || null,
+    cycleTargetKcal: doc.cycleTargetKcal ?? null,
     ...extra,
   };
 }
