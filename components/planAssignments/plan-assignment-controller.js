@@ -28,6 +28,33 @@ function validateScheduleFields({ startDate, endMode, fixedEndDate, durationValu
   return null;
 }
 
+const PHASE_FOCUS = ["cut", "maintain", "bulk"];
+
+// Sugerencias de dieta — el bloque `phase` que manda el cajón al empezar una
+// fase. `cycleTarget` = el objetivo (kcal + macros) ya calculado por el
+// front para el ciclo 1. Ausentes = aplicar un plan al estilo de siempre.
+function sanitizePhase(body) {
+  const p = body?.phase;
+  const ct = body?.cycleTarget;
+  if (!p || !ct || !Number.isFinite(Number(ct.kcal))) return { phase: null, cycleTarget: null };
+  return {
+    phase: {
+      name: String(p.name || "").trim().slice(0, 100) || null,
+      focus: PHASE_FOCUS.includes(p.focus) ? p.focus : null,
+      targetKcalDelta: Number.isFinite(Number(p.targetKcalDelta)) ? Number(p.targetKcalDelta) : 0,
+      ratePerCycle: Number.isFinite(Number(p.ratePerCycle)) ? Number(p.ratePerCycle) : 0,
+    },
+    cycleTarget: {
+      kcal: Math.round(Number(ct.kcal)),
+      macros: {
+        protein: Number(ct.macros?.protein) || 0,
+        carbs: Number(ct.macros?.carbs) || 0,
+        fat: Number(ct.macros?.fat) || 0,
+      },
+    },
+  };
+}
+
 // La copia congelada de DietTemplate ES la asignación (ver
 // diet-template-schema.js), así que trae days/dayPatterns con todo su
 // contenido de comidas — nadie en el frontend necesita eso para pintar "qué
@@ -84,6 +111,7 @@ module.exports = {
         fixedEndDate,
         durationValue,
         durationUnit,
+        ...sanitizePhase(req.body),
       });
     } catch (error) {
       // 409 y no 400: la petición está bien formada, lo que falla es el
@@ -141,6 +169,7 @@ module.exports = {
         fixedEndDate,
         durationValue,
         durationUnit,
+        ...sanitizePhase(req.body),
       });
     } catch (error) {
       if (error.code === "PLAN_OVERLAP") {
@@ -280,5 +309,66 @@ module.exports = {
     });
 
     return res.status(201).send(exception);
+  },
+
+  // --- Progresión ciclo a ciclo ---
+
+  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/next-cycle-suggestion
+  async getNextCycleSuggestion(req, res) {
+    const { clientId, phaseId } = req.params;
+    try {
+      const result = await planAssignmentService.buildNextCycleSuggestion(clientId, phaseId);
+      return res.send(result);
+    } catch (error) {
+      if (error.code === "DIET_PHASE_NOT_FOUND") {
+        return res.status(404).send({ message: error.message, code: error.code });
+      }
+      throw error;
+    }
+  },
+
+  // POST /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles
+  // body: { startDate?, mode?, days?, dayPatterns?, cycleTargetKcal, cycleTargetMacros?, name? }
+  async advanceCycle(req, res) {
+    const trainerId = req.auth.userId;
+    const { clientId, phaseId } = req.params;
+    const b = req.body || {};
+
+    if (!Number.isFinite(Number(b.cycleTargetKcal))) {
+      return res.status(400).send({ message: "cycleTargetKcal es obligatorio" });
+    }
+    if (b.startDate && !ISO_DATE.test(b.startDate)) {
+      return res.status(400).send({ message: "startDate inválida (YYYY-MM-DD)" });
+    }
+
+    let result;
+    try {
+      result = await planAssignmentService.advanceCycle({
+        trainerId,
+        clientId,
+        phaseId,
+        startDate: b.startDate,
+        mode: sanitizeMode(b.mode),
+        days: sanitizeDays(b.days),
+        dayPatterns: sanitizeDayPatterns(b.dayPatterns),
+        cycleTargetKcal: Math.round(Number(b.cycleTargetKcal)),
+        cycleTargetMacros: {
+          protein: Number(b.cycleTargetMacros?.protein) || 0,
+          carbs: Number(b.cycleTargetMacros?.carbs) || 0,
+          fat: Number(b.cycleTargetMacros?.fat) || 0,
+        },
+        name: b.name,
+      });
+    } catch (error) {
+      if (error.code === "DIET_PHASE_NOT_FOUND") {
+        return res.status(404).send({ message: error.message, code: error.code });
+      }
+      if (error.code === "PLAN_OVERLAP") {
+        return res.status(409).send({ message: error.message, code: error.code, conflict: error.conflict });
+      }
+      throw error;
+    }
+
+    return res.status(201).send(toAssignmentResponse(result.cycle, { goalId: result.goal?._id }));
   },
 };

@@ -2,6 +2,41 @@ const DietTemplate = require("./diet-template-schema");
 const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
+const { deriveSuitability } = require("./diet-suitability");
+const { scaleMealsContent } = require("../planAssignments/cycle-progression");
+
+// Sugerencias de dieta — `suitableFor` (vegana / sin gluten / ...) es DERIVADO
+// del contenido, nunca tecleado: se recalcula tras cada create/update, igual
+// que basisAmount en FoodExchangeGroup. Necesita el doc ya autopoblado
+// (customProducts con sus flags), por eso se hace en una segunda pasada.
+async function recomputeSuitability(id) {
+  const doc = await DietTemplate.findById(id);
+  if (!doc) return doc;
+  const { suitableFor } = deriveSuitability(doc.toObject());
+  await DietTemplate.updateOne({ _id: id }, { $set: { suitableFor } });
+  return DietTemplate.findById(id);
+}
+
+// Campos de FASE que se escriben en el primer ciclo (el "head"). Ausentes si
+// no se está empezando una fase (aplicar un plan al estilo de siempre).
+function phaseFields(phase, cycleTarget) {
+  if (!phase) return {};
+  return {
+    phaseName: phase.name || null,
+    phaseFocus: phase.focus || null,
+    phaseTargetKcalDelta: Number.isFinite(phase.targetKcalDelta) ? phase.targetKcalDelta : null,
+    targetRatePerCycle: Number.isFinite(phase.ratePerCycle) ? phase.ratePerCycle : null,
+    cycleTargetKcal: cycleTarget?.kcal ?? null,
+    cycleTargetMacros: cycleTarget?.macros ?? undefined,
+  };
+}
+
+// El head de una fase se apunta a sí mismo con phaseId (patrón supersededBy).
+async function finalizePhaseHead(created, phase) {
+  if (!phase) return created;
+  await DietTemplate.updateOne({ _id: created._id }, { $set: { phaseId: created._id } });
+  return DietTemplate.findById(created._id);
+}
 
 // El controller (sanitizeAlternatives) ya valida label/estructura pero deja
 // customProducts/customRecipes tal cual llegan del body (mismo formato
@@ -151,7 +186,7 @@ module.exports = {
   // un segundo documento ni una segunda escritura.
   async cloneForAssignment(template, clientId, schedule = {}) {
     const source = template.toObject();
-    return DietTemplate.create({
+    const created = await DietTemplate.create({
       trainerId: source.trainerId,
       clientId,
       sourceTemplateId: source._id,
@@ -163,7 +198,66 @@ module.exports = {
       mode: source.mode,
       days: await materializeDays(flattenDaysRef(source.days)),
       dayPatterns: await materializeDayPatterns(flattenDayPatternsRef(source.dayPatterns)),
+      suitableFor: source.suitableFor || [],
+      suitableForOverride: source.suitableForOverride || [],
+      ...phaseFields(schedule.phase, schedule.cycleTarget),
     });
+    return finalizePhaseHead(created, schedule.phase);
+  },
+
+  // Flujo B — un ciclo nuevo dentro de una fase existente. El contenido ya
+  // viene materializado/escalado por el servicio (cycle-progression.js); el
+  // nombre y el focus de la fase se heredan del primer ciclo (phaseHead).
+  async createCycle({ trainerId, clientId, phaseId, name, mode, days, dayPatterns, schedule = {} }) {
+    const head = await DietTemplate.findById(phaseId).lean();
+    const created = await DietTemplate.create({
+      trainerId,
+      clientId,
+      phaseId,
+      phaseName: undefined, // vive solo en el head
+      name: name || head?.name || "Ciclo",
+      mode: mode || head?.mode || "sequential",
+      days: await materializeDays(days || []),
+      dayPatterns: await materializeDayPatterns(dayPatterns || []),
+      startDate: schedule.startDate ?? null,
+      endMode: schedule.endMode ?? "indefinite",
+      endDate: schedule.endDate ?? null,
+      status: schedule.status ?? "active",
+      cycleTargetKcal: schedule.cycleTarget?.kcal ?? null,
+      cycleTargetMacros: schedule.cycleTarget?.macros ?? undefined,
+    });
+    return recomputeSuitability(created._id);
+  },
+
+  // Contenido de una copia (ciclo) aplanado a "clipboard" y escalado por
+  // `factor` — listo para createCycle. `factor` 1 = copia idéntica.
+  scaledCycleContent(prevCycle, factor = 1) {
+    const src = prevCycle.toObject ? prevCycle.toObject() : prevCycle;
+    return {
+      mode: src.mode,
+      days: flattenDaysRef(src.days || []).map((d) => ({
+        ...d,
+        meals: scaleMealsContent(d.meals, factor),
+      })),
+      dayPatterns: flattenDayPatternsRef(src.dayPatterns || []).map((p) => ({
+        ...p,
+        meals: scaleMealsContent(p.meals, factor),
+      })),
+    };
+  },
+
+  async findCyclesOfPhase(phaseId) {
+    return DietTemplate.find({ phaseId }).sort({ startDate: 1, createdAt: 1 });
+  },
+
+  async findPhaseHead(phaseId) {
+    return DietTemplate.findById(phaseId);
+  },
+
+  // La fase "vigente" para un cliente = la del ciclo activo (tip de la cadena).
+  async findActivePhaseId(clientId) {
+    const active = await DietTemplate.findOne({ clientId, status: "active" }).select("phaseId").lean();
+    return active?.phaseId || null;
   },
 
   // "Crear dieta" — el trainer construye el contenido directo para ESTE
@@ -174,7 +268,7 @@ module.exports = {
   // que desarmar. sourceTemplateId se queda en null: no hay plantilla de
   // origen, y eso ya es un estado válido (ver diet-template-schema.js).
   async createDirectAssignment(trainerId, clientId, name, days, mode, dayPatterns, schedule = {}) {
-    return DietTemplate.create({
+    const created = await DietTemplate.create({
       trainerId,
       clientId,
       name,
@@ -185,7 +279,10 @@ module.exports = {
       endMode: schedule.endMode ?? null,
       endDate: schedule.endDate ?? null,
       status: schedule.status ?? null,
+      ...phaseFields(schedule.phase, schedule.cycleTarget),
     });
+    const head = await finalizePhaseHead(created, schedule.phase);
+    return recomputeSuitability(head._id);
   },
 
   // ownerClientId opcional — puesto, la plantilla es material de biblioteca
@@ -205,7 +302,7 @@ module.exports = {
     // create() no pasa por el middleware de autopopulate (solo corre en
     // find/findOne) — se relee para devolver customProducts/customRecipes ya
     // poblados, mismo shape que listByTrainer/update.
-    return DietTemplate.findOne({ _id: created._id, trainerId });
+    return recomputeSuitability(created._id);
   },
 
   // clientId: null excluye las copias congeladas de asignaciones (ver
@@ -242,7 +339,22 @@ module.exports = {
     return DietTemplate.findOne({ _id: id, trainerId });
   },
 
-  async update(trainerId, id, { name, days, mode, dayPatterns }) {
+  // Sugerencias de dieta — plantillas de BIBLIOTECA que se pueden rankear
+  // para este cliente: las generales del entrenador, las propias de este
+  // cliente (ownerClientId), y las de fábrica (verified) de cualquiera.
+  // Nunca copias congeladas (clientId: null en todas).
+  async listRankableForClient(trainerId, clientId) {
+    return DietTemplate.find({
+      clientId: null,
+      $or: [
+        { trainerId, ownerClientId: null },
+        { trainerId, ownerClientId: clientId },
+        { verified: true },
+      ],
+    }).sort({ createdAt: -1 });
+  },
+
+  async update(trainerId, id, { name, days, mode, dayPatterns, suitableForOverride }) {
     const existing = await DietTemplate.findOne({ _id: id, trainerId });
     if (!existing) return null;
 
@@ -267,8 +379,14 @@ module.exports = {
     if (replacingDays) setOps.days = await materializeDays(days);
     if (replacingPatterns) setOps.dayPatterns = await materializeDayPatterns(dayPatterns);
 
+    if (Array.isArray(suitableForOverride)) {
+      setOps.suitableForOverride = suitableForOverride.filter((f) =>
+        ["vegan", "vegetarian", "lactoseFree", "glutenFree"].includes(f)
+      );
+    }
+
     await DietTemplate.updateOne({ _id: id }, { $set: setOps });
-    return DietTemplate.findOne({ _id: id, trainerId });
+    return recomputeSuitability(id);
   },
 
   // deleteOne (no deleteMany) dispara el hook en cascada de

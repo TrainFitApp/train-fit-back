@@ -1,9 +1,33 @@
 const nutritionalGoalDao = require("./nutritional-goal-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const userSchema = require("../users/schema");
 
 module.exports = {
   async create(data) {
     return nutritionalGoalDao.create(data);
+  },
+
+  // Sugerencias de dieta — cada ciclo de una fase crea su objetivo junto a
+  // su copia de dieta, con el mismo phaseId y las fechas del ciclo, y pasa a
+  // ser el vigente (goalInUse). El histórico de objetivos anteriores se
+  // conserva (no se borran), igual que en assignNutritionalGoal.
+  async assignToClient({ clientId, trainerId, kcal, macros = {}, phaseId, cycleId, startDate, name }) {
+    const goal = await nutritionalGoalDao.create({
+      userId: clientId,
+      assignedByTrainerId: trainerId,
+      name: name || "Objetivo de la fase",
+      kcalTotal: Math.round(kcal || 0),
+      proteinsGTotal: round1(macros.protein),
+      carbohydratesGTotal: round1(macros.carbs),
+      fatGTotal: round1(macros.fat),
+      phaseId: phaseId || null,
+      cycleId: cycleId || null,
+      startDate: startDate || null,
+      endMode: "indefinite",
+      endDate: null,
+    });
+    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
+    return goal;
   },
 
   async getById(id) {
@@ -64,3 +88,8 @@ module.exports = {
     return nutritionalGoalDao.deleteByIdAndUserId(id, userId);
   },
 };
+
+function round1(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n * 10) / 10 : 0;
+}

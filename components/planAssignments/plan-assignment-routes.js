@@ -44,6 +44,19 @@ router.postAsync(
   requireActiveClient("nutrition"),
   controller.createException
 );
+// --- Progresión ciclo a ciclo dentro de una fase ---
+router.getAsync(
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/next-cycle-suggestion",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.getNextCycleSuggestion
+);
+router.postAsync(
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.advanceCycle
+);
 router.getAsync(
   "/trainer/clients/:clientId/diet-exceptions",
   auth(["trainer"]),
