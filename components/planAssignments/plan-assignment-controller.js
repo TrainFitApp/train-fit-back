@@ -340,6 +340,12 @@ module.exports = {
     if (b.startDate && !ISO_DATE.test(b.startDate)) {
       return res.status(400).send({ message: "startDate inválida (YYYY-MM-DD)" });
     }
+    const hasContent =
+      (Array.isArray(b.days) && b.days.length) ||
+      (Array.isArray(b.dayPatterns) && b.dayPatterns.length);
+    if (!hasContent) {
+      return res.status(400).send({ message: "El ciclo necesita contenido (days o dayPatterns)" });
+    }
 
     let result;
     try {

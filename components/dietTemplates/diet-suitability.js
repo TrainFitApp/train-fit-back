@@ -33,6 +33,19 @@ function collectProducts(doc) {
   return out;
 }
 
+// El flag vive en el CustomProduct si se copió con datos completos (búsqueda
+// de alimentos del cliente), o solo en el Product del catálogo (plantillas
+// de biblioteca, que guardan {product, quantity}). El Product llega poblado
+// por autopopulate en cascada.
+function readFlag(p, flag) {
+  if (p?.[flag] === true || p?.[flag] === false) return p[flag];
+  const prod = p?.product;
+  if (prod && typeof prod === "object" && (prod[flag] === true || prod[flag] === false)) {
+    return prod[flag];
+  }
+  return null;
+}
+
 /**
  * @returns {{ suitableFor: string[], missingFlagCounts: Record<string, number>, productCount: number }}
  *   `missingFlagCounts` = cuántos productos no declaran cada flag (para el
@@ -47,9 +60,10 @@ function deriveSuitability(doc) {
     let allTrue = products.length > 0;
     let missing = 0;
     for (const p of products) {
-      if (p?.[flag] === true) continue;
+      const value = readFlag(p, flag);
+      if (value === true) continue;
       allTrue = false;
-      if (p?.[flag] === undefined || p?.[flag] === null) missing += 1;
+      if (value === null) missing += 1;
     }
     if (allTrue) suitableFor.push(flag);
     missingFlagCounts[flag] = missing;

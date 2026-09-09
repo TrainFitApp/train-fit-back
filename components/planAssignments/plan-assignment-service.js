@@ -190,12 +190,18 @@ module.exports = {
       cycleStart,
       today
     );
-    const withWeight = weights.filter((w) => Number.isFinite(w.weight)).sort((a, b) => a.date.localeCompare(b.date));
-    const weightStartKg = withWeight.length ? withWeight[0].weight : null;
-    const weightEndKg = withWeight.length ? withWeight[withWeight.length - 1].weight : null;
-    const spanDays = withWeight.length > 1
+    const withWeight = weights
+      .filter((w) => Number.isFinite(w.weight))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    // Hace falta al menos DOS medidas en la ventana del ciclo para hablar de
+    // tendencia. Con una sola (o ninguna) no se sugiere nada: el ciclo se
+    // repite tal cual (ver cycle-progression.js#suggestNextCycle).
+    const hasTrend = withWeight.length >= 2;
+    const weightStartKg = hasTrend ? withWeight[0].weight : null;
+    const weightEndKg = hasTrend ? withWeight[withWeight.length - 1].weight : null;
+    const spanDays = hasTrend
       ? daysElapsed(withWeight[0].date, withWeight[withWeight.length - 1].date)
-      : daysElapsed(cycleStart, today);
+      : 0;
 
     let adherencePct = null;
     try {

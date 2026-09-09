@@ -34,6 +34,15 @@ test("deriveSuitability", async (t) => {
     assert.equal(r.missingFlagCounts.glutenFree, 1);
   });
 
+  await t.test("lee el flag del Product poblado si no está en el CustomProduct", () => {
+    const r = deriveSuitability(
+      tmpl([
+        { product: { vegan: true, vegetarian: true, lactoseFree: true, glutenFree: true }, quantity: 100 },
+      ])
+    );
+    assert.ok(r.suitableFor.includes("vegan"));
+  });
+
   await t.test("plantilla sin productos → no certifica nada", () => {
     const r = deriveSuitability(tmpl([]));
     assert.deepEqual(r.suitableFor, []);

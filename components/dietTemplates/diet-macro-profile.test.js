@@ -86,6 +86,32 @@ test("cycleMacroProfile", async (t) => {
     assert.equal(cycleMacroProfile(doc).kcal, 165);
   });
 
+  await t.test("lee macros del Product poblado (shape de plantilla de biblioteca)", () => {
+    const doc = {
+      mode: "sequential",
+      days: [
+        {
+          dayLabel: "D1",
+          meals: [
+            {
+              slot: "Comida",
+              alternatives: [
+                {
+                  customProducts: [
+                    { product: { energyKcal100g: 165, protein100g: 31, carbohydrates100g: 0, fat100g: 3.6 }, quantity: 200 },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const r = cycleMacroProfile(doc);
+    assert.equal(r.kcal, 330); // 165 · 2
+    assert.equal(r.protein, 62);
+  });
+
   await t.test("plantilla vacía → ceros", () => {
     assert.deepEqual(cycleMacroProfile({ mode: "sequential", days: [] }), {
       kcal: 0,
