@@ -5,6 +5,12 @@ const { MEALS } = require("../dietDays/diet-days-util");
 const VALID_SLOTS = new Set(Object.values(MEALS));
 const MAX_ALTERNATIVES = 4;
 
+// Mismo criterio que recipe-controller.js#isAdmin — solo un admin puede
+// marcar una plantilla como "de fábrica" (verified).
+function isAdmin(req) {
+  return Boolean(req.userData?.roles?.includes("admin"));
+}
+
 // Fase 9 — 0 alternativas = comida vacía, 1 = sin elección, 2+ = el cliente
 // elige (ver diet-day-resolver.js#applyResolvedPlanToDietDay).
 function sanitizeAlternatives(alternatives) {
@@ -67,6 +73,10 @@ module.exports = {
     const name = (req.body?.name || "").trim();
     if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
 
+    // Sugerencias de dieta — dieta de fábrica (verified). Solo admin, mismo
+    // criterio que Recipe (recipe-controller.js#isAdmin && body.verified).
+    const verified = isAdmin(req) && req.body?.verified === true;
+
     // ownerClientId opcional — plantilla exclusiva de ese cliente (ver
     // diet-template-schema.js). Se comprueba la relación activa antes de
     // aceptarlo: sin esto, cualquier profesional podría colgar material de
@@ -86,7 +96,8 @@ module.exports = {
       sanitizeDays(req.body?.days),
       sanitizeMode(req.body?.mode),
       sanitizeDayPatterns(req.body?.dayPatterns),
-      ownerClientId
+      ownerClientId,
+      verified
     );
     return res.send(template);
   },
@@ -134,6 +145,9 @@ module.exports = {
     // (suitableFor) NUNCA se acepta del body: lo recalcula el dao.
     if (Array.isArray(req.body?.suitableForOverride)) {
       patch.suitableForOverride = req.body.suitableForOverride;
+    }
+    if (isAdmin(req) && typeof req.body?.verified === "boolean") {
+      patch.verified = req.body.verified;
     }
 
     const template = await dietTemplateDao.update(req.auth.userId, req.params.id, patch);

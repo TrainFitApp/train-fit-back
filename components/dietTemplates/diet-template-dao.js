@@ -288,13 +288,15 @@ module.exports = {
   // ownerClientId opcional — puesto, la plantilla es material de biblioteca
   // exclusivo de ese cliente (ver diet-template-schema.js); null, es general
   // y sirve para cualquiera.
-  async create(trainerId, name, days, mode, dayPatterns, ownerClientId = null) {
+  async create(trainerId, name, days, mode, dayPatterns, ownerClientId = null, verified = false) {
     const created = await DietTemplate.create({
       trainerId,
       name,
       // Solo se escribe si hay dueño — una plantilla general no lleva la
       // clave en absoluto (ver diet-template-schema.js).
       ...(ownerClientId ? { ownerClientId } : {}),
+      // Sugerencias de dieta — dieta de fábrica (solo admin, ver controller).
+      ...(verified ? { verified: true } : {}),
       days: await materializeDays(days),
       mode: mode || "sequential",
       dayPatterns: await materializeDayPatterns(dayPatterns),
@@ -354,7 +356,7 @@ module.exports = {
     }).sort({ createdAt: -1 });
   },
 
-  async update(trainerId, id, { name, days, mode, dayPatterns, suitableForOverride }) {
+  async update(trainerId, id, { name, days, mode, dayPatterns, suitableForOverride, verified }) {
     const existing = await DietTemplate.findOne({ _id: id, trainerId });
     if (!existing) return null;
 
@@ -384,6 +386,7 @@ module.exports = {
         ["vegan", "vegetarian", "lactoseFree", "glutenFree"].includes(f)
       );
     }
+    if (typeof verified === "boolean") setOps.verified = verified;
 
     await DietTemplate.updateOne({ _id: id }, { $set: setOps });
     return recomputeSuitability(id);
