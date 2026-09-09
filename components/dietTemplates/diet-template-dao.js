@@ -351,4 +351,31 @@ module.exports = {
       { new: true }
     );
   },
+
+  // Borrado coherente de fases (nutrición) — mismo trío que
+  // routineAssignmentDao para entrenamiento (findByIdAndClient/deleteById/
+  // reactivate). findByIdAndClient primero: quien borra siempre comprueba
+  // pertenencia antes de nada, así que deleteById no necesita repetir el
+  // filtro por clientId.
+  async findByIdAndClient(id, clientId) {
+    return DietTemplate.findOne({ _id: id, clientId });
+  },
+
+  // findByIdAndDelete (no deleteOne) para que dispare el mismo hook en
+  // cascada que dietTemplateDao.delete() — está registrado sobre
+  // "findOneAndDelete", no sobre el borrado del documento en sí.
+  async deleteById(id) {
+    return DietTemplate.findByIdAndDelete(id);
+  },
+
+  // Al cancelar la fase "active" (el tip de la cadena) hay que reactivar la
+  // que queda más reciente, o el cliente se queda sin ninguna fase "active"
+  // — mismo invariante que RoutineAssignment#reactivate.
+  async reactivate(id) {
+    return DietTemplate.findByIdAndUpdate(
+      id,
+      { $set: { status: "active" }, $unset: { supersededBy: "" } },
+      { new: true }
+    );
+  },
 };

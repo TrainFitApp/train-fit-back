@@ -18,6 +18,19 @@ router.getAsync("/food-exchanges/my-plan", auth(["user", "admin"]), controller.g
 // --- Lado profesional (montado bajo /trainer, ver routes/index.js) ---
 router.getAsync("/food-exchanges", auth(["trainer"]), controller.listMine);
 router.postAsync("/food-exchanges", auth(["trainer"]), controller.create);
+// Antes que "/food-exchanges/:id" por lo mismo que my-plan: no es un ObjectId.
+router.getAsync(
+  "/food-exchanges/reference-profiles",
+  auth(["trainer"]),
+  controller.listReferenceProfiles
+);
+// Antes que "/food-exchanges/:id": "starter-pack" no es un ObjectId, y el
+// router prueba en orden.
+router.postAsync(
+  "/food-exchanges/starter-pack",
+  auth(["trainer"]),
+  controller.importStarterPack
+);
 router.putAsync("/food-exchanges/:id", auth(["trainer"]), controller.update);
 router.deleteAsync("/food-exchanges/:id", auth(["trainer"]), controller.remove);
 

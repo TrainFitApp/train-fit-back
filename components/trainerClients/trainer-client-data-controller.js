@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const userSchema = require("../users/schema");
 const tableModel = require("../tables/table-service");
 const anthropometryService = require("../anthropometry/anthropometry-service");
@@ -13,6 +14,8 @@ const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("./trainer-client-dao");
+const FoodExchangeGroup = require("../foodExchanges/food-exchange-schema");
+const { isCompleteServing } = require("../foodExchanges/exchange-profile");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 const dietDaysDao = require("../dietDays/diet-days-dao");
@@ -147,6 +150,29 @@ function toFiberOrNull(value) {
 }
 
 /**
+ * Los grupos de intercambio del PROPIO entrenador que aparecen en el reparto.
+ *
+ * Una consulta para todo el objetivo, filtrada por `trainerId`: el perfil de
+ * un grupo de otro entrenador no puede congelarse en esta pauta.
+ */
+async function loadOwnExchangeGroups(meals, trainerId) {
+  const ids = (Array.isArray(meals) ? meals : []).flatMap((meal) =>
+    (Array.isArray(meal?.exchanges) ? meal.exchanges : [])
+      .map((exchange) => exchange?.groupId)
+      .filter((id) => id && mongoose.isValidObjectId(id))
+  );
+  if (!ids.length) return new Map();
+
+  const groups = await FoodExchangeGroup.find({
+    _id: { $in: [...new Set(ids.map(String))] },
+    trainerId,
+  })
+    .select("name serving freeQuantity")
+    .lean();
+  return new Map(groups.map((group) => [String(group._id), group]));
+}
+
+/**
  * Movimiento 5 Coach Pro — reparto del día en intercambios.
  *
  * Se descarta lo que no encaje en vez de rechazar la petición entera: esto
@@ -154,7 +180,14 @@ function toFiberOrNull(value) {
  * guarde un objetivo calórico. Un reparto vacío es el estado normal de todos
  * los objetivos que existían antes de esta función.
  */
-function sanitizeMealExchanges(meals) {
+async function sanitizeMealExchanges(meals, trainerId) {
+  // El perfil se congela desde la BASE DE DATOS, no desde lo que manda el
+  // front: es lo que después cuadra el día contra las kcal del objetivo, y
+  // aceptarlo del cliente sería dejar que el navegador decida cuánto suma
+  // una ración. De paso ata el grupo a su dueño — hasta ahora `groupId`
+  // entraba tal cual desde el body sin comprobar de quién era.
+  const groupsById = await loadOwnExchangeGroups(meals, trainerId);
+
   return (Array.isArray(meals) ? meals : [])
     .map((meal) => {
       const name = String(meal?.name || "").trim().slice(0, 60);
@@ -173,7 +206,33 @@ function sanitizeMealExchanges(meals) {
           const key = String(groupId);
           if (seen.has(key)) return null;
           seen.add(key);
-          return { groupId, groupName, count };
+
+          const group = groupsById.get(key);
+          // Grupo que no es suyo, o borrado entre que abrió el editor y
+          // guardó: la ración se conserva SIN perfil en vez de descartarla.
+          // El cuadre ya sabe decir qué grupos le faltan (exchange-profile.js
+          // #sumReparto), y eso es mejor que hacer desaparecer parte de una
+          // pauta que él acaba de escribir.
+          if (!group) return { groupId, groupName, count };
+          // Un grupo libre se congela como libre aunque tenga perfil: lo que
+          // decide si suma es la decisión del entrenador, no si se pudo
+          // calcular.
+          if (group.freeQuantity) {
+            return { groupId, groupName: group.name || groupName, count, freeQuantity: true };
+          }
+          if (!isCompleteServing(group.serving)) {
+            return { groupId, groupName, count };
+          }
+          return {
+            groupId,
+            // El nombre del documento y no el del body: si el front tenía uno
+            // viejo en pantalla, la copia congelada debe decir cómo se llama
+            // el grupo de verdad.
+            groupName: group.name || groupName,
+            count,
+            serving: group.serving,
+            servingFrozenAt: new Date(),
+          };
         })
         .filter(Boolean);
 
@@ -419,7 +478,7 @@ module.exports = {
       // Movimiento 5 Coach Pro — reparto del día en intercambios. Viaja en
       // la MISMA petición que los gramos porque son dos formas de pautar el
       // mismo objetivo.
-      mealExchanges: sanitizeMealExchanges(req.body.mealExchanges),
+      mealExchanges: await sanitizeMealExchanges(req.body.mealExchanges, trainerId),
     });
 
     // A diferencia del flujo del propio cliente (nutritional-goal-controller.js

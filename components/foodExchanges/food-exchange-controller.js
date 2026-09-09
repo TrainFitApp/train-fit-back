@@ -1,5 +1,16 @@
 const mongoose = require("mongoose");
 const FoodExchangeGroup = require("./food-exchange-schema");
+const Product = require("../products/product-schema");
+const {
+  MACROS,
+  computeServing,
+  groupStatus,
+  hasServing,
+  isDeclared,
+  itemDeviation,
+  itemMacros,
+} = require("./exchange-profile");
+const { STARTER_GROUPS, REFERENCE_PROFILES } = require("./starter-pack");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const userSchema = require("../users/schema");
 const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
@@ -25,17 +36,101 @@ function validateItems(items) {
 }
 
 const VALID_BASES = new Set(["protein", "carbs", "fat", "kcal"]);
+const VALID_ROLES = new Set(["carb", "protein", "fat", "vegetable", "fruit", "dairy"]);
 
-// Movimiento 5 Coach Pro — base numérica del grupo. Los dos campos van
-// juntos o no van: una base sin cantidad ("iguala hidratos", ¿cuántos?) no
-// permite calcular nada, y una cantidad sin base no significa nada.
-function buildBasis(body) {
-  const basis = VALID_BASES.has(body?.basis) ? body.basis : null;
-  const amount = Number(body?.basisAmount);
-  if (!basis || !Number.isFinite(amount) || amount <= 0) {
-    return { basis: null, basisAmount: null };
+// Las macros por 100 g de los productos vinculados, para poder calcular el
+// perfil de la ración al guardar. Solo los alimentos con productId: un grupo
+// escrito a mano sigue siendo válido y no dispara ninguna consulta.
+async function loadProducts(items) {
+  const ids = (items || [])
+    .map((item) => readProductId(item.productId))
+    .filter(Boolean);
+  if (!ids.length) return new Map();
+
+  const products = await Product.find({ _id: { $in: [...new Set(ids)] } })
+    .select("energyKcal100g protein100g carbohydrates100g fat100g")
+    .lean();
+  return new Map(products.map((product) => [String(product._id), product]));
+}
+
+/**
+ * El perfil de UNA ración del grupo: `anchor` + `serving`.
+ *
+ * Cada macro por separado: lo que el entrenador escribe gana, y lo que deja
+ * en blanco se rellena con las macros de los productos vinculados.
+ *
+ * Los dos caminos hacen falta, y el segundo NO basta. En los grupos reales de
+ * `pre`, 15 de 19 alimentos no están vinculados a ningún producto — un
+ * entrenador escribe "85 g de patata" y sigue, que es lo razonable. Si el
+ * perfil solo pudiera salir del catálogo, el cuadre del día no se podría
+ * calcular para casi nadie. Y al revés: las tablas de intercambio publicadas
+ * dan el perfil hecho (1 ración de almidón = 80 kcal, 15 g HC, 3 g P, 0-1 g
+ * G), así que teclear cuatro cifras una vez por grupo es MENOS trabajo que
+ * buscar y vincular seis productos.
+ *
+ * Lo que no se acepta del cliente es un macro que él no ha declarado: ese se
+ * recalcula siempre aquí. Si el front mandara un perfil desfasado quedaría
+ * guardado como bueno y descuadraría los repartos sin que se viera.
+ *
+ * Compatible con las apps publicadas: si llegan `basis`/`basisAmount` en vez
+ * de `anchor`/`serving`, se leen igual — es el mismo dato con otro nombre.
+ */
+function buildProfile(body, items, productsById) {
+  const anchor = VALID_BASES.has(body?.anchor)
+    ? body.anchor
+    : VALID_BASES.has(body?.basis)
+    ? body.basis
+    : null;
+
+  // Los productos se pegan al item solo para el cálculo; lo que se guarda
+  // sigue siendo el item pelado (ver buildPayload).
+  const withProducts = (items || []).map((item) => ({
+    ...item,
+    product: item.productId ? productsById.get(String(item.productId)) || null : null,
+  }));
+  const { serving } = computeServing(withProducts);
+
+  // Lo que él declara gana sobre lo calculado, macro a macro: el catálogo
+  // puede estar mal o incompleto, su criterio no se discute.
+  const declaredByHand = {};
+  for (const macro of MACROS) {
+    const value = Number(body?.serving?.[macro]);
+    if (isDeclared(body?.serving?.[macro]) && value >= 0) declaredByHand[macro] = value;
   }
-  return { basis, basisAmount: amount };
+  // `basisAmount` de las apps publicadas: es el anchor escrito a mano, con el
+  // nombre viejo.
+  if (anchor && declaredByHand[anchor] === undefined && Number(body?.basisAmount) > 0) {
+    declaredByHand[anchor] = Number(body.basisAmount);
+  }
+  for (const [macro, value] of Object.entries(declaredByHand)) serving[macro] = value;
+
+  const isManual = Object.keys(declaredByHand).length > 0;
+  // Si él lo dice, manda. Solo se deduce cuando no hay nada que decir: un
+  // grupo cuyos alimentos están vinculados SÍ tiene perfil calculable, y aun
+  // así puede no pesarse ("Verduras libres"). Eso no se adivina.
+  const freeQuantity =
+    typeof body?.freeQuantity === "boolean"
+      ? body.freeQuantity
+      : !isManual && !hasServing(serving);
+
+  return {
+    anchor,
+    serving,
+    servingSource: isManual ? "manual" : "computed",
+    freeQuantity,
+    tolerancePct: clampTolerance(body?.tolerancePct),
+    role: VALID_ROLES.has(body?.role) ? body.role : null,
+    // LEGACY, derivados y nunca al revés: las apps publicadas los leen y
+    // así no pueden divergir del perfil.
+    basis: anchor,
+    basisAmount: anchor && isDeclared(serving[anchor]) ? Number(serving[anchor]) : null,
+  };
+}
+
+function clampTolerance(value) {
+  const pct = Number(value);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) return 10;
+  return pct;
 }
 
 // El front devuelve el item tal y como lo recibió, y en listMine `productId`
@@ -48,19 +143,22 @@ function readProductId(raw) {
   return id && mongoose.isValidObjectId(id) ? String(id) : null;
 }
 
-function buildPayload(body) {
+async function buildPayload(body) {
+  const items = (body.items || []).map((item) => ({
+    productId: readProductId(item.productId),
+    name: String(item.name).trim(),
+    quantity: Number(item.quantity),
+    unit: String(item.unit || "g").trim(),
+    note: String(item.note || "").trim(),
+  }));
+
+  const productsById = await loadProducts(items);
   return {
     name: String(body.name || "").trim(),
     category: String(body.category || "").trim(),
     equivalenceNote: String(body.equivalenceNote || "").trim(),
-    ...buildBasis(body),
-    items: (body.items || []).map((item) => ({
-      productId: readProductId(item.productId),
-      name: String(item.name).trim(),
-      quantity: Number(item.quantity),
-      unit: String(item.unit || "g").trim(),
-      note: String(item.note || "").trim(),
-    })),
+    ...buildProfile(body, items, productsById),
+    items,
   };
 }
 
@@ -93,6 +191,60 @@ function toClientShape(group) {
   };
 }
 
+/**
+ * Lo que el entrenador necesita ver de un grupo y hoy no ve: qué macros tiene
+ * de verdad cada alimento, cuánto se desvía del criterio que él declaró, y
+ * cuánto se separan entre sí.
+ *
+ * Se calcula AQUÍ y no en el front porque aquí ya están los productos
+ * poblados: mandarlos enteros para que el navegador repita la misma cuenta
+ * sería pagar dos veces por lo mismo, y abriría la puerta a que las dos
+ * cuentas dejaran de coincidir.
+ *
+ * Todo es de solo lectura y derivado. Nada de esto se guarda.
+ */
+function withVerification(group) {
+  const tolerance = Number.isFinite(group.tolerancePct) ? group.tolerancePct : 10;
+
+  const items = (group.items || []).map((item) => {
+    const macros = itemMacros(item);
+    const deviation = itemDeviation(item, group.serving, group.anchor);
+    return {
+      ...item,
+      macros,
+      deviation,
+      // El veredicto ya masticado: la plantilla no debe decidir a base de
+      // comparar números, y así los tres sitios que lo pintan coinciden.
+      check: !macros
+        ? "unknown"
+        : !deviation
+        ? "no-anchor"
+        : Math.abs(deviation.pct) > tolerance
+        ? "off"
+        : "ok",
+    };
+  });
+
+  // La dispersión es la calidad real del grupo: si sus raciones van de 83 a
+  // 206 kcal, no son intercambiables en calorías por mucho que igualen la
+  // proteína, y el cliente merece que se lo digan.
+  const kcals = items.map((item) => item.macros?.kcal).filter(isDeclared);
+  const kcalRange =
+    kcals.length > 1 ? { min: Math.min(...kcals), max: Math.max(...kcals) } : null;
+
+  return {
+    ...group,
+    items,
+    status: groupStatus(group),
+    // Lo que dice el catálogo, aparte de lo que declaró él. Verlos juntos es
+    // lo que permite corregir uno de los dos con criterio.
+    servingComputed: computeServing(items).serving,
+    linkedCount: items.filter((item) => item.productId).length,
+    offCount: items.filter((item) => item.check === "off").length,
+    kcalRange,
+  };
+}
+
 module.exports = {
   // GET /trainer/food-exchanges
   //
@@ -106,7 +258,65 @@ module.exports = {
       .populate({ path: "items.productId", select: PRODUCT_CARD_FIELDS })
       .sort({ category: 1, name: 1 })
       .lean();
-    return res.send(groups.map(toClientShape));
+    return res.send(groups.map((group) => withVerification(toClientShape(group))));
+  },
+
+  // GET /trainer/food-exchanges/reference-profiles
+  //
+  // Los perfiles de la tabla estándar, para ofrecerlos a quien ya tiene
+  // grupos con una sola cifra declarada. El front los escala a SU tamaño de
+  // ración antes de enseñarlos y solo rellena los macros en blanco: es una
+  // propuesta que él acepta, no un valor que se le escriba encima.
+  //
+  // Estático y sin consulta: son seis filas de un módulo.
+  async listReferenceProfiles(req, res) {
+    return res.send(REFERENCE_PROFILES);
+  },
+
+  // POST /trainer/food-exchanges/starter-pack
+  //
+  // Copia la tabla estándar a SU biblioteca: grupos suyos, editables y
+  // borrables, no un catálogo compartido que se actualice por detrás. Montar
+  // esos seis grupos a mano es el trabajo del primer día y es idéntico para
+  // todo el mundo.
+  //
+  // Los que ya tenga por nombre se saltan, para que pulsarlo dos veces no
+  // duplique nada ni reviente contra el índice único.
+  async importStarterPack(req, res) {
+    const trainerId = req.auth.userId;
+    const existing = await FoodExchangeGroup.find({ trainerId }).select("name").lean();
+    const taken = new Set(existing.map((group) => group.name.toLowerCase()));
+
+    const pending = STARTER_GROUPS.filter((group) => !taken.has(group.name.toLowerCase()));
+    if (!pending.length) {
+      return res.send({ created: 0, skipped: STARTER_GROUPS.length });
+    }
+
+    const created = await FoodExchangeGroup.insertMany(
+      pending.map((group) => ({
+        trainerId,
+        name: group.name,
+        category: group.category,
+        equivalenceNote: group.equivalenceNote,
+        anchor: group.anchor,
+        serving: group.serving,
+        // Manual: son perfiles de manual, no calculados de un catálogo. Que
+        // vincular productos después no los pise.
+        servingSource: "manual",
+        role: group.role,
+        tolerancePct: 10,
+        freeQuantity: false,
+        items: group.items,
+        basis: group.anchor,
+        basisAmount: group.serving[group.anchor],
+      })),
+      { ordered: false }
+    );
+
+    return res.status(201).send({
+      created: created.length,
+      skipped: STARTER_GROUPS.length - pending.length,
+    });
   },
 
   async create(req, res) {
@@ -120,7 +330,7 @@ module.exports = {
     try {
       const group = await FoodExchangeGroup.create({
         trainerId: req.auth.userId,
-        ...buildPayload(body),
+        ...(await buildPayload(body)),
       });
       return res.status(201).send(group);
     } catch (e) {
@@ -139,7 +349,7 @@ module.exports = {
     try {
       const group = await FoodExchangeGroup.findOneAndUpdate(
         { _id: req.params.id, trainerId: req.auth.userId },
-        { $set: { ...buildPayload(body), updatedAt: new Date() } },
+        { $set: { ...(await buildPayload(body)), updatedAt: new Date() } },
         { new: true, runValidators: true }
       ).lean();
       if (!group) return res.status(404).send({ message: "Grupo no encontrado" });
@@ -204,7 +414,7 @@ module.exports = {
     const groups = await FoodExchangeGroup.find({
       $or: [{ trainerId: { $in: trainerIds } }, { _id: { $in: referencedIds } }],
     })
-      .select("name category equivalenceNote items")
+      .select("name category equivalenceNote items anchor serving freeQuantity")
       .sort({ category: 1, name: 1 })
       .lean();
 

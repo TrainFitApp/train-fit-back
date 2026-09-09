@@ -118,6 +118,39 @@ module.exports = {
     return dietTemplateDao.listByClient(clientId);
   },
 
+  // Borrado coherente de fases (nutrición) — "me he equivocado" / el cliente
+  // cambia de objetivo: quitar CUALQUIER fase (futura, pasada/sustituida, o
+  // la vigente ahora mismo).
+  //
+  // A diferencia de routineAssignmentService#cancelPhase, aquí solo hay UN
+  // invariante que reparar, no dos: nutrición no mantiene un puntero tipo
+  // `tableInUse` (existió como `dietInUse` y se retiró en el refactor de
+  // 2026-09) — "qué plan rige hoy" se resuelve siempre al vuelo por fecha
+  // (findCoveringDate/plan-resolver.js), así que borrar una fase nunca deja
+  // ese cálculo desincronizado. Lo único que sí hay que mantener es el TIP
+  // de la cadena: como mucho una fase por cliente con status "active" (la
+  // última que se aplicó, sea cual sea su fecha de inicio — ver
+  // applyPlan/createDirectPlan), y si la fase borrada era esa, la siguiente
+  // más reciente pasa a serlo.
+  async cancelPhase(clientId, planId) {
+    const phase = await dietTemplateDao.findByIdAndClient(planId, clientId);
+    if (!phase) {
+      const error = new Error("Fase no encontrada");
+      error.code = "DIET_PHASE_NOT_FOUND";
+      throw error;
+    }
+
+    await dietTemplateDao.deleteById(phase._id);
+
+    let newTip = null;
+    if (phase.status === "active") {
+      [newTip] = await dietTemplateDao.listByClient(clientId);
+      if (newTip) await dietTemplateDao.reactivate(newTip._id);
+    }
+
+    return { cancelled: phase, newTip };
+  },
+
   async findCoveringDate(clientId, date) {
     return dietTemplateDao.findCoveringDate(clientId, date);
   },

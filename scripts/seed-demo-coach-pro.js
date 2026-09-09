@@ -584,12 +584,18 @@ const GRUPOS_INTERCAMBIO = [
     equivalenceNote: "Equivalen en PROTEÍNA (unos 20 g), no en calorías. La grasa cambia entre ellos.",
     basis: "protein",
     basisAmount: 20,
+    // `producto` enlaza con ALIMENTOS (los productos propios del entrenador
+    // que siembra sembrarAlimentos). Es lo que permite que el perfil de la
+    // ración se calcule y que la verificación tenga contra qué comparar.
+    // A propósito quedan dos sin enlazar (Tofu, Avena, Pimiento): un grupo a
+    // medio vincular es el estado normal de una biblioteca real, y la demo
+    // tiene que enseñar cómo se ve.
     items: [
-      { name: "Pechuga de pollo", quantity: 100, unit: "g", note: "en crudo" },
-      { name: "Pavo", quantity: 105, unit: "g", note: "en crudo" },
-      { name: "Merluza", quantity: 115, unit: "g", note: "" },
-      { name: "Atún al natural", quantity: 90, unit: "g", note: "escurrido" },
-      { name: "Claras de huevo", quantity: 180, unit: "g", note: "" },
+      { name: "Pechuga de pollo", quantity: 100, unit: "g", note: "en crudo", producto: "Pechuga de pollo" },
+      { name: "Pavo", quantity: 105, unit: "g", note: "en crudo", producto: "Pavo" },
+      { name: "Merluza", quantity: 115, unit: "g", note: "", producto: "Merluza" },
+      { name: "Atún al natural", quantity: 90, unit: "g", note: "escurrido", producto: "Atún al natural" },
+      { name: "Claras de huevo", quantity: 180, unit: "g", note: "", producto: "Claras de huevo" },
       { name: "Tofu firme", quantity: 160, unit: "g", note: "" },
     ],
   },
@@ -601,10 +607,10 @@ const GRUPOS_INTERCAMBIO = [
     basis: "carbs",
     basisAmount: 15,
     items: [
-      { name: "Arroz basmati", quantity: 20, unit: "g", note: "en crudo" },
-      { name: "Pasta integral", quantity: 21, unit: "g", note: "en crudo" },
-      { name: "Patata", quantity: 85, unit: "g", note: "" },
-      { name: "Pan integral", quantity: 32, unit: "g", note: "" },
+      { name: "Arroz basmati", quantity: 20, unit: "g", note: "en crudo", producto: "Arroz basmati" },
+      { name: "Pasta integral", quantity: 21, unit: "g", note: "en crudo", producto: "Pasta integral" },
+      { name: "Patata", quantity: 85, unit: "g", note: "", producto: "Patata" },
+      { name: "Pan integral", quantity: 32, unit: "g", note: "", producto: "Pan integral" },
       { name: "Avena", quantity: 25, unit: "g", note: "" },
     ],
   },
@@ -616,25 +622,29 @@ const GRUPOS_INTERCAMBIO = [
     basis: "fat",
     basisAmount: 10,
     items: [
-      { name: "Aceite de oliva virgen extra", quantity: 11, unit: "ml", note: "" },
-      { name: "Aguacate", quantity: 65, unit: "g", note: "" },
-      { name: "Almendras", quantity: 18, unit: "g", note: "crudas" },
-      { name: "Mantequilla de cacahuete", quantity: 20, unit: "g", note: "100% cacahuete" },
+      { name: "Aceite de oliva virgen extra", quantity: 11, unit: "ml", note: "", producto: "Aceite de oliva virgen extra" },
+      { name: "Aguacate", quantity: 65, unit: "g", note: "", producto: "Aguacate" },
+      { name: "Almendras", quantity: 18, unit: "g", note: "crudas", producto: "Almendras" },
+      { name: "Mantequilla de cacahuete", quantity: 20, unit: "g", note: "100% cacahuete", producto: "Mantequilla de cacahuete" },
     ],
   },
   {
-    // Sin base numérica a propósito: enseña que un grupo puede seguir siendo
-    // una lista escrita a mano, como antes del Movimiento 5.
+    // `freeQuantity` EXPLÍCITO y no deducido de que no haya perfil: sus
+    // alimentos sí están vinculados y sí se les puede calcular las macros,
+    // pero este grupo no se pesa y no debe entrar en el cuadre del día. "No
+    // se puede calcular" y "no se cuenta" son cosas distintas, y solo el
+    // entrenador sabe cuál es cuál.
     clave: "verduras",
     name: "Verduras libres",
     category: "Verdura",
     equivalenceNote: "Cantidad libre. Son intercambiables entre sí sin pesar.",
     basis: null,
     basisAmount: null,
+    freeQuantity: true,
     items: [
-      { name: "Brócoli", quantity: 200, unit: "g", note: "" },
-      { name: "Calabacín", quantity: 200, unit: "g", note: "" },
-      { name: "Espinacas", quantity: 150, unit: "g", note: "" },
+      { name: "Brócoli", quantity: 200, unit: "g", note: "", producto: "Brócoli" },
+      { name: "Calabacín", quantity: 200, unit: "g", note: "", producto: "Calabacín" },
+      { name: "Espinacas", quantity: 150, unit: "g", note: "", producto: "Espinacas" },
       { name: "Pimiento", quantity: 200, unit: "g", note: "" },
     ],
   },
@@ -642,9 +652,40 @@ const GRUPOS_INTERCAMBIO = [
 
 async function sembrarIntercambios(trainerId) {
   const FoodExchangeGroup = require("../components/foodExchanges/food-exchange-schema");
+  const { computeServing, hasServing } = require("../components/foodExchanges/exchange-profile");
+
+  // Las macros por 100 g de los alimentos propios del entrenador, para poder
+  // calcular el perfil de la ración aquí mismo. Se usa el MISMO módulo que
+  // el backend y la migración: si la demo calculara por su cuenta, dejaría
+  // de demostrar lo que hace la aplicación.
+  const macrosPorNombre = new Map(
+    ALIMENTOS.map(([nombre, kcal, prot, hc, grasa]) => [
+      nombre,
+      {
+        energyKcal100g: kcal,
+        protein100g: prot,
+        carbohydrates100g: hc,
+        fat100g: grasa,
+      },
+    ])
+  );
+
   const ids = {};
   for (const g of GRUPOS_INTERCAMBIO) {
     const _id = oid("exgrp:" + g.clave);
+
+    const items = g.items.map(({ producto, ...item }) => ({
+      ...item,
+      productId: producto ? oid("prod:" + producto) : null,
+      product: producto ? macrosPorNombre.get(producto) || null : null,
+    }));
+
+    const { serving } = computeServing(items);
+    // La cifra que el entrenador declaró gana sobre la calculada, igual que
+    // en el controlador: el catálogo puede estar mal, su criterio no.
+    if (g.basis && g.basisAmount > 0) serving[g.basis] = g.basisAmount;
+    const freeQuantity = g.freeQuantity === true || (!g.basis && !hasServing(serving));
+
     await FoodExchangeGroup.updateOne(
       { _id },
       {
@@ -653,17 +694,23 @@ async function sembrarIntercambios(trainerId) {
           name: g.name,
           category: g.category,
           equivalenceNote: g.equivalenceNote,
+          anchor: g.basis,
+          serving,
+          servingSource: g.basis && g.basisAmount > 0 ? "manual" : "computed",
+          freeQuantity,
+          tolerancePct: 10,
+          // LEGACY, derivados del perfil como hace el controlador.
           basis: g.basis,
-          basisAmount: g.basisAmount,
-          items: g.items,
+          basisAmount: g.basis ? serving[g.basis] : null,
+          items: items.map(({ product, ...item }) => item),
           updatedAt: new Date(),
         },
       },
       { upsert: true }
     );
-    ids[g.clave] = { _id, name: g.name };
+    ids[g.clave] = { _id, name: g.name, serving, freeQuantity };
   }
-  console.log("   " + GRUPOS_INTERCAMBIO.length + " grupos de intercambio (3 con base numérica)");
+  console.log("   " + GRUPOS_INTERCAMBIO.length + " grupos de intercambio (3 con perfil de ración, 1 libre)");
   return ids;
 }
 
@@ -690,38 +737,57 @@ async function sembrarObjetivos(trainerId, clientes, grupos) {
     // Solo Lucía se pauta TAMBIÉN por intercambios repartidos por comida.
     // Los otros dos van en gramos: es la decisión del usuario de que las dos
     // formas convivan, y con los tres iguales no se vería.
+    //
+    // Las raciones están elegidas para que el reparto CUADRE con los gramos
+    // de arriba (±10 %): 13 de hidratos, 5 de proteína y 4,5 de grasa contra
+    // 1850 kcal / 136 P / 194 HC / 58 G. Es el estado que la demo tiene que
+    // enseñar — que las dos formas de pautar el mismo día dicen lo mismo.
+    // La verificación por alimento sí deja ver el otro lado: dentro de los
+    // grupos hay equivalencias que se salen de la tolerancia.
     if (c.clave === "lucia") {
+      // El perfil se congela AQUÍ, como hace el controlador al pautar: si el
+      // entrenador retoca el grupo mañana, esta pauta no cambia de
+      // significado sola.
+      const racion = (grupo, count) =>
+        grupo.freeQuantity
+          ? { groupId: grupo._id, groupName: grupo.name, count, freeQuantity: true, servingFrozenAt: new Date() }
+          : {
+              groupId: grupo._id,
+              groupName: grupo.name,
+              count,
+              serving: grupo.serving,
+              servingFrozenAt: new Date(),
+            };
+
       doc.mealExchanges = [
         {
           name: "Desayuno",
           exchanges: [
-            { groupId: grupos.hidratos._id, groupName: grupos.hidratos.name, count: 2 },
-            { groupId: grupos.proteina._id, groupName: grupos.proteina.name, count: 1 },
-            { groupId: grupos.grasa._id, groupName: grupos.grasa.name, count: 1 },
+            racion(grupos.hidratos, 3),
+            racion(grupos.proteina, 1),
+            racion(grupos.grasa, 1),
           ],
         },
         {
           name: "Comida",
           exchanges: [
-            { groupId: grupos.proteina._id, groupName: grupos.proteina.name, count: 2 },
-            { groupId: grupos.hidratos._id, groupName: grupos.hidratos.name, count: 3 },
-            { groupId: grupos.grasa._id, groupName: grupos.grasa.name, count: 1 },
-            { groupId: grupos.verduras._id, groupName: grupos.verduras.name, count: 1 },
+            racion(grupos.proteina, 2),
+            racion(grupos.hidratos, 4),
+            racion(grupos.grasa, 1.5),
+            racion(grupos.verduras, 1),
           ],
         },
         {
           name: "Post-entreno",
-          exchanges: [
-            { groupId: grupos.proteina._id, groupName: grupos.proteina.name, count: 1.5 },
-            { groupId: grupos.hidratos._id, groupName: grupos.hidratos.name, count: 2 },
-          ],
+          exchanges: [racion(grupos.proteina, 1), racion(grupos.hidratos, 4)],
         },
         {
           name: "Cena",
           exchanges: [
-            { groupId: grupos.proteina._id, groupName: grupos.proteina.name, count: 2 },
-            { groupId: grupos.grasa._id, groupName: grupos.grasa.name, count: 0.5 },
-            { groupId: grupos.verduras._id, groupName: grupos.verduras.name, count: 1 },
+            racion(grupos.proteina, 1),
+            racion(grupos.grasa, 2),
+            racion(grupos.hidratos, 2),
+            racion(grupos.verduras, 1),
           ],
         },
       ];
@@ -2044,9 +2110,11 @@ async function main() {
   await sembrarDolor(clientes);
   await sembrarPuntuaciones(trainerId);
   await sembrarRutinas(trainerId, clientes);
+  // Los alimentos van ANTES que los intercambios: los grupos vinculan sus
+  // items a estos productos y calculan el perfil de la ración con sus macros.
+  const alimentos = await sembrarAlimentos(trainerId);
   const grupos = await sembrarIntercambios(trainerId);
   await sembrarObjetivos(trainerId, clientes, grupos);
-  const alimentos = await sembrarAlimentos(trainerId);
   await sembrarDietas(trainerId, clientes, alimentos);
   await sembrarSuplementos(trainerId, clientes);
   await sembrarHabitos(trainerId, clientes);

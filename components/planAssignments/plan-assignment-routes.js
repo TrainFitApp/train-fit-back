@@ -29,6 +29,15 @@ router.getAsync(
   requireActiveClient("nutrition"),
   controller.getHistory
 );
+// Mismo endpoint generalizado que DELETE .../routine-assignments/:assignmentId
+// para entrenamiento (routine-assignment-routes.js) — quitar CUALQUIER fase,
+// no solo la vigente.
+router.deleteAsync(
+  "/trainer/clients/:clientId/nutrition-plans/:planId",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.cancelPhase
+);
 router.postAsync(
   "/trainer/clients/:clientId/diet-exceptions",
   auth(["trainer"]),

@@ -210,6 +210,39 @@ module.exports = {
     return res.send(assignments.map((a) => toAssignmentResponse(a)));
   },
 
+  // DELETE /trainer/clients/:clientId/nutrition-plans/:planId
+  // Mismo generalizado que routineAssignmentController#cancelPhase para
+  // entrenamiento: "me he equivocado" / el cliente cambia de objetivo, quitar
+  // CUALQUIER fase (futura, pasada/sustituida, o la vigente ahora mismo). Si
+  // era el tip de la cadena, la que queda más reciente se reactiva sola (ver
+  // service) — el cliente nunca se queda sin ninguna fase "active" salvo que
+  // fuera la primera de su historia.
+  async cancelPhase(req, res) {
+    const trainerId = req.auth.userId;
+    const { clientId, planId } = req.params;
+
+    let result;
+    try {
+      result = await planAssignmentService.cancelPhase(clientId, planId);
+    } catch (error) {
+      if (error.code === "DIET_PHASE_NOT_FOUND") {
+        return res.status(404).send({ message: error.message, code: error.code });
+      }
+      throw error;
+    }
+
+    await planChangeService.recordPlanAssignment({
+      trainerId,
+      clientId,
+      previousAssignment: result.cancelled,
+      newAssignment: result.newTip,
+      planName: result.newTip?.name,
+      reason: req.body?.reason,
+    });
+
+    return res.status(204).send();
+  },
+
   // GET /trainer/clients/:clientId/diet-exceptions
   // TASK-045 (MASTER_BACKLOG.md) — nuevo: listado de excepciones puntuales
   // ("hoy salto la dieta", "hoy como fuera") para el historial de nutrición
