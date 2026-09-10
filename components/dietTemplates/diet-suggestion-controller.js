@@ -28,18 +28,28 @@ module.exports = {
     const objetiveKcalDelta = Number(req.body?.objetiveKcalDelta) || 0;
 
     const [user, anthros, prefs] = await Promise.all([
-      userSchema.findById(clientId).select("sex height birth activity steps training").lean(),
+      userSchema.findById(clientId).select("sex height birth activity steps training weight").lean(),
       anthropometryDao.getAllAnthropometriesByUserId(clientId),
       nutritionPreferencesDao.getByClientId(clientId),
     ]);
 
-    const latestWeight = (anthros || []).find((a) => Number.isFinite(a.weight));
+    // El peso sale de la última antropometría; si el cliente todavía no tiene
+    // ninguna (recién registrado, invitado por un entrenador), se usa el que
+    // metió en el registro (`User.weight`). Antes esto daba 422 aunque el
+    // dato existía.
+    const latestAnthroWeight = (anthros || []).find((a) => Number.isFinite(a.weight));
+    const weightKg = latestAnthroWeight?.weight ?? (Number.isFinite(user?.weight) ? user.weight : null);
+    const weightSource = latestAnthroWeight
+      ? { weightKg: latestAnthroWeight.weight, date: latestAnthroWeight.date, from: "anthropometry" }
+      : weightKg !== null
+      ? { weightKg, from: "signup" }
+      : null;
     const age = ageFromBirth(user?.birth);
 
     // Guard — sin biométricos no hay objetivo (mismo criterio que la pantalla
-    // de objetivo del cliente). El front pide una antropometría primero.
+    // de objetivo del cliente).
     const missing = [];
-    if (!latestWeight) missing.push("peso");
+    if (weightKg === null) missing.push("peso");
     if (!user?.height) missing.push("altura");
     if (age === null) missing.push("fecha de nacimiento");
     if (user?.sex === undefined || user?.sex === null) missing.push("sexo");
@@ -48,7 +58,7 @@ module.exports = {
     }
 
     const target = computeNutritionTarget({
-      weightKg: latestWeight.weight,
+      weightKg,
       heightCm: user.height,
       age,
       sex: user.sex,
@@ -90,7 +100,7 @@ module.exports = {
         fat: target.fat,
         objetiveKcalDelta,
       },
-      weightSource: { weightKg: latestWeight.weight, date: latestWeight.date },
+      weightSource,
       requiredFlags,
       ranked,
       hidden,
