@@ -133,8 +133,7 @@ function buildAdherenceInput(data, periodDays, now = new Date()) {
       })),
     },
     checkins: {
-      respondedAt: data.checkinResponses.map((r) => r.respondedAt),
-      cadence: data.checkinConfig?.cadence,
+      requests: data.checkinRequests,
       periodDays,
       now,
     },
@@ -213,7 +212,7 @@ module.exports = {
       latestWeight: lastEntry?.weight ?? null,
       latestWeightDate: lastEntry?.date ?? null,
       lastCheckinAt: lastResponse?.respondedAt ?? null,
-      checkinCadence: data.checkinConfig?.cadence ?? null,
+      checkinRequests: data.checkinRequests,
       activePlan: activePlan
         ? { _id: activePlan._id, startDate: activePlan.startDate, endDate: activePlan.endDate }
         : null,

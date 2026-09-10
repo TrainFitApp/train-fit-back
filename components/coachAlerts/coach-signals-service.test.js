@@ -10,6 +10,7 @@ const {
   detectLowAdherence,
   detectInactivity,
   detectCheckinOverdue,
+  detectWeightPlanOverdue,
   detectPendingReview,
   detectPlanEndingSoon,
 } = require("./coach-signals-service");
@@ -284,49 +285,60 @@ test("detectInactivity", async (t) => {
 });
 
 test("detectCheckinOverdue", async (t) => {
+  // Cada check-in que se le cerró sin responder. Antes esto contaba ciclos
+  // teóricos de una cadencia declarada y, encima, se rendía de entrada con
+  // los check-ins del calendario: un cliente podía dejar pasar un mes
+  // entero sin que saltara ninguna alerta.
+  const perdida = (dias) => ({
+    scheduledAt: new Date(NOW.getTime() - dias * 86400000),
+    closesAt: new Date(NOW.getTime() - (dias - 7) * 86400000),
+    status: "pending",
+  });
+  const respondida = (dias) => ({ ...perdida(dias), status: "responded" });
+
   await t.test("nunca respondido -> alerta con frase de primer check-in", () => {
     const signal = detectCheckinOverdue({
       clientName: "Sara",
       now: NOW,
-      checkin: { config: { cadence: "weekly" }, lastResponseAt: null },
+      checkin: { requests: [perdida(8)], lastResponseAt: null },
     });
     assert.ok(signal);
     assert.match(signal.reason, /todavía no ha respondido a su primer check-in/);
   });
 
-  await t.test("un ciclo vencido -> prioridad media", () => {
+  await t.test("un check-in perdido -> prioridad media", () => {
     const signal = detectCheckinOverdue({
       clientName: "Sara",
       now: NOW,
       checkin: {
-        config: { cadence: "weekly" },
-        lastResponseAt: new Date(NOW.getTime() - 8 * 86400000),
+        requests: [perdida(8)],
+        lastResponseAt: new Date(NOW.getTime() - 15 * 86400000),
       },
     });
     assert.equal(signal.priority, "medium");
-    assert.equal(signal.context.overdueCycles, 1);
+    assert.equal(signal.context.missedCheckins, 1);
   });
 
-  await t.test("dos ciclos o más vencidos -> prioridad alta", () => {
+  await t.test("dos o más perdidos -> prioridad alta", () => {
     const signal = detectCheckinOverdue({
       clientName: "Sara",
       now: NOW,
       checkin: {
-        config: { cadence: "weekly" },
+        requests: [perdida(8), perdida(15)],
         lastResponseAt: new Date(NOW.getTime() - 20 * 86400000),
       },
     });
     assert.equal(signal.priority, "high");
-    assert.equal(signal.context.overdueCycles, 2);
+    assert.equal(signal.context.missedCheckins, 2);
   });
 
-  await t.test("respondido dentro de plazo -> sin alerta", () => {
+  await t.test("todo respondido -> sin alerta", () => {
     assert.equal(
       detectCheckinOverdue({
         clientName: "Sara",
         now: NOW,
         checkin: {
-          config: { cadence: "weekly" },
+          requests: [respondida(8), respondida(15)],
           lastResponseAt: new Date(NOW.getTime() - 3 * 86400000),
         },
       }),
@@ -334,22 +346,70 @@ test("detectCheckinOverdue", async (t) => {
     );
   });
 
-  await t.test("cadencia 'once' ya respondida -> nunca vuelve a alertar", () => {
+  // Sigue abierta: el cliente está a tiempo de contestarla hoy.
+  await t.test("una solicitud todavía abierta no dispara alerta", () => {
+    const abierta = {
+      scheduledAt: new Date(NOW.getTime() - 86400000),
+      closesAt: new Date(NOW.getTime() + 6 * 86400000),
+      status: "pending",
+    };
     assert.equal(
-      detectCheckinOverdue({
-        clientName: "Sara",
-        now: NOW,
-        checkin: {
-          config: { cadence: "once" },
-          lastResponseAt: new Date(NOW.getTime() - 200 * 86400000),
-        },
+      detectCheckinOverdue({ clientName: "Sara", now: NOW, checkin: { requests: [abierta] } }),
+      null
+    );
+  });
+
+  await t.test("sin check-in programado -> sin alerta", () => {
+    assert.equal(detectCheckinOverdue({ clientName: "Sara", now: NOW, checkin: null }), null);
+  });
+});
+
+test("detectWeightPlanOverdue", async (t) => {
+  await t.test("sin pauta -> sin alerta (cliente 'libre')", () => {
+    assert.equal(
+      detectWeightPlanOverdue({ clientName: "Nil", weightPlanCompliance: null }),
+      null
+    );
+  });
+
+  await t.test("al día -> sin alerta", () => {
+    assert.equal(
+      detectWeightPlanOverdue({
+        clientName: "Nil",
+        weightPlanCompliance: { intervalDays: 7, overdueDays: 0, upToDate: true, neverWeighed: false },
       }),
       null
     );
   });
 
-  await t.test("sin check-in configurado -> sin alerta", () => {
-    assert.equal(detectCheckinOverdue({ clientName: "Sara", now: NOW, checkin: null }), null);
+  await t.test("atrasado por debajo del intervalo completo -> prioridad media", () => {
+    const signal = detectWeightPlanOverdue({
+      clientName: "Nil",
+      weightPlanCompliance: { intervalDays: 7, overdueDays: 3, upToDate: false, neverWeighed: false },
+    });
+    assert.ok(signal);
+    assert.equal(signal.type, "weight_plan_overdue");
+    assert.equal(signal.priority, "medium");
+    assert.match(signal.reason, /Nil lleva 3 días sin pesarse, con pauta de cada 7 días/);
+  });
+
+  // Crítica al DOBLAR el intervalo sin pesarse: overdueDays >= intervalDays
+  // (vencimiento a los 7 días + 7 de atraso = 14 días reales sin pesarse).
+  // Mismo lenguaje que checkinOverdueCriticalCycles.
+  await t.test("atrasado el doble del intervalo -> prioridad alta", () => {
+    const signal = detectWeightPlanOverdue({
+      clientName: "Nil",
+      weightPlanCompliance: { intervalDays: 7, overdueDays: 7, upToDate: false, neverWeighed: false },
+    });
+    assert.equal(signal.priority, "high");
+  });
+
+  await t.test("nunca se ha pesado -> frase específica", () => {
+    const signal = detectWeightPlanOverdue({
+      clientName: "Nil",
+      weightPlanCompliance: { intervalDays: 10, overdueDays: 2, upToDate: false, neverWeighed: true },
+    });
+    assert.match(signal.reason, /todavía no ha registrado ningún peso de su pauta \(cada 10 días\)/);
   });
 });
 
@@ -394,7 +454,7 @@ test("buildSignalsForClient", async (t) => {
       now: NOW,
       entries: weightEntries([[21, 80], [0, 78.5]]),
       adherence: goodAdherence(95),
-      checkin: { config: { cadence: "weekly" }, lastResponseAt: new Date(NOW.getTime() - 86400000) },
+      checkin: { requests: [], lastResponseAt: new Date(NOW.getTime() - 86400000) },
       planEndingSoon: null,
       lastActivityAt: NOW,
     });
@@ -409,7 +469,13 @@ test("buildSignalsForClient", async (t) => {
       entries: weightEntries([[21, 80], [0, 80.1]]),
       adherence: goodAdherence(85),
       checkin: {
-        config: { cadence: "weekly" },
+        requests: [
+          {
+            scheduledAt: new Date(NOW.getTime() - 30 * 86400000),
+            closesAt: new Date(NOW.getTime() - (30 - 7) * 86400000),
+            status: "pending",
+          },
+        ],
         lastResponseAt: new Date(NOW.getTime() - 30 * 86400000),
       },
       planEndingSoon: { daysLeft: 1 },
@@ -442,7 +508,7 @@ test("buildSignalsForClient", async (t) => {
       now: NOW,
       entries: weightEntries([[21, 80], [7, 80], [0, 76]]),
       adherence: goodAdherence(30),
-      checkin: { config: { cadence: "weekly" }, lastResponseAt: null },
+      checkin: { requests: [{ scheduledAt: new Date(NOW.getTime() - 8 * 86400000), closesAt: new Date(NOW.getTime() - 86400000), status: "pending" }], lastResponseAt: null },
       planEndingSoon: { daysLeft: 3 },
       lastActivityAt: new Date(NOW.getTime() - 20 * 86400000),
     });

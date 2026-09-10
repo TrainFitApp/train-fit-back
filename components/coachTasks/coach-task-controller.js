@@ -1,5 +1,6 @@
 const coachTaskDao = require("./coach-task-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { validDate } = require("../clientOverview/overview-domain");
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_NOTES_LENGTH = 1000;
@@ -26,16 +27,16 @@ function validatePayload({ title, notes, dueDate }) {
     if (title.trim().length > MAX_TITLE_LENGTH)
       return `title no puede superar ${MAX_TITLE_LENGTH} caracteres`;
   }
-  if (notes !== undefined && typeof notes === "string" && notes.length > MAX_NOTES_LENGTH) {
+  if (notes !== undefined && (typeof notes !== "string" || notes.length > MAX_NOTES_LENGTH)) {
     return `notes no puede superar ${MAX_NOTES_LENGTH} caracteres`;
   }
-  if (dueDate !== undefined && dueDate !== null && !ISO_DATE.test(String(dueDate))) {
+  if (dueDate !== undefined && dueDate !== null && !validDate(dueDate)) {
     return "dueDate debe tener formato YYYY-MM-DD";
   }
   return null;
 }
 
-module.exports = {
+const controller = {
   // GET /trainer/tasks?status=pending
   async listMine(req, res) {
     const status = ["pending", "done"].includes(req.query.status) ? req.query.status : undefined;
@@ -98,3 +99,11 @@ module.exports = {
     return res.sendStatus(204);
   },
 };
+
+module.exports = Object.fromEntries(Object.entries(controller).map(([name, action]) => [name, async (req, res) => {
+  try { return await action(req, res); }
+  catch (error) {
+    if (error.status && error.status < 500) return res.status(error.status).send({ message: error.message, code: error.code });
+    throw error;
+  }
+}]));

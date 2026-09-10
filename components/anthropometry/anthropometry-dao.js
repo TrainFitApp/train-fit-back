@@ -82,6 +82,29 @@ module.exports = {
     }
   },
 
+  // El último peso registrado, venga de donde venga (formulario del cliente
+  // o check-in): es el ancla de la ventana de la pauta de peso. `$ne: null`
+  // descarta también los documentos donde el campo no existe, que son la
+  // mayoría — un documento de solo perímetros no cuenta como pesarse.
+  async findLastWeight(userId) {
+    return Anthropometry.findOne({ userId, weight: { $ne: null } })
+      .sort({ date: -1 })
+      .select("date weight")
+      .lean();
+  },
+
+  // Lo mismo para muchos clientes de una vez, para el cron de recordatorios:
+  // una consulta en vez de una por pauta. Mismo criterio que listForUsersSince.
+  async lastWeightByUsers(userIds) {
+    if (!userIds?.length) return new Map();
+    const rows = await Anthropometry.aggregate([
+      { $match: { userId: { $in: userIds }, weight: { $ne: null } } },
+      { $sort: { date: -1 } },
+      { $group: { _id: "$userId", date: { $first: "$date" }, weight: { $first: "$weight" } } },
+    ]);
+    return new Map(rows.map((row) => [String(row._id), { date: row.date, weight: row.weight }]));
+  },
+
   async mergeAnthropometryFields(userId, date, fields) {
     return Anthropometry.findOneAndUpdate(
       { userId, date },

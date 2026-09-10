@@ -13,6 +13,8 @@ const AnthropometrySchema = new Schema({
     required: true,
   },
   weight: { type: Number },
+  // Recibos privados de las correcciones del resumen. No forman parte del dato corporal.
+  overviewOperations: { type: [String], default: undefined, select: false },
   checkinSources: { type: [Schema.Types.ObjectId], default: undefined, select: false },
   neck: { type: Number },
   chest: { type: Number },

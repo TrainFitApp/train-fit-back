@@ -255,6 +255,7 @@ const controller = {
       const intake = await trainerClientService.submitIntake(trainerId, req.auth.userId, intakeData);
       return res.status(201).send(intake);
     } catch (e) {
+      if (e.status && e.status < 500) return res.status(e.status).send({ message: e.message, code: e.code, missingFields: e.missingFields, currentValues: e.currentValues });
       if (e.code === "NO_INTAKE_PENDING") {
         return res.status(400).send({ message: e.message, code: e.code });
       }

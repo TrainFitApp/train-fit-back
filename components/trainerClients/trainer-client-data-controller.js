@@ -310,11 +310,24 @@ module.exports = {
   // GET /trainer/clients/:clientId/anthropometry — F09, requireActiveClient() sin scope
   async getClientAnthropometry(req, res) {
     const clientId = req.params.clientId;
-    const maxDate = req.query.maxDate ? new Date(req.query.maxDate) : new Date();
-    const minDate = req.query.minDate
-      ? new Date(req.query.minDate)
-      : new Date(maxDate.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const isCivilDate = (value) => typeof value === "string"
+      && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      && Number.isFinite(Date.parse(value))
+      && new Date(value).toISOString().slice(0, 10) === value;
+    const maxDate = req.query.maxDate === undefined ? todayIsoDate() : req.query.maxDate;
+    if (!isCivilDate(maxDate)) {
+      return res.status(400).send({ message: "maxDate debe ser una fecha válida con formato YYYY-MM-DD" });
+    }
+    const minDate = req.query.minDate === undefined ? addDaysToIsoDate(maxDate, -90) : req.query.minDate;
+    if (!isCivilDate(minDate)) {
+      return res.status(400).send({ message: "minDate debe ser una fecha válida con formato YYYY-MM-DD" });
+    }
+    if (minDate > maxDate) {
+      return res.status(400).send({ message: "minDate no puede ser posterior a maxDate" });
+    }
 
+    // Anthropometry.date es String: enviar días civiles evita que Mongoose
+    // convierta objetos Date a textos locales que no coinciden con YYYY-MM-DD.
     const entries = await anthropometryService.getAnthropometriesByUserIdBetweenDates(
       clientId,
       minDate,

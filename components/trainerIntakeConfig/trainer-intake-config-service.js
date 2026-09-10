@@ -1,5 +1,6 @@
 const trainerIntakeConfigDao = require("./trainer-intake-config-dao");
 const { INTAKE_FIELD_KEYS } = require("./intake-field-catalog");
+const { MEASUREMENT_CATALOG, validateMeasurementFields, fingerprint } = require("../clientOverview/overview-domain");
 
 const MAX_CUSTOM_QUESTIONS = 20;
 const VALID_SCOPES = ["training", "nutrition"];
@@ -31,10 +32,14 @@ module.exports = {
       enabledFields: config ? config.enabledFields : [...INTAKE_FIELD_KEYS],
       customQuestions: config ? (config.customQuestions || []).map(toPublicQuestion) : [],
       lastScopes: config ? config.lastScopes || [] : [],
+      measurementFields: config?.measurementFields || ["weight"],
+      measurementCatalog: MEASUREMENT_CATALOG,
+      version: fingerprint(config || { enabledFields: INTAKE_FIELD_KEYS, measurementFields: ["weight"] }),
     };
   },
 
-  async updateMyConfig(trainerId, enabledFields, customQuestions = [], lastScopes = []) {
+  async updateMyConfig(trainerId, enabledFields, customQuestions = [], lastScopes = [], measurementFields) {
+    if (measurementFields !== undefined) measurementFields = validateMeasurementFields(measurementFields);
     if (!Array.isArray(enabledFields) || !enabledFields.every((f) => INTAKE_FIELD_KEYS.includes(f))) {
       const err = new Error("enabledFields contiene una clave no reconocida en el catálogo");
       err.code = "INVALID_INTAKE_FIELDS";
@@ -51,12 +56,15 @@ module.exports = {
       throw err;
     }
     const normalized = customQuestions.map((q) => ({ label: q.label.trim(), enabled: q.enabled !== false }));
-    const config = await trainerIntakeConfigDao.upsert(trainerId, enabledFields, normalized, lastScopes);
+    const config = await trainerIntakeConfigDao.upsert(trainerId, enabledFields, normalized, lastScopes, measurementFields);
     return {
       trainerId,
       enabledFields: config.enabledFields,
       customQuestions: (config.customQuestions || []).map(toPublicQuestion),
       lastScopes: config.lastScopes || [],
+      measurementFields: config.measurementFields || ["weight"],
+      measurementCatalog: MEASUREMENT_CATALOG,
+      version: fingerprint(config),
     };
   },
 

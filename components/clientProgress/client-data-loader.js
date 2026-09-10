@@ -68,7 +68,7 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
   const [
     anthropometryDesc,
     allCheckinResponses,
-    checkinConfig,
+    checkinRequests,
     dietDays,
     workoutDates,
     trainingWindow,
@@ -76,7 +76,7 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
   ] = await Promise.all([
     anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, from, to),
     checkinDao.listResponses(trainerId, clientId),
-    checkinDao.getAppliedConfig(trainerId, clientId),
+    checkinDao.listRequestsInWindow(trainerId, clientId, from, to),
     client._id
       ? dietDaysDao.getFullyPopulatedDietDaysForUser(client._id, from, to)
       : [],
@@ -110,7 +110,9 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
       .filter((r) => isoDate(r.respondedAt) >= from && isoDate(r.respondedAt) <= to)
       .reverse(),
     allCheckinResponses,
-    checkinConfig,
+    // Las ocurrencias reales de la ventana: es lo que mide la adherencia
+    // de check-ins (ver checkin-occurrences.js), no la cadencia declarada.
+    checkinRequests,
     dietDays,
     workoutDates,
     planProgress: { plannedTotal: trainingWindow.plannedTotal, completedTotal: trainingWindow.completedSessions },

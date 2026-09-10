@@ -1,4 +1,4 @@
-const { CHECKIN_CADENCE_DAYS } = require("../trainerCheckins/checkin-due");
+const { summarizeOccurrences } = require("../trainerCheckins/checkin-occurrences");
 
 // Fase 2 Coach Pro — adherencia MULTIDIMENSIONAL.
 //
@@ -119,47 +119,42 @@ function habitsDimension({ habits }) {
 }
 
 /**
- * Check-ins: CICLOS CUBIERTOS frente a los que tocaban.
+ * Check-ins: OCURRENCIAS RESPONDIDAS frente a las que se cerraron.
  *
- * Contaba respuestas sueltas, y eso daba dos resultados malos a la vez: un
- * "7 de 4" que se lee como un error de cuentas, y un 100% para alguien que
- * mandó siete respuestas la misma semana y dejó las otras tres en blanco.
- * Lo que mide adherencia es la regularidad, no el volumen.
+ * Antes esto contaba ciclos teóricos a partir de una cadencia declarada, y
+ * solo el sistema legacy la tenía: un check-in creado en el calendario
+ * devolvía "sin cadencia" y NO puntuaba, aunque el cliente lo estuviera
+ * respondiendo todas las semanas. La cifra que el entrenador leía en la
+ * Cartera se estaba callando a media cartera.
  *
- * Un ciclo cuenta como cubierto si tiene AL MENOS una respuesta. Con el
- * envío ya limitado a uno por ciclo (checkin-controller#respond), ambos
- * números coinciden salvo en respuestas antiguas anteriores al límite.
+ * Ahora se cuentan solicitudes reales (ver checkin-occurrences.js): las
+ * cerradas sin responder pesan en contra, las que siguen abiertas no
+ * cuentan todavía, y las canceladas por el entrenador no cuentan nunca.
  *
- * Cadencia "once" queda fuera: un check-in de una sola vez no genera una
- * serie que medir.
- *
- * @param respondedAt fechas de respuesta (Date o ISO) dentro del periodo
+ * @param requests solicitudes de la ventana, con status/scheduledAt/closesAt
  */
-function checkinsDimension({ respondedAt, cadence, periodDays, now = new Date() }) {
-  const cadenceDays = CHECKIN_CADENCE_DAYS[cadence];
-  if (!cadenceDays || !periodDays) {
+function checkinsDimension({ requests = [], periodDays, now = new Date() }) {
+  if (!periodDays || !requests.length) {
+    // Mismo motivo que antes para el mismo hueco: no hay check-ins que
+    // medir. La etiqueta que ve el entrenador no cambia.
     return { applicable: false, reason: "sin_cadencia" };
   }
-  const expected = Math.floor(periodDays / cadenceDays);
-  if (expected < 1) {
+
+  const { answered, missed, resolved } = summarizeOccurrences(requests, now);
+  if (!resolved) {
+    // Programado pero todavía sin ninguna ocurrencia cerrada: no hay nada
+    // que puntuar sin castigar a quien aún está a tiempo de responder.
     return { applicable: false, reason: "periodo_corto" };
   }
 
-  // Ciclo 0 = el más reciente (los `cadenceDays` días que acaban hoy).
-  const ciclosCubiertos = new Set();
-  for (const fecha of respondedAt || []) {
-    const dias = (now.getTime() - new Date(fecha).getTime()) / 86400000;
-    if (dias < 0 || dias >= periodDays) continue;
-    ciclosCubiertos.add(Math.floor(dias / cadenceDays));
-  }
-
-  const cubiertos = ciclosCubiertos.size;
   return {
     applicable: true,
-    percentage: Math.min(100, pct(cubiertos, expected) ?? 0),
-    detail: `${cubiertos} de ${expected} ${cadence === "biweekly" ? "quincenas" : "semanas"} con check-in`,
-    coveredCycles: cubiertos,
-    expectedCycles: expected,
+    percentage: pct(answered, resolved) ?? 0,
+    detail: `${answered} de ${resolved} check-ins respondidos`,
+    answered,
+    missed,
+    expectedCycles: resolved,
+    coveredCycles: answered,
   };
 }
 

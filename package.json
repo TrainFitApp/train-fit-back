@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node ./bin/www",
+    "test:overview": "node --test components/clientOverview/body-metrics.test.js components/clientOverview/measurement-write.test.js components/clientOverview/overview-domain.test.js components/clientOverview/overview-service.test.js components/clientOverview/overview-integration.test.js components/trainerNotes/trainer-note-stage.test.js",
     "serve": "node --watch bin/www",
     "serve:open": "CORS_OPEN=1 node --watch bin/www",
     "rebuild:search-indexes": "node scripts/rebuild-search-indexes.js",
@@ -23,12 +24,17 @@
     "migrate:nutrition-model": "node scripts/migrate-nutrition-model.js",
     "migrate:nutrition-model:dry-run": "node scripts/migrate-nutrition-model.js --dry-run",
     "migrate:nutrition-model:keep-old": "node scripts/migrate-nutrition-model.js --keep-old",
+    "seed:mock-client": "node scripts/seed-mock-client.js",
+    "migrate:legacy-checkins": "node scripts/migrate-legacy-checkins.js",
+    "migrate:legacy-checkins:dry-run": "node scripts/migrate-legacy-checkins.js --dry-run",
+    "migrate:anthropometry-requests": "node scripts/migrate-anthropometry-requests.js",
+    "migrate:anthropometry-requests:dry-run": "node scripts/migrate-anthropometry-requests.js --dry-run",
     "verify:nutrition-model": "node scripts/verify-nutrition-model.js",
     "migrate:pautado-assigned-quantity": "node scripts/migrate-pautado-assigned-quantity.js",
     "migrate:pautado-assigned-quantity:dry-run": "node scripts/migrate-pautado-assigned-quantity.js --dry-run",
     "migrate:diet-template-drop-nulls": "node scripts/migrate-diet-template-drop-nulls.js",
     "migrate:diet-template-drop-nulls:dry-run": "node scripts/migrate-diet-template-drop-nulls.js --dry-run",
-    "test": "node --test components/remoteConfig/remote-config-service.test.js components/billing/feature-access-service.test.js components/util/normalize-email.test.js components/util/date-util.test.js components/users/schema.test.js components/sets/set-dao.test.js components/util/verification-code.test.js components/users/verification-flow.test.js components/users/restore-password-flow.test.js components/coachAlerts/coach-signals-service.test.js components/coachAlerts/coach-alert-service.test.js components/coachRules/rule-evaluation-service.test.js components/planAssignments/plan-assignment-service.test.js components/planChanges/plan-change-service.test.js components/trainerCheckins/checkin-custom-question.test.js components/trainerCheckins/checkin-field-catalog.test.js components/workouts/soreness-catalog.test.js components/painLog/pain-catalog.test.js components/foodExchanges/exchange-math.test.js components/dietDays/shopping-list-service.test.js components/workoutTemplates/workout-template-dao.test.js components/exerciseScores/exercise-score-catalog.test.js components/exerciseScores/session-load-service.test.js components/clientProgress/adherence-service.test.js components/clientProgress/roster-service.test.js components/clientProgress/progress-service.test.js components/clientProgress/training-service.test.js components/clientCoachView/client-coach-view-controller.test.js components/routineAssignments/routine-assignment-schedule.test.js"
+    "test": "node --test components/remoteConfig/remote-config-service.test.js components/billing/feature-access-service.test.js components/util/normalize-email.test.js components/util/date-util.test.js components/users/schema.test.js components/sets/set-dao.test.js components/util/verification-code.test.js components/users/verification-flow.test.js components/users/restore-password-flow.test.js components/coachAlerts/coach-signals-service.test.js components/coachAlerts/coach-alert-service.test.js components/coachRules/rule-evaluation-service.test.js components/planAssignments/plan-assignment-service.test.js components/planChanges/plan-change-service.test.js components/trainerCheckins/checkin-custom-question.test.js components/trainerCheckins/checkin-field-catalog.test.js components/workouts/soreness-catalog.test.js components/painLog/pain-catalog.test.js components/foodExchanges/exchange-math.test.js components/dietDays/shopping-list-service.test.js components/workoutTemplates/workout-template-dao.test.js components/exerciseScores/exercise-score-catalog.test.js components/exerciseScores/session-load-service.test.js components/clientProgress/adherence-service.test.js components/clientProgress/roster-service.test.js components/clientProgress/progress-service.test.js components/clientProgress/training-service.test.js components/routineAssignments/routine-assignment-schedule.test.js components/anthropometry/anthropometry-controller.test.js components/weightPlans/weight-plan-service.test.js components/trainerCheckins/checkin-occurrences.test.js components/trainerCheckins/checkin-calendar.test.js"
   },
   "dependencies": {
     "@awaitjs/express": "^0.6.1",

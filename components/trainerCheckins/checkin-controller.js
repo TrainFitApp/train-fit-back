@@ -1,22 +1,18 @@
 const checkinDao = require("./checkin-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
-const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const notificationDao = require("../notifications/notification-dao");
-const { cadenceDays } = require("./checkin-due");
+const CheckinSchedule = require("./checkin-schedule-schema");
+const calendarService = require("./checkin-calendar-service");
+const { occurrenceAt, validateTiming, calendarDate } = require("./checkin-schedule-dates");
 const userSchema = require("../users/schema");
-const {
-  CHECKIN_FIELDS_BY_KEY,
-  CHECKIN_FIELD_KEYS,
-  scaleLevelsFor,
-  isPlausibleValue,
-} = require("./checkin-field-catalog");
-const {
-  isCustomKey,
-  questionIdFromKey,
-  validateCustomAnswer,
-  normalizeCustomAnswer,
-  validateQuestionDefinition,
-} = require("./checkin-custom-question");
+const { CHECKIN_FIELD_KEYS } = require("./checkin-field-catalog");
+const { validateQuestionDefinition } = require("./checkin-custom-question");
+const CheckinRequest = require("./checkin-request-schema");
+
+// Hora por defecto al programar desde una plantilla. El entrenador puede
+// cambiarla luego en el calendario del cliente.
+const DEFAULT_SCHEDULE_TIME = "09:00";
+const DEFAULT_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Madrid";
 
 // Fase 5 Coach Pro — comprueba la forma de TODAS las preguntas propias antes
 // de guardar la plantilla. Devuelve el primer error o null.
@@ -29,10 +25,6 @@ function validateCustomQuestions(questions) {
     if (error) return error;
   }
   return null;
-}
-
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function validEnabledFields(enabledFields) {
@@ -50,7 +42,7 @@ module.exports = {
   },
 
   async createDefinition(req, res) {
-    const { name, enabledFields, cadence, customQuestions } = req.body || {};
+    const { name, enabledFields, frequency, interval, customQuestions } = req.body || {};
     if (!name || !name.trim()) {
       return res.status(400).send({ message: "name es obligatorio" });
     }
@@ -65,7 +57,7 @@ module.exports = {
         req.auth.userId,
         name.trim(),
         enabledFields || [],
-        cadence || "weekly",
+        { frequency: frequency || "weekly", interval: interval || 1 },
         customQuestions || []
       );
       return res.status(201).send(definition);
@@ -78,7 +70,7 @@ module.exports = {
   },
 
   async updateDefinition(req, res) {
-    const { name, enabledFields, cadence, customQuestions } = req.body || {};
+    const { name, enabledFields, frequency, interval, customQuestions } = req.body || {};
     if (enabledFields && !validEnabledFields(enabledFields)) {
       return res.status(400).send({ message: "enabledFields contiene una clave no reconocida en el catálogo" });
     }
@@ -88,7 +80,8 @@ module.exports = {
     const updates = {};
     if (name !== undefined) updates.name = name.trim();
     if (enabledFields !== undefined) updates.enabledFields = enabledFields;
-    if (cadence !== undefined) updates.cadence = cadence;
+    if (frequency !== undefined) updates.frequency = frequency;
+    if (interval !== undefined) updates.interval = interval;
     if (customQuestions !== undefined) updates.customQuestions = customQuestions;
 
     try {
@@ -109,7 +102,14 @@ module.exports = {
     return res.sendStatus(204);
   },
 
-  // POST /trainer/checkin-templates/:id/apply — body: { clientIds: [...] }
+  // POST /trainer/checkin-templates/:id/apply — body: { clientIds, timeZone }
+  //
+  // Aplicar una plantilla a varios clientes es PROGRAMARLES el check-in.
+  // Antes esto escribía una "configuración aplicada" con su propia cadencia,
+  // un segundo motor en paralelo al calendario: el que de verdad genera las
+  // solicitudes, el que cuenta para la adherencia y el que ve el cliente.
+  // Ahora escribe directamente en ese, con la periodicidad por defecto de la
+  // plantilla; el entrenador puede afinarla luego cliente a cliente.
   async applyDefinition(req, res) {
     const definition = await checkinDao.getDefinitionById(req.auth.userId, req.params.id);
     if (!definition) return res.status(404).send({ message: "Plantilla no encontrada" });
@@ -117,6 +117,30 @@ module.exports = {
     const clientIds = Array.isArray(req.body?.clientIds) ? req.body.clientIds : [];
     if (!clientIds.length) {
       return res.status(400).send({ message: "clientIds es obligatorio y no puede estar vacío" });
+    }
+    if (!definition.enabledFields?.length && !definition.customQuestions?.some((q) => q.enabled !== false)) {
+      return res.status(400).send({ message: "El check-in necesita al menos una pregunta activa" });
+    }
+
+    const now = new Date();
+    const timeZone = typeof req.body?.timeZone === "string" && req.body.timeZone ? req.body.timeZone : DEFAULT_TIME_ZONE;
+    // Fase 8b — antes esto era siempre "hoy, semanal": el entrenador que
+    // quería aplicar en bloque para dentro de tres días, o a diario, tenía
+    // que aplicar y luego entrar cliente a cliente a cambiar la fecha. Los
+    // tres overrides son opcionales; sin ellos se comporta igual que antes
+    // (hoy, a la hora y periodicidad por defecto de la plantilla).
+    const timing = {
+      startDate: typeof req.body?.startDate === "string" ? req.body.startDate : now.toISOString().slice(0, 10),
+      time: typeof req.body?.time === "string" ? req.body.time : DEFAULT_SCHEDULE_TIME,
+      timeZone,
+      frequency: typeof req.body?.frequency === "string" ? req.body.frequency : (definition.frequency || "weekly"),
+      interval: Number.isInteger(req.body?.interval) ? req.body.interval : (definition.interval || 1),
+    };
+    const timingError = validateTiming(timing);
+    if (timingError) return res.status(400).send({ message: timingError });
+    // Mismo criterio que saveSchedule: no se inventan solicitudes anteriores a hoy.
+    if (timing.startDate < calendarDate(now, timing.timeZone)) {
+      return res.status(400).send({ message: "El inicio debe ser hoy o una fecha futura" });
     }
 
     const applied = [];
@@ -128,20 +152,24 @@ module.exports = {
         skipped.push(clientId);
         continue;
       }
-      await checkinDao.applyToClient(req.auth.userId, clientId, definition);
-      await notificationDao.create(clientId, req.auth.userId, "checkin_requested", {
-        templateName: definition.name,
+
+      const schedule = await CheckinSchedule.create({
+        trainerId: req.auth.userId,
+        clientId,
+        name: definition.name,
+        sourceTemplateId: definition._id,
+        enabledFields: definition.enabledFields,
+        customQuestions: definition.customQuestions || [],
+        ...timing,
+        nextRunAt: occurrenceAt(timing, 0),
       });
+      // La primera solicitud sale ya: aplicar una plantilla y que el cliente
+      // no vea nada hasta la semana que viene se lee como que no funcionó.
+      await calendarService.materialize(schedule.toObject(), now);
       applied.push(clientId);
     }
 
     return res.send({ applied, skipped });
-  },
-
-  // GET /trainer/clients/:clientId/checkin-config — profesional, config ya aplicada
-  async getClientCheckinConfig(req, res) {
-    const config = await checkinDao.getAppliedConfig(req.auth.userId, req.params.clientId);
-    return res.send(config);
   },
 
   // GET /trainer/clients/:clientId/checkin-responses — profesional, histórico
@@ -157,36 +185,23 @@ module.exports = {
   // name/lastname/email — se aplana a `client` para que el frontend no
   // tenga que distinguir entre el campo crudo y el objeto poblado.
   async getMyCheckinResponses(req, res) {
-    const [responses, configs] = await Promise.all([
-      checkinDao.listResponsesForTrainer(req.auth.userId),
-      // Una sola consulta para TODAS las plantillas del trainer: sin esto
-      // las respuestas a preguntas propias se listaban con su clave cruda
-      // ("custom:6a9033db…") en vez del enunciado, porque el enunciado no
-      // está en el catálogo — vive en la plantilla aplicada a ese cliente.
-      checkinDao.getAppliedConfigsForTrainer(req.auth.userId),
-    ]);
-
-    const preguntasPorCliente = new Map();
-    for (const config of configs) {
-      const clientKey = String(config.clientId?._id || config.clientId);
-      const previas = preguntasPorCliente.get(clientKey) || [];
-      preguntasPorCliente.set(clientKey, [...previas, ...(config.customQuestions || [])]);
-    }
+    const responses = await checkinDao.listResponsesForTrainer(req.auth.userId);
 
     return res.send(
       responses.map(({ clientId, ...rest }) => ({
         ...rest,
         client: clientId && typeof clientId === "object" ? clientId : null,
-        // Solo lo que hace falta para pintar la respuesta.
-        customQuestions: (rest.customQuestions || preguntasPorCliente.get(String(clientId?._id || clientId)) || []).map(
-          (question) => ({
-            _id: question._id,
-            label: question.label,
-            type: question.type,
-            unit: question.unit || "",
-            options: question.options || [],
-          })
-        ),
+        // El enunciado de una pregunta propia viaja EN la respuesta desde que
+        // cada solicitud guarda su propia copia (ver checkin-request-schema):
+        // antes había que ir a buscarlo a la configuración aplicada del
+        // cliente, que ya no existe.
+        customQuestions: (rest.customQuestions || []).map((question) => ({
+          _id: question._id,
+          label: question.label,
+          type: question.type,
+          unit: question.unit || "",
+          options: question.options || [],
+        })),
       }))
     );
   },
@@ -207,34 +222,33 @@ module.exports = {
   },
 
   // --- Lado cliente ---
-  // GET /trainer/checkins/mine — qué campos le piden, por cada profesional con relación activa
+  // GET /trainer/checkins/mine — sus check-ins abiertos ahora mismo.
+  //
+  // Antes esto mezclaba dos cosas: las "configuraciones aplicadas" del
+  // sistema legacy (que no eran una solicitud concreta, sino una intención
+  // permanente) y las solicitudes reales del calendario. El cliente veía un
+  // formulario siempre abierto junto a otro con fecha de cierre, sin
+  // diferencia visible entre ambos. Ahora solo hay solicitudes.
   async listMine(req, res) {
-    const configs = await checkinDao.getAppliedConfigsForClient(req.auth.userId);
-    const activeTrainerIds = new Set();
-    for (const config of configs) {
-      const relation = await trainerClientDao.findActiveByTrainerAndClient(config.trainerId, req.auth.userId);
-      if (relation) activeTrainerIds.add(String(config.trainerId));
-    }
     const now = new Date();
-    const pending = await require("./checkin-request-schema").find({ clientId: req.auth.userId, status: "pending", scheduledAt: { $lte: now }, $or: [{ closesAt: null }, { closesAt: { $gt: now } }] }).lean();
+    const pending = await CheckinRequest.find({
+      clientId: req.auth.userId,
+      status: "pending",
+      scheduledAt: { $lte: now },
+      $or: [{ closesAt: null }, { closesAt: { $gt: now } }],
+    }).lean();
+
+    const visible = [];
     for (const request of pending) {
-      if (await trainerClientDao.findActiveByTrainerAndClient(request.trainerId, req.auth.userId)) activeTrainerIds.add(String(request.trainerId));
+      const relation = await trainerClientDao.findActiveByTrainerAndClient(request.trainerId, req.auth.userId);
+      if (relation) visible.push({ ...request, requestId: request._id });
     }
-    const visible = [
-      ...configs.filter((c) => !c.calendarManaged && activeTrainerIds.has(String(c.trainerId))),
-      // Sin "cadence": un CheckinRequest es una ocurrencia puntual del
-      // sistema de calendario (frequency/interval viven en CheckinSchedule,
-      // no aquí) — inventar "once" mentía sobre la periodicidad real.
-      ...pending.filter(r => activeTrainerIds.has(String(r.trainerId))).map(r => ({ ...r, requestId: r._id })),
-    ];
 
     const trainerIds = [...new Set(visible.map((c) => String(c.trainerId)))];
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
 
-    return res.send(
-      visible.map((c) => ({ ...c, trainer: trainersById.get(String(c.trainerId)) || null }))
-    );
+    return res.send(visible.map((c) => ({ ...c, trainer: trainersById.get(String(c.trainerId)) || null })));
   },
 
   // GET /trainer/checkins/mine/history — coach-tab FASE2, "formularios
@@ -245,16 +259,9 @@ module.exports = {
   // (ver checkin-dao.js, van a Anthropometry), así que no aparecen aquí.
   async listMyHistory(req, res) {
     const clientId = req.auth.userId;
-    const configs = await checkinDao.getAppliedConfigsForClient(clientId);
-    const activeTrainerIds = new Set();
-    for (const config of configs) {
-      const relation = await trainerClientDao.findActiveByTrainerAndClient(config.trainerId, clientId);
-      if (relation) activeTrainerIds.add(String(config.trainerId));
-    }
-
     const activeRelations = await trainerClientDao.findActiveByClient(clientId);
-    for (const relation of activeRelations) activeTrainerIds.add(String(relation.trainerId));
-    const trainerIds = [...activeTrainerIds];
+    const trainerIds = [...new Set(activeRelations.map((relation) => String(relation.trainerId)))];
+
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
 
@@ -269,167 +276,5 @@ module.exports = {
 
     return res.send(allResponses);
   },
-
-  // POST /trainer/checkins/:trainerId/respond
-  async respond(req, res) {
-    const clientId = req.auth.userId;
-    const trainerId = req.params.trainerId;
-
-    const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId);
-    if (!relation) {
-      return res.status(403).send({ message: "No tienes una relación activa con este profesional" });
-    }
-
-    const config = await checkinDao.getAppliedConfig(trainerId, clientId);
-    if (config?.calendarManaged) return res.status(409).send({ message: "Abre el check-in pendiente desde Mis check-ins" });
-    const enabledFields = new Set(config?.enabledFields || []);
-
-    // Fase 5 — preguntas propias activas de ESTE cliente (las de su copia
-    // aplicada, no las de la plantilla maestra, que puede haber cambiado
-    // desde entonces).
-    const customQuestions = new Map(
-      (config?.customQuestions || [])
-        .filter((q) => q.enabled)
-        .map((q) => [String(q._id), q])
-    );
-
-    const values = req.body?.values || {};
-    const submittedKeys = Object.keys(values);
-
-    // Las obligatorias se comprueban ANTES que nada: si falta una, el
-    // check-in entero se rechaza sin guardar la mitad de las respuestas.
-    for (const [questionId, question] of customQuestions) {
-      if (!question.required) continue;
-      const key = `custom:${questionId}`;
-      const value = values[key];
-      if (value === null || value === undefined || value === "") {
-        return res.status(400).send({
-          message: `"${question.label}" es obligatoria`,
-          code: "CHECKIN_REQUIRED_MISSING",
-        });
-      }
-    }
-
-    for (const key of submittedKeys) {
-      if (isCustomKey(key)) {
-        const question = customQuestions.get(questionIdFromKey(key));
-        if (!question) {
-          return res.status(400).send({
-            message: "Esa pregunta ya no está activa en este check-in",
-            code: "CHECKIN_FIELD_NOT_ACTIVE",
-          });
-        }
-        const error = validateCustomAnswer(question, values[key]);
-        if (error) return res.status(400).send({ message: error });
-        values[key] = normalizeCustomAnswer(question, values[key]);
-        continue;
-      }
-
-      if (!enabledFields.has(key)) {
-        return res.status(400).send({
-          message: `El campo "${key}" no está activo para este check-in`,
-          code: "CHECKIN_FIELD_NOT_ACTIVE",
-        });
-      }
-      const fieldDef = CHECKIN_FIELDS_BY_KEY.get(key);
-      const value = values[key];
-      // El máximo sale de las anclas del campo, no de un 5 fijo: el color de
-      // orina tiene 8 niveles y el resto 5, sin que ninguno necesite un tipo
-      // propio. Ver checkin-field-catalog.js#scaleLevelsFor.
-      if (fieldDef.type === "scale_1_5") {
-        const levels = scaleLevelsFor(fieldDef);
-        if (value < 1 || value > levels) {
-          return res.status(400).send({ message: `"${key}" debe estar entre 1 y ${levels}` });
-        }
-      }
-      // Cotas de plausibilidad: un ombligo de 44 cm no es una medida, es un
-      // dedo que ha resbalado. Se rechaza AQUÍ, al teclearlo, que es el único
-      // momento en que alguien puede corregirlo. Ver el comentario de min/max
-      // en checkin-field-catalog.js para el fallo real que originó esto.
-      if (fieldDef.type === "number" && !isPlausibleValue(fieldDef, value)) {
-        const unit = fieldDef.unit ? ` ${fieldDef.unit}` : "";
-        const range =
-          fieldDef.min !== undefined && fieldDef.max !== undefined
-            ? ` Debe estar entre ${fieldDef.min}${unit} y ${fieldDef.max}${unit}.`
-            : "";
-        return res.status(400).send({
-          message: `"${fieldDef.label}" no parece una medida real.${range}`,
-          code: "CHECKIN_VALUE_IMPLAUSIBLE",
-        });
-      }
-      if (fieldDef.type === "text") {
-        if (typeof value !== "string" || !value.trim()) {
-          return res.status(400).send({ message: `"${key}" es obligatorio y debe ser texto` });
-        }
-        if (value.length > 1000) {
-          return res.status(400).send({ message: `"${key}" no puede superar 1000 caracteres` });
-        }
-        values[key] = value.trim();
-      }
-    }
-
-    const anthropometryFields = {};
-    for (const key of submittedKeys) {
-      // Una pregunta propia nunca escribe en Anthropometry: no tiene
-      // semántica conocida (ver checkin-custom-question.js).
-      if (isCustomKey(key)) continue;
-      const fieldDef = CHECKIN_FIELDS_BY_KEY.get(key);
-      if (fieldDef.storage === "anthropometry") {
-        anthropometryFields[fieldDef.anthropometryField] = values[key];
-      }
-    }
-
-    let anthropometryDoc = null;
-    if (Object.keys(anthropometryFields).length) {
-      anthropometryDoc = await anthropometryDao.mergeAnthropometryFields(
-        clientId,
-        todayIsoDate(),
-        anthropometryFields
-      );
-    }
-
-    // Antes solo se creaba CheckinResponse si había campos wellbeing — un
-    // check-in respondido ÚNICAMENTE con composición corporal (peso,
-    // perímetros...) nunca generaba ningún registro aquí, así que jamás
-    // aparecía en "Respuestas de check-in" del trainer aunque el cliente sí
-    // hubiera respondido y visto el toast de éxito. Ahora se guarda SIEMPRE
-    // que se haya enviado algo, con TODOS los valores enviados (no solo los
-    // wellbeing) — usa las mismas claves del catálogo que ya sabe
-    // renderizar el frontend del trainer (checkinFieldLabel/Unit), así que
-    // los campos de composición se ven ahí con su etiqueta y unidad
-    // correctas sin tocar el frontend.
-    // UN check-in por ciclo. Antes cada envío creaba un CheckinResponse
-    // nuevo sin mirar si ya había uno esa semana, así que un cliente podía
-    // acumular siete respuestas donde la cadencia pedía una — de ahí el
-    // "7 de 4" de la ficha. Si ya respondió su ciclo, el envío no crea otra:
-    // reescribe la suya, para que pueda corregirse sin perder el registro.
-    //
-    // `respondedAt` no se toca al reescribir: moverlo cambiaría el ciclo al
-    // que pertenece la respuesta y falsearía la adherencia.
-    let responseDoc = null;
-    let updated = false;
-    if (submittedKeys.length) {
-      const existente =
-        config?.cadence === "once"
-          ? null
-          : await checkinDao.findResponseInCurrentCycle(
-              trainerId,
-              clientId,
-              cadenceDays(config?.cadence),
-              new Date()
-            );
-
-      if (existente) {
-        responseDoc = await checkinDao.updateResponseValues(existente._id, values);
-        updated = true;
-      } else {
-        responseDoc = await checkinDao.createResponse(trainerId, clientId, values);
-      }
-      await notificationDao.createForTrainer(trainerId, clientId, "checkin_responded", {});
-    }
-
-    return res
-      .status(updated ? 200 : 201)
-      .send({ anthropometry: anthropometryDoc, response: responseDoc, updated });
-  },
 };
+

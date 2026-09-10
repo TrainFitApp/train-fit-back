@@ -38,6 +38,7 @@ const TrainerIntakeConfigSchema = new Schema(
       },
     },
     customQuestions: { type: [CustomIntakeQuestionSchema], default: () => [] },
+    measurementFields: { type: [String], default: () => ["weight"] },
     // Últimos checkboxes de ámbito marcados en la pantalla de invitar (no el
     // scope de ninguna invitación en concreto) — solo para recordar el
     // estado de esos 2 checkboxes la próxima vez que el trainer entre,

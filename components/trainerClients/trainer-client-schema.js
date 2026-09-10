@@ -7,6 +7,8 @@ const TrainerClientSchema = new Schema(
     // clientId queda AUSENTE del documento (nunca `null` explícito) hasta que el
     // invitado acepta y se resuelve a un usuario real — ver modelos-de-datos/01-trainerclient.md.
     clientId: { type: Schema.Types.ObjectId, ref: "User", index: true },
+    stageId: { type: Schema.Types.ObjectId, ref: "CoachingStage", default: null },
+    activatedAt: { type: Date, default: null },
     clientEmail: { type: String, required: true, trim: true, lowercase: true },
     scope: {
       type: String,

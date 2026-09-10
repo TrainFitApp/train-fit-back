@@ -13,7 +13,7 @@ const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 // Confirma la cascada completa de users/schema.js: crea contenido en las
 // colecciones que dependen del trainer o del cliente (TrainerClient,
 // TrainerNote, TrainerPayment, TrainerTask+TaskCompletion, ClientIntake,
-// TrainerIntakeConfig, CheckinResponse, TrainerCheckinTemplate,
+// TrainerIntakeConfig, CheckinResponse,
 // CheckinTemplateDefinition, DietTemplate(copia)+DietException,
 // Notification, Recipe, BillingCustomer, BillingEvent), borra al TRAINER, y
 // confirma que todo desaparece — incluido lo que dependía del CLIENTE en la
@@ -34,7 +34,6 @@ async function main() {
   const clientIntakeSchema = require("../components/clientIntake/client-intake-schema");
   const trainerIntakeConfigSchema = require("../components/trainerIntakeConfig/trainer-intake-config-schema");
   const checkinResponseSchema = require("../components/trainerCheckins/checkin-response-schema");
-  const trainerCheckinTemplateSchema = require("../components/trainerCheckins/trainer-checkin-template-schema");
   const checkinTemplateDefinitionSchema = require("../components/trainerCheckins/checkin-template-definition-schema");
   const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
   const dietExceptionSchema = require("../components/dietExceptions/diet-exception-schema");
@@ -67,9 +66,6 @@ async function main() {
       trainerId: trainer._id, clientId: client._id, values: { weight: 80 },
     });
     docs.checkinTemplateDef = await checkinTemplateDefinitionSchema.create({ trainerId: trainer._id, name: `Plantilla ${runId}` });
-    docs.checkinTemplateApplied = await trainerCheckinTemplateSchema.create({
-      trainerId: trainer._id, clientId: client._id, enabledFields: [],
-    });
     docs.dietTemplateCopy = await dietTemplateSchema.create({
       trainerId: trainer._id, clientId: client._id, name: "Copia verificación",
       startDate: "2026-01-01", endMode: "indefinite", status: "active",
@@ -104,7 +100,6 @@ async function main() {
       ["TrainerIntakeConfig", trainerIntakeConfigSchema, docs.intakeConfig._id],
       ["CheckinResponse", checkinResponseSchema, docs.checkinResponse._id],
       ["CheckinTemplateDefinition", checkinTemplateDefinitionSchema, docs.checkinTemplateDef._id],
-      ["TrainerCheckinTemplate", trainerCheckinTemplateSchema, docs.checkinTemplateApplied._id],
       ["DietTemplate (copia)", dietTemplateSchema, docs.dietTemplateCopy._id],
       ["DietException", dietExceptionSchema, docs.dietException._id],
       ["Notification", notificationSchema, docs.notification._id],

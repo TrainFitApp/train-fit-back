@@ -245,12 +245,15 @@ module.exports = {
       invitation.trainerId,
       clientUser._id
     );
-    const nextStatus = alreadyActiveWithTrainer ? "active" : "cuestionario_pendiente";
+    const alreadyInReview = alreadyActiveWithTrainer ? [] : await trainerClientDao.findByTrainerAndClientInStatuses(invitation.trainerId, clientUser._id, ["en_revision"]);
+    const nextStatus = alreadyActiveWithTrainer ? "active" : alreadyInReview.length ? "en_revision" : "cuestionario_pendiente";
 
     const updated = await trainerClientDao.updateStatus(invitation._id, nextStatus, {
       clientId: clientUser._id,
       respondedAt: new Date(),
+      ...(nextStatus === "active" ? { activatedAt: new Date() } : {}),
     });
+    await require("../clientOverview/stage-service").ensureStages(invitation.trainerId, clientUser._id);
     await notificationDao.createForTrainer(invitation.trainerId, clientUser._id, "invite_accepted", {
       scope: invitation.scope,
     });
@@ -265,22 +268,19 @@ module.exports = {
    * preferencias — no se duplica ese dato en un schema aparte.
    */
   async submitIntake(trainerId, clientId, intakeData) {
+    const overviewIntake = require("../clientOverview/intake-service");
+    const prepared = await overviewIntake.prepareIntake(trainerId, clientId, intakeData);
     const pendingRelations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
       "cuestionario_pendiente",
     ]);
     if (!pendingRelations.length) {
+      if (prepared.alreadyComplete) return clientIntakeDao.getByTrainerAndClient(trainerId, clientId);
       const err = new Error("No tienes ningún cuestionario pendiente con este profesional");
       err.code = "NO_INTAKE_PENDING";
       throw err;
     }
 
-    const intake = await clientIntakeDao.upsert(trainerId, clientId, intakeData);
-    await nutritionPreferencesDao.upsertOwnResponse(clientId, {
-      allergies: intakeData.allergies,
-      favoriteFoods: intakeData.favoriteFoods,
-      dislikedFoods: intakeData.dislikedFoods,
-      cooksAtHome: intakeData.cooksAtHome,
-    });
+    const intake = await overviewIntake.persistPreparedIntake(trainerId, clientId, prepared);
     await trainerClientDao.updateManyStatus(trainerId, clientId, "cuestionario_pendiente", "en_revision");
     await notificationDao.create(clientId, trainerId, "intake_submitted", {});
     await notificationDao.createForTrainer(trainerId, clientId, "intake_submitted_trainer", {});
@@ -303,7 +303,7 @@ module.exports = {
       throw err;
     }
 
-    await trainerClientDao.updateManyStatus(trainerId, clientId, "en_revision", "active");
+    await trainerClientDao.updateManyStatus(trainerId, clientId, "en_revision", "active", { activatedAt: new Date() });
     await notificationDao.create(clientId, trainerId, "client_confirmed", {});
     return trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, ["active"]);
   },
@@ -322,7 +322,7 @@ module.exports = {
       trainerClientDao.findAllByClient(clientId, { status: ["cuestionario_pendiente", "en_revision"] }),
     ]);
 
-    if (active.length || !onboarding.length) {
+    if (!onboarding.length) {
       return { blocked: false, relations: [] };
     }
 
@@ -338,13 +338,22 @@ module.exports = {
       trainerIntakeConfigService.getEnabledFieldsByTrainers(trainerIds),
       trainerIntakeConfigService.getCustomQuestionsByTrainers(trainerIds),
     ]);
+    const overviewConfigs = new Map(await Promise.all(trainerIds.map(async (id) => [id, await trainerIntakeConfigService.getMyConfig(id)])));
+    const stageIds = new Map(await Promise.all(trainerIds.map(async (id) => {
+      const { stage } = await require("../clientOverview/stage-service").resolveStage(id, clientId, null, { onboarding: true });
+      return [id, String(stage._id)];
+    })));
     return {
-      blocked: true,
+      blocked: !active.length,
       relations: enriched.map((r) => ({
         trainerId: r.trainerId,
         scope: r.scope,
         status: r.status,
         trainer: r.trainer,
+        stageId: stageIds.get(String(r.trainerId)),
+        intakeMeasurementFields: overviewConfigs.get(String(r.trainerId)).measurementFields,
+        intakeMeasurementCatalog: overviewConfigs.get(String(r.trainerId)).measurementCatalog,
+        intakeConfigVersion: overviewConfigs.get(String(r.trainerId)).version,
         intakeEnabledFields: enabledFieldsByTrainer.get(String(r.trainerId)),
         // Mismo criterio que intakeEnabledFields — por trainer, no por scope
         // de la relación (ver comentario del schema en
@@ -365,8 +374,9 @@ module.exports = {
 
   // TASK-062 (MASTER_BACKLOG.md)
   async getPreviousRelationCutoff(trainerId, clientId) {
-    const latestRevoked = await trainerClientDao.findLatestRevokedForClient(trainerId, clientId);
-    return latestRevoked?.revokedAt || null;
+    const { stages } = await require("../clientOverview/stage-service").ensureStages(trainerId, clientId);
+    const current = [...stages].reverse().find((stage) => !stage.endedAt);
+    return stages.length > 1 && current ? current.startedAt : null;
   },
 
   async listActiveClientsForTrainer(trainerId) {
@@ -386,19 +396,23 @@ module.exports = {
   async revokeByTrainer(trainerId, clientId, scope) {
     const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId, scope);
     if (!relation) return null; // ya no activa, o nunca existió — idempotente
-    return trainerClientDao.updateStatus(relation._id, "revoked", {
+    const updated = await trainerClientDao.updateStatus(relation._id, "revoked", {
       revokedBy: "trainer",
       revokedAt: new Date(),
     });
+    await require("../clientOverview/stage-service").ensureStages(trainerId, clientId);
+    return updated;
   },
 
   async revokeByClient(clientId, scope) {
     const relation = await trainerClientDao.findActiveByClientAndScope(clientId, scope);
     if (!relation) return null;
-    return trainerClientDao.updateStatus(relation._id, "revoked", {
+    const updated = await trainerClientDao.updateStatus(relation._id, "revoked", {
       revokedBy: "client",
       revokedAt: new Date(),
     });
+    await require("../clientOverview/stage-service").ensureStages(relation.trainerId, clientId);
+    return updated;
   },
 
   async listHistoryByTrainer(trainerId) {

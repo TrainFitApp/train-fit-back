@@ -20,6 +20,10 @@ const CoachTaskSchema = new Schema(
     // ("preparar plantillas de volumen"). Cuando está, la tarea aparece
     // también en la ficha de ese cliente.
     clientId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    stageId: { type: Schema.Types.ObjectId, ref: "CoachingStage", default: null },
+    requestId: { type: String, default: undefined },
+    version: { type: Number, default: 0 },
+    updatedAt: { type: Date, default: Date.now },
 
     title: { type: String, required: true, trim: true, maxlength: 200 },
     notes: { type: String, trim: true, maxlength: 1000, default: "" },
@@ -51,5 +55,6 @@ CoachTaskSchema.index({ trainerId: 1, status: 1, dueDate: 1 });
 
 // La ficha del cliente pide solo los suyos.
 CoachTaskSchema.index({ clientId: 1, status: 1 });
+CoachTaskSchema.index({ trainerId: 1, requestId: 1 }, { unique: true, partialFilterExpression: { requestId: { $type: "string" } } });
 
 module.exports = mongoose.model("CoachTask", CoachTaskSchema);

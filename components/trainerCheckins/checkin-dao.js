@@ -1,16 +1,17 @@
 const mongoose = require("mongoose");
 const CheckinTemplateDefinition = require("./checkin-template-definition-schema");
-const TrainerCheckinTemplate = require("./trainer-checkin-template-schema");
 const CheckinResponse = require("./checkin-response-schema");
+const CheckinRequest = require("./checkin-request-schema");
 
 module.exports = {
   // --- CheckinTemplateDefinition (plantillas maestras) ---
-  async createDefinition(trainerId, name, enabledFields, cadence, customQuestions = []) {
+  async createDefinition(trainerId, name, enabledFields, timing = {}, customQuestions = []) {
     return CheckinTemplateDefinition.create({
       trainerId,
       name,
       enabledFields,
-      cadence,
+      frequency: timing.frequency || "weekly",
+      interval: timing.interval || 1,
       customQuestions,
     });
   },
@@ -35,56 +36,9 @@ module.exports = {
     return CheckinTemplateDefinition.findOneAndDelete({ _id: id, trainerId });
   },
 
-  // --- TrainerCheckinTemplate (configuración ya aplicada a un cliente) ---
-  // Copia enabledFields/cadence de la definición al momento de aplicar — nunca
-  // una referencia viva (ver modelos-de-datos/03-trainercheckintemplate.md).
-  async applyToClient(trainerId, clientId, definition) {
-    return TrainerCheckinTemplate.findOneAndUpdate(
-      { trainerId, clientId },
-      {
-        $set: {
-          enabledFields: definition.enabledFields,
-          cadence: definition.cadence,
-          calendarManaged: false,
-          // Fase 5 — las preguntas propias se copian igual que el resto,
-          // CONSERVANDO su _id: la respuesta viaja con la clave
-          // "custom:<id>" (ver checkin-custom-question.js), así que
-          // regenerar los ids al reaplicar dejaría huérfanas todas las
-          // respuestas anteriores, que aparecerían sin enunciado.
-          customQuestions: (definition.customQuestions || []).map((q) =>
-            typeof q.toObject === "function" ? q.toObject() : q
-          ),
-          sourceTemplateId: definition._id,
-          updatedAt: new Date(),
-        },
-      },
-      { new: true, upsert: true }
-    );
-  },
-
-  async getAppliedConfig(trainerId, clientId) {
-    return TrainerCheckinTemplate.findOne({ trainerId, clientId }).lean();
-  },
-
-  async getAppliedConfigsForClient(clientId) {
-    return TrainerCheckinTemplate.find({ clientId }).lean();
-  },
-
   // --- CheckinResponse (histórico, solo campos wellbeing-backed) ---
   async createResponse(trainerId, clientId, values) {
     return CheckinResponse.create({ trainerId, clientId, values });
-  },
-
-  // La respuesta de ESTE ciclo, si ya existe. Un ciclo es la ventana de
-  // `cadenceDays` días que acaba ahora: con cadencia semanal, los últimos 7.
-  async findResponseInCurrentCycle(trainerId, clientId, cadenceDays, now = new Date()) {
-    const desde = new Date(now.getTime() - cadenceDays * 86400000);
-    return CheckinResponse.findOne({
-      trainerId,
-      clientId,
-      scheduleId: { $exists: false },
-      respondedAt: { $gte: desde, $lte: now },
-    }).sort({ respondedAt: -1 });
   },
 
   // Reescribe los valores de una respuesta ya enviada. `respondedAt` NO se
@@ -120,15 +74,6 @@ module.exports = {
       .lean();
   },
 
-  // Dashboard trainer, "Requiere tu atención" — configuraciones de check-in
-  // aplicadas por este trainer a CUALQUIERA de sus clientes (a diferencia de
-  // getAppliedConfigsForClient, que es de un cliente concreto). Junto con
-  // getLatestResponseByClient sirve para calcular isCheckinDue por cliente
-  // sin recorrer clientes uno a uno.
-  async getAppliedConfigsForTrainer(trainerId) {
-    return TrainerCheckinTemplate.find({ trainerId }).populate("clientId", "name lastname").lean();
-  },
-
   // Última respuesta (fecha) de CADA cliente de este trainer, en una sola
   // agregación — a diferencia de listResponsesForTrainer (limit() global
   // ordenado por fecha, que con muchos clientes activos podría dejar fuera
@@ -157,7 +102,33 @@ module.exports = {
       .lean();
   },
 
-  // TASK-024 (MASTER_BACKLOG.md)
+  // --- Ocurrencias (CheckinRequest) ---
+  // La adherencia, la Cartera y las alertas miden sobre solicitudes reales,
+  // no sobre una cadencia declarada (ver checkin-occurrences.js). Estas dos
+  // consultas son su única fuente.
+  async listRequestsInWindow(trainerId, clientId, from, to) {
+    return CheckinRequest.find({
+      trainerId,
+      clientId,
+      scheduledAt: {
+        $gte: new Date(`${from}T00:00:00.000Z`),
+        $lte: new Date(`${to}T23:59:59.999Z`),
+      },
+    })
+      .select("scheduledAt closesAt status respondedAt name")
+      .sort({ scheduledAt: -1 })
+      .lean();
+  },
+
+  // Toda la cartera de una vez: el evaluador nocturno y la Cartera miran a
+  // 30 clientes a la vez y no pueden permitirse una consulta por cliente.
+  async listRequestsForTrainerSince(trainerId, since) {
+    return CheckinRequest.find({ trainerId, scheduledAt: { $gte: since } })
+      .select("clientId scheduledAt closesAt status respondedAt name")
+      .sort({ scheduledAt: -1 })
+      .lean();
+  },
+
   async countUnseenForTrainer(trainerId) {
     return CheckinResponse.countDocuments({ trainerId, seenByTrainer: false });
   },

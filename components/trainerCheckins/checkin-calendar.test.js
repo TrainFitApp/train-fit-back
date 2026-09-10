@@ -9,7 +9,6 @@ const Response = require("./checkin-response-schema");
 const Notification = require("../notifications/notification-schema");
 const relations = require("../trainerClients/trainer-client-dao");
 const anthropometry = require("../anthropometry/anthropometry-dao");
-const { isCheckinDue } = require("./checkin-due");
 const timing = { startDate: "2026-03-22", time: "09:00", timeZone: "Europe/Madrid", frequency: "weekly", interval: 1 };
 const query = value => ({ lean: async () => value });
 const id = "aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -130,7 +129,3 @@ test("la revisión no vuelve a escribir medidas y los avisos usan claves idempot
   assert.deepEqual(notice.mock.calls.map(c => c.arguments[0].dedupeKey), [`checkin_responded:${id}`, `checkin_reviewed:${id}`]);
 });
 
-test("un formulario independiente no reinicia la cadencia del anterior", () => {
-  assert.equal(isCheckinDue({ cadence: "weekly" }, [{ scheduleId: id, respondedAt: new Date() }]), true);
-  assert.equal(isCheckinDue({ calendarManaged: true }, []), false);
-});

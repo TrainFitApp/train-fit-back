@@ -16,7 +16,12 @@ const CheckinTemplateDefinitionSchema = new Schema({
   },
   // coach-tab FASE2 — "once" es una plantilla de una sola vez (nunca vuelve
   // a estar pendiente tras la primera respuesta), "biweekly" cada 14 días.
-  cadence: { type: String, enum: ["weekly", "biweekly", "once"], default: "weekly" },
+  // Periodicidad por defecto al aplicar la plantilla a un cliente, en el
+  // mismo vocabulario que usa la programación real (CheckinSchedule). Antes
+  // era `cadence: weekly|biweekly|once`, un tercer vocabulario para lo
+  // mismo. El entrenador puede ajustarla por cliente después.
+  frequency: { type: String, enum: ["once", "daily", "weekly", "monthly"], default: "weekly" },
+  interval: { type: Number, min: 1, max: 52, default: 1 },
   // Fase 5 Coach Pro — preguntas propias del coach (§7), con tipo. Conviven
   // con enabledFields, que sigue siendo el catálogo cerrado — ver
   // checkin-custom-question.js para por qué son dos cosas distintas.

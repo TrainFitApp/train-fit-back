@@ -1,9 +1,9 @@
 const Schedule = require("./checkin-schedule-schema");
 const Request = require("./checkin-request-schema");
-const Legacy = require("./trainer-checkin-template-schema");
 const dao = require("./checkin-dao");
 const relations = require("../trainerClients/trainer-client-dao");
 const { validateTiming, validDate, calendarDate, occurrenceAt, occurrencesBetween, nextOccurrence } = require("./checkin-schedule-dates");
+const { CHECKIN_FIELD_KEYS } = require("./checkin-field-catalog");
 const service = require("./checkin-calendar-service");
 const scope = req => ({ trainerId: req.auth.userId, clientId: req.params.clientId });
 const validId = id => typeof id === "string" && /^[a-f\d]{24}$/i.test(id);
@@ -14,9 +14,8 @@ module.exports = {
     const { from, to } = req.query;
     if (!validDate(from) || !validDate(to) || from > to || (new Date(to) - new Date(from)) > 370 * 86400000) return res.status(400).send({ message: "Elige un rango de hasta un año" });
     const schedules = await Schedule.find(scope(req)).sort({ createdAt: 1 }).lean();
-    const [requests, legacyConfig, legacyResponses] = await Promise.all([
+    const [requests, legacyResponses] = await Promise.all([
       Request.find({ ...scope(req), scheduledAt: { $gte: new Date(new Date(from).getTime() - 86400000), $lte: new Date(new Date(to).getTime() + 2 * 86400000) } }).sort({ scheduledAt: -1 }).lean(),
-      Legacy.findOne(scope(req)).lean(),
       dao.listResponses(req.auth.userId, req.params.clientId),
     ]);
     const now = new Date();
@@ -32,10 +31,10 @@ module.exports = {
     ]);
     const historic = legacyResponses.filter(r => !r.scheduleId);
     const historicEntries = historic.filter(r => new Date(r.respondedAt) >= new Date(from) && new Date(r.respondedAt) <= new Date(`${to}T23:59:59.999Z`)).map(r => ({
-      ...r, scheduleId: "legacy", name: "Check-in anterior", scheduledAt: r.respondedAt, timeZone: "UTC", status: "legacy", customQuestions: legacyConfig?.customQuestions || [],
+      ...r, scheduleId: "legacy", name: "Check-in anterior", scheduledAt: r.respondedAt, timeZone: "UTC", status: "legacy", customQuestions: r.customQuestions || [],
     }));
     const responses = legacyResponses.filter(r => r.scheduleId).slice(0, 200);
-    return res.send({ schedules, entries: [...entries, ...historicEntries], responses: [...responses, ...historic.map(r => ({ ...r, scheduleId: "legacy", customQuestions: legacyConfig?.customQuestions || [] }))], pendingReviews, reviewCount, legacyConfig: legacyConfig?.calendarManaged ? null : legacyConfig, legacyResponses: historic });
+    return res.send({ schedules, entries: [...entries, ...historicEntries], responses: [...responses, ...historic.map(r => ({ ...r, scheduleId: "legacy", customQuestions: r.customQuestions || [] }))], pendingReviews, reviewCount, legacyResponses: historic });
   },
 
   async saveSchedule(req, res) {
@@ -47,9 +46,22 @@ module.exports = {
     if (req.params.scheduleId && !existing) return notFound(res);
     let content = existing;
     if (!existing) {
-      if (data.legacyConfigId) content = validId(data.legacyConfigId) ? await Legacy.findOne({ ...scope(req), _id: data.legacyConfigId, calendarManaged: { $ne: true } }).lean() : null;
-      else content = validId(data.sourceTemplateId) ? await dao.getDefinitionById(req.auth.userId, data.sourceTemplateId) : null;
-      if (!content) return res.status(400).send({ message: "Selecciona una plantilla disponible" });
+      if (validId(data.sourceTemplateId)) {
+        content = await dao.getDefinitionById(req.auth.userId, data.sourceTemplateId);
+        if (!content) return res.status(400).send({ message: "Selecciona una plantilla disponible" });
+      } else if (Array.isArray(data.enabledFields) && data.enabledFields.length) {
+        // Fase 8 — alternativa a la plantilla: campos sueltos del catálogo,
+        // igual que ya hace tracking-controller.js#applyPreset pero desde
+        // este endpoint general en vez de un `CheckinSchedule.create` aparte.
+        // Sin `sourceTemplateId`: no hereda cambios futuros de ninguna
+        // plantilla porque no viene de ninguna.
+        if (!data.enabledFields.every(f => CHECKIN_FIELD_KEYS.includes(f))) {
+          return res.status(400).send({ message: "enabledFields contiene una clave no reconocida en el catálogo" });
+        }
+        content = { enabledFields: data.enabledFields, customQuestions: [] };
+      } else {
+        return res.status(400).send({ message: "Selecciona una plantilla o elige al menos un campo" });
+      }
     }
     if (!content.enabledFields?.length && !content.customQuestions?.some(q => q.enabled !== false)) return res.status(400).send({ message: "El check-in necesita al menos una pregunta activa" });
     const timing = { startDate: data.startDate, time: data.time, timeZone: data.timeZone, frequency: data.frequency, interval: data.interval };
@@ -72,10 +84,9 @@ module.exports = {
       if (!schedule || schedule.conflict) return res.status(409).send({ message: "La programación está cambiando. Recarga y vuelve a intentarlo" });
     } else {
       schedule = await Schedule.create({ ...scope(req), ...timing, name: data.name.trim(), nextRunAt: occurrenceAt(timing, 0),
-        sourceTemplateId: data.sourceTemplateId || content.sourceTemplateId || null, legacyConfigId: data.legacyConfigId || null,
+        sourceTemplateId: data.sourceTemplateId || content.sourceTemplateId || null, legacyConfigId: null,
         enabledFields: content.enabledFields, customQuestions: content.customQuestions || [],
       });
-      if (data.legacyConfigId) await Legacy.updateOne({ ...scope(req), _id: data.legacyConfigId }, { $set: { calendarManaged: true } });
     }
     await service.materialize(schedule.toObject ? schedule.toObject() : schedule, now);
     return res.status(existing ? 200 : 201).send(schedule);

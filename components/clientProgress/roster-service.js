@@ -4,6 +4,7 @@ const {
 } = require("../coachAlerts/coach-alert-service");
 const { SIGNAL_THRESHOLDS } = require("../coachAlerts/coach-signals-service");
 const { computeAdherence } = require("./adherence-service");
+const { summarizeOccurrences } = require("../trainerCheckins/checkin-occurrences");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { taskLabel } = require("../trainerTasks/task-label");
 const tableDao = require("../tables/table-dao");
@@ -229,8 +230,7 @@ async function buildRoster(trainerId, now = new Date()) {
         })),
       },
       checkins: {
-        respondedAt: (snapshot.checkinResponses || []).map((r) => r.respondedAt),
-        cadence: snapshot.checkinConfig?.cadence,
+        requests: snapshot.checkinRequests || [],
         periodDays: ROSTER_WINDOW_DAYS,
         now,
       },
@@ -253,7 +253,20 @@ async function buildRoster(trainerId, now = new Date()) {
       weightChange: weightChangeFor(snapshot.entries),
       lastCheckinAt: snapshot.lastResponseAt || null,
       daysSinceCheckin: daysSince(snapshot.lastResponseAt, now),
-      checkinCadence: snapshot.checkinConfig?.cadence || null,
+      // "Vencido" ya no se deduce de una cadencia declarada: es que se le
+      // cerró algún check-in sin responder dentro de la ventana.
+      checkinOverdue: summarizeOccurrences(snapshot.checkinRequests || [], now).missed > 0,
+      // Fase 6 — mismo objeto que ya calcula complianceFor para la señal
+      // nocturna (ver coach-alert-service#buildClientSnapshots): null =
+      // cliente "libre", sin pauta que vigilar.
+      weightPlan: snapshot.weightPlanCompliance
+        ? {
+            intervalDays: snapshot.weightPlanCompliance.intervalDays,
+            upToDate: snapshot.weightPlanCompliance.upToDate,
+            overdueDays: snapshot.weightPlanCompliance.overdueDays,
+            neverWeighed: snapshot.weightPlanCompliance.neverWeighed,
+          }
+        : null,
       lastActivityAt: snapshot.lastActivityAt || null,
       daysSinceActivity: daysSince(snapshot.lastActivityAt, now),
       sessions: (snapshot.workoutDates || []).length,

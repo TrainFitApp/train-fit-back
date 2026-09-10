@@ -21,10 +21,10 @@ module.exports = {
     return new Map(trainerIds.map((id) => [id, byTrainer.get(id) || [...INTAKE_FIELD_KEYS]]));
   },
 
-  async upsert(trainerId, enabledFields, customQuestions, lastScopes) {
+  async upsert(trainerId, enabledFields, customQuestions, lastScopes, measurementFields) {
     return TrainerIntakeConfig.findOneAndUpdate(
       { trainerId },
-      { $set: { enabledFields, customQuestions, lastScopes, updatedAt: new Date() } },
+      { $set: { enabledFields, customQuestions, lastScopes, ...(measurementFields !== undefined ? { measurementFields } : {}), updatedAt: new Date() } },
       { new: true, upsert: true }
     ).lean();
   },

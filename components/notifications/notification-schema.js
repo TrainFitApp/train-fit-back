@@ -37,7 +37,12 @@ const NotificationSchema = new Schema(
         "intake_submitted",
         "client_confirmed",
         "meal_prescribed",
+        // Vivo solo para leer notificaciones ya escritas: las peticiones de
+        // medidas dejaron de existir como flujo propio (los perímetros se
+        // piden como check-in, el peso con una pauta). No se escriben nuevas.
         "anthropometry_requested",
+        // "Toca pesarte": vence la ventana de la pauta de peso.
+        "weight_due",
         // --- Cliente → trainer (destinatario: trainer) ---
         "invite_accepted",
         "intake_submitted_trainer",

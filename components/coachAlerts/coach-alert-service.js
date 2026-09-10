@@ -11,6 +11,8 @@ const userSchema = require("../users/schema");
 const { runRulesForTrainer } = require("../coachRules/coach-rule-service");
 const tableDao = require("../tables/table-dao");
 const painDao = require("../painLog/pain-dao");
+const weightPlanDao = require("../weightPlans/weight-plan-dao");
+const { complianceFor } = require("../weightPlans/weight-plan-service");
 
 // Días de silencio tras un cierre MANUAL de una alerta antes de que el
 // evaluador pueda volver a abrirla. Si el coach mira un estancamiento y
@@ -74,15 +76,19 @@ async function loadTrainerContext(trainerId, now) {
   const [
     activeClients,
     pendingReviewRelations,
-    checkinConfigs,
     latestResponses,
+    checkinRequests,
     endingSoon,
     checkinResponses,
+    weightPlans,
   ] = await Promise.all([
     trainerClientService.listActiveClientsForTrainer(trainerId),
     trainerClientDao.findByTrainerAndStatusWithClient(trainerId, "en_revision"),
-    checkinDao.getAppliedConfigsForTrainer(trainerId),
     checkinDao.getLatestResponseByClient(trainerId),
+    checkinDao.listRequestsForTrainerSince(
+      trainerId,
+      new Date(now.getTime() - SIGNAL_THRESHOLDS.analysisWindowDays * 86400000)
+    ),
     planAssignmentService.listEndingSoonForTrainer(trainerId, PLAN_ENDING_LOOKAHEAD_DAYS),
     // Fase 3 — los VALORES de las respuestas, no solo sus fechas: las reglas
     // del coach pueden condicionar sobre bienestar (estrés, sueño, pasos).
@@ -91,11 +97,14 @@ async function loadTrainerContext(trainerId, now) {
       trainerId,
       new Date(now.getTime() - SIGNAL_THRESHOLDS.analysisWindowDays * 86400000)
     ),
+    // Fase 6 — las pautas de peso de TODA la cartera, para saber quién se ha
+    // dejado de pesar. Solo depende de trainerId, no de clientIds todavía.
+    weightPlanDao.findByTrainer(trainerId),
   ]);
 
   const clientIds = activeClients.filter((entry) => entry.user).map((entry) => entry.user._id);
 
-  const [anthropometryEntries, clientDiets, workoutDates, painEntries] = await Promise.all([
+  const [anthropometryEntries, clientDiets, workoutDates, painEntries, lastWeightByClientId] = await Promise.all([
     anthropometryDao.listForUsersSince(clientIds, windowStart),
     // tableInUse va en el MISMO select que dietInUse (no en una consulta
     // aparte): la vista de Cartera lo necesita para las sesiones prescritas
@@ -116,6 +125,12 @@ async function loadTrainerContext(trainerId, now) {
     // pain_max). Mismo criterio que las sesiones de arriba: entra en el
     // evaluador nocturno porque su consulta es barata en lote.
     painDao.listForUsersSince(clientIds, windowStart),
+    // Fase 6 — el ÚLTIMO peso real de cada cliente, sin acotar por ventana:
+    // una pauta de 90 días o un cliente atrasado más de analysisWindowDays
+    // no debe parecer "nunca se ha pesado" solo porque su último peso quedó
+    // fuera de los 28 días de anthropometryEntries. Mismo agregado que ya
+    // usa weight-plan-reminder-service.js.
+    anthropometryDao.lastWeightByUsers(clientIds),
   ]);
 
   const anthropometryByClient = groupBy(anthropometryEntries, (entry) => String(entry.userId));
@@ -149,9 +164,6 @@ async function loadTrainerContext(trainerId, now) {
   return {
     activeClients,
     pendingReviewRelations,
-    checkinByClient: new Map(
-      checkinConfigs.filter((c) => c.clientId).map((c) => [String(c.clientId._id), c])
-    ),
     lastResponseByClient: new Map(latestResponses.map((r) => [String(r._id), r.respondedAt])),
     endingSoonByClient: new Map(
       endingSoon.filter((a) => a.clientId).map((a) => [String(a.clientId._id), a])
@@ -159,11 +171,18 @@ async function loadTrainerContext(trainerId, now) {
     anthropometryByClient,
     adherenceByClient,
     checkinResponsesByClient: groupBy(checkinResponses, (r) => String(r.clientId)),
+    // Ocurrencias reales de check-in: el denominador de la adherencia y la
+    // señal de "no responde", que antes solo entendían el sistema legacy.
+    checkinRequestsByClient: groupBy(checkinRequests, (r) => String(r.clientId)),
     workoutDatesByClient: groupBy(workoutDates, (row) => String(row.userId)),
     painEntriesByClient: groupBy(painEntries, (row) => String(row.userId)),
     // Solo lo consume la Cartera (roster-service.js); las señales nocturnas
     // no miran la rutina asignada, ver detectInactivity.
     tableIdByClient,
+    // Fase 6 — una pauta por cliente (índice único trainerId+clientId en el
+    // esquema), y su último peso real conocido.
+    weightPlanByClient: new Map(weightPlans.map((plan) => [String(plan.clientId), plan])),
+    lastWeightByClient: lastWeightByClientId,
   };
 }
 
@@ -207,6 +226,7 @@ function buildClientSnapshots(context, now) {
       now,
       entries: [],
       checkinResponses: [],
+      checkinRequests: [],
     });
   }
 
@@ -216,8 +236,14 @@ function buildClientSnapshots(context, now) {
     const entries = context.anthropometryByClient.get(clientKey) || [];
     const adherence = context.adherenceByClient.get(clientKey) || null;
     const lastResponseAt = context.lastResponseByClient.get(clientKey) || null;
-    const config = context.checkinByClient.get(clientKey) || null;
     const endingSoon = context.endingSoonByClient.get(clientKey) || null;
+    // Fase 6 — cumplimiento de la pauta de peso, ya resuelto aquí (no en la
+    // señal) para que la Cartera y el evaluador nocturno lean el mismo
+    // objeto en vez de recalcularlo cada uno a su manera.
+    const weightPlan = context.weightPlanByClient?.get(clientKey) || null;
+    const weightPlanCompliance = weightPlan
+      ? complianceFor(weightPlan, context.lastWeightByClient?.get(clientKey) || null, now)
+      : null;
 
     snapshots.push({
       clientId: entry.user._id,
@@ -231,8 +257,8 @@ function buildClientSnapshots(context, now) {
       entries,
       adherence,
       lastResponseAt,
-      checkinConfig: config,
       checkinResponses: context.checkinResponsesByClient.get(clientKey) || [],
+      checkinRequests: context.checkinRequestsByClient?.get(clientKey) || [],
       // Fase 6 — solo las FECHAS de las sesiones: es lo que necesita la
       // métrica de regla "sesiones entrenadas", y lo único que sale barato
       // para toda la cartera.
@@ -244,6 +270,7 @@ function buildClientSnapshots(context, now) {
         ? { daysLeft: endingSoon.daysLeft, endDate: endingSoon.endDate }
         : null,
       lastActivityAt: lastActivityFor({ lastResponseAt, entries, adherence, now }),
+      weightPlanCompliance,
     });
   }
 
@@ -268,11 +295,10 @@ function buildSignalsFromSnapshots(snapshots) {
       now: snapshot.now,
       entries: snapshot.entries,
       adherence: snapshot.adherence,
-      checkin: snapshot.checkinConfig
-        ? { config: snapshot.checkinConfig, lastResponseAt: snapshot.lastResponseAt }
-        : null,
+      checkin: { requests: snapshot.checkinRequests || [], lastResponseAt: snapshot.lastResponseAt },
       planEndingSoon: snapshot.planEndingSoon,
       lastActivityAt: snapshot.lastActivityAt,
+      weightPlanCompliance: snapshot.weightPlanCompliance,
     }),
   }));
 }

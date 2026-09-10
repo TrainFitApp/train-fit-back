@@ -1,12 +1,13 @@
 const trainerClientService = require("../trainerClients/trainer-client-service");
-const checkinDao = require("../trainerCheckins/checkin-dao");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
 const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
-const { isCheckinDue } = require("../trainerCheckins/checkin-due");
+const weightPlanDao = require("../weightPlans/weight-plan-dao");
+const anthropometryDao = require("../anthropometry/anthropometry-dao");
+const { complianceFor } = require("../weightPlans/weight-plan-service");
 
 module.exports = {
   // GET /coach/dashboard — cliente autenticado. Agrega, de TODOS sus
@@ -40,18 +41,10 @@ module.exports = {
     const trainerName = (trainerId) => nameByTrainerId.get(String(trainerId)) || "Tu profesional";
 
     // --- Check-ins pendientes ---
-    const appliedConfigs = await checkinDao.getAppliedConfigsForClient(clientId);
-    const visibleConfigs = appliedConfigs.filter((c) => activeTrainerIdSet.has(String(c.trainerId)));
+    // Una solicitud real y abierta, no una "configuración con cadencia"
+    // permanentemente vencida: el cliente ve lo que puede contestar ahora.
     const pendingCheckins = [];
-    for (const config of visibleConfigs) {
-      const responses = await checkinDao.listResponses(config.trainerId, clientId);
-      touchActivity(config.trainerId, config.updatedAt);
-      if (isCheckinDue(config, responses)) {
-        pendingCheckins.push({ trainerId: config.trainerId, trainerName: trainerName(config.trainerId) });
-      }
-    }
 
-    // --- Propuestas de comida pendientes de elegir ---
     const now = new Date();
     const calendarRequests = await require("../trainerCheckins/checkin-request-schema").find({ clientId, trainerId: { $in: activeTrainerIds }, status: "pending", scheduledAt: { $lte: now }, $or: [{ closesAt: null }, { closesAt: { $gt: now } }] }).lean();
     for (const request of calendarRequests) {
@@ -101,6 +94,26 @@ module.exports = {
           trainerName: trainerName(p.trainerId),
         };
       });
+
+    // --- Pauta de peso vencida ---
+    // La petición de medidas era el ÚNICO pendiente que no llegaba hasta
+    // aquí: existía como notificación suelta y como aviso dentro de la
+    // pantalla de peso, así que el cliente que entraba por este resumen no
+    // se enteraba de que se lo estaban pidiendo. Su sustituta sí entra.
+    const weightPlans = (await weightPlanDao.findByClient(clientId)).filter((plan) =>
+      activeTrainerIdSet.has(String(plan.trainerId))
+    );
+    const lastWeight = weightPlans.length ? await anthropometryDao.findLastWeight(clientId) : null;
+    const pendingWeighIns = weightPlans
+      .map((plan) => ({ plan, compliance: complianceFor(plan, lastWeight) }))
+      .filter(({ compliance }) => !compliance.upToDate)
+      .map(({ plan, compliance }) => ({
+        trainerId: plan.trainerId,
+        trainerName: trainerName(plan.trainerId),
+        intervalDays: compliance.intervalDays,
+        overdueDays: compliance.overdueDays,
+        lastWeightAt: compliance.lastWeightAt,
+      }));
 
     // --- Rutina / objetivo asignados actualmente ---
     const user = await userSchema.findById(clientId).select("tableInUse goalInUse");
@@ -156,6 +169,7 @@ module.exports = {
     return res.send({
       professionals: professionalsWithActivity,
       pendingCheckins,
+      pendingWeighIns,
       pendingMealProposals,
       nutritionPreferences,
       pendingPayments,
@@ -164,8 +178,4 @@ module.exports = {
     });
   },
 
-  // Re-export de trainerCheckins/checkin-due.js — mantiene el punto de
-  // entrada que ya usaba su test sin duplicar la lógica. Los consumidores
-  // NUEVOS deben importar de checkin-due.js directamente, no de aquí.
-  isCheckinDue,
 };

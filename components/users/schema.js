@@ -27,7 +27,6 @@ const trainerTaskSchema = require("../trainerTasks/trainer-task-schema");
 const clientIntakeSchema = require("../clientIntake/client-intake-schema");
 const trainerIntakeConfigSchema = require("../trainerIntakeConfig/trainer-intake-config-schema");
 const checkinResponseSchema = require("../trainerCheckins/checkin-response-schema");
-const trainerCheckinTemplateSchema = require("../trainerCheckins/trainer-checkin-template-schema");
 const checkinTemplateDefinitionSchema = require("../trainerCheckins/checkin-template-definition-schema");
 const notificationSchema = require("../notifications/notification-schema");
 const recipeSchema = require("../recipes/recipe-schema");
@@ -225,10 +224,8 @@ UserSchema.pre("deleteOne", async function (next) {
       await clientIntakeSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
+      await require("../clientOverview/overview-cleanup").deleteForUser(user._id);
       await checkinResponseSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await trainerCheckinTemplateSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
       await require("../trainerCheckins/checkin-schedule-schema").deleteMany({ $or: [{ trainerId: user._id }, { clientId: user._id }] });

@@ -109,65 +109,86 @@ test("checkinsDimension", async (t) => {
   const NOW = new Date("2026-08-27T12:00:00.000Z");
   const haceDias = (n) => new Date(NOW.getTime() - n * 86400000);
 
-  await t.test("cuenta SEMANAS cubiertas, no respuestas sueltas", () => {
+  // Una ocurrencia = una solicitud real (CheckinRequest), no una semana
+  // teórica sacada de una cadencia declarada. Ese cálculo teórico solo
+  // entendía el sistema legacy y dejaba a los check-ins del calendario
+  // fuera de la adherencia entera.
+  const respondida = (dias) => ({
+    scheduledAt: haceDias(dias),
+    closesAt: haceDias(dias - 7),
+    status: "responded",
+  });
+  const cerradaSinResponder = (dias) => ({
+    scheduledAt: haceDias(dias),
+    closesAt: haceDias(dias - 7),
+    status: "pending",
+  });
+
+  await t.test("cuenta respondidas frente a las que se cerraron", () => {
     const d = checkinsDimension({
-      respondedAt: [haceDias(1), haceDias(8), haceDias(15)],
-      cadence: "weekly",
+      requests: [respondida(1), respondida(8), respondida(15), cerradaSinResponder(22)],
       periodDays: 28,
       now: NOW,
     });
     assert.equal(d.percentage, 75);
-    assert.equal(d.detail, "3 de 4 semanas con check-in");
+    assert.equal(d.detail, "3 de 4 check-ins respondidos");
+    assert.equal(d.missed, 1);
   });
 
-  // El caso que producía el "7 de 4": siete respuestas, tres semanas vacías.
-  await t.test("siete respuestas de la misma semana cubren UNA semana, no siete", () => {
+  // La que sigue abierta no puede contar como fallo: el cliente está a
+  // tiempo de responderla hoy mismo.
+  await t.test("una solicitud todavía abierta no entra en el denominador", () => {
+    const abierta = { scheduledAt: haceDias(1), closesAt: haceDias(-6), status: "pending" };
     const d = checkinsDimension({
-      respondedAt: [haceDias(1), haceDias(2), haceDias(3), haceDias(4), haceDias(5), haceDias(6), haceDias(6)],
-      cadence: "weekly",
+      requests: [abierta, respondida(8)],
       periodDays: 28,
       now: NOW,
     });
-    assert.equal(d.coveredCycles, 1);
-    assert.equal(d.expectedCycles, 4);
-    assert.equal(d.percentage, 25);
-  });
-
-  await t.test("quincenal en 28 días espera 2", () => {
-    const d = checkinsDimension({
-      respondedAt: [haceDias(1), haceDias(20)],
-      cadence: "biweekly",
-      periodDays: 28,
-      now: NOW,
-    });
+    assert.equal(d.expectedCycles, 1);
     assert.equal(d.percentage, 100);
-    assert.equal(d.detail, "2 de 2 quincenas con check-in");
   });
 
-  await t.test("las respuestas fuera del periodo no cuentan", () => {
+  // La cancela el entrenador, no el cliente: no es un incumplimiento suyo.
+  await t.test("una cancelada no cuenta ni a favor ni en contra", () => {
+    const cancelada = { scheduledAt: haceDias(8), closesAt: haceDias(1), status: "cancelled" };
     const d = checkinsDimension({
-      respondedAt: [haceDias(40), haceDias(60)],
-      cadence: "weekly",
+      requests: [cancelada, respondida(15)],
       periodDays: 28,
       now: NOW,
     });
-    assert.equal(d.coveredCycles, 0);
+    assert.equal(d.expectedCycles, 1);
+    assert.equal(d.percentage, 100);
+  });
+
+  await t.test("una revisada cuenta igual que una respondida", () => {
+    const revisada = { scheduledAt: haceDias(8), closesAt: haceDias(1), status: "reviewed" };
+    const d = checkinsDimension({ requests: [revisada], periodDays: 28, now: NOW });
+    assert.equal(d.percentage, 100);
+  });
+
+  await t.test("marcada 'unanswered' cuenta como perdida aunque no tenga cierre", () => {
+    const perdida = { scheduledAt: haceDias(8), closesAt: null, status: "unanswered" };
+    const d = checkinsDimension({ requests: [perdida], periodDays: 28, now: NOW });
     assert.equal(d.percentage, 0);
+    assert.equal(d.missed, 1);
   });
 
-  await t.test("cadencia 'once' no aplica: no es adherencia continuada", () => {
-    assert.equal(
-      checkinsDimension({ respondedAt: [haceDias(1)], cadence: "once", periodDays: 28, now: NOW }).applicable,
-      false
-    );
+  await t.test("sin check-in programado no aplica", () => {
+    assert.equal(checkinsDimension({ requests: [], periodDays: 28, now: NOW }).applicable, false);
+    assert.equal(checkinsDimension({ requests: [], periodDays: 28, now: NOW }).reason, "sin_cadencia");
   });
 
-  await t.test("sin check-in configurado no aplica", () => {
-    assert.equal(checkinsDimension({ respondedAt: [], cadence: undefined, periodDays: 28 }).applicable, false);
+  await t.test("programado pero sin ninguna ocurrencia cerrada todavía", () => {
+    const abierta = { scheduledAt: haceDias(1), closesAt: haceDias(-6), status: "pending" };
+    const d = checkinsDimension({ requests: [abierta], periodDays: 28, now: NOW });
+    assert.equal(d.applicable, false);
+    assert.equal(d.reason, "periodo_corto");
   });
 
-  await t.test("periodo más corto que la cadencia no aplica (no tocaba ninguno)", () => {
-    assert.equal(checkinsDimension({ respondedAt: [], cadence: "biweekly", periodDays: 7 }).applicable, false);
+  await t.test("una ocurrencia futura no se le debe a nadie todavía", () => {
+    const futura = { scheduledAt: haceDias(-3), closesAt: haceDias(-10), status: "pending" };
+    const d = checkinsDimension({ requests: [futura], periodDays: 28, now: NOW });
+    assert.equal(d.applicable, false);
   });
 });
 
@@ -181,7 +202,7 @@ test("computeAdherence", async (t) => {
       nutrition: { percentage: 80, daysWithData: 20, periodDays: 28 },
       training: { completedSessions: 0, plannedTotal: 0 },
       habits: { habits: [] },
-      checkins: { respondedAt: [], cadence: undefined, periodDays: 28 },
+      checkins: { requests: [], periodDays: 28 },
     });
     assert.equal(result.overall, 80);
     assert.equal(result.applicableCount, 1);
@@ -193,11 +214,10 @@ test("computeAdherence", async (t) => {
       training: { completedSessions: 12, plannedTotal: 12 }, // 100
       habits: { habits: [{ id: "1", label: "Pasos", completions: 28, activeDays: 28 }] }, // 100
       checkins: {
-        respondedAt: [NOW_TEST, new Date(NOW_TEST.getTime() - 8 * 86400000)],
-        cadence: "weekly",
+        requests: [{ scheduledAt: new Date(NOW_TEST.getTime() - 8 * 86400000), closesAt: new Date(NOW_TEST.getTime() - 1 * 86400000), status: "responded" }, { scheduledAt: new Date(NOW_TEST.getTime() - 15 * 86400000), closesAt: new Date(NOW_TEST.getTime() - 8 * 86400000), status: "responded" }, { scheduledAt: new Date(NOW_TEST.getTime() - 22 * 86400000), closesAt: new Date(NOW_TEST.getTime() - 15 * 86400000), status: "pending" }, { scheduledAt: new Date(NOW_TEST.getTime() - 29 * 86400000), closesAt: new Date(NOW_TEST.getTime() - 22 * 86400000), status: "pending" }],
         periodDays: 28,
         now: NOW_TEST,
-      }, // 2 de 4 semanas -> 50
+      }, // 2 respondidas de 4 cerradas -> 50
     });
     assert.equal(result.overall, 88); // (100+100+100+50)/4 = 87,5 -> 88
     assert.equal(result.applicableCount, 4);
@@ -209,8 +229,11 @@ test("computeAdherence", async (t) => {
       training: { completedSessions: 3, plannedTotal: 12 }, // 25
       habits: { habits: [] },
       checkins: {
-        respondedAt: [0, 8, 16, 24].map((d) => new Date(NOW_TEST.getTime() - d * 86400000)),
-        cadence: "weekly",
+        requests: [8, 16, 24].map((d) => ({
+          scheduledAt: new Date(NOW_TEST.getTime() - d * 86400000),
+          closesAt: new Date(NOW_TEST.getTime() - (d - 7) * 86400000),
+          status: "responded",
+        })),
         periodDays: 28,
         now: NOW_TEST,
       }, // 100
@@ -225,7 +248,7 @@ test("computeAdherence", async (t) => {
       nutrition: null,
       training: { completedSessions: 0, plannedTotal: 0 },
       habits: { habits: [] },
-      checkins: { respondedAt: [], cadence: undefined, periodDays: 28 },
+      checkins: { requests: [], periodDays: 28 },
     });
     assert.equal(result.overall, null);
     assert.equal(result.weakest, null);

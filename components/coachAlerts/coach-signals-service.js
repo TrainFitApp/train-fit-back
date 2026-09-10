@@ -3,7 +3,7 @@ const {
   isPlausibleAnthropometry,
   isPlausibleAnthropometryChange,
 } = require("../trainerCheckins/checkin-field-catalog");
-const { isCheckinDue, checkinOverdueCycles } = require("../trainerCheckins/checkin-due");
+const { summarizeOccurrences } = require("../trainerCheckins/checkin-occurrences");
 
 // Fase 1 Coach Pro — el CÁLCULO de las señales, separado de dónde salen los
 // datos y de dónde se escriben las alertas (eso es coach-alert-service.js).
@@ -295,13 +295,16 @@ function detectInactivity({ lastActivityAt, now, clientName }) {
   };
 }
 
+// Antes esto miraba una cadencia declarada y, encima, se rendía de entrada
+// con los check-ins del calendario (isCheckinDue devolvía false para ellos):
+// el cliente podía dejar pasar un mes de check-ins sin que saltara nada.
+// Ahora la señal es un hecho comprobable: se le cerraron N check-ins sin
+// responder dentro de la ventana de análisis.
 function detectCheckinOverdue({ checkin, now, clientName }) {
-  if (!checkin?.config) return null;
-  const responses = checkin.lastResponseAt ? [{ respondedAt: checkin.lastResponseAt }] : [];
-  if (!isCheckinDue(checkin.config, responses, now)) return null;
+  const { missed } = summarizeOccurrences(checkin?.requests || [], now);
+  if (!missed) return null;
 
-  const cycles = checkinOverdueCycles(checkin.config, responses, now);
-  const isCritical = cycles >= SIGNAL_THRESHOLDS.checkinOverdueCriticalCycles;
+  const isCritical = missed >= SIGNAL_THRESHOLDS.checkinOverdueCriticalCycles;
 
   return {
     type: "checkin_overdue",
@@ -311,9 +314,40 @@ function detectCheckinOverdue({ checkin, now, clientName }) {
       : `${clientName} todavía no ha respondido a su primer check-in.`,
     context: {
       metric: "checkin",
-      cadence: checkin.config.cadence,
-      overdueCycles: cycles,
+      missedCheckins: missed,
+      overdueCycles: missed,
       lastResponseAt: checkin.lastResponseAt || null,
+    },
+  };
+}
+
+// Fase 6 — la pauta de peso a escala de cartera. `weightPlanCompliance` ya
+// viene resuelto por complianceFor (weight-plan-service.js); esta función se
+// queda pura como el resto de detect* (solo decide umbral y redacta).
+//
+// Sin pauta (cliente "libre") no hay nada que vigilar: null, no señal.
+//
+// Crítica al doblar el intervalo sin pesarse — mismo lenguaje que
+// checkinOverdueCriticalCycles (2 ciclos = el doble de la cadencia): un
+// atraso de un intervalo completo por encima del vencimiento ya es la misma
+// gravedad que dos check-ins seguidos sin responder.
+function detectWeightPlanOverdue({ weightPlanCompliance, clientName }) {
+  if (!weightPlanCompliance || weightPlanCompliance.upToDate) return null;
+
+  const { intervalDays, overdueDays, neverWeighed } = weightPlanCompliance;
+  const isCritical = overdueDays >= intervalDays * (SIGNAL_THRESHOLDS.checkinOverdueCriticalCycles - 1);
+
+  return {
+    type: "weight_plan_overdue",
+    priority: isCritical ? "high" : "medium",
+    reason: neverWeighed
+      ? `${clientName} todavía no ha registrado ningún peso de su pauta (cada ${intervalDays} días).`
+      : `${clientName} lleva ${overdueDays} día${overdueDays === 1 ? "" : "s"} sin pesarse, con pauta de cada ${intervalDays} días.`,
+    context: {
+      metric: "weight_plan",
+      intervalDays,
+      overdueDays,
+      neverWeighed,
     },
   };
 }
@@ -355,6 +389,7 @@ function buildSignalsForClient(input) {
     detectPendingReview(base),
     detectPlanEndingSoon(base),
     detectCheckinOverdue(base),
+    detectWeightPlanOverdue(base),
     detectSharpWeightChange(base),
     detectLowAdherence(base),
     detectStagnation(base),
@@ -375,6 +410,7 @@ module.exports = {
   detectLowAdherence,
   detectInactivity,
   detectCheckinOverdue,
+  detectWeightPlanOverdue,
   detectPendingReview,
   detectPlanEndingSoon,
 };

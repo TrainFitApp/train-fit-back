@@ -3,3 +3,6 @@ node_modules
 file.log
 .env
 bash.exe.stackdump
+
+# Entornos temporales de pruebas (manifiestos y sesiones locales).
+/.tmp/

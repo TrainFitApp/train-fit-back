@@ -267,8 +267,10 @@ async function sembrarAntropometria(clientes) {
 }
 
 async function sembrarCheckins(trainerId, clientes) {
-  const TrainerCheckinTemplate = require("../components/trainerCheckins/trainer-checkin-template-schema");
+  const CheckinSchedule = require("../components/trainerCheckins/checkin-schedule-schema");
+  const CheckinRequest = require("../components/trainerCheckins/checkin-request-schema");
   const CheckinResponse = require("../components/trainerCheckins/checkin-response-schema");
+  const WeightPlan = require("../components/weightPlans/weight-plan-schema");
 
   // Campos activados: mezcla de composición, perímetros y bienestar, con el
   // color de orina incluido para que se vea la escala de 8 niveles.
@@ -298,14 +300,35 @@ async function sembrarCheckins(trainerId, clientes) {
     elena: [false, false, true, false],
   };
 
+  // Qué estado tiene cada ocurrencia (i = 0 es la más reciente). Sin esto la
+  // bandeja "Por revisar" sale vacía y la adherencia de check-ins no puede
+  // calcularse: se cuenta sobre solicitudes reales, no sobre una cadencia.
+  const ESTADOS = {
+    // Va al día: solo la última espera respuesta del entrenador.
+    lucia: ["responded", "reviewed", "reviewed", "reviewed", "reviewed", "reviewed", "reviewed", "reviewed"],
+    // Cumple pero arrastra fatiga: dos seguidas sin revisar es justo el caso
+    // en el que el entrenador tiene que sentarse a decidir algo.
+    marcos: ["responded", "responded", "reviewed", "reviewed", "reviewed", "reviewed", "reviewed", "reviewed"],
+    // Se está descolgando: dos se le cerraron sin contestar.
+    elena: ["unanswered", "unanswered", "reviewed", "reviewed", "reviewed", "reviewed", "reviewed", "reviewed"],
+  };
+  const REVISIONES = {
+    lucia: "Semana redonda. Mantenemos cargas y subimos 100 kcal el fin de semana.",
+    marcos: "El peso no se mueve pero el sueño ha empeorado. Antes de tocar la dieta, dos semanas cuidando el descanso.",
+    elena: "Cuando puedas, cuéntame qué te está costando más y lo ajustamos.",
+  };
+
   let respuestas = 0;
+  let solicitudes = 0;
   for (const c of clientes) {
     const preguntaId = oid("q:" + c.clave);
-    await TrainerCheckinTemplate.updateOne(
+    await CheckinSchedule.updateOne(
       { _id: oid(`chkcfg:${c.clave}`) },
       {
         $set: {
-          trainerId, clientId: c._id, enabledFields: CAMPOS, cadence: "weekly", sourceTemplateId: null,
+          trainerId, clientId: c._id, enabledFields: CAMPOS, sourceTemplateId: null,
+          name: "Check-in semanal", startDate: new Date().toISOString().slice(0, 10),
+          time: "09:00", timeZone: "Europe/Madrid", frequency: "weekly", interval: 1, active: true,
           customQuestions: [{ _id: preguntaId, enabled: true, unit: "", options: [], ...PREGUNTAS[c.clave] }],
         },
       },
@@ -340,27 +363,96 @@ async function sembrarCheckins(trainerId, clientes) {
       // su estancamiento se lea como "toca cambiar algo", no como dejadez.
       if (c.clave === "marcos") { v.general_fatigue = 4; v.sleep_quality = 3; v.recovery_between_sessions = 2; }
 
+      const estado = ESTADOS[c.clave][i] || "reviewed";
+      const contestada = estado === "responded" || estado === "reviewed";
+      const valores = {
+        ...v,
+        comment: comentarios[i % comentarios.length],
+        // Misma bolsa Mixed que los campos del catálogo: el prefijo
+        // "custom:" es lo que las distingue, sin colección aparte.
+        ["custom:" + preguntaId]: RESPUESTAS_PROPIAS[c.clave][i % 4],
+      };
+
+      // La solicitud es el registro canónico: de aquí salen la bandeja de
+      // revisión, la adherencia y el calendario. La respuesta es su
+      // proyección, y comparte _id (igual que projectAnswer en producción).
+      await CheckinRequest.updateOne(
+        { _id: oid(`chk:${c.clave}:${i}`) },
+        {
+          $set: {
+            trainerId, clientId: c._id, scheduleId: oid(`chkcfg:${c.clave}`),
+            occurrenceKey: `seed:${c.clave}:${i}`,
+            name: "Check-in semanal", enabledFields: CAMPOS,
+            customQuestions: [{ _id: preguntaId, enabled: true, unit: "", options: [], ...PREGUNTAS[c.clave] }],
+            scheduledAt: hace(diasAtras), closesAt: hace(diasAtras - 7), timeZone: "Europe/Madrid",
+            status: estado,
+            values: contestada ? valores : {},
+            respondedAt: contestada ? hace(diasAtras) : null,
+            reviewedAt: estado === "reviewed" ? hace(Math.max(0, diasAtras - 1)) : null,
+            reviewComment: estado === "reviewed" ? REVISIONES[c.clave] : "",
+            seenByTrainer: estado === "reviewed",
+          },
+        },
+        { upsert: true }
+      );
+      solicitudes++;
+
+      if (!contestada) continue;
+
       await CheckinResponse.updateOne(
         { _id: oid(`chk:${c.clave}:${i}`) },
         {
           $set: {
-            trainerId, clientId: c._id, respondedAt: hace(diasAtras),
-            values: {
-              ...v,
-              comment: comentarios[i % comentarios.length],
-              // Misma bolsa Mixed que los campos del catálogo: el prefijo
-              // "custom:" es lo que las distingue, sin colección aparte.
-              ["custom:" + preguntaId]: RESPUESTAS_PROPIAS[c.clave][i % 4],
-            },
-            seenByTrainer: i > 1,
+            trainerId, clientId: c._id, scheduleId: oid(`chkcfg:${c.clave}`),
+            name: "Check-in semanal", respondedAt: hace(diasAtras),
+            values: valores,
+            status: estado,
+            reviewedAt: estado === "reviewed" ? hace(Math.max(0, diasAtras - 1)) : null,
+            reviewComment: estado === "reviewed" ? REVISIONES[c.clave] : "",
+            customQuestions: [{ _id: preguntaId, enabled: true, unit: "", options: [], ...PREGUNTAS[c.clave] }],
+            seenByTrainer: estado === "reviewed",
           },
         },
         { upsert: true }
       );
       respuestas++;
     }
+    // Elena tiene además una solicitud abierta AHORA: se le acaba de pedir y
+    // todavía está a tiempo. Es lo que distingue "no ha contestado todavía"
+    // de "se le cerró sin contestar", que la pantalla trata distinto.
+    if (c.clave === "elena") {
+      await CheckinRequest.updateOne(
+        { _id: oid(`chk:${c.clave}:abierta`) },
+        {
+          $set: {
+            trainerId, clientId: c._id, scheduleId: oid(`chkcfg:${c.clave}`),
+            occurrenceKey: `seed:${c.clave}:abierta`,
+            name: "Check-in semanal", enabledFields: CAMPOS,
+            customQuestions: [{ _id: preguntaId, enabled: true, unit: "", options: [], ...PREGUNTAS[c.clave] }],
+            scheduledAt: hace(2), closesAt: hace(-5), timeZone: "Europe/Madrid",
+            status: "pending", values: {}, respondedAt: null,
+          },
+        },
+        { upsert: true }
+      );
+      solicitudes++;
+    }
+
+    // Pauta de peso: cada cliente con un ritmo distinto, para que se vea la
+    // diferencia entre ir al día y arrastrar retraso.
+    await WeightPlan.updateOne(
+      { _id: oid(`peso:${c.clave}`) },
+      {
+        $set: {
+          trainerId, clientId: c._id,
+          intervalDays: c.clave === "lucia" ? 2 : c.clave === "marcos" ? 3 : 7,
+          notes: "", lastReminderSentAt: null,
+        },
+      },
+      { upsert: true }
+    );
   }
-  console.log(`   ${respuestas} respuestas de check-in`);
+  console.log(`   ${solicitudes} solicitudes y ${respuestas} respuestas de check-in`);
 }
 
 async function sembrarDolor(clientes) {
@@ -1824,8 +1916,10 @@ async function limpiar() {
     TrainerClient: require("../components/trainerClients/trainer-client-schema"),
     Anthropometry: mongoose.models.Anthropometry
       || mongoose.model("Anthropometry", require("../components/anthropometry/anthropometry-schema")),
-    TrainerCheckinTemplate: require("../components/trainerCheckins/trainer-checkin-template-schema"),
+    CheckinSchedule: require("../components/trainerCheckins/checkin-schedule-schema"),
     CheckinResponse: require("../components/trainerCheckins/checkin-response-schema"),
+    CheckinRequest: require("../components/trainerCheckins/checkin-request-schema"),
+    WeightPlan: require("../components/weightPlans/weight-plan-schema"),
     PainEntry: require("../components/painLog/pain-schema").PainEntry,
     PainThreshold: require("../components/painLog/pain-schema").PainThreshold,
     ExerciseScore: require("../components/exerciseScores/exercise-score-schema"),
@@ -1868,8 +1962,13 @@ async function limpiar() {
     push("User", "user:" + k);
     for (const scope of ["training", "nutrition"]) push("TrainerClient", "rel:" + k + ":" + scope);
     for (let s = 0; s < 12; s++) push("Anthropometry", "antro:" + k + ":" + s);
-    push("TrainerCheckinTemplate", "chkcfg:" + k);
-    for (let i = 0; i < 8; i++) push("CheckinResponse", "chk:" + k + ":" + i);
+    push("CheckinSchedule", "chkcfg:" + k);
+    push("WeightPlan", "peso:" + k);
+    push("CheckinRequest", "chk:" + k + ":abierta");
+    for (let i = 0; i < 8; i++) {
+      push("CheckinResponse", "chk:" + k + ":" + i);
+      push("CheckinRequest", "chk:" + k + ":" + i);
+    }
     push("NutritionalGoal", "goal:" + k);
     push("Diet", "diet:" + k);
     push("Table", "table:" + k);

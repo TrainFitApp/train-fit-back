@@ -116,6 +116,9 @@ test("señales integradas a partir de snapshots", async (t) => {
       // Fase 3 — los valores de check-in que alimentan las métricas de
       // bienestar del motor de reglas.
       checkinResponsesByClient: new Map(),
+      // Ocurrencias de check-in: el denominador de la adherencia y la señal
+      // de "no responde" desde que dejaron de deducirse de una cadencia.
+      checkinRequestsByClient: new Map(),
       ...overrides,
     };
   }
