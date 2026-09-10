@@ -280,6 +280,7 @@ module.exports = {
       favoriteFoods: intakeData.favoriteFoods,
       dislikedFoods: intakeData.dislikedFoods,
       cooksAtHome: intakeData.cooksAtHome,
+      dietaryFlags: intakeData.dietaryFlags,
     });
     await trainerClientDao.updateManyStatus(trainerId, clientId, "cuestionario_pendiente", "en_revision");
     await notificationDao.create(clientId, trainerId, "intake_submitted", {});
@@ -345,7 +346,14 @@ module.exports = {
         scope: r.scope,
         status: r.status,
         trainer: r.trainer,
-        intakeEnabledFields: enabledFieldsByTrainer.get(String(r.trainerId)),
+        // `dietaryFlags` es esencial para pautar nutrición (lo usa el filtro
+        // del cajón de sugerencias) — se fuerza en toda relación de scope
+        // "nutrition" aunque la config guardada del trainer no lo tenga
+        // (clave nueva). No es toggleable, no está en el panel de invites.
+        intakeEnabledFields:
+          r.scope === "nutrition"
+            ? [...new Set([...(enabledFieldsByTrainer.get(String(r.trainerId)) || []), "dietaryFlags"])]
+            : (enabledFieldsByTrainer.get(String(r.trainerId)) || []).filter((f) => f !== "dietaryFlags"),
         // Mismo criterio que intakeEnabledFields — por trainer, no por scope
         // de la relación (ver comentario del schema en
         // trainerIntakeConfig/trainer-intake-config-schema.js). Solo las que

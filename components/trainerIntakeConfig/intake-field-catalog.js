@@ -17,6 +17,22 @@ const INTAKE_FIELD_KEYS = [
   "favoriteFoods",
   "dislikedFoods",
   "cooksAtHome",
+  // Restricciones dietéticas estructuradas (vegano / sin gluten / ...) →
+  // ClientNutritionPreferences.dietaryFlags. No es un campo que el
+  // entrenador active/desactive: getOnboardingStatus lo fuerza siempre que
+  // la relación es de scope "nutrition" (es esencial para pautar, no
+  // opcional). Por eso NO aparece en el panel de checkboxes de invites.
+  "dietaryFlags",
 ];
 
-module.exports = { INTAKE_FIELD_KEYS };
+// Los que van a ClientNutritionPreferences (F29), no a ClientIntake — el
+// resto viven en ClientIntake. Ver trainer-client-service.js#submitIntake.
+const NUTRITION_PREFERENCE_KEYS = [
+  "allergies",
+  "favoriteFoods",
+  "dislikedFoods",
+  "cooksAtHome",
+  "dietaryFlags",
+];
+
+module.exports = { INTAKE_FIELD_KEYS, NUTRITION_PREFERENCE_KEYS };
