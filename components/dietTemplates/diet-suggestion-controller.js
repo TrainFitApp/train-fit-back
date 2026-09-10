@@ -109,6 +109,9 @@ module.exports = {
       // signo) — el cajón lo usa para arrancar en Definir/Mantener/Volumen
       // en vez de siempre Definir. El entrenador manda igual.
       clientObjetive: Number.isFinite(user.objetive) ? user.objetive : null,
+      // Restricciones que el cliente declaró en el intake — el cajón las
+      // pre-marca la primera vez (mismo criterio que clientObjetive).
+      clientDietaryFlags: (prefs?.dietaryFlags || []).filter((f) => VALID_FLAGS.includes(f)),
       requiredFlags,
       ranked,
       hidden,
