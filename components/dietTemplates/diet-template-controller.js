@@ -1,6 +1,7 @@
 const dietTemplateDao = require("./diet-template-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { MEALS } = require("../dietDays/diet-days-util");
+const { cycleMacroProfile } = require("./diet-macro-profile");
 
 const VALID_SLOTS = new Set(Object.values(MEALS));
 const MAX_ALTERNATIVES = 4;
@@ -124,7 +125,14 @@ module.exports = {
       onlyOwned: req.query?.onlyOwned === "true",
       includeOwned: req.query?.includeOwned === "true",
     });
-    return res.send(templates);
+    // Perfil de macros de un día tipo — para pintar las cards con kcal/P/C/G
+    // (mismo cálculo que el cajón de sugerencias, sin objetivo de cliente).
+    return res.send(
+      templates.map((t) => {
+        const doc = t.toObject ? t.toObject() : t;
+        return { ...doc, macroProfile: cycleMacroProfile(doc) };
+      })
+    );
   },
 
   async updateTemplate(req, res) {
