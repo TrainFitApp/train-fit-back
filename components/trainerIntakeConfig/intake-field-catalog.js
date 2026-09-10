@@ -29,13 +29,15 @@ const INTAKE_FIELD_KEYS = [
   // para calcular objetivo/carga.
   //   profileBiometrics -> User.weight/height/sex/birth
   //   activityProfile   -> User.steps/activity/training
+  //   objective         -> User.objetive (déficit / mantenimiento / superávit)
   "profileBiometrics",
   "activityProfile",
+  "objective",
 ];
 
 // Claves que se reescriben en `User` (no en ClientIntake ni en
 // ClientNutritionPreferences). Ver trainer-client-service.js#submitIntake.
-const USER_PROFILE_KEYS = ["profileBiometrics", "activityProfile"];
+const USER_PROFILE_KEYS = ["profileBiometrics", "activityProfile", "objective"];
 
 // Los que van a ClientNutritionPreferences (F29), no a ClientIntake — el
 // resto viven en ClientIntake. Ver trainer-client-service.js#submitIntake.

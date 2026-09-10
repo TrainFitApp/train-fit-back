@@ -28,7 +28,7 @@ module.exports = {
     const objetiveKcalDelta = Number(req.body?.objetiveKcalDelta) || 0;
 
     const [user, anthros, prefs] = await Promise.all([
-      userSchema.findById(clientId).select("sex height birth activity steps training weight").lean(),
+      userSchema.findById(clientId).select("sex height birth activity steps training weight objetive").lean(),
       anthropometryDao.getAllAnthropometriesByUserId(clientId),
       nutritionPreferencesDao.getByClientId(clientId),
     ]);
@@ -101,6 +101,10 @@ module.exports = {
         objetiveKcalDelta,
       },
       weightSource,
+      // El objetivo que el cliente eligió al registrarse (delta kcal con
+      // signo) — el cajón lo usa para arrancar en Definir/Mantener/Volumen
+      // en vez de siempre Definir. El entrenador manda igual.
+      clientObjetive: Number.isFinite(user.objetive) ? user.objetive : null,
       requiredFlags,
       ranked,
       hidden,

@@ -7,6 +7,8 @@ const trainerIntakeConfigService = require("../trainerIntakeConfig/trainer-intak
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
+const anthropometryDao = require("../anthropometry/anthropometry-dao");
+const { todayIsoDate } = require("../util/date-util");
 
 // Datos de perfil que el intake confirma y reescribe en `User` (los metió el
 // cliente al registrarse). Rangos = los mismos que valida el schema / sign-up.
@@ -24,6 +26,10 @@ function extractUserProfilePatch(data) {
   if (num(data.steps) >= 1 && num(data.steps) <= 2) patch.steps = num(data.steps);
   if (num(data.activity) >= 1 && num(data.activity) <= 2) patch.activity = num(data.activity);
   if (num(data.training) >= 1 && num(data.training) <= 2) patch.training = num(data.training);
+  // objetive = delta de kcal con signo (−déficit / 0 / +superávit).
+  if (Number.isFinite(num(data.objetive)) && Math.abs(num(data.objetive)) <= 1500) {
+    patch.objetive = num(data.objetive);
+  }
   return patch;
 }
 
@@ -314,6 +320,18 @@ module.exports = {
       await nutritionalGoalService.recomputeDefaultForClient(clientId).catch(() => {});
     }
 
+    // Sembrar la primera antropometría con el peso del intake, si el cliente
+    // aún no tiene ninguna — así "último peso" en la ficha y el cajón de
+    // sugerencias funcionan desde el día 1, sin un AnthropometryRequest aparte.
+    if (Number.isFinite(userPatch.weight)) {
+      const existing = await anthropometryDao.getAllAnthropometriesByUserId(clientId);
+      if (!existing.length) {
+        await anthropometryDao
+          .mergeAnthropometryFields(clientId, todayIsoDate(), { weight: userPatch.weight })
+          .catch(() => {});
+      }
+    }
+
     await trainerClientDao.updateManyStatus(trainerId, clientId, "cuestionario_pendiente", "en_revision");
     await notificationDao.create(clientId, trainerId, "intake_submitted", {});
     await notificationDao.createForTrainer(trainerId, clientId, "intake_submitted_trainer", {});
@@ -388,6 +406,7 @@ module.exports = {
           const base = new Set(enabledFieldsByTrainer.get(String(r.trainerId)) || []);
           base.add("profileBiometrics");
           base.add("activityProfile");
+          base.add("objective");
           if (r.scope === "nutrition") base.add("dietaryFlags");
           else base.delete("dietaryFlags");
           return [...base];
