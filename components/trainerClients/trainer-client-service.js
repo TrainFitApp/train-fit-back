@@ -6,6 +6,26 @@ const clientIntakeDao = require("../clientIntake/client-intake-dao");
 const trainerIntakeConfigService = require("../trainerIntakeConfig/trainer-intake-config-service");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
+const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
+
+// Datos de perfil que el intake confirma y reescribe en `User` (los metió el
+// cliente al registrarse). Rangos = los mismos que valida el schema / sign-up.
+function extractUserProfilePatch(data) {
+  const patch = {};
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v));
+  if (num(data.weight) >= 30 && num(data.weight) <= 300) patch.weight = num(data.weight);
+  if (num(data.height) >= 70 && num(data.height) <= 300) patch.height = num(data.height);
+  if (data.sex === 0 || data.sex === 1) patch.sex = data.sex;
+  if (data.birth && !Number.isNaN(new Date(data.birth).getTime())) patch.birth = new Date(data.birth);
+  // steps/activity/training llegan ya resueltos al `.value` numérico del
+  // enum (mismo criterio que sign-up: el front tiene las constantes).
+  // Rangos de los .value de los enums: STEPS 1-1.86, ACTIVITY 1.15-1.75,
+  // TRAINING ~1-1.8 (ver shared-ui/constants).
+  if (num(data.steps) >= 1 && num(data.steps) <= 2) patch.steps = num(data.steps);
+  if (num(data.activity) >= 1 && num(data.activity) <= 2) patch.activity = num(data.activity);
+  if (num(data.training) >= 1 && num(data.training) <= 2) patch.training = num(data.training);
+  return patch;
+}
 
 const VALID_SCOPES = ["training", "nutrition"];
 
@@ -282,6 +302,18 @@ module.exports = {
       cooksAtHome: intakeData.cooksAtHome,
       dietaryFlags: intakeData.dietaryFlags,
     });
+
+    // Reciclar lo del registro — el intake confirma peso/altura/sexo/pasos/
+    // actividad/frecuencia y los reescribe en `User`, para que el cálculo de
+    // objetivo del entrenador (y el cajón de sugerencias) parta de datos
+    // frescos. Si algo cambió, se recalcula el objetivo "Default" del cliente
+    // (solo si no es uno asignado por un profesional — ese no se pisa).
+    const userPatch = extractUserProfilePatch(intakeData);
+    if (Object.keys(userPatch).length) {
+      await userSchema.findByIdAndUpdate(clientId, { $set: userPatch });
+      await nutritionalGoalService.recomputeDefaultForClient(clientId).catch(() => {});
+    }
+
     await trainerClientDao.updateManyStatus(trainerId, clientId, "cuestionario_pendiente", "en_revision");
     await notificationDao.create(clientId, trainerId, "intake_submitted", {});
     await notificationDao.createForTrainer(trainerId, clientId, "intake_submitted_trainer", {});
@@ -346,14 +378,20 @@ module.exports = {
         scope: r.scope,
         status: r.status,
         trainer: r.trainer,
-        // `dietaryFlags` es esencial para pautar nutrición (lo usa el filtro
-        // del cajón de sugerencias) — se fuerza en toda relación de scope
-        // "nutrition" aunque la config guardada del trainer no lo tenga
-        // (clave nueva). No es toggleable, no está en el panel de invites.
-        intakeEnabledFields:
-          r.scope === "nutrition"
-            ? [...new Set([...(enabledFieldsByTrainer.get(String(r.trainerId)) || []), "dietaryFlags"])]
-            : (enabledFieldsByTrainer.get(String(r.trainerId)) || []).filter((f) => f !== "dietaryFlags"),
+        // Campos FORZADOS (no toggleables, no en el panel de invites):
+        //   · profileBiometrics + activityProfile — el intake confirma datos
+        //     que el cliente ya metió al registrarse y los reescribe en User;
+        //     el entrenador siempre los necesita, sea cual sea el scope.
+        //   · dietaryFlags — solo scope nutrición (filtro del cajón).
+        // Aunque la config guardada del trainer no los tenga (claves nuevas).
+        intakeEnabledFields: (() => {
+          const base = new Set(enabledFieldsByTrainer.get(String(r.trainerId)) || []);
+          base.add("profileBiometrics");
+          base.add("activityProfile");
+          if (r.scope === "nutrition") base.add("dietaryFlags");
+          else base.delete("dietaryFlags");
+          return [...base];
+        })(),
         // Mismo criterio que intakeEnabledFields — por trainer, no por scope
         // de la relación (ver comentario del schema en
         // trainerIntakeConfig/trainer-intake-config-schema.js). Solo las que

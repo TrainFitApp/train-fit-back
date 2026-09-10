@@ -23,7 +23,19 @@ const INTAKE_FIELD_KEYS = [
   // la relación es de scope "nutrition" (es esencial para pautar, no
   // opcional). Por eso NO aparece en el panel de checkboxes de invites.
   "dietaryFlags",
+  // Datos que el cliente YA metió al registrarse — el intake solo los
+  // confirma/actualiza y los reescribe en `User`. También forzados (no
+  // toggleables), para toda relación: el entrenador siempre los necesita
+  // para calcular objetivo/carga.
+  //   profileBiometrics -> User.weight/height/sex/birth
+  //   activityProfile   -> User.steps/activity/training
+  "profileBiometrics",
+  "activityProfile",
 ];
+
+// Claves que se reescriben en `User` (no en ClientIntake ni en
+// ClientNutritionPreferences). Ver trainer-client-service.js#submitIntake.
+const USER_PROFILE_KEYS = ["profileBiometrics", "activityProfile"];
 
 // Los que van a ClientNutritionPreferences (F29), no a ClientIntake — el
 // resto viven en ClientIntake. Ver trainer-client-service.js#submitIntake.
@@ -35,4 +47,4 @@ const NUTRITION_PREFERENCE_KEYS = [
   "dietaryFlags",
 ];
 
-module.exports = { INTAKE_FIELD_KEYS, NUTRITION_PREFERENCE_KEYS };
+module.exports = { INTAKE_FIELD_KEYS, NUTRITION_PREFERENCE_KEYS, USER_PROFILE_KEYS };
