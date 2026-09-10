@@ -72,7 +72,11 @@ module.exports = {
       ? req.body.dietaryFlags.filter((f) => VALID_FLAGS.includes(f))
       : (prefs?.dietaryFlags || []).filter((f) => VALID_FLAGS.includes(f));
 
-    const templates = await dietTemplateDao.listRankableForClient(trainerId, clientId);
+    const VALID_SOURCES = ["general", "client", "verified"];
+    const sources = Array.isArray(req.body?.sources)
+      ? req.body.sources.filter((s) => VALID_SOURCES.includes(s))
+      : null;
+    const templates = await dietTemplateDao.listRankableForClient(trainerId, clientId, sources);
     const candidates = templates.map((t) => {
       const doc = t.toObject ? t.toObject() : t;
       const profile = cycleMacroProfile(doc);

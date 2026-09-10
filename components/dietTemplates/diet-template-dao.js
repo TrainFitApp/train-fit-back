@@ -345,15 +345,17 @@ module.exports = {
   // para este cliente: las generales del entrenador, las propias de este
   // cliente (ownerClientId), y las de fábrica (verified) de cualquiera.
   // Nunca copias congeladas (clientId: null en todas).
-  async listRankableForClient(trainerId, clientId) {
-    return DietTemplate.find({
-      clientId: null,
-      $or: [
-        { trainerId, ownerClientId: null },
-        { trainerId, ownerClientId: clientId },
-        { verified: true },
-      ],
-    }).sort({ createdAt: -1 });
+  // `sources` acota el origen (filtro del cajón): 'general' = plantillas
+  // generales del entrenador, 'client' = las propias de este cliente,
+  // 'verified' = las de fábrica. Sin `sources` (o vacío) = las tres.
+  async listRankableForClient(trainerId, clientId, sources) {
+    const set = new Set(sources && sources.length ? sources : ["general", "client", "verified"]);
+    const or = [];
+    if (set.has("general")) or.push({ trainerId, ownerClientId: null });
+    if (set.has("client")) or.push({ trainerId, ownerClientId: clientId });
+    if (set.has("verified")) or.push({ verified: true });
+    if (!or.length) return [];
+    return DietTemplate.find({ clientId: null, $or: or }).sort({ createdAt: -1 });
   },
 
   async update(trainerId, id, { name, days, mode, dayPatterns, suitableForOverride, verified }) {
