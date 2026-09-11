@@ -94,7 +94,7 @@ module.exports = {
       };
     });
 
-    const { ranked, hidden } = rankTemplates(candidates, target, requiredFlags);
+    const { ranked } = rankTemplates(candidates, target, requiredFlags);
 
     return res.send({
       target: {
@@ -114,7 +114,6 @@ module.exports = {
       clientDietaryFlags: (prefs?.dietaryFlags || []).filter((f) => VALID_FLAGS.includes(f)),
       requiredFlags,
       ranked,
-      hidden,
     });
   },
 };

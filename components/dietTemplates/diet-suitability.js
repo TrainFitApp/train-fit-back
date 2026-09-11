@@ -78,13 +78,25 @@ function effectiveSuitability(suitableFor = [], suitableForOverride = []) {
 }
 
 /**
- * ¿Esta plantilla pasa el filtro duro del cajón? Pasa si cumple TODAS las
- * restricciones que el cliente tiene marcadas.
+ * Qué restricciones del cliente NO cumple esta plantilla. Array vacío = las
+ * cumple todas.
+ *
+ * 2026-09 — antes esto era un booleano (`passesDietaryFilter`) y las que
+ * daban `false` se escondían del ranking. Ahora salen igual, ordenadas por
+ * macros detrás de las que sí cumplen, y esta lista es lo que el cartel rojo
+ * de la tarjeta enseña: una dieta que cuadra de macros pero lleva un
+ * alimento con gluten se arregla cambiando ese alimento, y esconderla
+ * obligaba a descartarla entera.
+ *
+ * Ojo con lo que significa: un flag "falta" tanto si algún alimento NO lo
+ * cumple como si simplemente no lo declara (`null` = desconocido, ver
+ * deriveSuitability). Por eso el cartel nombra la restricción incumplida y
+ * no acusa al contenido ("No cumple: Sin gluten", no "lleva gluten").
  */
-function passesDietaryFilter({ suitableFor, suitableForOverride }, requiredFlags = []) {
-  if (!requiredFlags.length) return true;
+function missingDietaryFlags({ suitableFor, suitableForOverride }, requiredFlags = []) {
+  if (!requiredFlags.length) return [];
   const effective = new Set(effectiveSuitability(suitableFor, suitableForOverride));
-  return requiredFlags.every((flag) => effective.has(flag));
+  return requiredFlags.filter((flag) => FLAGS.includes(flag) && !effective.has(flag));
 }
 
 module.exports = {
@@ -92,5 +104,5 @@ module.exports = {
   collectProducts,
   deriveSuitability,
   effectiveSuitability,
-  passesDietaryFilter,
+  missingDietaryFlags,
 };

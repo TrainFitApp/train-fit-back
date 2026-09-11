@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const {
   deriveSuitability,
   effectiveSuitability,
-  passesDietaryFilter,
+  missingDietaryFlags,
 } = require("./diet-suitability");
 
 function tmpl(customProducts) {
@@ -77,17 +77,23 @@ test("effectiveSuitability = derivado ∪ override", () => {
   assert.deepEqual(effectiveSuitability(["vegan"], ["vegan"]), ["vegan"]);
 });
 
-test("passesDietaryFilter", async (t) => {
-  await t.test("sin restricciones del cliente → pasa todo", () => {
-    assert.equal(passesDietaryFilter({ suitableFor: [] }, []), true);
+test("missingDietaryFlags", async (t) => {
+  await t.test("sin restricciones del cliente → no falta nada", () => {
+    assert.deepEqual(missingDietaryFlags({ suitableFor: [] }, []), []);
   });
-  await t.test("cliente vegano, plantilla no marcada → no pasa", () => {
-    assert.equal(passesDietaryFilter({ suitableFor: ["glutenFree"] }, ["vegan"]), false);
+  await t.test("cliente vegano, plantilla no marcada → falta vegan", () => {
+    assert.deepEqual(missingDietaryFlags({ suitableFor: ["glutenFree"] }, ["vegan"]), ["vegan"]);
   });
-  await t.test("cliente vegano, plantilla apta por override → pasa", () => {
-    assert.equal(
-      passesDietaryFilter({ suitableFor: [], suitableForOverride: ["vegan"] }, ["vegan"]),
-      true
+  await t.test("cliente vegano, plantilla apta por override → no falta nada", () => {
+    assert.deepEqual(
+      missingDietaryFlags({ suitableFor: [], suitableForOverride: ["vegan"] }, ["vegan"]),
+      []
+    );
+  });
+  await t.test("devuelve TODAS las que faltan, no solo la primera", () => {
+    assert.deepEqual(
+      missingDietaryFlags({ suitableFor: ["vegan"] }, ["vegan", "glutenFree", "lactoseFree"]),
+      ["glutenFree", "lactoseFree"]
     );
   });
 });

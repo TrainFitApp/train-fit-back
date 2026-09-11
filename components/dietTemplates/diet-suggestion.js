@@ -1,14 +1,22 @@
 // Sugerencias de dieta — el ranking. Dado el objetivo de kcal+macros de un
 // cliente y un conjunto de plantillas candidatas, las ordena por cercanía.
 //
-// - Filtro DURO por restricciones dietéticas (vegano, sin gluten...): las que
-//   no pasan salen aparte, en `hidden`, no se rankean.
 // - Orden por distancia ponderada normalizada. Pesos provisionales,
 //   ajustables con uso real: kcal manda, luego proteína.
+// - Restricciones dietéticas (vegano, sin gluten...): NO descartan. Las que
+//   no cumplen salen igual, con `missingFlags`, pero SIEMPRE detrás de las
+//   que sí cumplen. Ver missingDietaryFlags en diet-suitability.js para el
+//   porqué del cambio.
+//
+// El bloque de las que cumplen va primero a propósito y no mezclado por
+// distancia pura: el primero de la lista es el que el panel aplica por
+// defecto (ver `chosen` en diet-suggestion-drawer), así que mezclarlas
+// dejaría a un celíaco con una dieta con gluten a un solo click, sin
+// haberla elegido nadie.
 //
 // PURO.
 
-const { passesDietaryFilter } = require("./diet-suitability");
+const { missingDietaryFlags } = require("./diet-suitability");
 
 const WEIGHTS = { kcal: 0.5, protein: 0.3, carbs: 0.1, fat: 0.1 };
 
@@ -50,37 +58,30 @@ function deltas(profile, target) {
  *   suitableFor, suitableForOverride, verified, ownerClientId }
  * @param {{kcal,protein,carbs,fat}} target
  * @param {string[]} requiredFlags  restricciones del cliente (dietaryFlags)
- * @returns {{ ranked: Array, hidden: Array }}
- *   ranked: ordenadas, con { ...candidate, distance, deltas, rank }
- *   hidden: las que no pasan el filtro dietético, con { _id, name, missingFlags }
+ * @returns {{ ranked: Array }}
+ *   ranked: TODAS, con { ...candidate, distance, deltas, missingFlags, rank }.
+ *   Primero las que cumplen las restricciones (por distancia), después las
+ *   que no (también por distancia).
  */
 function rankTemplates(candidates, target, requiredFlags = []) {
-  const ranked = [];
-  const hidden = [];
+  const ranked = (candidates || []).map((c) => ({
+    ...c,
+    missingFlags: missingDietaryFlags(c, requiredFlags),
+    distance: Math.round(distance(c.profile || {}, target) * 1000) / 1000,
+    deltas: deltas(c.profile || {}, target),
+  }));
 
-  for (const c of candidates || []) {
-    if (!passesDietaryFilter(c, requiredFlags)) {
-      const effective = new Set([...(c.suitableFor || []), ...(c.suitableForOverride || [])]);
-      hidden.push({
-        _id: c._id,
-        name: c.name,
-        missingFlags: requiredFlags.filter((f) => !effective.has(f)),
-      });
-      continue;
-    }
-    ranked.push({
-      ...c,
-      distance: Math.round(distance(c.profile || {}, target) * 1000) / 1000,
-      deltas: deltas(c.profile || {}, target),
-    });
-  }
-
-  ranked.sort((a, b) => a.distance - b.distance);
+  ranked.sort((a, b) => {
+    const cumpleA = a.missingFlags.length === 0;
+    const cumpleB = b.missingFlags.length === 0;
+    if (cumpleA !== cumpleB) return cumpleA ? -1 : 1;
+    return a.distance - b.distance;
+  });
   ranked.forEach((item, i) => {
     item.rank = i + 1;
   });
 
-  return { ranked, hidden };
+  return { ranked };
 }
 
 module.exports = { WEIGHTS, distance, deltas, rankTemplates };
