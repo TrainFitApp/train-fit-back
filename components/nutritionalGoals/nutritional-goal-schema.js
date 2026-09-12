@@ -19,6 +19,31 @@ const GoalMealExchangeSchema = new Schema(
     // el cliente ya tiene debe seguir siendo legible.
     groupName: { type: String, required: true, trim: true, maxlength: 100 },
     count: { type: Number, required: true, min: 0 },
+    // El perfil de la ración CONGELADO en el momento de pautar, igual que
+    // `groupName` y por el mismo motivo llevado un paso más lejos: si el
+    // entrenador retoca el grupo mañana (cambia una cantidad, añade un
+    // alimento, corrige el perfil), la pauta que este cliente ya tiene no
+    // puede cambiar de significado sola. Sin congelarlo, un cuadre que salió
+    // verde en marzo dice otra cosa en abril sin que nadie haya tocado el
+    // objetivo, y el entrenador no tendría forma de saber cuál de las dos
+    // cifras fue la que él aprobó.
+    //
+    // Vacío = pautado antes de que existiera el perfil, o grupo sin perfil.
+    // No suma en el cuadre y se dice cuál falta (ver exchange-profile.js
+    // #sumReparto): un total al que le faltan grupos parece correcto y no lo
+    // es.
+    serving: {
+      kcal: { type: Number, default: null, min: 0 },
+      protein: { type: Number, default: null, min: 0 },
+      carbs: { type: Number, default: null, min: 0 },
+      fat: { type: Number, default: null, min: 0 },
+    },
+    servingFrozenAt: { type: Date, default: null },
+    // Congelado junto al perfil: un grupo libre no suma en el cuadre y está
+    // bien que no sume, mientras que uno sin perfil es un agujero. Sin esta
+    // marca los dos se leerían igual y el aviso de "no cuadrable" saltaría
+    // en repartos perfectamente definidos que llevan verduras.
+    freeQuantity: { type: Boolean, default: false },
   },
   { _id: false }
 );
@@ -72,6 +97,14 @@ const NutritionalGoalSchema = new Schema({
   startDate: { type: String, default: null },
   endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null], default: null },
   endDate: { type: String, default: null },
+  // Sugerencias de dieta + progresión — cada ciclo de una fase crea su
+  // objetivo junto a su copia de dieta, con el mismo phaseId y las fechas
+  // del ciclo. Así la adherencia de la fase (que abarca varios ciclos con
+  // targets distintos) puede resolver "qué objetivo regía el 3 de marzo"
+  // por fecha, en vez de depender solo del puntero User.goalInUse.
+  // Ausentes en objetivos creados fuera de una fase (comportamiento de hoy).
+  phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null, index: true },
+  cycleId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

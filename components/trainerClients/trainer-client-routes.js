@@ -99,6 +99,12 @@ router.postAsync(
   requireActiveClient("nutrition"),
   dataController.assignNutritionalGoal
 );
+router.postAsync(
+  "/clients/:clientId/nutrition-target",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.getNutritionTarget
+);
 router.putAsync(
   "/clients/:clientId/nutritional-goals/:goalId/activate",
   auth(["trainer"]),

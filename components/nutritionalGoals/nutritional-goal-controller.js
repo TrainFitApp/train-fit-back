@@ -31,6 +31,18 @@ function sendLockedGoal(res) {
   });
 }
 
+// El cliente ve y activa un objetivo pautado por su entrenador, pero no lo
+// edita ni lo borra (ni siquiera vacío/name) — para eso está el chat con el
+// entrenador. El propio trainer sigue pudiendo cambiarlo, pero por SU
+// endpoint (trainer-client-data-controller.js#assignNutritionalGoal, que
+// crea un objetivo nuevo y lo activa), no por esta ruta de cliente.
+function sendTrainerAssignedGoal(res) {
+  return res.status(403).send({
+    message: "Este objetivo lo pauto tu entrenador, no se puede editar ni borrar desde aqui",
+    code: "NUTRITIONAL_GOAL_TRAINER_ASSIGNED",
+  });
+}
+
 function getGoalId(goal) {
   return String(goal?._id || "");
 }
@@ -133,6 +145,7 @@ const controller = {
     const currentGoal = await nutritionalGoalService.getById(req.params.id);
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
+    if (!isAdmin(req) && currentGoal.assignedByTrainerId) return sendTrainerAssignedGoal(res);
     if (await isGoalLockedForPlan(req, currentGoal)) return sendLockedGoal(res);
 
     const goal = isAdmin(req)
@@ -151,6 +164,7 @@ const controller = {
     const currentGoal = await nutritionalGoalService.getById(req.params.id);
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
+    if (!isAdmin(req) && currentGoal.assignedByTrainerId) return sendTrainerAssignedGoal(res);
 
     const ownerId = currentGoal.userId;
     const goalCount = await nutritionalGoalService.countByUserId(ownerId);

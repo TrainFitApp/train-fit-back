@@ -102,8 +102,23 @@ const DietTemplateSchema = new Schema(
     startDate: { type: String }, // "YYYY-MM-DD"
     // null sigue en el enum: una asignación indefinida escribe endMode
     // explícito y Mongoose no lo deja pasar gratis si no está listado.
+    //
+    // 2026-09 — endMode se queda SOLO por los documentos viejos: desde que la
+    // duración pasó a ser una estimación (ver estimatedEndDate), toda
+    // asignación nueva nace "indefinite".
     endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null] },
-    endDate: { type: String }, // "YYYY-MM-DD" o null si indefinido
+    // Fin REAL. null mientras la fase sigue corriendo; se estampa el día en
+    // que otra fase la corta (markSuperseded). Antes de 2026-09 guardaba la
+    // fecha calculada al asignar ("8 semanas" -> fecha concreta), que actuaba
+    // como límite duro; eso vive ahora en estimatedEndDate.
+    endDate: { type: String }, // "YYYY-MM-DD" o null si sigue vigente
+    // Duración ESTIMADA: hasta cuándo se calcula que durará la fase. No corta
+    // nada (el fin real lo decide el entrenador al abrir el siguiente ciclo),
+    // pero sí reserva el tramo: no se puede PROGRAMAR otra fase dentro de él
+    // (ver blocksNewPhase en plan-assignment-service.js), y alimenta el aviso
+    // de "toca revisar" del dashboard (listEndingSoonForTrainer).
+    // null = sin estimación, la fase corre hasta nuevo aviso.
+    estimatedEndDate: { type: String }, // "YYYY-MM-DD" o null
     status: { type: String, enum: ["active", "superseded", "ended", null] },
     // Encadena con la copia que la sustituyó — permite reconstruir el
     // historial de fases sin perder rastro de lo que regía antes. Ausente
@@ -116,6 +131,55 @@ const DietTemplateSchema = new Schema(
     // está ausente en una asignación creada de cero ("Crear dieta"), que no
     // sale de ninguna plantilla.
     sourceTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
+
+    // --- Fase / ciclo (sugerencias de dieta + progresión) ---
+    //
+    // Vocabulario: una **fase** (Hipertrofia, Minicut, Definición...) es un
+    // grupo de **ciclos** encadenados. Lo que antes era "una fase" (una copia
+    // congelada suelta) pasa a ser un ciclo; la fase es el grupo. Todos estos
+    // campos SOLO existen en copias (clientId puesto) — en una plantilla de
+    // biblioteca no significan nada, igual que startDate/status.
+    //
+    // `phaseId` apunta al PRIMER ciclo de la fase (auto-ref, mismo patrón que
+    // supersededBy). El primer ciclo se apunta a sí mismo. find({phaseId})
+    // devuelve todos los ciclos de una fase; renombrar la fase = tocar 1 doc.
+    phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate", index: true },
+    // Nombre y enfoque de la FASE — solo en el primer ciclo, se leen vía
+    // phaseId desde los demás. `phaseFocus` es la elección Déficit/
+    // Mantenimiento/Superávit del cajón de sugerencias, no un dato aparte.
+    phaseName: { type: String, trim: true, maxlength: 100 },
+    phaseFocus: { type: String, enum: ["cut", "maintain", "bulk", null] },
+    // Delta de kcal elegido en el cajón (−500 / 0 / +300...) y ritmo por
+    // defecto de la rampa (kcal por ciclo, p. ej. −100). Solo primer ciclo.
+    phaseTargetKcalDelta: { type: Number },
+    targetRatePerCycle: { type: Number },
+    // kcal / macros objetivo resueltos de ESTE ciclo — en todos los ciclos.
+    // Los necesita el cálculo de adherencia y el diff del ciclo siguiente.
+    cycleTargetKcal: { type: Number },
+    cycleTargetMacros: {
+      protein: { type: Number },
+      carbs: { type: Number },
+      fat: { type: Number },
+    },
+
+    // --- Aptitud dietética ---
+    //
+    // `suitableFor` es DERIVADO del contenido: la plantilla lleva "vegan" si
+    // TODOS sus CustomProduct tienen vegan === true (igual para vegetarian /
+    // lactoseFree / glutenFree). Se recalcula en cada guardado
+    // (diet-template-dao.js), nunca se teclea — como los campos basis legacy
+    // de FoodExchangeGroup. Un flag `null` en un producto = "desconocido",
+    // no certifica.
+    suitableFor: { type: [String], default: () => [] },
+    // Aptitudes que el entrenador FUERZA a mano cuando sabe que la dieta es
+    // apta pese a productos con el flag sin rellenar. La efectiva que ve el
+    // filtro = union(suitableFor, suitableForOverride).
+    suitableForOverride: { type: [String], default: () => [] },
+    // true = dieta predefinida de administración (mismo patrón que
+    // Product.verified / Recipe.verified). Sale en el ranking de sugerencias
+    // de todos los entrenadores. Ausente / false = dieta del entrenador.
+    verified: { type: Boolean, default: false },
+
     name: { type: String, required: true, trim: true, maxlength: 100 },
     mode: { type: String, enum: ["sequential", "recurring", "choice"], default: "sequential" },
     days: [

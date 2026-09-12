@@ -1,9 +1,16 @@
 const dietTemplateDao = require("./diet-template-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { MEALS } = require("../dietDays/diet-days-util");
+const { cycleMacroProfile } = require("./diet-macro-profile");
 
 const VALID_SLOTS = new Set(Object.values(MEALS));
 const MAX_ALTERNATIVES = 4;
+
+// Mismo criterio que recipe-controller.js#isAdmin — solo un admin puede
+// marcar una plantilla como "de fábrica" (verified).
+function isAdmin(req) {
+  return Boolean(req.userData?.roles?.includes("admin"));
+}
 
 // Fase 9 — 0 alternativas = comida vacía, 1 = sin elección, 2+ = el cliente
 // elige (ver diet-day-resolver.js#applyResolvedPlanToDietDay).
@@ -67,6 +74,10 @@ module.exports = {
     const name = (req.body?.name || "").trim();
     if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
 
+    // Sugerencias de dieta — dieta de fábrica (verified). Solo admin, mismo
+    // criterio que Recipe (recipe-controller.js#isAdmin && body.verified).
+    const verified = isAdmin(req) && req.body?.verified === true;
+
     // ownerClientId opcional — plantilla exclusiva de ese cliente (ver
     // diet-template-schema.js). Se comprueba la relación activa antes de
     // aceptarlo: sin esto, cualquier profesional podría colgar material de
@@ -86,7 +97,8 @@ module.exports = {
       sanitizeDays(req.body?.days),
       sanitizeMode(req.body?.mode),
       sanitizeDayPatterns(req.body?.dayPatterns),
-      ownerClientId
+      ownerClientId,
+      verified
     );
     return res.send(template);
   },
@@ -113,12 +125,38 @@ module.exports = {
       onlyOwned: req.query?.onlyOwned === "true",
       includeOwned: req.query?.includeOwned === "true",
     });
-    return res.send(templates);
+    // Perfil de macros de un día tipo — para pintar las cards con kcal/P/C/G
+    // (mismo cálculo que el cajón de sugerencias, sin objetivo de cliente).
+    return res.send(
+      templates.map((t) => {
+        const doc = t.toObject ? t.toObject() : t;
+        return { ...doc, macroProfile: cycleMacroProfile(doc) };
+      })
+    );
+  },
+
+  // GET /trainer/diet-templates/:id — una sola plantilla con su contenido
+  // completo (days/dayPatterns). listTemplates ya devuelve esto para TODA la
+  // lista; este endpoint es para cuando el consumidor solo conoce el id de
+  // UNA (p. ej. precargar el builder con la plantilla elegida en el cajón de
+  // sugerencias antes de aplicarla — ver diet-suggestion-drawer).
+  async getTemplate(req, res) {
+    const template = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
+    if (!template) return res.status(404).send({ message: "Plantilla no encontrada" });
+    const doc = template.toObject ? template.toObject() : template;
+    return res.send({ ...doc, macroProfile: cycleMacroProfile(doc) });
   },
 
   async updateTemplate(req, res) {
     const existing = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
     if (!existing) return res.status(404).send({ message: "Plantilla no encontrada" });
+    // Esta ruta es solo para plantillas de BIBLIOTECA. La copia congelada de
+    // un cliente (clientId puesto) se edita por su propio endpoint
+    // (plan-assignment-controller.js#updateContent), que sí exige que
+    // pertenezca a ESE cliente concreto — aquí ni siquiera se comprueba eso,
+    // así que dejarla pasar podría editar la dieta de un cliente por el
+    // camino equivocado.
+    if (existing.clientId) return res.status(404).send({ message: "Plantilla no encontrada" });
 
     const patch = {};
     if (req.body?.name !== undefined) {
@@ -129,6 +167,15 @@ module.exports = {
     if (req.body?.days !== undefined) patch.days = sanitizeDays(req.body.days);
     if (req.body?.mode !== undefined) patch.mode = sanitizeMode(req.body.mode);
     if (req.body?.dayPatterns !== undefined) patch.dayPatterns = sanitizeDayPatterns(req.body.dayPatterns);
+    // Sugerencias de dieta — aptitudes que el entrenador fuerza a mano
+    // (cuando la deriva no basta por productos sin flag). El array derivado
+    // (suitableFor) NUNCA se acepta del body: lo recalcula el dao.
+    if (Array.isArray(req.body?.suitableForOverride)) {
+      patch.suitableForOverride = req.body.suitableForOverride;
+    }
+    if (isAdmin(req) && typeof req.body?.verified === "boolean") {
+      patch.verified = req.body.verified;
+    }
 
     const template = await dietTemplateDao.update(req.auth.userId, req.params.id, patch);
     return res.send(template);
