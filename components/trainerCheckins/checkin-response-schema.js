@@ -12,6 +12,13 @@ const CheckinResponseSchema = new Schema({
   trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
   clientId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
   respondedAt: { type: Date, default: Date.now },
+  scheduleId: { type: Schema.Types.ObjectId },
+  name: { type: String },
+  customQuestions: { type: [require("./checkin-custom-question").CustomCheckinQuestionSchema], default: undefined },
+  status: { type: String },
+  reviewedAt: { type: Date },
+  reviewComment: { type: String },
+  projectedVersionAt: { type: Date },
   values: { type: Schema.Types.Mixed, required: true }, // { [fieldKey]: number|string }, todas las claves respondidas
   // TASK-024 (MASTER_BACKLOG.md) — antes no había forma de saber si el
   // trainer ya había visto una respuesta o no (ni notificación al

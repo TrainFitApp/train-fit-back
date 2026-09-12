@@ -52,6 +52,14 @@ module.exports = {
     }
 
     // --- Propuestas de comida pendientes de elegir ---
+    const now = new Date();
+    const calendarRequests = await require("../trainerCheckins/checkin-request-schema").find({ clientId, trainerId: { $in: activeTrainerIds }, status: "pending", scheduledAt: { $lte: now }, $or: [{ closesAt: null }, { closesAt: { $gt: now } }] }).lean();
+    for (const request of calendarRequests) {
+      pendingCheckins.push({ trainerId: request.trainerId, trainerName: trainerName(request.trainerId), requestId: request._id, name: request.name });
+      touchActivity(request.trainerId, request.scheduledAt);
+    }
+
+    // --- Propuestas de comida pendientes de elegir ---
     const mealProposalsRaw = await mealProposalDao.listAllPendingForClient(clientId);
     const pendingMealProposals = mealProposalsRaw
       .filter((p) => activeTrainerIdSet.has(String(p.trainerId)))

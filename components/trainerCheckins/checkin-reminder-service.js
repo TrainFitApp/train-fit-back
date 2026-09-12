@@ -27,6 +27,7 @@ function addDays(date, days) {
 async function findDueReminders(now = new Date()) {
   const configs = await TrainerCheckinTemplate.find({
     cadence: { $in: Object.keys(CADENCE_DAYS) },
+    calendarManaged: { $ne: true },
   })
     .populate("clientId", "name lastname email")
     .populate("trainerId", "name lastname")
@@ -37,6 +38,7 @@ async function findDueReminders(now = new Date()) {
     if (!config.clientId?.email) continue; // defensivo, mismo criterio que aggregateByOtherParty
 
     const lastResponse = await CheckinResponse.findOne({
+      scheduleId: { $exists: false },
       trainerId: config.trainerId?._id || config.trainerId,
       clientId: config.clientId._id,
     })

@@ -13,6 +13,7 @@ const AnthropometrySchema = new Schema({
     required: true,
   },
   weight: { type: Number },
+  checkinSources: { type: [Schema.Types.ObjectId], default: undefined, select: false },
   neck: { type: Number },
   chest: { type: Number },
   // Deprecados (MVP-trainers D8, 2026-08-01): un único valor histórico sin

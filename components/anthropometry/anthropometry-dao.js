@@ -68,6 +68,20 @@ module.exports = {
   // `fields`, nunca sobrescribe el documento entero. Usado por el check-in
   // del profesional para fusionar con lo que el cliente ya haya auto-registrado
   // ese mismo día (o viceversa) sin que una escritura borre a la otra.
+  async mergeCheckinFields(userId, date, fields, requestId) {
+    try {
+      return await Anthropometry.findOneAndUpdate(
+        { userId, date, checkinSources: { $ne: requestId } },
+        { $set: fields, $setOnInsert: { userId, date }, $addToSet: { checkinSources: requestId } },
+        { new: true, upsert: true }
+      ).lean();
+    } catch (error) {
+      // La clave única del día también protege el reintento tras una caída.
+      if (error.code !== 11000 || !await Anthropometry.exists({ userId, date, checkinSources: requestId })) throw error;
+      return null;
+    }
+  },
+
   async mergeAnthropometryFields(userId, date, fields) {
     return Anthropometry.findOneAndUpdate(
       { userId, date },

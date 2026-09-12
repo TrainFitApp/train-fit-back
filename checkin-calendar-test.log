@@ -1,0 +1,88 @@
+TAP version 13
+# Subtest: fechas fijas mantienen las 09:00 locales al cambiar el horario
+ok 1 - fechas fijas mantienen las 09:00 locales al cambiar el horario
+  ---
+  duration_ms: 76.4646
+  type: 'test'
+  ...
+# Subtest: mensual conserva el día 31 y contempla febrero bisiesto y el intervalo máximo
+ok 2 - mensual conserva el día 31 y contempla febrero bisiesto y el intervalo máximo
+  ---
+  duration_ms: 6.684
+  type: 'test'
+  ...
+# Subtest: rechaza fechas y frecuencias inválidas y usa la fecha de la zona elegida
+ok 3 - rechaza fechas y frecuencias inválidas y usa la fecha de la zona elegida
+  ---
+  duration_ms: 2.9296
+  type: 'test'
+  ...
+# Subtest: el cierre es exclusivo: al abrir el siguiente el anterior queda sin responder
+ok 4 - el cierre es exclusivo: al abrir el siguiente el anterior queda sin responder
+  ---
+  duration_ms: 0.6574
+  type: 'test'
+  ...
+# Subtest: valida la instantánea, no acepta campos ajenos ni escalas fuera de rango
+ok 5 - valida la instantánea, no acepta campos ajenos ni escalas fuera de rango
+  ---
+  duration_ms: 3.4984
+  type: 'test'
+  ...
+# Subtest: recupera ciclos atrasados sin duplicarlos y sólo deja abierta la última solicitud
+ok 6 - recupera ciclos atrasados sin duplicarlos y sólo deja abierta la última solicitud
+  ---
+  duration_ms: 11.2656
+  type: 'test'
+  ...
+# Subtest: un bloqueo ocupado no crea solicitudes y se libera incluso si falla el trabajo
+ok 7 - un bloqueo ocupado no crea solicitudes y se libera incluso si falla el trabajo
+  ---
+  duration_ms: 2.7027
+  type: 'test'
+  ...
+# Subtest: pedir ahora reutiliza la solicitud abierta y no desplaza el calendario
+ok 8 - pedir ahora reutiliza la solicitud abierta y no desplaza el calendario
+  ---
+  duration_ms: 0.9768
+  type: 'test'
+  ...
+# Subtest: revisar es explícito, del profesional propietario e idempotente
+ok 9 - revisar es explícito, del profesional propietario e idempotente
+  ---
+  duration_ms: 1.2532
+  type: 'test'
+  ...
+# Subtest: un cliente sólo responde su solicitud y el cierre se comprueba en la escritura
+ok 10 - un cliente sólo responde su solicitud y el cierre se comprueba en la escritura
+  ---
+  duration_ms: 1.1902
+  type: 'test'
+  ...
+# Subtest: la revisión no vuelve a escribir medidas y los avisos usan claves idempotentes
+ok 11 - la revisión no vuelve a escribir medidas y los avisos usan claves idempotentes
+  ---
+  duration_ms: 0.9945
+  type: 'test'
+  ...
+# Subtest: un formulario independiente no reinicia la cadencia del anterior
+ok 12 - un formulario independiente no reinicia la cadencia del anterior
+  ---
+  duration_ms: 0.3233
+  type: 'test'
+  ...
+# Subtest: push omite respuestas y comentarios de la pantalla bloqueada
+ok 13 - push omite respuestas y comentarios de la pantalla bloqueada
+  ---
+  duration_ms: 0.3091
+  type: 'test'
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 9521.5928

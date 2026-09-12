@@ -1,0 +1,3819 @@
+
+> trainfitback@101.3.47 test
+> node --test components/remoteConfig/remote-config-service.test.js components/billing/feature-access-service.test.js components/util/normalize-email.test.js components/util/date-util.test.js components/users/schema.test.js components/sets/set-dao.test.js components/util/verification-code.test.js components/users/verification-flow.test.js components/users/restore-password-flow.test.js components/coachAlerts/coach-signals-service.test.js components/coachAlerts/coach-alert-service.test.js components/coachRules/rule-evaluation-service.test.js components/planAssignments/plan-assignment-service.test.js components/planChanges/plan-change-service.test.js components/trainerCheckins/checkin-custom-question.test.js components/trainerCheckins/checkin-field-catalog.test.js components/workouts/soreness-catalog.test.js components/painLog/pain-catalog.test.js components/foodExchanges/exchange-math.test.js components/dietDays/shopping-list-service.test.js components/workoutTemplates/workout-template-dao.test.js components/exerciseScores/exercise-score-catalog.test.js components/exerciseScores/session-load-service.test.js components/clientProgress/adherence-service.test.js components/clientProgress/roster-service.test.js components/clientProgress/progress-service.test.js components/clientProgress/training-service.test.js components/clientCoachView/client-coach-view-controller.test.js components/routineAssignments/routine-assignment-schedule.test.js
+
+TAP version 13
+# Subtest: isEffectivelyEntitled
+    # Subtest: entitled=false -> false regardless of expiresAt
+    ok 1 - entitled=false -> false regardless of expiresAt
+      ---
+      duration_ms: 1.5301
+      type: 'test'
+      ...
+    # Subtest: entitled=true, expiresAt in the future -> true
+    ok 2 - entitled=true, expiresAt in the future -> true
+      ---
+      duration_ms: 0.3278
+      type: 'test'
+      ...
+    # Subtest: entitled=true, expiresAt in the past (missed EXPIRATION webhook) -> false
+    ok 3 - entitled=true, expiresAt in the past (missed EXPIRATION webhook) -> false
+      ---
+      duration_ms: 0.2912
+      type: 'test'
+      ...
+    # Subtest: entitled=true, no expiresAt (legacy/manual grant) -> true
+    ok 4 - entitled=true, no expiresAt (legacy/manual grant) -> true
+      ---
+      duration_ms: 0.6151
+      type: 'test'
+      ...
+    # Subtest: no premium object -> false
+    ok 5 - no premium object -> false
+      ---
+      duration_ms: 0.2693
+      type: 'test'
+      ...
+    1..5
+ok 1 - isEffectivelyEntitled
+  ---
+  duration_ms: 8.267
+  type: 'test'
+  ...
+# Subtest: isPremiumUser
+    # Subtest: user with expired premium is not premium
+    ok 1 - user with expired premium is not premium
+      ---
+      duration_ms: 3.0421
+      type: 'test'
+      ...
+    # Subtest: user with active premium is premium
+    ok 2 - user with active premium is premium
+      ---
+      duration_ms: 0.6801
+      type: 'test'
+      ...
+    # Subtest: user without premium field is not premium
+    ok 3 - user without premium field is not premium
+      ---
+      duration_ms: 1.6635
+      type: 'test'
+      ...
+    1..3
+ok 2 - isPremiumUser
+  ---
+  duration_ms: 7.87
+  type: 'test'
+  ...
+# Subtest: isCheckinDue
+    # Subtest: nunca respondido -> siempre pendiente, cualquier cadencia
+    ok 1 - nunca respondido -> siempre pendiente, cualquier cadencia
+      ---
+      duration_ms: 1.0435
+      type: 'test'
+      ...
+    # Subtest: weekly: respondido hace 6 días -> NO pendiente
+    ok 2 - weekly: respondido hace 6 días -> NO pendiente
+      ---
+      duration_ms: 0.4947
+      type: 'test'
+      ...
+    # Subtest: weekly: respondido hace exactamente 7 días -> SÍ pendiente (límite inclusivo)
+    ok 3 - weekly: respondido hace exactamente 7 días -> SÍ pendiente (límite inclusivo)
+      ---
+      duration_ms: 0.3392
+      type: 'test'
+      ...
+    # Subtest: weekly: respondido hace 10 días -> pendiente
+    ok 4 - weekly: respondido hace 10 días -> pendiente
+      ---
+      duration_ms: 0.328
+      type: 'test'
+      ...
+    # Subtest: biweekly: respondido hace 10 días -> NO pendiente todavía
+    ok 5 - biweekly: respondido hace 10 días -> NO pendiente todavía
+      ---
+      duration_ms: 0.2851
+      type: 'test'
+      ...
+    # Subtest: biweekly: respondido hace 14 días -> pendiente
+    ok 6 - biweekly: respondido hace 14 días -> pendiente
+      ---
+      duration_ms: 0.4853
+      type: 'test'
+      ...
+    # Subtest: once: respondido una vez (hace 1 día) -> nunca vuelve a estar pendiente
+    ok 7 - once: respondido una vez (hace 1 día) -> nunca vuelve a estar pendiente
+      ---
+      duration_ms: 1.5119
+      type: 'test'
+      ...
+    # Subtest: once: respondido hace mucho tiempo (200 días) -> sigue sin estar pendiente
+    ok 8 - once: respondido hace mucho tiempo (200 días) -> sigue sin estar pendiente
+      ---
+      duration_ms: 0.854
+      type: 'test'
+      ...
+    # Subtest: responses ya viene ordenado desc por respondedAt: solo se mira responses[0]
+    ok 9 - responses ya viene ordenado desc por respondedAt: solo se mira responses[0]
+      ---
+      duration_ms: 1.2772
+      type: 'test'
+      ...
+    # Subtest: cadencia desconocida cae al default de 7 días (weekly)
+    ok 10 - cadencia desconocida cae al default de 7 días (weekly)
+      ---
+      duration_ms: 0.5758
+      type: 'test'
+      ...
+    1..10
+ok 3 - isCheckinDue
+  ---
+  duration_ms: 12.5045
+  type: 'test'
+  ...
+# Register SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# Suggestions SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# SES SMTP verify failed: Missing credentials for "PLAIN"
+# Subtest: nutritionDimension
+    # Subtest: con datos suficientes reporta el porcentaje y sobre cuántos días
+    ok 1 - con datos suficientes reporta el porcentaje y sobre cuántos días
+      ---
+      duration_ms: 3.7462
+      type: 'test'
+      ...
+    # Subtest: con menos de 3 días de datos no aplica (un % sobre 2 días es ruido)
+    ok 2 - con menos de 3 días de datos no aplica (un % sobre 2 días es ruido)
+      ---
+      duration_ms: 0.5313
+      type: 'test'
+      ...
+    # Subtest: sin plan de nutrición no aplica — no es un 0%
+    ok 3 - sin plan de nutrición no aplica — no es un 0%
+      ---
+      duration_ms: 0.2791
+      type: 'test'
+      ...
+    1..3
+ok 4 - nutritionDimension
+  ---
+  duration_ms: 7.3809
+  type: 'test'
+  ...
+# Subtest: trainingDimension
+    # Subtest: sesiones hechas frente a las del plan entero
+    ok 1 - sesiones hechas frente a las del plan entero
+      ---
+      duration_ms: 2.4636
+      type: 'test'
+      ...
+    # Subtest: dos microciclos de dos sesiones son 4, no 8
+    ok 2 - dos microciclos de dos sesiones son 4, no 8
+      ---
+      duration_ms: 0.418
+      type: 'test'
+      ...
+    # Subtest: entrenar de más se topa en 100, no da 160%
+    ok 3 - entrenar de más se topa en 100, no da 160%
+      ---
+      duration_ms: 0.3133
+      type: 'test'
+      ...
+    # Subtest: sin rutina asignada no aplica — el caso normal de un cliente solo de nutrición
+    ok 4 - sin rutina asignada no aplica — el caso normal de un cliente solo de nutrición
+      ---
+      duration_ms: 0.4939
+      type: 'test'
+      ...
+    # Subtest: cero sesiones con rutina asignada SÍ aplica, y es un 0% real
+    ok 5 - cero sesiones con rutina asignada SÍ aplica, y es un 0% real
+      ---
+      duration_ms: 0.5469
+      type: 'test'
+      ...
+    1..5
+ok 5 - trainingDimension
+  ---
+  duration_ms: 7.2375
+  type: 'test'
+  ...
+# Subtest: habitsDimension
+    # Subtest: cada hábito contra SUS días activos, no contra una ventana fija
+    ok 1 - cada hábito contra SUS días activos, no contra una ventana fija
+      ---
+      duration_ms: 0.7227
+      type: 'test'
+      ...
+    # Subtest: un hábito solo: el detalle es el suyo, no un recuento
+    ok 2 - un hábito solo: el detalle es el suyo, no un recuento
+      ---
+      duration_ms: 0.3178
+      type: 'test'
+      ...
+    # Subtest: cumplir de más se topa en 100 por hábito
+    ok 3 - cumplir de más se topa en 100 por hábito
+      ---
+      duration_ms: 0.2501
+      type: 'test'
+      ...
+    # Subtest: sin hábitos asignados no aplica
+    ok 4 - sin hábitos asignados no aplica
+      ---
+      duration_ms: 0.2347
+      type: 'test'
+      ...
+    # Subtest: un hábito creado hoy (0 días activos) no cuenta todavía
+    ok 5 - un hábito creado hoy (0 días activos) no cuenta todavía
+      ---
+      duration_ms: 0.2433
+      type: 'test'
+      ...
+    1..5
+ok 6 - habitsDimension
+  ---
+  duration_ms: 2.8539
+  type: 'test'
+  ...
+# Subtest: checkinsDimension
+    # Subtest: cuenta SEMANAS cubiertas, no respuestas sueltas
+    ok 1 - cuenta SEMANAS cubiertas, no respuestas sueltas
+      ---
+      duration_ms: 2.3486
+      type: 'test'
+      ...
+    # Subtest: siete respuestas de la misma semana cubren UNA semana, no siete
+    ok 2 - siete respuestas de la misma semana cubren UNA semana, no siete
+      ---
+      duration_ms: 0.4086
+      type: 'test'
+      ...
+    # Subtest: quincenal en 28 días espera 2
+    ok 3 - quincenal en 28 días espera 2
+      ---
+      duration_ms: 1.0455
+      type: 'test'
+      ...
+    # Subtest: las respuestas fuera del periodo no cuentan
+    ok 4 - las respuestas fuera del periodo no cuentan
+      ---
+      duration_ms: 0.524
+      type: 'test'
+      ...
+    # Subtest: cadencia 'once' no aplica: no es adherencia continuada
+    ok 5 - cadencia 'once' no aplica: no es adherencia continuada
+      ---
+      duration_ms: 0.3599
+      type: 'test'
+      ...
+    # Subtest: sin check-in configurado no aplica
+    ok 6 - sin check-in configurado no aplica
+      ---
+      duration_ms: 0.4678
+      type: 'test'
+      ...
+    # Subtest: periodo más corto que la cadencia no aplica (no tocaba ninguno)
+    ok 7 - periodo más corto que la cadencia no aplica (no tocaba ninguno)
+      ---
+      duration_ms: 2.4731
+      type: 'test'
+      ...
+    1..7
+ok 7 - checkinsDimension
+  ---
+  duration_ms: 9.2231
+  type: 'test'
+  ...
+# Subtest: computeAdherence
+    # Subtest: promedia SOLO las dimensiones aplicables
+    ok 1 - promedia SOLO las dimensiones aplicables
+      ---
+      duration_ms: 0.7065
+      type: 'test'
+      ...
+    # Subtest: con cuatro dimensiones activas promedia las cuatro
+    ok 2 - con cuatro dimensiones activas promedia las cuatro
+      ---
+      duration_ms: 0.4503
+      type: 'test'
+      ...
+    # Subtest: señala DÓNDE falla, no solo la media
+    ok 3 - señala DÓNDE falla, no solo la media
+      ---
+      duration_ms: 0.3716
+      type: 'test'
+      ...
+    # Subtest: un cliente sin ningún dato da overall null, nunca 0
+    ok 4 - un cliente sin ningún dato da overall null, nunca 0
+      ---
+      duration_ms: 2.6177
+      type: 'test'
+      ...
+    # Subtest: siempre devuelve las 4 dimensiones, aplicables o no
+    ok 5 - siempre devuelve las 4 dimensiones, aplicables o no
+      ---
+      duration_ms: 1.9696
+      type: 'test'
+      ...
+    1..5
+ok 8 - computeAdherence
+  ---
+  duration_ms: 7.2901
+  type: 'test'
+  ...
+# Subtest: buildWeekWindows
+    # Subtest: devuelve N ventanas de 7 días, de la más antigua a la más reciente
+    ok 1 - devuelve N ventanas de 7 días, de la más antigua a la más reciente
+      ---
+      duration_ms: 5.3846
+      type: 'test'
+      ...
+    # Subtest: las ventanas no se solapan ni dejan huecos
+    ok 2 - las ventanas no se solapan ni dejan huecos
+      ---
+      duration_ms: 0.5065
+      type: 'test'
+      ...
+    1..2
+ok 9 - buildWeekWindows
+  ---
+  duration_ms: 8.1178
+  type: 'test'
+  ...
+# Subtest: catálogos derivados
+    # Subtest: los campos de bienestar salen del catálogo y excluyen el texto libre
+    ok 1 - los campos de bienestar salen del catálogo y excluyen el texto libre
+      ---
+      duration_ms: 0.5521
+      type: 'test'
+      ...
+    # Subtest: los perímetros salen del catálogo con su etiqueta legible
+    ok 2 - los perímetros salen del catálogo con su etiqueta legible
+      ---
+      duration_ms: 0.4151
+      type: 'test'
+      ...
+    1..2
+ok 10 - catálogos derivados
+  ---
+  duration_ms: 2.2158
+  type: 'test'
+  ...
+# Subtest: buildWeeklySeries
+    # Subtest: sin datos, cada semana viene en null — nunca en 0
+    ok 1 - sin datos, cada semana viene en null — nunca en 0
+      ---
+      duration_ms: 3.2488
+      type: 'test'
+      ...
+    # Subtest: el peso se promedia dentro de la semana y reparte por ventana
+    ok 2 - el peso se promedia dentro de la semana y reparte por ventana
+      ---
+      duration_ms: 1.8937
+      type: 'test'
+      ...
+    # Subtest: los perímetros toman el ÚLTIMO valor de la semana, no la media
+    ok 3 - los perímetros toman el ÚLTIMO valor de la semana, no la media
+      ---
+      duration_ms: 1.3944
+      type: 'test'
+      ...
+    # Subtest: un perímetro ausente en el último registro cae al anterior de esa semana
+    ok 4 - un perímetro ausente en el último registro cae al anterior de esa semana
+      ---
+      duration_ms: 0.7116
+      type: 'test'
+      ...
+    # Subtest: el bienestar promedia solo los campos realmente reportados
+    ok 5 - el bienestar promedia solo los campos realmente reportados
+      ---
+      duration_ms: 0.8524
+      type: 'test'
+      ...
+    # Subtest: cuenta las sesiones de cada semana, sin convertirlas en porcentaje
+    ok 6 - cuenta las sesiones de cada semana, sin convertirlas en porcentaje
+      ---
+      duration_ms: 0.4273
+      type: 'test'
+      ...
+    # Subtest: una semana sin entrenar es 0 sesiones, no un hueco
+    ok 7 - una semana sin entrenar es 0 sesiones, no un hueco
+      ---
+      duration_ms: 0.2712
+      type: 'test'
+      ...
+    1..7
+ok 11 - buildWeeklySeries
+  ---
+  duration_ms: 11.2655
+  type: 'test'
+  ...
+# Subtest: buildComparison
+    # Subtest: con menos de dos semanas no hay nada que comparar
+    ok 1 - con menos de dos semanas no hay nada que comparar
+      ---
+      duration_ms: 0.6688
+      type: 'test'
+      ...
+    # Subtest: compara la última semana contra la anterior con absoluto y porcentaje
+    ok 2 - compara la última semana contra la anterior con absoluto y porcentaje
+      ---
+      duration_ms: 0.8075
+      type: 'test'
+      ...
+    # Subtest: una métrica que falta en una de las dos semanas NO se compara
+    ok 3 - una métrica que falta en una de las dos semanas NO se compara
+      ---
+      duration_ms: 0.659
+      type: 'test'
+      ...
+    # Subtest: los perímetros comparados llevan su etiqueta legible
+    ok 4 - los perímetros comparados llevan su etiqueta legible
+      ---
+      duration_ms: 0.4824
+      type: 'test'
+      ...
+    # Subtest: sin perímetros ni bienestar comunes, esos bloques van en null
+    ok 5 - sin perímetros ni bienestar comunes, esos bloques van en null
+      ---
+      duration_ms: 0.3996
+      type: 'test'
+      ...
+    1..5
+ok 12 - buildComparison
+  ---
+  duration_ms: 5.448
+  type: 'test'
+  ...
+# Subtest: buildWeightTrend
+    # Subtest: primera semana con datos contra la última
+    ok 1 - primera semana con datos contra la última
+      ---
+      duration_ms: 1.5379
+      type: 'test'
+      ...
+    # Subtest: con un solo pesaje no hay tendencia
+    ok 2 - con un solo pesaje no hay tendencia
+      ---
+      duration_ms: 0.688
+      type: 'test'
+      ...
+    # Subtest: sin pesajes tampoco
+    ok 3 - sin pesajes tampoco
+      ---
+      duration_ms: 0.4235
+      type: 'test'
+      ...
+    1..3
+ok 13 - buildWeightTrend
+  ---
+  duration_ms: 3.4696
+  type: 'test'
+  ...
+# Subtest: weightChangeFor
+    # Subtest: primera medición contra la última, con signo
+    ok 1 - primera medición contra la última, con signo
+      ---
+      duration_ms: 1.5585
+      type: 'test'
+      ...
+    # Subtest: subida de peso: mismo cálculo, signo positivo
+    ok 2 - subida de peso: mismo cálculo, signo positivo
+      ---
+      duration_ms: 0.2489
+      type: 'test'
+      ...
+    # Subtest: con una sola medición no hay variación que reportar
+    ok 3 - con una sola medición no hay variación que reportar
+      ---
+      duration_ms: 0.1905
+      type: 'test'
+      ...
+    # Subtest: sin mediciones devuelve null, no un 0 (que parecería 'no se ha movido')
+    ok 4 - sin mediciones devuelve null, no un 0 (que parecería 'no se ha movido')
+      ---
+      duration_ms: 0.2595
+      type: 'test'
+      ...
+    # Subtest: ignora las mediciones sin peso en vez de contarlas como 0
+    ok 5 - ignora las mediciones sin peso en vez de contarlas como 0
+      ---
+      duration_ms: 0.3232
+      type: 'test'
+      ...
+    # Subtest: con menos de dos pesos reales no reporta aunque haya varias mediciones
+    ok 6 - con menos de dos pesos reales no reporta aunque haya varias mediciones
+      ---
+      duration_ms: 0.2626
+      type: 'test'
+      ...
+    # Subtest: ningún valor sale como NaN, undefined o null en los campos numéricos
+    ok 7 - ningún valor sale como NaN, undefined o null en los campos numéricos
+      ---
+      duration_ms: 0.3016
+      type: 'test'
+      ...
+    1..7
+ok 14 - weightChangeFor
+  ---
+  duration_ms: 6.1465
+  type: 'test'
+  ...
+# Subtest: daysSince
+    # Subtest: hoy mismo son 0 días, no 1
+    ok 1 - hoy mismo son 0 días, no 1
+      ---
+      duration_ms: 0.8132
+      type: 'test'
+      ...
+    # Subtest: cuenta días completos transcurridos
+    ok 2 - cuenta días completos transcurridos
+      ---
+      duration_ms: 0.5656
+      type: 'test'
+      ...
+    # Subtest: sin fecha devuelve null — 'nunca' no es 'hace 0 días'
+    ok 3 - sin fecha devuelve null — 'nunca' no es 'hace 0 días'
+      ---
+      duration_ms: 0.256
+      type: 'test'
+      ...
+    1..3
+ok 15 - daysSince
+  ---
+  duration_ms: 2.9724
+  type: 'test'
+  ...
+# Subtest: contrato con coachAlerts
+    # Subtest: coach-alert-service exporta lo que la Cartera importa
+    ok 1 - coach-alert-service exporta lo que la Cartera importa
+      ---
+      duration_ms: 0.2535
+      type: 'test'
+      ...
+    # Subtest: buildRoster es invocable
+    ok 2 - buildRoster es invocable
+      ---
+      duration_ms: 0.2125
+      type: 'test'
+      ...
+    1..2
+ok 16 - contrato con coachAlerts
+  ---
+  duration_ms: 0.8984
+  type: 'test'
+  ...
+# Register SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# Suggestions SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# SES SMTP verify failed: Missing credentials for "PLAIN"
+# Subtest: dos sesiones el mismo día cuentan por workout, no por fecha
+ok 17 - dos sesiones el mismo día cuentan por workout, no por fecha
+  ---
+  duration_ms: 3.6601
+  type: 'test'
+  ...
+# Subtest: carga, reps y RIR conservan la misma serie; cero es un RIR válido
+ok 18 - carga, reps y RIR conservan la misma serie; cero es un RIR válido
+  ---
+  duration_ms: 1.3738
+  type: 'test'
+  ...
+# Subtest: RIR ausente no se convierte en cero ni en el esperado
+ok 19 - RIR ausente no se convierte en cero ni en el esperado
+  ---
+  duration_ms: 0.2522
+  type: 'test'
+  ...
+# Subtest: series por grupo no duplican etiquetas repetidas ni excluyen peso corporal
+ok 20 - series por grupo no duplican etiquetas repetidas ni excluyen peso corporal
+  ---
+  duration_ms: 1.3941
+  type: 'test'
+  ...
+# Subtest: buildWeeklyTraining
+    # Subtest: volumen = repeticiones × peso, sumado
+    ok 1 - volumen = repeticiones × peso, sumado
+      ---
+      duration_ms: 0.9155
+      type: 'test'
+      ...
+    # Subtest: cuenta sesiones por DÍA distinto, no por serie
+    ok 2 - cuenta sesiones por DÍA distinto, no por serie
+      ---
+      duration_ms: 2.0147
+      type: 'test'
+      ...
+    # Subtest: una semana sin entrenar da volumen null, no 0
+    ok 3 - una semana sin entrenar da volumen null, no 0
+      ---
+      duration_ms: 0.3053
+      type: 'test'
+      ...
+    # Subtest: reparte las series en su semana correcta
+    ok 4 - reparte las series en su semana correcta
+      ---
+      duration_ms: 0.6605
+      type: 'test'
+      ...
+    # Subtest: una serie sin peso no revienta el cálculo
+    ok 5 - una serie sin peso no revienta el cálculo
+      ---
+      duration_ms: 0.5364
+      type: 'test'
+      ...
+    1..5
+ok 21 - buildWeeklyTraining
+  ---
+  duration_ms: 6.3021
+  type: 'test'
+  ...
+# Subtest: buildPersonalRecords
+    # Subtest: el récord es la serie de más PESO
+    ok 1 - el récord es la serie de más PESO
+      ---
+      duration_ms: 0.2822
+      type: 'test'
+      ...
+    # Subtest: a igual peso gana la de más repeticiones
+    ok 2 - a igual peso gana la de más repeticiones
+      ---
+      duration_ms: 0.1566
+      type: 'test'
+      ...
+    # Subtest: 10×60 no supera a 3×100 aunque su volumen sea mayor
+    ok 3 - 10×60 no supera a 3×100 aunque su volumen sea mayor
+      ---
+      duration_ms: 0.1126
+      type: 'test'
+      ...
+    # Subtest: las series sin carga quedan fuera (no hay PR de 0 kg)
+    ok 4 - las series sin carga quedan fuera (no hay PR de 0 kg)
+      ---
+      duration_ms: 0.1373
+      type: 'test'
+      ...
+    # Subtest: las series sin repeticiones tampoco cuentan
+    ok 5 - las series sin repeticiones tampoco cuentan
+      ---
+      duration_ms: 0.1031
+      type: 'test'
+      ...
+    # Subtest: un récord por ejercicio, ordenados de más a menos peso
+    ok 6 - un récord por ejercicio, ordenados de más a menos peso
+      ---
+      duration_ms: 0.1539
+      type: 'test'
+      ...
+    # Subtest: sin series, sin récords
+    ok 7 - sin series, sin récords
+      ---
+      duration_ms: 0.097
+      type: 'test'
+      ...
+    1..7
+ok 22 - buildPersonalRecords
+  ---
+  duration_ms: 1.6737
+  type: 'test'
+  ...
+# Subtest: buildLoadEvolution
+    # Subtest: sigue los ejercicios MÁS entrenados, con su peso máximo semanal
+    ok 1 - sigue los ejercicios MÁS entrenados, con su peso máximo semanal
+      ---
+      duration_ms: 0.5055
+      type: 'test'
+      ...
+    # Subtest: nunca sigue más de TOP_EXERCISES ejercicios
+    ok 2 - nunca sigue más de TOP_EXERCISES ejercicios
+      ---
+      duration_ms: 0.2743
+      type: 'test'
+      ...
+    # Subtest: los ejercicios sin carga no entran en la evolución
+    ok 3 - los ejercicios sin carga no entran en la evolución
+      ---
+      duration_ms: 0.1271
+      type: 'test'
+      ...
+    1..3
+ok 23 - buildLoadEvolution
+  ---
+  duration_ms: 1.1764
+  type: 'test'
+  ...
+# Subtest: buildVolumeComparison
+    # Subtest: compara la última semana contra la anterior
+    ok 1 - compara la última semana contra la anterior
+      ---
+      duration_ms: 0.2249
+      type: 'test'
+      ...
+    # Subtest: no compara contra una semana sin entrenar
+    ok 2 - no compara contra una semana sin entrenar
+      ---
+      duration_ms: 0.1277
+      type: 'test'
+      ...
+    # Subtest: con una sola semana no hay comparación
+    ok 3 - con una sola semana no hay comparación
+      ---
+      duration_ms: 0.1046
+      type: 'test'
+      ...
+    1..3
+ok 24 - buildVolumeComparison
+  ---
+  duration_ms: 0.7012
+  type: 'test'
+  ...
+# Subtest: umbrales
+    # Subtest: el peso mínimo seguido es positivo pero pequeño
+    ok 1 - el peso mínimo seguido es positivo pero pequeño
+      ---
+      duration_ms: 0.1762
+      type: 'test'
+      ...
+    1..1
+ok 25 - umbrales
+  ---
+  duration_ms: 0.3045
+  type: 'test'
+  ...
+# Subtest: buildBlockTraining
+    # Subtest: agrupa por microciclo y calcula volumen, series y sesiones
+    ok 1 - agrupa por microciclo y calcula volumen, series y sesiones
+      ---
+      duration_ms: 14.289
+      type: 'test'
+      ...
+    # Subtest: ordena por primera sesión, no por el orden de llegada
+    ok 2 - ordena por primera sesión, no por el orden de llegada
+      ---
+      duration_ms: 0.4377
+      type: 'test'
+      ...
+    # Subtest: volumen POR SESIÓN además del total
+    ok 3 - volumen POR SESIÓN además del total
+      ---
+      duration_ms: 0.2236
+      type: 'test'
+      ...
+    # Subtest: una serie sin microciclo se ignora en vez de crear un bloque fantasma
+    ok 4 - una serie sin microciclo se ignora en vez de crear un bloque fantasma
+      ---
+      duration_ms: 0.1548
+      type: 'test'
+      ...
+    # Subtest: sin series no hay bloques
+    ok 5 - sin series no hay bloques
+      ---
+      duration_ms: 0.1066
+      type: 'test'
+      ...
+    1..5
+ok 26 - buildBlockTraining
+  ---
+  duration_ms: 16.522
+  type: 'test'
+  ...
+# Subtest: buildBlockComparison
+    # Subtest: compara el volumen POR SESIÓN, no el total
+    ok 1 - compara el volumen POR SESIÓN, no el total
+      ---
+      duration_ms: 0.3037
+      type: 'test'
+      ...
+    # Subtest: con un solo bloque no hay comparación
+    ok 2 - con un solo bloque no hay comparación
+      ---
+      duration_ms: 0.213
+      type: 'test'
+      ...
+    # Subtest: sin bloques tampoco
+    ok 3 - sin bloques tampoco
+      ---
+      duration_ms: 0.0894
+      type: 'test'
+      ...
+    # Subtest: un bloque anterior sin volumen no genera un porcentaje infinito
+    ok 4 - un bloque anterior sin volumen no genera un porcentaje infinito
+      ---
+      duration_ms: 0.1072
+      type: 'test'
+      ...
+    1..4
+ok 27 - buildBlockComparison
+  ---
+  duration_ms: 1.0899
+  type: 'test'
+  ...
+# Subtest: buildBlockReadiness
+    # Subtest: promedia por SESIÓN, no por serie (varias series del mismo día no pesan de más)
+    ok 1 - promedia por SESIÓN, no por serie (varias series del mismo día no pesan de más)
+      ---
+      duration_ms: 0.4494
+      type: 'test'
+      ...
+    # Subtest: una sesión sin ninguno de los dos valores no cuenta ni resta
+    ok 2 - una sesión sin ninguno de los dos valores no cuenta ni resta
+      ---
+      duration_ms: 0.1463
+      type: 'test'
+      ...
+    # Subtest: readinessPre y perceivedEffortPost se promedian de forma independiente
+    ok 3 - readinessPre y perceivedEffortPost se promedian de forma independiente
+      ---
+      duration_ms: 0.1405
+      type: 'test'
+      ...
+    # Subtest: varios microciclos, ordenados por primera sesión
+    ok 4 - varios microciclos, ordenados por primera sesión
+      ---
+      duration_ms: 0.1865
+      type: 'test'
+      ...
+    # Subtest: series sin splitId no cuentan (dato viejo, no comparable)
+    ok 5 - series sin splitId no cuentan (dato viejo, no comparable)
+      ---
+      duration_ms: 0.1224
+      type: 'test'
+      ...
+    # Subtest: sin sets tampoco
+    ok 6 - sin sets tampoco
+      ---
+      duration_ms: 0.1221
+      type: 'test'
+      ...
+    1..6
+ok 28 - buildBlockReadiness
+  ---
+  duration_ms: 1.5956
+  type: 'test'
+  ...
+# Subtest: buildBlockMuscleGroups
+    # Subtest: suma el volumen de la serie a cada grupo primario implicado
+    ok 1 - suma el volumen de la serie a cada grupo primario implicado
+      ---
+      duration_ms: 0.391
+      type: 'test'
+      ...
+    # Subtest: sin grupo primario, cae al secundario
+    ok 2 - sin grupo primario, cae al secundario
+      ---
+      duration_ms: 0.1866
+      type: 'test'
+      ...
+    # Subtest: un ejercicio sin ficha en el catálogo (sin grupos) no aporta nada
+    ok 3 - un ejercicio sin ficha en el catálogo (sin grupos) no aporta nada
+      ---
+      duration_ms: 0.1207
+      type: 'test'
+      ...
+    # Subtest: agrega varias series del mismo grupo dentro del microciclo
+    ok 4 - agrega varias series del mismo grupo dentro del microciclo
+      ---
+      duration_ms: 0.2212
+      type: 'test'
+      ...
+    # Subtest: ordena los grupos de más a menos volumen
+    ok 5 - ordena los grupos de más a menos volumen
+      ---
+      duration_ms: 0.1961
+      type: 'test'
+      ...
+    # Subtest: ordena los bloques por primera sesión, igual que buildBlockTraining
+    ok 6 - ordena los bloques por primera sesión, igual que buildBlockTraining
+      ---
+      duration_ms: 0.1926
+      type: 'test'
+      ...
+    # Subtest: una serie sin microciclo se ignora
+    ok 7 - una serie sin microciclo se ignora
+      ---
+      duration_ms: 0.1483
+      type: 'test'
+      ...
+    # Subtest: sin series no hay bloques
+    ok 8 - sin series no hay bloques
+      ---
+      duration_ms: 0.1013
+      type: 'test'
+      ...
+    1..8
+ok 29 - buildBlockMuscleGroups
+  ---
+  duration_ms: 2.3196
+  type: 'test'
+  ...
+# Subtest: buildBlockExerciseProgress
+    # Subtest: filtra por ejercicio y calcula peso máximo, volumen y series por bloque
+    ok 1 - filtra por ejercicio y calcula peso máximo, volumen y series por bloque
+      ---
+      duration_ms: 1.4787
+      type: 'test'
+      ...
+    # Subtest: ordena los bloques por primera sesión, igual que buildBlockTraining
+    ok 2 - ordena los bloques por primera sesión, igual que buildBlockTraining
+      ---
+      duration_ms: 0.3832
+      type: 'test'
+      ...
+    # Subtest: respeta MIN_TRACKED_WEIGHT igual que buildPersonalRecords
+    ok 3 - respeta MIN_TRACKED_WEIGHT igual que buildPersonalRecords
+      ---
+      duration_ms: 0.2379
+      type: 'test'
+      ...
+    # Subtest: una serie sin microciclo se ignora en vez de crear un bloque fantasma
+    ok 4 - una serie sin microciclo se ignora en vez de crear un bloque fantasma
+      ---
+      duration_ms: 0.2646
+      type: 'test'
+      ...
+    # Subtest: sin series no hay bloques
+    ok 5 - sin series no hay bloques
+      ---
+      duration_ms: 0.1831
+      type: 'test'
+      ...
+    1..5
+ok 30 - buildBlockExerciseProgress
+  ---
+  duration_ms: 3.4437
+  type: 'test'
+  ...
+# Subtest: listTrackedExerciseNames
+    # Subtest: nombres únicos, sin repetidos, ordenados alfabéticamente
+    ok 1 - nombres únicos, sin repetidos, ordenados alfabéticamente
+      ---
+      duration_ms: 0.6758
+      type: 'test'
+      ...
+    # Subtest: un ejercicio por debajo de MIN_TRACKED_WEIGHT no se ofrece
+    ok 2 - un ejercicio por debajo de MIN_TRACKED_WEIGHT no se ofrece
+      ---
+      duration_ms: 0.1376
+      type: 'test'
+      ...
+    # Subtest: sin series no hay nombres
+    ok 3 - sin series no hay nombres
+      ---
+      duration_ms: 0.1061
+      type: 'test'
+      ...
+    1..3
+ok 31 - listTrackedExerciseNames
+  ---
+  duration_ms: 1.386
+  type: 'test'
+  ...
+# Subtest: buildSessionTraining
+    # Subtest: agrupa por fecha, no por serie
+    ok 1 - agrupa por fecha, no por serie
+      ---
+      duration_ms: 0.3098
+      type: 'test'
+      ...
+    # Subtest: ordena por fecha ascendente
+    ok 2 - ordena por fecha ascendente
+      ---
+      duration_ms: 0.1808
+      type: 'test'
+      ...
+    # Subtest: sin series no hay sesiones
+    ok 3 - sin series no hay sesiones
+      ---
+      duration_ms: 0.1704
+      type: 'test'
+      ...
+    1..3
+ok 32 - buildSessionTraining
+  ---
+  duration_ms: 0.9817
+  type: 'test'
+  ...
+# Subtest: buildSessionMuscleGroups
+    # Subtest: agrupa por sesión, no por microciclo
+    ok 1 - agrupa por sesión, no por microciclo
+      ---
+      duration_ms: 0.6468
+      type: 'test'
+      ...
+    # Subtest: sin grupo muscular no aporta nada
+    ok 2 - sin grupo muscular no aporta nada
+      ---
+      duration_ms: 0.1244
+      type: 'test'
+      ...
+    1..2
+ok 33 - buildSessionMuscleGroups
+  ---
+  duration_ms: 1.0968
+  type: 'test'
+  ...
+# Subtest: buildSessionReadiness
+    # Subtest: no promedia: el pulso ya es un dato por sesión
+    ok 1 - no promedia: el pulso ya es un dato por sesión
+      ---
+      duration_ms: 0.2832
+      type: 'test'
+      ...
+    # Subtest: una sesión sin ningún pulso no aparece
+    ok 2 - una sesión sin ningún pulso no aparece
+      ---
+      duration_ms: 0.1266
+      type: 'test'
+      ...
+    1..2
+ok 34 - buildSessionReadiness
+  ---
+  duration_ms: 0.6556
+  type: 'test'
+  ...
+# Subtest: buildSessionExerciseProgress
+    # Subtest: una fila por sesión con peso máximo de ESE día
+    ok 1 - una fila por sesión con peso máximo de ESE día
+      ---
+      duration_ms: 0.3385
+      type: 'test'
+      ...
+    # Subtest: filtra por ejercicio y respeta MIN_TRACKED_WEIGHT
+    ok 2 - filtra por ejercicio y respeta MIN_TRACKED_WEIGHT
+      ---
+      duration_ms: 0.1356
+      type: 'test'
+      ...
+    1..2
+ok 35 - buildSessionExerciseProgress
+  ---
+  duration_ms: 0.7268
+  type: 'test'
+  ...
+# Subtest: buildSessionAdherence
+    # Subtest: calcula el porcentaje hechas/pautadas por sesión
+    ok 1 - calcula el porcentaje hechas/pautadas por sesión
+      ---
+      duration_ms: 0.2522
+      type: 'test'
+      ...
+    # Subtest: una sesión sin series pautadas no da división por cero
+    ok 2 - una sesión sin series pautadas no da división por cero
+      ---
+      duration_ms: 0.1347
+      type: 'test'
+      ...
+    # Subtest: ordena por fecha ascendente
+    ok 3 - ordena por fecha ascendente
+      ---
+      duration_ms: 0.1658
+      type: 'test'
+      ...
+    # Subtest: sin filas no hay sesiones
+    ok 4 - sin filas no hay sesiones
+      ---
+      duration_ms: 0.1201
+      type: 'test'
+      ...
+    1..4
+ok 36 - buildSessionAdherence
+  ---
+  duration_ms: 1.0663
+  type: 'test'
+  ...
+# Subtest: buildBlockAdherence
+    # Subtest: suma series hechas/pautadas de todo el bloque antes de dividir (no promedia %)
+    ok 1 - suma series hechas/pautadas de todo el bloque antes de dividir (no promedia %)
+      ---
+      duration_ms: 0.3385
+      type: 'test'
+      ...
+    # Subtest: ordena por primera sesión, igual que el resto de buildBlock*
+    ok 2 - ordena por primera sesión, igual que el resto de buildBlock*
+      ---
+      duration_ms: 0.2188
+      type: 'test'
+      ...
+    # Subtest: una sesión sin microciclo se ignora
+    ok 3 - una sesión sin microciclo se ignora
+      ---
+      duration_ms: 0.1709
+      type: 'test'
+      ...
+    # Subtest: sin sesiones no hay bloques
+    ok 4 - sin sesiones no hay bloques
+      ---
+      duration_ms: 0.1204
+      type: 'test'
+      ...
+    1..4
+ok 37 - buildBlockAdherence
+  ---
+  duration_ms: 1.2382
+  type: 'test'
+  ...
+# Subtest: listTrackedWorkoutNames
+    # Subtest: nombres únicos, ordenados alfabéticamente, sin filtro de carga
+    ok 1 - nombres únicos, ordenados alfabéticamente, sin filtro de carga
+      ---
+      duration_ms: 0.2233
+      type: 'test'
+      ...
+    # Subtest: sin nombre de workout no aporta nada
+    ok 2 - sin nombre de workout no aporta nada
+      ---
+      duration_ms: 0.1113
+      type: 'test'
+      ...
+    # Subtest: sin series no hay nombres
+    ok 3 - sin series no hay nombres
+      ---
+      duration_ms: 0.1119
+      type: 'test'
+      ...
+    1..3
+ok 38 - listTrackedWorkoutNames
+  ---
+  duration_ms: 0.7471
+  type: 'test'
+  ...
+# Subtest: dedupeKeyFor
+    # Subtest: identifica (profesional, cliente, tipo) y nada más
+    ok 1 - identifica (profesional, cliente, tipo) y nada más
+      ---
+      duration_ms: 1.6066
+      type: 'test'
+      ...
+    # Subtest: no depende de la fecha: la misma condición dos noches da la misma clave
+    ok 2 - no depende de la fecha: la misma condición dos noches da la misma clave
+      ---
+      duration_ms: 0.3296
+      type: 'test'
+      ...
+    # Subtest: distingue cliente y tipo
+    ok 3 - distingue cliente y tipo
+      ---
+      duration_ms: 0.2809
+      type: 'test'
+      ...
+    # Subtest: acepta ObjectId sin reventar (se interpola como string)
+    ok 4 - acepta ObjectId sin reventar (se interpola como string)
+      ---
+      duration_ms: 0.2571
+      type: 'test'
+      ...
+    1..4
+ok 39 - dedupeKeyFor
+  ---
+  duration_ms: 5.9614
+  type: 'test'
+  ...
+# Subtest: lastActivityFor
+    # Subtest: sin ninguna señal de vida -> null (no se inventa antigüedad)
+    ok 1 - sin ninguna señal de vida -> null (no se inventa antigüedad)
+      ---
+      duration_ms: 0.4025
+      type: 'test'
+      ...
+    # Subtest: con días de dieta registrados -> se considera activo ahora
+    ok 2 - con días de dieta registrados -> se considera activo ahora
+      ---
+      duration_ms: 0.2183
+      type: 'test'
+      ...
+    # Subtest: adherencia con 0 días registrados NO cuenta como actividad
+    ok 3 - adherencia con 0 días registrados NO cuenta como actividad
+      ---
+      duration_ms: 0.3092
+      type: 'test'
+      ...
+    # Subtest: toma la más reciente entre check-in y última medida
+    ok 4 - toma la más reciente entre check-in y última medida
+      ---
+      duration_ms: 1.5651
+      type: 'test'
+      ...
+    # Subtest: solo medidas, sin check-ins -> la última medida
+    ok 5 - solo medidas, sin check-ins -> la última medida
+      ---
+      duration_ms: 0.4015
+      type: 'test'
+      ...
+    1..5
+ok 40 - lastActivityFor
+  ---
+  duration_ms: 4.1792
+  type: 'test'
+  ...
+# Subtest: señales integradas a partir de snapshots
+    # Subtest: un profesional sin clientes no produce señales
+    ok 1 - un profesional sin clientes no produce señales
+      ---
+      duration_ms: 2.8625
+      type: 'test'
+      ...
+    # Subtest: cliente en revisión produce su señal con nombre completo
+    ok 2 - cliente en revisión produce su señal con nombre completo
+      ---
+      duration_ms: 2.0595
+      type: 'test'
+      ...
+    # Subtest: relación sin usuario poblado se salta sin reventar
+    ok 3 - relación sin usuario poblado se salta sin reventar
+      ---
+      duration_ms: 0.3188
+      type: 'test'
+      ...
+    # Subtest: cliente activo sin problemas aparece con lista de señales vacía
+    ok 4 - cliente activo sin problemas aparece con lista de señales vacía
+      ---
+      duration_ms: 0.3871
+      type: 'test'
+      ...
+    # Subtest: cruza antropometría, adherencia y check-in del cliente correcto
+    ok 5 - cruza antropometría, adherencia y check-in del cliente correcto
+      ---
+      duration_ms: 1.2596
+      type: 'test'
+      ...
+    1..5
+ok 41 - señales integradas a partir de snapshots
+  ---
+  duration_ms: 7.766
+  type: 'test'
+  ...
+# Subtest: ALERT_COOLDOWN_DAYS
+    # Subtest: es un silencio real, ni nulo ni eterno
+    ok 1 - es un silencio real, ni nulo ni eterno
+      ---
+      duration_ms: 0.1943
+      type: 'test'
+      ...
+    1..1
+ok 42 - ALERT_COOLDOWN_DAYS
+  ---
+  duration_ms: 0.44
+  type: 'test'
+  ...
+# Register SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# Suggestions SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# SES SMTP verify failed: Missing credentials for "PLAIN"
+# Subtest: detectStagnation
+    # Subtest: 3 semanas sin mover el peso con buena adherencia -> alerta
+    ok 1 - 3 semanas sin mover el peso con buena adherencia -> alerta
+      ---
+      duration_ms: 7.4324
+      type: 'test'
+      ...
+    # Subtest: menos de 3 semanas -> todavía no es estancamiento
+    ok 2 - menos de 3 semanas -> todavía no es estancamiento
+      ---
+      duration_ms: 0.5588
+      type: 'test'
+      ...
+    # Subtest: el peso SÍ se ha movido por encima del umbral -> sin alerta
+    ok 3 - el peso SÍ se ha movido por encima del umbral -> sin alerta
+      ---
+      duration_ms: 0.7726
+      type: 'test'
+      ...
+    # Subtest: baja adherencia -> NO es estancamiento (el problema es cumplir)
+    ok 4 - baja adherencia -> NO es estancamiento (el problema es cumplir)
+      ---
+      duration_ms: 0.4842
+      type: 'test'
+      ...
+    # Subtest: adherencia con muy pocos días registrados -> no se afirma nada
+    ok 5 - adherencia con muy pocos días registrados -> no se afirma nada
+      ---
+      duration_ms: 4.4185
+      type: 'test'
+      ...
+    # Subtest: sin adherencia disponible -> no se afirma nada
+    ok 6 - sin adherencia disponible -> no se afirma nada
+      ---
+      duration_ms: 0.421
+      type: 'test'
+      ...
+    # Subtest: un solo registro de peso -> no hay tendencia que calcular
+    ok 7 - un solo registro de peso -> no hay tendencia que calcular
+      ---
+      duration_ms: 0.3708
+      type: 'test'
+      ...
+    # Subtest: estancamiento hacia arriba también cuenta (sin dirección de objetivo)
+    ok 8 - estancamiento hacia arriba también cuenta (sin dirección de objetivo)
+      ---
+      duration_ms: 0.7525
+      type: 'test'
+      ...
+    1..8
+ok 43 - detectStagnation
+  ---
+  duration_ms: 19.0118
+  type: 'test'
+  ...
+# Subtest: detectSharpWeightChange
+    # Subtest: bajada de más del 2% semanal -> alerta de prioridad alta
+    ok 1 - bajada de más del 2% semanal -> alerta de prioridad alta
+      ---
+      duration_ms: 1.3453
+      type: 'test'
+      ...
+    # Subtest: subida brusca también alerta, con el verbo correcto
+    ok 2 - subida brusca también alerta, con el verbo correcto
+      ---
+      duration_ms: 0.3272
+      type: 'test'
+      ...
+    # Subtest: fluctuación normal (menos del 2% semanal) -> sin alerta
+    ok 3 - fluctuación normal (menos del 2% semanal) -> sin alerta
+      ---
+      duration_ms: 0.1785
+      type: 'test'
+      ...
+    # Subtest: normaliza a semana: 2% en 14 días NO es brusco
+    ok 4 - normaliza a semana: 2% en 14 días NO es brusco
+      ---
+      duration_ms: 0.1809
+      type: 'test'
+      ...
+    # Subtest: elige el registro más cercano a 7 días atrás, no el más antiguo
+    ok 5 - elige el registro más cercano a 7 días atrás, no el más antiguo
+      ---
+      duration_ms: 0.2974
+      type: 'test'
+      ...
+    1..5
+ok 44 - detectSharpWeightChange
+  ---
+  duration_ms: 4.8562
+  type: 'test'
+  ...
+# Subtest: detectSharpMeasurementChange
+    # Subtest: cintura con más del 3% de variación -> alerta con la etiqueta del catálogo
+    ok 1 - cintura con más del 3% de variación -> alerta con la etiqueta del catálogo
+      ---
+      duration_ms: 1.1676
+      type: 'test'
+      ...
+    # Subtest: variación pequeña (error de medición) -> sin alerta
+    ok 2 - variación pequeña (error de medición) -> sin alerta
+      ---
+      duration_ms: 0.3727
+      type: 'test'
+      ...
+    # Subtest: varios perímetros desviados -> UNA sola alerta, la de mayor variación
+    ok 3 - varios perímetros desviados -> UNA sola alerta, la de mayor variación
+      ---
+      duration_ms: 0.4375
+      type: 'test'
+      ...
+    # Subtest: el catálogo de perímetros vigilados no está vacío ni trae composición corporal
+    ok 4 - el catálogo de perímetros vigilados no está vacío ni trae composición corporal
+      ---
+      duration_ms: 0.2874
+      type: 'test'
+      ...
+    1..4
+ok 45 - detectSharpMeasurementChange
+  ---
+  duration_ms: 2.9842
+  type: 'test'
+  ...
+# Subtest: detectLowAdherence
+    # Subtest: por debajo del 70% -> alerta media
+    ok 1 - por debajo del 70% -> alerta media
+      ---
+      duration_ms: 0.4446
+      type: 'test'
+      ...
+    # Subtest: por debajo del 50% -> prioridad alta
+    ok 2 - por debajo del 50% -> prioridad alta
+      ---
+      duration_ms: 0.26
+      type: 'test'
+      ...
+    # Subtest: justo en el umbral (70%) -> sin alerta
+    ok 3 - justo en el umbral (70%) -> sin alerta
+      ---
+      duration_ms: 0.3425
+      type: 'test'
+      ...
+    # Subtest: pocos días registrados -> el porcentaje no es fiable todavía
+    ok 4 - pocos días registrados -> el porcentaje no es fiable todavía
+      ---
+      duration_ms: 0.7104
+      type: 'test'
+      ...
+    # Subtest: sin datos de adherencia -> sin alerta
+    ok 5 - sin datos de adherencia -> sin alerta
+      ---
+      duration_ms: 0.4188
+      type: 'test'
+      ...
+    1..5
+ok 46 - detectLowAdherence
+  ---
+  duration_ms: 3.9365
+  type: 'test'
+  ...
+# Subtest: detectInactivity
+    # Subtest: 14 días sin actividad -> alerta media
+    ok 1 - 14 días sin actividad -> alerta media
+      ---
+      duration_ms: 0.5322
+      type: 'test'
+      ...
+    # Subtest: 21 días o más -> prioridad alta
+    ok 2 - 21 días o más -> prioridad alta
+      ---
+      duration_ms: 0.1958
+      type: 'test'
+      ...
+    # Subtest: actividad reciente -> sin alerta
+    ok 3 - actividad reciente -> sin alerta
+      ---
+      duration_ms: 0.4118
+      type: 'test'
+      ...
+    # Subtest: sin ninguna actividad conocida -> sin alerta (no se inventa antigüedad)
+    ok 4 - sin ninguna actividad conocida -> sin alerta (no se inventa antigüedad)
+      ---
+      duration_ms: 0.3739
+      type: 'test'
+      ...
+    1..4
+ok 47 - detectInactivity
+  ---
+  duration_ms: 2.7541
+  type: 'test'
+  ...
+# Subtest: detectCheckinOverdue
+    # Subtest: nunca respondido -> alerta con frase de primer check-in
+    ok 1 - nunca respondido -> alerta con frase de primer check-in
+      ---
+      duration_ms: 0.6418
+      type: 'test'
+      ...
+    # Subtest: un ciclo vencido -> prioridad media
+    ok 2 - un ciclo vencido -> prioridad media
+      ---
+      duration_ms: 0.3628
+      type: 'test'
+      ...
+    # Subtest: dos ciclos o más vencidos -> prioridad alta
+    ok 3 - dos ciclos o más vencidos -> prioridad alta
+      ---
+      duration_ms: 0.2532
+      type: 'test'
+      ...
+    # Subtest: respondido dentro de plazo -> sin alerta
+    ok 4 - respondido dentro de plazo -> sin alerta
+      ---
+      duration_ms: 0.2178
+      type: 'test'
+      ...
+    # Subtest: cadencia 'once' ya respondida -> nunca vuelve a alertar
+    ok 5 - cadencia 'once' ya respondida -> nunca vuelve a alertar
+      ---
+      duration_ms: 0.2141
+      type: 'test'
+      ...
+    # Subtest: sin check-in configurado -> sin alerta
+    ok 6 - sin check-in configurado -> sin alerta
+      ---
+      duration_ms: 0.2048
+      type: 'test'
+      ...
+    1..6
+ok 48 - detectCheckinOverdue
+  ---
+  duration_ms: 2.8361
+  type: 'test'
+  ...
+# Subtest: detectPendingReview / detectPlanEndingSoon
+    # Subtest: cuestionario en revisión -> prioridad alta (bloquea al cliente)
+    ok 1 - cuestionario en revisión -> prioridad alta (bloquea al cliente)
+      ---
+      duration_ms: 0.4922
+      type: 'test'
+      ...
+    # Subtest: relación activa -> nada que revisar
+    ok 2 - relación activa -> nada que revisar
+      ---
+      duration_ms: 0.2446
+      type: 'test'
+      ...
+    # Subtest: plan que caduca hoy -> frase específica y prioridad alta
+    ok 3 - plan que caduca hoy -> frase específica y prioridad alta
+      ---
+      duration_ms: 0.4964
+      type: 'test'
+      ...
+    # Subtest: plan que caduca en 5 días -> prioridad media y singular/plural correcto
+    ok 4 - plan que caduca en 5 días -> prioridad media y singular/plural correcto
+      ---
+      duration_ms: 0.2818
+      type: 'test'
+      ...
+    # Subtest: sin plan próximo a caducar -> sin alerta
+    ok 5 - sin plan próximo a caducar -> sin alerta
+      ---
+      duration_ms: 0.219
+      type: 'test'
+      ...
+    1..5
+ok 49 - detectPendingReview / detectPlanEndingSoon
+  ---
+  duration_ms: 2.9155
+  type: 'test'
+  ...
+# Subtest: buildSignalsForClient
+    # Subtest: cliente que va bien -> ninguna señal
+    ok 1 - cliente que va bien -> ninguna señal
+      ---
+      duration_ms: 1.8975
+      type: 'test'
+      ...
+    # Subtest: cliente con varios problemas -> varias señales, sin duplicar tipo
+    ok 2 - cliente con varios problemas -> varias señales, sin duplicar tipo
+      ---
+      duration_ms: 0.5641
+      type: 'test'
+      ...
+    # Subtest: cliente en revisión -> solo la señal de cuestionario
+    ok 3 - cliente en revisión -> solo la señal de cuestionario
+      ---
+      duration_ms: 0.3149
+      type: 'test'
+      ...
+    # Subtest: toda señal trae los campos que CoachAlert exige como obligatorios
+    ok 4 - toda señal trae los campos que CoachAlert exige como obligatorios
+      ---
+      duration_ms: 0.9581
+      type: 'test'
+      ...
+    1..4
+ok 50 - buildSignalsForClient
+  ---
+  duration_ms: 6.2172
+  type: 'test'
+  ...
+# Subtest: SIGNAL_THRESHOLDS es coherente consigo mismo
+    # Subtest: el umbral crítico de adherencia es más bajo que el de aviso
+    ok 1 - el umbral crítico de adherencia es más bajo que el de aviso
+      ---
+      duration_ms: 0.5477
+      type: 'test'
+      ...
+    # Subtest: el estancamiento exige más adherencia que el umbral de 'baja adherencia'
+    ok 2 - el estancamiento exige más adherencia que el umbral de 'baja adherencia'
+      ---
+      duration_ms: 0.3145
+      type: 'test'
+      ...
+    # Subtest: la ventana de análisis cubre el mínimo de semanas del estancamiento
+    ok 3 - la ventana de análisis cubre el mínimo de semanas del estancamiento
+      ---
+      duration_ms: 0.6698
+      type: 'test'
+      ...
+    # Subtest: el umbral crítico de inactividad es mayor que el de aviso
+    ok 4 - el umbral crítico de inactividad es mayor que el de aviso
+      ---
+      duration_ms: 0.2066
+      type: 'test'
+      ...
+    1..4
+ok 51 - SIGNAL_THRESHOLDS es coherente consigo mismo
+  ---
+  duration_ms: 3.1459
+  type: 'test'
+  ...
+# Subtest: compare
+    # Subtest: un valor no resuelto (sin datos) NUNCA cumple
+    ok 1 - un valor no resuelto (sin datos) NUNCA cumple
+      ---
+      duration_ms: 4.196
+      type: 'test'
+      ...
+    # Subtest: una condición de variación con un solo dato no cumple
+    ok 2 - una condición de variación con un solo dato no cumple
+      ---
+      duration_ms: 0.3793
+      type: 'test'
+      ...
+    # Subtest: comparaciones directas
+    ok 3 - comparaciones directas
+      ---
+      duration_ms: 0.3468
+      type: 'test'
+      ...
+    # Subtest: 'ha bajado más de X%' usa el signo correcto
+    ok 4 - 'ha bajado más de X%' usa el signo correcto
+      ---
+      duration_ms: 0.2848
+      type: 'test'
+      ...
+    # Subtest: 'ha bajado menos de X%' incluye no haber bajado y haber subido
+    ok 5 - 'ha bajado menos de X%' incluye no haber bajado y haber subido
+      ---
+      duration_ms: 0.2122
+      type: 'test'
+      ...
+    # Subtest: 'apenas ha cambiado' es simétrico en las dos direcciones
+    ok 6 - 'apenas ha cambiado' es simétrico en las dos direcciones
+      ---
+      duration_ms: 0.296
+      type: 'test'
+      ...
+    # Subtest: un operador desconocido no cumple, no revienta
+    ok 7 - un operador desconocido no cumple, no revienta
+      ---
+      duration_ms: 0.1768
+      type: 'test'
+      ...
+    1..7
+ok 52 - compare
+  ---
+  duration_ms: 9.7197
+  type: 'test'
+  ...
+# Subtest: resolutores del catálogo
+    # Subtest: peso: current y variación sobre el periodo
+    ok 1 - peso: current y variación sobre el periodo
+      ---
+      duration_ms: 3.4829
+      type: 'test'
+      ...
+    # Subtest: peso: registros fuera del periodo quedan excluidos
+    ok 2 - peso: registros fuera del periodo quedan excluidos
+      ---
+      duration_ms: 0.9815
+      type: 'test'
+      ...
+    # Subtest: peso sin registros -> null
+    ok 3 - peso sin registros -> null
+      ---
+      duration_ms: 0.3076
+      type: 'test'
+      ...
+    # Subtest: bienestar: promedia el periodo
+    ok 4 - bienestar: promedia el periodo
+      ---
+      duration_ms: 0.6039
+      type: 'test'
+      ...
+    # Subtest: perímetros existen como métrica con etiqueta legible
+    ok 5 - perímetros existen como métrica con etiqueta legible
+      ---
+      duration_ms: 0.4867
+      type: 'test'
+      ...
+    # Subtest: días sin check-in
+    ok 6 - días sin check-in
+      ---
+      duration_ms: 0.364
+      type: 'test'
+      ...
+    # Subtest: adherencia nutricional sin datos -> null, no 0
+    ok 7 - adherencia nutricional sin datos -> null, no 0
+      ---
+      duration_ms: 0.2443
+      type: 'test'
+      ...
+    # Subtest: el catálogo servido a la UI no lleva funciones y sí operadores
+    ok 8 - el catálogo servido a la UI no lleva funciones y sí operadores
+      ---
+      duration_ms: 0.5656
+      type: 'test'
+      ...
+    1..8
+ok 53 - resolutores del catálogo
+  ---
+  duration_ms: 9.0938
+  type: 'test'
+  ...
+# Subtest: evaluateRule
+    # Subtest: se cumple cuando encajan las dos condiciones
+    ok 1 - se cumple cuando encajan las dos condiciones
+      ---
+      duration_ms: 0.6313
+      type: 'test'
+      ...
+    # Subtest: NO se cumple si el peso sí bajó
+    ok 2 - NO se cumple si el peso sí bajó
+      ---
+      duration_ms: 0.3509
+      type: 'test'
+      ...
+    # Subtest: con logic 'all', una condición sin datos tumba la regla entera
+    ok 3 - con logic 'all', una condición sin datos tumba la regla entera
+      ---
+      duration_ms: 0.5725
+      type: 'test'
+      ...
+    # Subtest: con logic 'any' basta una condición cumplida
+    ok 4 - con logic 'any' basta una condición cumplida
+      ---
+      duration_ms: 0.3846
+      type: 'test'
+      ...
+    # Subtest: una regla con métrica inexistente no cumple, no revienta
+    ok 5 - una regla con métrica inexistente no cumple, no revienta
+      ---
+      duration_ms: 0.1743
+      type: 'test'
+      ...
+    1..5
+ok 54 - evaluateRule
+  ---
+  duration_ms: 3.1091
+  type: 'test'
+  ...
+# Subtest: buildEvidence
+    # Subtest: compone los números que dispararon la regla
+    ok 1 - compone los números que dispararon la regla
+      ---
+      duration_ms: 0.5503
+      type: 'test'
+      ...
+    # Subtest: sin condiciones cumplidas devuelve cadena vacía
+    ok 2 - sin condiciones cumplidas devuelve cadena vacía
+      ---
+      duration_ms: 0.1273
+      type: 'test'
+      ...
+    1..2
+ok 55 - buildEvidence
+  ---
+  duration_ms: 0.9493
+  type: 'test'
+  ...
+# Subtest: shouldEvaluateClient
+    # Subtest: trigger 'daily' evalúa siempre
+    ok 1 - trigger 'daily' evalúa siempre
+      ---
+      duration_ms: 0.1996
+      type: 'test'
+      ...
+    # Subtest: 'after_checkin' salta a quien no ha reportado desde la última pasada
+    ok 2 - 'after_checkin' salta a quien no ha reportado desde la última pasada
+      ---
+      duration_ms: 0.1866
+      type: 'test'
+      ...
+    # Subtest: sin evaluación previa, cualquier trigger corre la primera vez
+    ok 3 - sin evaluación previa, cualquier trigger corre la primera vez
+      ---
+      duration_ms: 0.125
+      type: 'test'
+      ...
+    # Subtest: 'after_measurement' mira la última entrada de antropometría
+    ok 4 - 'after_measurement' mira la última entrada de antropometría
+      ---
+      duration_ms: 0.2479
+      type: 'test'
+      ...
+    # Subtest: appliesTo 'selected' limita a los clientes elegidos
+    ok 5 - appliesTo 'selected' limita a los clientes elegidos
+      ---
+      duration_ms: 0.1543
+      type: 'test'
+      ...
+    1..5
+ok 56 - shouldEvaluateClient
+  ---
+  duration_ms: 1.3705
+  type: 'test'
+  ...
+# Subtest: MAX_CLIENTS_AFFECTED_PER_RUN
+    # Subtest: es un tope real, ni cero ni ilimitado
+    ok 1 - es un tope real, ni cero ni ilimitado
+      ---
+      duration_ms: 0.1353
+      type: 'test'
+      ...
+    1..1
+ok 57 - MAX_CLIENTS_AFFECTED_PER_RUN
+  ---
+  duration_ms: 0.3132
+  type: 'test'
+  ...
+# Subtest: buildShoppingList
+    # Subtest: suma el mismo producto a lo largo de los días
+    ok 1 - suma el mismo producto a lo largo de los días
+      ---
+      duration_ms: 3.4827
+      type: 'test'
+      ...
+    # Subtest: dos productos distintos con el mismo nombre no se juntan
+    ok 2 - dos productos distintos con el mismo nombre no se juntan
+      ---
+      duration_ms: 33.2514
+      type: 'test'
+      ...
+    # Subtest: productos escritos a mano se agrupan por nombre, sin distinguir mayúsculas
+    ok 3 - productos escritos a mano se agrupan por nombre, sin distinguir mayúsculas
+      ---
+      duration_ms: 0.7047
+      type: 'test'
+      ...
+    # Subtest: solo cuenta lo PAUTADO, no lo que el cliente añadió por su cuenta
+    ok 4 - solo cuenta lo PAUTADO, no lo que el cliente añadió por su cuenta
+      ---
+      duration_ms: 2.5267
+      type: 'test'
+      ...
+    # Subtest: con onlyPlanned false entra todo
+    ok 5 - con onlyPlanned false entra todo
+      ---
+      duration_ms: 6.3993
+      type: 'test'
+      ...
+    # Subtest: ordena por cantidad, y por nombre cuando empatan
+    ok 6 - ordena por cantidad, y por nombre cuando empatan
+      ---
+      duration_ms: 0.6644
+      type: 'test'
+      ...
+    # Subtest: los ingredientes de una receta cuentan como productos sueltos
+    ok 7 - los ingredientes de una receta cuentan como productos sueltos
+      ---
+      duration_ms: 1.5053
+      type: 'test'
+      ...
+    # Subtest: cuenta los días que REALMENTE tenían plan
+    ok 8 - cuenta los días que REALMENTE tenían plan
+      ---
+      duration_ms: 0.7284
+      type: 'test'
+      ...
+    # Subtest: descarta cantidades cero o negativas en vez de sumarlas
+    ok 9 - descarta cantidades cero o negativas en vez de sumarlas
+      ---
+      duration_ms: 0.7049
+      type: 'test'
+      ...
+    # Subtest: un item sin nombre ni producto no genera una fila en blanco
+    ok 10 - un item sin nombre ni producto no genera una fila en blanco
+      ---
+      duration_ms: 0.6728
+      type: 'test'
+      ...
+    # Subtest: sin días devuelve una lista vacía, no revienta
+    ok 11 - sin días devuelve una lista vacía, no revienta
+      ---
+      duration_ms: 0.4187
+      type: 'test'
+      ...
+    # Subtest: redondea a un decimal, sin acumular error a lo largo del mes
+    ok 12 - redondea a un decimal, sin acumular error a lo largo del mes
+      ---
+      duration_ms: 0.7064
+      type: 'test'
+      ...
+    1..12
+ok 58 - buildShoppingList
+  ---
+  duration_ms: 57.9229
+  type: 'test'
+  ...
+# Subtest: groupKey
+    # Subtest: prefiere el id del catálogo al nombre
+    ok 1 - prefiere el id del catálogo al nombre
+      ---
+      duration_ms: 0.3693
+      type: 'test'
+      ...
+    # Subtest: cae al nombre normalizado cuando no hay producto
+    ok 2 - cae al nombre normalizado cuando no hay producto
+      ---
+      duration_ms: 0.5009
+      type: 'test'
+      ...
+    # Subtest: sin nada devuelve null
+    ok 3 - sin nada devuelve null
+      ---
+      duration_ms: 0.3136
+      type: 'test'
+      ...
+    1..3
+ok 59 - groupKey
+  ---
+  duration_ms: 2.2064
+  type: 'test'
+  ...
+# Subtest: productsOfMeal
+    # Subtest: junta los sueltos y los de recetas
+    ok 1 - junta los sueltos y los de recetas
+      ---
+      duration_ms: 0.3825
+      type: 'test'
+      ...
+    # Subtest: una comida vacía no revienta
+    ok 2 - una comida vacía no revienta
+      ---
+      duration_ms: 0.5628
+      type: 'test'
+      ...
+    1..2
+ok 60 - productsOfMeal
+  ---
+  duration_ms: 1.5452
+  type: 'test'
+  ...
+# Subtest: toScoreOrNull
+    # Subtest: acepta la escala entera, incluido el 0
+    ok 1 - acepta la escala entera, incluido el 0
+      ---
+      duration_ms: 3.456
+      type: 'test'
+      ...
+    # Subtest: un valor ausente NO se convierte en 0
+    ok 2 - un valor ausente NO se convierte en 0
+      ---
+      duration_ms: 0.7232
+      type: 'test'
+      ...
+    # Subtest: descarta fuera de escala y no enteros
+    ok 3 - descarta fuera de escala y no enteros
+      ---
+      duration_ms: 0.7677
+      type: 'test'
+      ...
+    1..3
+ok 61 - toScoreOrNull
+  ---
+  duration_ms: 9.9287
+  type: 'test'
+  ...
+# Subtest: sanitizeMuscleScores
+    # Subtest: conserva los grupos válidos
+    ok 1 - conserva los grupos válidos
+      ---
+      duration_ms: 3.3768
+      type: 'test'
+      ...
+    # Subtest: descarta el 0: la ausencia ya significa 'no lo trabaja'
+    ok 2 - descarta el 0: la ausencia ya significa 'no lo trabaja'
+      ---
+      duration_ms: 0.4107
+      type: 'test'
+      ...
+    # Subtest: devuelve en el orden del catálogo, no en el de llegada
+    ok 3 - devuelve en el orden del catálogo, no en el de llegada
+      ---
+      duration_ms: 0.612
+      type: 'test'
+      ...
+    # Subtest: descarta músculos que no están en el catálogo
+    ok 4 - descarta músculos que no están en el catálogo
+      ---
+      duration_ms: 0.7434
+      type: 'test'
+      ...
+    # Subtest: un músculo repetido se queda con su primera puntuación
+    ok 5 - un músculo repetido se queda con su primera puntuación
+      ---
+      duration_ms: 2.5853
+      type: 'test'
+      ...
+    # Subtest: entradas basura devuelven vacío, nunca revientan
+    ok 6 - entradas basura devuelven vacío, nunca revientan
+      ---
+      duration_ms: 1.4785
+      type: 'test'
+      ...
+    1..6
+ok 62 - sanitizeMuscleScores
+  ---
+  duration_ms: 12.6768
+  type: 'test'
+  ...
+# Subtest: sanitizeJointScores
+    # Subtest: acepta articulaciones, no músculos
+    ok 1 - acepta articulaciones, no músculos
+      ---
+      duration_ms: 0.6402
+      type: 'test'
+      ...
+    1..1
+ok 63 - sanitizeJointScores
+  ---
+  duration_ms: 1.4077
+  type: 'test'
+  ...
+# Subtest: catálogo de puntuaciones
+    # Subtest: los músculos son EXACTAMENTE los del registro de agujetas
+    ok 1 - los músculos son EXACTAMENTE los del registro de agujetas
+      ---
+      duration_ms: 0.9083
+      type: 'test'
+      ...
+    # Subtest: 8 articulaciones, sin repetidas ni vacías
+    ok 2 - 8 articulaciones, sin repetidas ni vacías
+      ---
+      duration_ms: 0.5878
+      type: 'test'
+      ...
+    # Subtest: una frase por cada nivel de la escala, en ambas escalas
+    ok 3 - una frase por cada nivel de la escala, en ambas escalas
+      ---
+      duration_ms: 0.3248
+      type: 'test'
+      ...
+    # Subtest: la escala empieza en 0: 'no lo trabaja' es una respuesta
+    ok 4 - la escala empieza en 0: 'no lo trabaja' es una respuesta
+      ---
+      duration_ms: 0.2338
+      type: 'test'
+      ...
+    1..4
+ok 64 - catálogo de puntuaciones
+  ---
+  duration_ms: 3.1682
+  type: 'test'
+  ...
+# Subtest: el catálogo de puntuaciones del front es idéntico al del backend
+    # Subtest: mismas articulaciones, mismas anclas y mismos límites
+    ok 1 - mismas articulaciones, mismas anclas y mismos límites
+      ---
+      duration_ms: 2.1401
+      type: 'test'
+      ...
+    1..1
+ok 65 - el catálogo de puntuaciones del front es idéntico al del backend
+  ---
+  duration_ms: 2.6897
+  type: 'test'
+  ...
+# Subtest: buildSessionLoad
+    # Subtest: multiplica la puntuación por las SERIES, no la suma a secas
+    ok 1 - multiplica la puntuación por las SERIES, no la suma a secas
+      ---
+      duration_ms: 1.5207
+      type: 'test'
+      ...
+    # Subtest: acumula el mismo músculo entre ejercicios distintos
+    ok 2 - acumula el mismo músculo entre ejercicios distintos
+      ---
+      duration_ms: 3.2021
+      type: 'test'
+      ...
+    # Subtest: ordena de más a menos carga
+    ok 3 - ordena de más a menos carga
+      ---
+      duration_ms: 2.1146
+      type: 'test'
+      ...
+    # Subtest: cuenta los ejercicios sin puntuar en vez de ignorarlos en silencio
+    ok 4 - cuenta los ejercicios sin puntuar en vez de ignorarlos en silencio
+      ---
+      duration_ms: 2.2581
+      type: 'test'
+      ...
+    # Subtest: un ejercicio sin series no aporta carga
+    ok 5 - un ejercicio sin series no aporta carga
+      ---
+      duration_ms: 0.4638
+      type: 'test'
+      ...
+    # Subtest: articulaciones por separado de los músculos
+    ok 6 - articulaciones por separado de los músculos
+      ---
+      duration_ms: 0.5615
+      type: 'test'
+      ...
+    # Subtest: sin ejercicios devuelve listas vacías, no revienta
+    ok 7 - sin ejercicios devuelve listas vacías, no revienta
+      ---
+      duration_ms: 0.4277
+      type: 'test'
+      ...
+    1..7
+ok 66 - buildSessionLoad
+  ---
+  duration_ms: 15.5563
+  type: 'test'
+  ...
+# Subtest: estimateSessionSeconds
+    # Subtest: suma ejecución + descanso de cada serie
+    ok 1 - suma ejecución + descanso de cada serie
+      ---
+      duration_ms: 1.1667
+      type: 'test'
+      ...
+    # Subtest: el descanso de la última serie no cuenta: nadie descansa al terminar
+    ok 2 - el descanso de la última serie no cuenta: nadie descansa al terminar
+      ---
+      duration_ms: 0.5897
+      type: 'test'
+      ...
+    # Subtest: usa el tiempo por serie del ejercicio cuando lo hay
+    ok 3 - usa el tiempo por serie del ejercicio cuando lo hay
+      ---
+      duration_ms: 0.4339
+      type: 'test'
+      ...
+    # Subtest: una serie sin descanso escrito usa el descanso por defecto
+    ok 4 - una serie sin descanso escrito usa el descanso por defecto
+      ---
+      duration_ms: 0.3398
+      type: 'test'
+      ...
+    # Subtest: un ejercicio sin puntuar sigue contando tiempo
+    ok 5 - un ejercicio sin puntuar sigue contando tiempo
+      ---
+      duration_ms: 0.2854
+      type: 'test'
+      ...
+    # Subtest: una sesión vacía dura 0, no un número negativo
+    ok 6 - una sesión vacía dura 0, no un número negativo
+      ---
+      duration_ms: 1.0181
+      type: 'test'
+      ...
+    1..6
+ok 67 - estimateSessionSeconds
+  ---
+  duration_ms: 5.9523
+  type: 'test'
+  ...
+# Subtest: formatDuration
+    # Subtest: por debajo de una hora, en minutos
+    ok 1 - por debajo de una hora, en minutos
+      ---
+      duration_ms: 0.5513
+      type: 'test'
+      ...
+    # Subtest: por encima, en horas y minutos
+    ok 2 - por encima, en horas y minutos
+      ---
+      duration_ms: 0.307
+      type: 'test'
+      ...
+    # Subtest: una hora justa no dice '1 h 0 min'
+    ok 3 - una hora justa no dice '1 h 0 min'
+      ---
+      duration_ms: 0.3234
+      type: 'test'
+      ...
+    # Subtest: cero no revienta
+    ok 4 - cero no revienta
+      ---
+      duration_ms: 0.3716
+      type: 'test'
+      ...
+    1..4
+ok 68 - formatDuration
+  ---
+  duration_ms: 3.028
+  type: 'test'
+  ...
+# Subtest: sesión con ejercicios sin poblar (regresión del .lean())
+    # Subtest: buildSessionLoad no reparte nada y no cuenta ni un ejercicio
+    ok 1 - buildSessionLoad no reparte nada y no cuenta ni un ejercicio
+      ---
+      duration_ms: 0.3669
+      type: 'test'
+      ...
+    # Subtest: estimateSessionSeconds devuelve 0, no una estimación parcial
+    ok 2 - estimateSessionSeconds devuelve 0, no una estimación parcial
+      ---
+      duration_ms: 2.2749
+      type: 'test'
+      ...
+    # Subtest: con los mismos ejercicios poblados sí hay reparto y duración
+    ok 3 - con los mismos ejercicios poblados sí hay reparto y duración
+      ---
+      duration_ms: 0.4961
+      type: 'test'
+      ...
+    1..3
+ok 69 - sesión con ejercicios sin poblar (regresión del .lean())
+  ---
+  duration_ms: 3.7826
+  type: 'test'
+  ...
+# Subtest: exchangesFor
+    # Subtest: divide la cantidad de la etiqueta entre la ración del grupo
+    ok 1 - divide la cantidad de la etiqueta entre la ración del grupo
+      ---
+      duration_ms: 1.8912
+      type: 'test'
+      ...
+    # Subtest: redondea a media ración, que es lo que un coach pauta
+    ok 2 - redondea a media ración, que es lo que un coach pauta
+      ---
+      duration_ms: 0.3955
+      type: 'test'
+      ...
+    # Subtest: redondea hacia abajo cuando toca
+    ok 3 - redondea hacia abajo cuando toca
+      ---
+      duration_ms: 0.391
+      type: 'test'
+      ...
+    # Subtest: un grupo SIN base numérica devuelve null, no 0
+    ok 4 - un grupo SIN base numérica devuelve null, no 0
+      ---
+      duration_ms: 0.4115
+      type: 'test'
+      ...
+    # Subtest: sin cantidad no hay cuenta que hacer
+    ok 5 - sin cantidad no hay cuenta que hacer
+      ---
+      duration_ms: 0.5755
+      type: 'test'
+      ...
+    # Subtest: nunca devuelve NaN ni Infinity
+    ok 6 - nunca devuelve NaN ni Infinity
+      ---
+      duration_ms: 2.2794
+      type: 'test'
+      ...
+    1..6
+ok 70 - exchangesFor
+  ---
+  duration_ms: 11.4484
+  type: 'test'
+  ...
+# Subtest: basisForExchanges
+    # Subtest: multiplica la ración por el número de raciones
+    ok 1 - multiplica la ración por el número de raciones
+      ---
+      duration_ms: 1.2082
+      type: 'test'
+      ...
+    # Subtest: cero raciones es un dato válido: cero de esa base
+    ok 2 - cero raciones es un dato válido: cero de esa base
+      ---
+      duration_ms: 0.7864
+      type: 'test'
+      ...
+    # Subtest: sin base numérica no se puede
+    ok 3 - sin base numérica no se puede
+      ---
+      duration_ms: 0.7907
+      type: 'test'
+      ...
+    # Subtest: un número de raciones no válido devuelve null
+    ok 4 - un número de raciones no válido devuelve null
+      ---
+      duration_ms: 0.3418
+      type: 'test'
+      ...
+    1..4
+ok 71 - basisForExchanges
+  ---
+  duration_ms: 5.7361
+  type: 'test'
+  ...
+# Subtest: amountForExchanges
+    # Subtest: multiplica la cantidad que escribió el coach
+    ok 1 - multiplica la cantidad que escribió el coach
+      ---
+      duration_ms: 1.8713
+      type: 'test'
+      ...
+    # Subtest: media ración es media cantidad
+    ok 2 - media ración es media cantidad
+      ---
+      duration_ms: 0.3268
+      type: 'test'
+      ...
+    # Subtest: respeta la unidad del alimento, no asume gramos
+    ok 3 - respeta la unidad del alimento, no asume gramos
+      ---
+      duration_ms: 0.2788
+      type: 'test'
+      ...
+    # Subtest: sin cantidad no hay nada que multiplicar
+    ok 4 - sin cantidad no hay nada que multiplicar
+      ---
+      duration_ms: 0.2523
+      type: 'test'
+      ...
+    1..4
+ok 72 - amountForExchanges
+  ---
+  duration_ms: 3.6134
+  type: 'test'
+  ...
+# Subtest: mealBasisTotals
+    # Subtest: suma por base, no todo junto
+    ok 1 - suma por base, no todo junto
+      ---
+      duration_ms: 0.6812
+      type: 'test'
+      ...
+    # Subtest: acumula dos grupos de la misma base
+    ok 2 - acumula dos grupos de la misma base
+      ---
+      duration_ms: 0.4641
+      type: 'test'
+      ...
+    # Subtest: cuenta aparte los grupos que no se pueden sumar
+    ok 3 - cuenta aparte los grupos que no se pueden sumar
+      ---
+      duration_ms: 0.3223
+      type: 'test'
+      ...
+    # Subtest: una comida vacía no revienta
+    ok 4 - una comida vacía no revienta
+      ---
+      duration_ms: 0.5719
+      type: 'test'
+      ...
+    # Subtest: un grupo que ya no existe cuenta como no sumable, no rompe
+    ok 5 - un grupo que ya no existe cuenta como no sumable, no rompe
+      ---
+      duration_ms: 0.444
+      type: 'test'
+      ...
+    1..5
+ok 73 - mealBasisTotals
+  ---
+  duration_ms: 3.5755
+  type: 'test'
+  ...
+# Subtest: catálogo de bases
+    # Subtest: las cuatro bases tienen clave, etiqueta y unidad
+    ok 1 - las cuatro bases tienen clave, etiqueta y unidad
+      ---
+      duration_ms: 0.3676
+      type: 'test'
+      ...
+    # Subtest: las calorías se miden en kcal, no en gramos
+    ok 2 - las calorías se miden en kcal, no en gramos
+      ---
+      duration_ms: 0.1962
+      type: 'test'
+      ...
+    # Subtest: el paso de redondeo es media ración
+    ok 3 - el paso de redondeo es media ración
+      ---
+      duration_ms: 5.0432
+      type: 'test'
+      ...
+    1..3
+ok 74 - catálogo de bases
+  ---
+  duration_ms: 6.5886
+  type: 'test'
+  ...
+# Subtest: sanitizePainEntry
+    # Subtest: conserva zona, nivel y nota
+    ok 1 - conserva zona, nivel y nota
+      ---
+      duration_ms: 2.917
+      type: 'test'
+      ...
+    # Subtest: el nivel 0 SÍ se guarda: 'hoy no me duele' es información
+    ok 2 - el nivel 0 SÍ se guarda: 'hoy no me duele' es información
+      ---
+      duration_ms: 0.504
+      type: 'test'
+      ...
+    # Subtest: descarta zonas fuera del catálogo
+    ok 3 - descarta zonas fuera del catálogo
+      ---
+      duration_ms: 0.2754
+      type: 'test'
+      ...
+    # Subtest: descarta niveles fuera de 0-10 o no enteros
+    ok 4 - descarta niveles fuera de 0-10 o no enteros
+      ---
+      duration_ms: 0.3018
+      type: 'test'
+      ...
+    # Subtest: acepta los dos extremos de la escala
+    ok 5 - acepta los dos extremos de la escala
+      ---
+      duration_ms: 0.2285
+      type: 'test'
+      ...
+    # Subtest: recorta la nota a 300 caracteres
+    ok 6 - recorta la nota a 300 caracteres
+      ---
+      duration_ms: 2.4503
+      type: 'test'
+      ...
+    # Subtest: entradas basura devuelven null, nunca revientan
+    ok 7 - entradas basura devuelven null, nunca revientan
+      ---
+      duration_ms: 0.3328
+      type: 'test'
+      ...
+    1..7
+ok 75 - sanitizePainEntry
+  ---
+  duration_ms: 12.359
+  type: 'test'
+  ...
+# Subtest: sanitizeThreshold
+    # Subtest: conserva los dos umbrales
+    ok 1 - conserva los dos umbrales
+      ---
+      duration_ms: 1.0274
+      type: 'test'
+      ...
+    # Subtest: si vienen del revés se corrigen, no se rechazan
+    ok 2 - si vienen del revés se corrigen, no se rechazan
+      ---
+      duration_ms: 0.4932
+      type: 'test'
+      ...
+    # Subtest: los dos iguales es válido: se para justo donde empieza a molestar
+    ok 3 - los dos iguales es válido: se para justo donde empieza a molestar
+      ---
+      duration_ms: 0.2467
+      type: 'test'
+      ...
+    # Subtest: descarta zona o niveles no válidos
+    ok 4 - descarta zona o niveles no válidos
+      ---
+      duration_ms: 0.1732
+      type: 'test'
+      ...
+    1..4
+ok 76 - sanitizeThreshold
+  ---
+  duration_ms: 3.3654
+  type: 'test'
+  ...
+# Subtest: catálogo de dolor
+    # Subtest: 15 zonas, sin repetidas ni vacías
+    ok 1 - 15 zonas, sin repetidas ni vacías
+      ---
+      duration_ms: 0.5503
+      type: 'test'
+      ...
+    # Subtest: los tramos cubren el 0-10 entero, sin huecos ni solapes
+    ok 2 - los tramos cubren el 0-10 entero, sin huecos ni solapes
+      ---
+      duration_ms: 0.4573
+      type: 'test'
+      ...
+    # Subtest: bandFor devuelve el tramo correcto en los bordes
+    ok 3 - bandFor devuelve el tramo correcto en los bordes
+      ---
+      duration_ms: 0.3223
+      type: 'test'
+      ...
+    # Subtest: fuera de rango no hay tramo
+    ok 4 - fuera de rango no hay tramo
+      ---
+      duration_ms: 0.1999
+      type: 'test'
+      ...
+    # Subtest: el umbral limitante coincide con el inicio de su tramo
+    ok 5 - el umbral limitante coincide con el inicio de su tramo
+      ---
+      duration_ms: 0.1498
+      type: 'test'
+      ...
+    1..5
+ok 77 - catálogo de dolor
+  ---
+  duration_ms: 2.575
+  type: 'test'
+  ...
+# Subtest: el catálogo de dolor del front es idéntico al del backend
+    # Subtest: mismas zonas, mismos tramos y mismos límites
+    ok 1 - mismas zonas, mismos tramos y mismos límites
+      ---
+      duration_ms: 4.1518
+      type: 'test'
+      ...
+    1..1
+ok 78 - el catálogo de dolor del front es idéntico al del backend
+  ---
+  duration_ms: 4.4724
+  type: 'test'
+  ...
+# Subtest: blocksNewPhase
+    # Subtest: una fase abierta que ya venía corriendo se deja sustituir
+    ok 1 - una fase abierta que ya venía corriendo se deja sustituir
+      ---
+      duration_ms: 1.7698
+      type: 'test'
+      ...
+    # Subtest: empezar el mismo día en que arrancó la abierta también la sustituye
+    ok 2 - empezar el mismo día en que arrancó la abierta también la sustituye
+      ---
+      duration_ms: 0.3518
+      type: 'test'
+      ...
+    # Subtest: una fase con fechas cerradas SÍ bloquea
+    ok 3 - una fase con fechas cerradas SÍ bloquea
+      ---
+      duration_ms: 0.3056
+      type: 'test'
+      ...
+    # Subtest: una fase abierta que empieza MÁS ADELANTE bloquea
+    ok 4 - una fase abierta que empieza MÁS ADELANTE bloquea
+      ---
+      duration_ms: 0.3413
+      type: 'test'
+      ...
+    1..4
+ok 79 - blocksNewPhase
+  ---
+  duration_ms: 6.2796
+  type: 'test'
+  ...
+# Subtest: diffFields
+    # Subtest: detecta el cambio del ejemplo: 2200 -> 2100 kcal
+    ok 1 - detecta el cambio del ejemplo: 2200 -> 2100 kcal
+      ---
+      duration_ms: 1.0059
+      type: 'test'
+      ...
+    # Subtest: sin cambios reales no registra nada
+    ok 2 - sin cambios reales no registra nada
+      ---
+      duration_ms: 0.9264
+      type: 'test'
+      ...
+    # Subtest: 2100 y '2100' NO son un cambio
+    ok 3 - 2100 y '2100' NO son un cambio
+      ---
+      duration_ms: 0.2294
+      type: 'test'
+      ...
+    # Subtest: registra varios campos a la vez
+    ok 4 - registra varios campos a la vez
+      ---
+      duration_ms: 0.3689
+      type: 'test'
+      ...
+    # Subtest: sin objetivo previo, todo lo relleno cuenta como cambio
+    ok 5 - sin objetivo previo, todo lo relleno cuenta como cambio
+      ---
+      duration_ms: 0.2954
+      type: 'test'
+      ...
+    # Subtest: null y undefined se tratan igual: ninguno de los dos es un cambio
+    ok 6 - null y undefined se tratan igual: ninguno de los dos es un cambio
+      ---
+      duration_ms: 0.2007
+      type: 'test'
+      ...
+    # Subtest: pasar de un valor a vacío SÍ es un cambio
+    ok 7 - pasar de un valor a vacío SÍ es un cambio
+      ---
+      duration_ms: 0.1659
+      type: 'test'
+      ...
+    # Subtest: solo mira los campos declarados, no el documento entero
+    ok 8 - solo mira los campos declarados, no el documento entero
+      ---
+      duration_ms: 0.2726
+      type: 'test'
+      ...
+    # Subtest: el cambio de vigencia de un plan usa sus propios campos
+    ok 9 - el cambio de vigencia de un plan usa sus propios campos
+      ---
+      duration_ms: 0.3512
+      type: 'test'
+      ...
+    1..9
+ok 80 - diffFields
+  ---
+  duration_ms: 6.5453
+  type: 'test'
+  ...
+# Subtest: catálogos de campos
+    # Subtest: cada campo del objetivo tiene etiqueta legible
+    ok 1 - cada campo del objetivo tiene etiqueta legible
+      ---
+      duration_ms: 0.2202
+      type: 'test'
+      ...
+    # Subtest: las calorías están cubiertas (es el cambio del ejemplo)
+    ok 2 - las calorías están cubiertas (es el cambio del ejemplo)
+      ---
+      duration_ms: 0.1299
+      type: 'test'
+      ...
+    1..2
+ok 81 - catálogos de campos
+  ---
+  duration_ms: 0.7542
+  type: 'test'
+  ...
+# Subtest: calculateMaintenanceStatus
+    # Subtest: disabled -> normal regardless of dates
+    ok 1 - disabled -> normal regardless of dates
+      ---
+      duration_ms: 2.2989
+      type: 'test'
+      ...
+    # Subtest: enabled, no dates at all -> active (instant/indefinite toggle)
+    ok 2 - enabled, no dates at all -> active (instant/indefinite toggle)
+      ---
+      duration_ms: 0.3071
+      type: 'test'
+      ...
+    # Subtest: enabled, startAt in the future, no endAt, no warningFrom -> normal
+    ok 3 - enabled, startAt in the future, no endAt, no warningFrom -> normal
+      ---
+      duration_ms: 0.3102
+      type: 'test'
+      ...
+    # Subtest: enabled, startAt in the future, no endAt, past warningFrom -> warning
+    ok 4 - enabled, startAt in the future, no endAt, past warningFrom -> warning
+      ---
+      duration_ms: 2.0925
+      type: 'test'
+      ...
+    # Subtest: enabled, startAt only, now past startAt, no endAt -> active indefinitely
+    ok 5 - enabled, startAt only, now past startAt, no endAt -> active indefinitely
+      ---
+      duration_ms: 0.3168
+      type: 'test'
+      ...
+    # Subtest: enabled, now within [startAt, endAt] -> active
+    ok 6 - enabled, now within [startAt, endAt] -> active
+      ---
+      duration_ms: 0.3699
+      type: 'test'
+      ...
+    # Subtest: enabled, now past endAt -> normal even though enabled stays true (self-clears)
+    ok 7 - enabled, now past endAt -> normal even though enabled stays true (self-clears)
+      ---
+      duration_ms: 0.2749
+      type: 'test'
+      ...
+    # Subtest: boundary: now === startAt -> active (inclusive start)
+    ok 8 - boundary: now === startAt -> active (inclusive start)
+      ---
+      duration_ms: 0.2865
+      type: 'test'
+      ...
+    # Subtest: boundary: now === endAt -> still active (inclusive through the instant of end)
+    ok 9 - boundary: now === endAt -> still active (inclusive through the instant of end)
+      ---
+      duration_ms: 0.3428
+      type: 'test'
+      ...
+    1..9
+ok 82 - calculateMaintenanceStatus
+  ---
+  duration_ms: 10.7142
+  type: 'test'
+  ...
+# Subtest: calculateForceUpdate
+    # Subtest: client version below minimum -> required
+    ok 1 - client version below minimum -> required
+      ---
+      duration_ms: 0.4166
+      type: 'test'
+      ...
+    # Subtest: client version equal to minimum -> not required
+    ok 2 - client version equal to minimum -> not required
+      ---
+      duration_ms: 0.2424
+      type: 'test'
+      ...
+    # Subtest: client version above minimum -> not required
+    ok 3 - client version above minimum -> not required
+      ---
+      duration_ms: 0.2253
+      type: 'test'
+      ...
+    # Subtest: per-platform minimum is respected
+    ok 4 - per-platform minimum is respected
+      ---
+      duration_ms: 0.1502
+      type: 'test'
+      ...
+    # Subtest: web: client version below minimum -> required
+    ok 5 - web: client version below minimum -> required
+      ---
+      duration_ms: 0.3039
+      type: 'test'
+      ...
+    # Subtest: web: client version at or above minimum -> not required
+    ok 6 - web: client version at or above minimum -> not required
+      ---
+      duration_ms: 0.459
+      type: 'test'
+      ...
+    # Subtest: unknown platform -> fail-open, not required
+    ok 7 - unknown platform -> fail-open, not required
+      ---
+      duration_ms: 0.4032
+      type: 'test'
+      ...
+    # Subtest: invalid client version string -> fail-open, not required
+    ok 8 - invalid client version string -> fail-open, not required
+      ---
+      duration_ms: 1.207
+      type: 'test'
+      ...
+    # Subtest: missing min version for platform -> fail-open, not required
+    ok 9 - missing min version for platform -> fail-open, not required
+      ---
+      duration_ms: 0.2929
+      type: 'test'
+      ...
+    # Subtest: no forceUpdate config at all -> fail-open, not required
+    ok 10 - no forceUpdate config at all -> fail-open, not required
+      ---
+      duration_ms: 0.3383
+      type: 'test'
+      ...
+    1..10
+ok 83 - calculateForceUpdate
+  ---
+  duration_ms: 6.4935
+  type: 'test'
+  ...
+# Subtest: validateConfigPatch
+    # Subtest: valid full patch -> no errors
+    ok 1 - valid full patch -> no errors
+      ---
+      duration_ms: 1.0395
+      type: 'test'
+      ...
+    # Subtest: warningFrom without startAt -> error
+    ok 2 - warningFrom without startAt -> error
+      ---
+      duration_ms: 0.176
+      type: 'test'
+      ...
+    # Subtest: endAt without startAt -> error
+    ok 3 - endAt without startAt -> error
+      ---
+      duration_ms: 0.1551
+      type: 'test'
+      ...
+    # Subtest: startAt after endAt -> error
+    ok 4 - startAt after endAt -> error
+      ---
+      duration_ms: 0.138
+      type: 'test'
+      ...
+    # Subtest: invalid semver min version -> error
+    ok 5 - invalid semver min version -> error
+      ---
+      duration_ms: 0.1442
+      type: 'test'
+      ...
+    # Subtest: invalid semver min version for web -> error
+    ok 6 - invalid semver min version for web -> error
+      ---
+      duration_ms: 0.2483
+      type: 'test'
+      ...
+    1..6
+ok 84 - validateConfigPatch
+  ---
+  duration_ms: 2.7722
+  type: 'test'
+  ...
+# Subtest: pickCurrentPhase
+    # Subtest: sin fases devuelve null
+    ok 1 - sin fases devuelve null
+      ---
+      duration_ms: 0.861
+      type: 'test'
+      ...
+    # Subtest: una fase futura no cuenta como actual
+    ok 2 - una fase futura no cuenta como actual
+      ---
+      duration_ms: 0.2207
+      type: 'test'
+      ...
+    # Subtest: una sola fase vigente se devuelve tal cual
+    ok 3 - una sola fase vigente se devuelve tal cual
+      ---
+      duration_ms: 0.1502
+      type: 'test'
+      ...
+    # Subtest: entre varias fases pasadas, gana la de startDate más reciente
+    ok 4 - entre varias fases pasadas, gana la de startDate más reciente
+      ---
+      duration_ms: 0.2995
+      type: 'test'
+      ...
+    # Subtest: mismo startDate: gana la de createdAt más reciente
+    ok 5 - mismo startDate: gana la de createdAt más reciente
+      ---
+      duration_ms: 0.1805
+      type: 'test'
+      ...
+    # Subtest: una fase que empieza HOY ya cuenta como vigente
+    ok 6 - una fase que empieza HOY ya cuenta como vigente
+      ---
+      duration_ms: 0.1708
+      type: 'test'
+      ...
+    1..6
+ok 85 - pickCurrentPhase
+  ---
+  duration_ms: 4.2663
+  type: 'test'
+  ...
+# Subtest: set-dao updateSet — donedAt
+    # Subtest: false -> true: fija donedAt
+    ok 1 - false -> true: fija donedAt
+      ---
+      duration_ms: 2.1834
+      type: 'test'
+      ...
+    # Subtest: true -> true (edición no relacionada): NO vuelve a tocar donedAt
+    ok 2 - true -> true (edición no relacionada): NO vuelve a tocar donedAt
+      ---
+      duration_ms: 0.5773
+      type: 'test'
+      ...
+    # Subtest: true -> false: limpia donedAt
+    ok 3 - true -> false: limpia donedAt
+      ---
+      duration_ms: 0.4253
+      type: 'test'
+      ...
+    # Subtest: el cliente no puede mandar donedAt directamente
+    ok 4 - el cliente no puede mandar donedAt directamente
+      ---
+      duration_ms: 0.6098
+      type: 'test'
+      ...
+    1..4
+ok 86 - set-dao updateSet — donedAt
+  ---
+  duration_ms: 6.6059
+  type: 'test'
+  ...
+# Subtest: claves de pregunta propia
+    # Subtest: van prefijadas y se pueden volver a leer
+    ok 1 - van prefijadas y se pueden volver a leer
+      ---
+      duration_ms: 1.0224
+      type: 'test'
+      ...
+    # Subtest: NINGUNA clave del catálogo cerrado puede confundirse con una propia
+    ok 2 - NINGUNA clave del catálogo cerrado puede confundirse con una propia
+      ---
+      duration_ms: 0.2691
+      type: 'test'
+      ...
+    # Subtest: una clave normal no es de pregunta propia
+    ok 3 - una clave normal no es de pregunta propia
+      ---
+      duration_ms: 0.8862
+      type: 'test'
+      ...
+    1..3
+ok 87 - claves de pregunta propia
+  ---
+  duration_ms: 4.7292
+  type: 'test'
+  ...
+# Subtest: validateQuestionDefinition
+    # Subtest: acepta una pregunta bien formada de cada tipo
+    ok 1 - acepta una pregunta bien formada de cada tipo
+      ---
+      duration_ms: 0.4464
+      type: 'test'
+      ...
+    # Subtest: rechaza enunciado vacío
+    ok 2 - rechaza enunciado vacío
+      ---
+      duration_ms: 0.3834
+      type: 'test'
+      ...
+    # Subtest: rechaza tipo desconocido
+    ok 3 - rechaza tipo desconocido
+      ---
+      duration_ms: 0.8807
+      type: 'test'
+      ...
+    # Subtest: un selector con menos de 2 opciones no es un selector
+    ok 4 - un selector con menos de 2 opciones no es un selector
+      ---
+      duration_ms: 0.5653
+      type: 'test'
+      ...
+    # Subtest: las opciones en blanco no cuentan para el mínimo
+    ok 5 - las opciones en blanco no cuentan para el mínimo
+      ---
+      duration_ms: 0.8703
+      type: 'test'
+      ...
+    1..5
+ok 88 - validateQuestionDefinition
+  ---
+  duration_ms: 5.5666
+  type: 'test'
+  ...
+# Subtest: validateCustomAnswer
+    # Subtest: una opcional sin responder es válida
+    ok 1 - una opcional sin responder es válida
+      ---
+      duration_ms: 0.4176
+      type: 'test'
+      ...
+    # Subtest: una obligatoria sin responder NO lo es
+    ok 2 - una obligatoria sin responder NO lo es
+      ---
+      duration_ms: 0.1802
+      type: 'test'
+      ...
+    # Subtest: escala 1-5 respeta sus límites
+    ok 3 - escala 1-5 respeta sus límites
+      ---
+      duration_ms: 0.1629
+      type: 'test'
+      ...
+    # Subtest: número rechaza negativos y no-números
+    ok 4 - número rechaza negativos y no-números
+      ---
+      duration_ms: 0.1898
+      type: 'test'
+      ...
+    # Subtest: texto tiene tope de longitud
+    ok 5 - texto tiene tope de longitud
+      ---
+      duration_ms: 0.1433
+      type: 'test'
+      ...
+    # Subtest: sí/no acepta booleano y sus formas de texto
+    ok 6 - sí/no acepta booleano y sus formas de texto
+      ---
+      duration_ms: 0.2159
+      type: 'test'
+      ...
+    # Subtest: selector solo admite sus propias opciones
+    ok 7 - selector solo admite sus propias opciones
+      ---
+      duration_ms: 0.1545
+      type: 'test'
+      ...
+    # Subtest: frecuencia solo admite la escala fija
+    ok 8 - frecuencia solo admite la escala fija
+      ---
+      duration_ms: 0.1316
+      type: 'test'
+      ...
+    # Subtest: un tipo desconocido no cuela ningún valor
+    ok 9 - un tipo desconocido no cuela ningún valor
+      ---
+      duration_ms: 0.1114
+      type: 'test'
+      ...
+    1..9
+ok 89 - validateCustomAnswer
+  ---
+  duration_ms: 2.8095
+  type: 'test'
+  ...
+# Subtest: normalizeCustomAnswer
+    # Subtest: el texto se recorta
+    ok 1 - el texto se recorta
+      ---
+      duration_ms: 0.1944
+      type: 'test'
+      ...
+    # Subtest: sí/no acaba siendo booleano venga como venga
+    ok 2 - sí/no acaba siendo booleano venga como venga
+      ---
+      duration_ms: 0.1269
+      type: 'test'
+      ...
+    # Subtest: los numéricos se guardan como número, no como string
+    ok 3 - los numéricos se guardan como número, no como string
+      ---
+      duration_ms: 0.1587
+      type: 'test'
+      ...
+    # Subtest: selector y frecuencia se guardan tal cual
+    ok 4 - selector y frecuencia se guardan tal cual
+      ---
+      duration_ms: 0.1435
+      type: 'test'
+      ...
+    1..4
+ok 90 - normalizeCustomAnswer
+  ---
+  duration_ms: 1.0225
+  type: 'test'
+  ...
+# Subtest: catálogo de check-in
+    # Subtest: no hay claves repetidas
+    ok 1 - no hay claves repetidas
+      ---
+      duration_ms: 2.0738
+      type: 'test'
+      ...
+    # Subtest: toda escala del catálogo tiene anclas
+    ok 2 - toda escala del catálogo tiene anclas
+      ---
+      duration_ms: 6.6539
+      type: 'test'
+      ...
+    # Subtest: ningún ancla está vacía ni repetida dentro de su campo
+    ok 3 - ningún ancla está vacía ni repetida dentro de su campo
+      ---
+      duration_ms: 5.2831
+      type: 'test'
+      ...
+    # Subtest: una escala necesita al menos dos niveles para significar algo
+    ok 4 - una escala necesita al menos dos niveles para significar algo
+      ---
+      duration_ms: 0.4219
+      type: 'test'
+      ...
+    # Subtest: todas las escalas son de 5 niveles menos el color de orina, que tiene 8
+    ok 5 - todas las escalas son de 5 niveles menos el color de orina, que tiene 8
+      ---
+      duration_ms: 0.5017
+      type: 'test'
+      ...
+    # Subtest: scaleLevelsFor cae a 5 cuando no hay anclas (preguntas propias del coach)
+    ok 6 - scaleLevelsFor cae a 5 cuando no hay anclas (preguntas propias del coach)
+      ---
+      duration_ms: 0.2803
+      type: 'test'
+      ...
+    # Subtest: toda medida numérica del cuerpo explica cómo tomarse
+    ok 7 - toda medida numérica del cuerpo explica cómo tomarse
+      ---
+      duration_ms: 0.3149
+      type: 'test'
+      ...
+    # Subtest: urine_color es un campo aparte, no una redefinición de hydration_level
+    ok 8 - urine_color es un campo aparte, no una redefinición de hydration_level
+      ---
+      duration_ms: 0.4189
+      type: 'test'
+      ...
+    1..8
+ok 91 - catálogo de check-in
+  ---
+  duration_ms: 20.3464
+  type: 'test'
+  ...
+# Subtest: el catálogo del front es idéntico al del backend
+    # Subtest: mismas claves, etiquetas, tipos, anclas e instrucciones
+    ok 1 - mismas claves, etiquetas, tipos, anclas e instrucciones
+      ---
+      duration_ms: 4.4164
+      type: 'test'
+      ...
+    1..1
+ok 92 - el catálogo del front es idéntico al del backend
+  ---
+  duration_ms: 11.7168
+  type: 'test'
+  ...
+# Subtest: cotas de plausibilidad
+    # Subtest: un ombligo de 44 cm no es un adulto; uno de 84 sí
+    ok 1 - un ombligo de 44 cm no es un adulto; uno de 84 sí
+      ---
+      duration_ms: 0.3563
+      type: 'test'
+      ...
+    # Subtest: toda medida corporal tiene cotas
+    ok 2 - toda medida corporal tiene cotas
+      ---
+      duration_ms: 0.3012
+      type: 'test'
+      ...
+    # Subtest: el mínimo es menor que el máximo en todos los campos
+    ok 3 - el mínimo es menor que el máximo en todos los campos
+      ---
+      duration_ms: 0.4737
+      type: 'test'
+      ...
+    # Subtest: las cotas son ANCHAS: no dejan fuera a personas reales
+    ok 4 - las cotas son ANCHAS: no dejan fuera a personas reales
+      ---
+      duration_ms: 0.307
+      type: 'test'
+      ...
+    # Subtest: las erratas típicas se rechazan
+    ok 5 - las erratas típicas se rechazan
+      ---
+      duration_ms: 0.3396
+      type: 'test'
+      ...
+    # Subtest: un campo sin cotas acepta: ante la duda no se descarta un dato bueno
+    ok 6 - un campo sin cotas acepta: ante la duda no se descarta un dato bueno
+      ---
+      duration_ms: 0.1655
+      type: 'test'
+      ...
+    # Subtest: lo que no es número nunca es plausible
+    ok 7 - lo que no es número nunca es plausible
+      ---
+      duration_ms: 0.2264
+      type: 'test'
+      ...
+    # Subtest: un campo desconocido no revienta
+    ok 8 - un campo desconocido no revienta
+      ---
+      duration_ms: 0.1862
+      type: 'test'
+      ...
+    1..8
+ok 93 - cotas de plausibilidad
+  ---
+  duration_ms: 4.9268
+  type: 'test'
+  ...
+# Subtest: cotas de variación
+    # Subtest: el caso real: 123 -> 79 cm de ombligo en 7 días es imposible
+    ok 1 - el caso real: 123 -> 79 cm de ombligo en 7 días es imposible
+      ---
+      duration_ms: 0.4306
+      type: 'test'
+      ...
+    # Subtest: una bajada real de cintura sí pasa
+    ok 2 - una bajada real de cintura sí pasa
+      ---
+      duration_ms: 0.2154
+      type: 'test'
+      ...
+    # Subtest: el mismo salto es creíble si hay meses de por medio
+    ok 3 - el mismo salto es creíble si hay meses de por medio
+      ---
+      duration_ms: 0.2198
+      type: 'test'
+      ...
+    # Subtest: el peso admite más variación semanal que un perímetro
+    ok 4 - el peso admite más variación semanal que un perímetro
+      ---
+      duration_ms: 1.1889
+      type: 'test'
+      ...
+    # Subtest: sin nada con que comparar, se acepta
+    ok 5 - sin nada con que comparar, se acepta
+      ---
+      duration_ms: 1.0681
+      type: 'test'
+      ...
+    # Subtest: un campo sin grupo conocido no se filtra
+    ok 6 - un campo sin grupo conocido no se filtra
+      ---
+      duration_ms: 0.9494
+      type: 'test'
+      ...
+    1..6
+ok 94 - cotas de variación
+  ---
+  duration_ms: 5.2046
+  type: 'test'
+  ...
+# Subtest: dao.sendMailCode sobrescribe restoreCode de forma atómica en cada reenvío
+ok 95 - dao.sendMailCode sobrescribe restoreCode de forma atómica en cada reenvío
+  ---
+  duration_ms: 3.9299
+  type: 'test'
+  ...
+# Subtest: dao.sendMailCode: reenvío dentro del cooldown no toca la BD ni envía email (protección atómica)
+ok 96 - dao.sendMailCode: reenvío dentro del cooldown no toca la BD ni envía email (protección atómica)
+  ---
+  duration_ms: 1.078
+  type: 'test'
+  ...
+# Subtest: dao.sendMailCode: el límite diario de 3 códigos ahora sí se aplica (antes el select() no traía los campos y nunca se alcanzaba)
+ok 97 - dao.sendMailCode: el límite diario de 3 códigos ahora sí se aplica (antes el select() no traía los campos y nunca se alcanzaba)
+  ---
+  duration_ms: 0.5516
+  type: 'test'
+  ...
+# Subtest: dao.sendMailCode: un nuevo día resetea el contador diario
+ok 98 - dao.sendMailCode: un nuevo día resetea el contador diario
+  ---
+  duration_ms: 0.4508
+  type: 'test'
+  ...
+# Subtest: dao.sendMailCode: dos reenvíos consecutivos (con cooldown ya pasado) — solo el último restoreCode es válido
+ok 99 - dao.sendMailCode: dos reenvíos consecutivos (con cooldown ya pasado) — solo el último restoreCode es válido
+  ---
+  duration_ms: 0.8438
+  type: 'test'
+  ...
+# Subtest: controller.sendMailCode: cooldown activo devuelve 429 explícito (antes devolvía 200 silenciosamente)
+ok 100 - controller.sendMailCode: cooldown activo devuelve 429 explícito (antes devolvía 200 silenciosamente)
+  ---
+  duration_ms: 0.8512
+  type: 'test'
+  ...
+# Subtest: controller.sendMailCode: éxito real devuelve 200 y cambia el código
+ok 101 - controller.sendMailCode: éxito real devuelve 200 y cambia el código
+  ---
+  duration_ms: 0.3252
+  type: 'test'
+  ...
+# Subtest: controller.sendMailCode: usuario inexistente devuelve 200 genérico (anti-enumeración, comportamiento preservado)
+ok 102 - controller.sendMailCode: usuario inexistente devuelve 200 genérico (anti-enumeración, comportamiento preservado)
+  ---
+  duration_ms: 0.4544
+  type: 'test'
+  ...
+# Register SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# Suggestions SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# SES SMTP verify failed: Missing credentials for "PLAIN"
+# Subtest: email field casing/whitespace (signup)
+    # Subtest: uppercase email is normalized on document construction
+    ok 1 - uppercase email is normalized on document construction
+      ---
+      duration_ms: 14.1611
+      type: 'test'
+      ...
+    # Subtest: lowercase email is left unchanged
+    ok 2 - lowercase email is left unchanged
+      ---
+      duration_ms: 0.7801
+      type: 'test'
+      ...
+    # Subtest: mixed-case email is normalized
+    ok 3 - mixed-case email is normalized
+      ---
+      duration_ms: 2.4423
+      type: 'test'
+      ...
+    # Subtest: leading/trailing spaces are trimmed
+    ok 4 - leading/trailing spaces are trimmed
+      ---
+      duration_ms: 0.6271
+      type: 'test'
+      ...
+    # Subtest: well-formed email passes validation
+    ok 5 - well-formed email passes validation
+      ---
+      duration_ms: 3.108
+      type: 'test'
+      ...
+    # Subtest: malformed email fails validation
+    ok 6 - malformed email fails validation
+      ---
+      duration_ms: 1.4442
+      type: 'test'
+      ...
+    1..6
+ok 103 - email field casing/whitespace (signup)
+  ---
+  duration_ms: 25.4246
+  type: 'test'
+  ...
+# Subtest: email query casting (login / lookups)
+    # Subtest: find({email: "david.argente@gmail.com"}) casts to the canonical form
+    ok 1 - find({email: "david.argente@gmail.com"}) casts to the canonical form
+      ---
+      duration_ms: 3.4028
+      type: 'test'
+      ...
+    # Subtest: find({email: "David.Argente@gmail.com"}) casts to the canonical form
+    ok 2 - find({email: "David.Argente@gmail.com"}) casts to the canonical form
+      ---
+      duration_ms: 0.5025
+      type: 'test'
+      ...
+    # Subtest: find({email: "DAVID.ARGENTE@GMAIL.COM"}) casts to the canonical form
+    ok 3 - find({email: "DAVID.ARGENTE@GMAIL.COM"}) casts to the canonical form
+      ---
+      duration_ms: 0.7215
+      type: 'test'
+      ...
+    # Subtest: find({email: "DaViD.ArGeNtE@gMaIl.CoM"}) casts to the canonical form
+    ok 4 - find({email: "DaViD.ArGeNtE@gMaIl.CoM"}) casts to the canonical form
+      ---
+      duration_ms: 0.2052
+      type: 'test'
+      ...
+    # Subtest: find({email: "  David.Argente@Gmail.com  "}) casts to the canonical form
+    ok 5 - find({email: "  David.Argente@Gmail.com  "}) casts to the canonical form
+      ---
+      duration_ms: 0.3745
+      type: 'test'
+      ...
+    # Subtest: findOneAndUpdate filter is normalized the same way
+    ok 6 - findOneAndUpdate filter is normalized the same way
+      ---
+      duration_ms: 0.8849
+      type: 'test'
+      ...
+    1..6
+ok 104 - email query casting (login / lookups)
+  ---
+  duration_ms: 7.4237
+  type: 'test'
+  ...
+# Subtest: email update-payload casting ($set.email)
+    # Subtest: a $set.email update is normalized before hitting the DB
+    ok 1 - a $set.email update is normalized before hitting the DB
+      ---
+      duration_ms: 1.4624
+      type: 'test'
+      ...
+    1..1
+ok 105 - email update-payload casting ($set.email)
+  ---
+  duration_ms: 1.6754
+  type: 'test'
+  ...
+# Subtest: caso 1: el primer código funciona
+ok 106 - caso 1: el primer código funciona
+  ---
+  duration_ms: 5.7501
+  type: 'test'
+  ...
+# Subtest: caso 2 y 3: reenviar genera un código nuevo y el anterior deja de servir
+ok 107 - caso 2 y 3: reenviar genera un código nuevo y el anterior deja de servir
+  ---
+  duration_ms: 1.4938
+  type: 'test'
+  ...
+# Subtest: caso 3b: dos reenvíos seguidos, solo el último código sirve
+ok 108 - caso 3b: dos reenvíos seguidos, solo el último código sirve
+  ---
+  duration_ms: 1.3624
+  type: 'test'
+  ...
+# Subtest: caso 5: reenvíos rápidos consecutivos están protegidos por cooldown atómico
+ok 109 - caso 5: reenvíos rápidos consecutivos están protegidos por cooldown atómico
+  ---
+  duration_ms: 0.6015
+  type: 'test'
+  ...
+# Subtest: caso 6: código expirado falla aunque sea el último enviado
+ok 110 - caso 6: código expirado falla aunque sea el último enviado
+  ---
+  duration_ms: 0.9995
+  type: 'test'
+  ...
+# Subtest: caso 7: un código válido verifica correctamente al usuario
+ok 111 - caso 7: un código válido verifica correctamente al usuario
+  ---
+  duration_ms: 0.5884
+  type: 'test'
+  ...
+# Subtest: caso 8: reutilizar un código ya usado falla
+ok 112 - caso 8: reutilizar un código ya usado falla
+  ---
+  duration_ms: 0.545
+  type: 'test'
+  ...
+# Subtest: caso 9: reenviar después de verificar con éxito no genera un hash fantasma
+ok 113 - caso 9: reenviar después de verificar con éxito no genera un hash fantasma
+  ---
+  duration_ms: 0.5309
+  type: 'test'
+  ...
+# Subtest: caso 10: la fuente de verdad es la BD, no el estado en memoria del cliente
+ok 114 - caso 10: la fuente de verdad es la BD, no el estado en memoria del cliente
+  ---
+  duration_ms: 1.5455
+  type: 'test'
+  ...
+# Subtest: intentos fallidos: se bloquea tras 5 intentos incorrectos
+ok 115 - intentos fallidos: se bloquea tras 5 intentos incorrectos
+  ---
+  duration_ms: 2.9433
+  type: 'test'
+  ...
+# Subtest: resendVerificationHash reinicia los intentos fallidos del código anterior
+ok 116 - resendVerificationHash reinicia los intentos fallidos del código anterior
+  ---
+  duration_ms: 1.3412
+  type: 'test'
+  ...
+# Subtest: updateVerificationHash (regeneración desde login) también fija expiración y resetea intentos
+ok 117 - updateVerificationHash (regeneración desde login) también fija expiración y resetea intentos
+  ---
+  duration_ms: 0.7314
+  type: 'test'
+  ...
+# Subtest: resendVerificationHash envía por email exactamente el código guardado en BD
+ok 118 - resendVerificationHash envía por email exactamente el código guardado en BD
+  ---
+  duration_ms: 0.9267
+  type: 'test'
+  ...
+# Register SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# Suggestions SMTP verify failed: connect ECONNREFUSED 127.0.0.1:587
+# SES SMTP verify failed: Missing credentials for "PLAIN"
+# Subtest: daysElapsed vs daysInRange
+    # Subtest: el mismo día: 0 transcurridos, 1 en el rango
+    ok 1 - el mismo día: 0 transcurridos, 1 en el rango
+      ---
+      duration_ms: 1.7882
+      type: 'test'
+      ...
+    # Subtest: un día después: 1 transcurrido, 2 en el rango
+    ok 2 - un día después: 1 transcurrido, 2 en el rango
+      ---
+      duration_ms: 0.395
+      type: 'test'
+      ...
+    # Subtest: difieren siempre exactamente en 1
+    ok 3 - difieren siempre exactamente en 1
+      ---
+      duration_ms: 0.4673
+      type: 'test'
+      ...
+    # Subtest: cruza fin de mes y fin de año correctamente
+    ok 4 - cruza fin de mes y fin de año correctamente
+      ---
+      duration_ms: 0.5383
+      type: 'test'
+      ...
+    # Subtest: año bisiesto: febrero de 2028 tiene 29 días
+    ok 5 - año bisiesto: febrero de 2028 tiene 29 días
+      ---
+      duration_ms: 2.9681
+      type: 'test'
+      ...
+    # Subtest: daysInRange nunca baja de 1, ni con el rango invertido
+    ok 6 - daysInRange nunca baja de 1, ni con el rango invertido
+      ---
+      duration_ms: 2.3899
+      type: 'test'
+      ...
+    # Subtest: daysElapsed SÍ puede ser negativo (es una resta, no un tamaño)
+    ok 7 - daysElapsed SÍ puede ser negativo (es una resta, no un tamaño)
+      ---
+      duration_ms: 2.4257
+      type: 'test'
+      ...
+    1..7
+ok 119 - daysElapsed vs daysInRange
+  ---
+  duration_ms: 16.2496
+  type: 'test'
+  ...
+# Subtest: addDaysToIsoDate
+    # Subtest: suma y resta días
+    ok 1 - suma y resta días
+      ---
+      duration_ms: 3.5029
+      type: 'test'
+      ...
+    # Subtest: cruza meses y años
+    ok 2 - cruza meses y años
+      ---
+      duration_ms: 0.7645
+      type: 'test'
+      ...
+    # Subtest: es consistente con daysElapsed
+    ok 3 - es consistente con daysElapsed
+      ---
+      duration_ms: 0.5069
+      type: 'test'
+      ...
+    1..3
+ok 120 - addDaysToIsoDate
+  ---
+  duration_ms: 8.0051
+  type: 'test'
+  ...
+# Subtest: isoDate / todayIsoDate
+    # Subtest: recorta un Date a YYYY-MM-DD
+    ok 1 - recorta un Date a YYYY-MM-DD
+      ---
+      duration_ms: 0.495
+      type: 'test'
+      ...
+    # Subtest: es idempotente sobre una cadena que ya lo es
+    ok 2 - es idempotente sobre una cadena que ya lo es
+      ---
+      duration_ms: 0.9397
+      type: 'test'
+      ...
+    # Subtest: todayIsoDate tiene el formato esperado
+    ok 3 - todayIsoDate tiene el formato esperado
+      ---
+      duration_ms: 1.0003
+      type: 'test'
+      ...
+    1..3
+ok 121 - isoDate / todayIsoDate
+  ---
+  duration_ms: 4.2295
+  type: 'test'
+  ...
+# Subtest: normalizeEmail
+    # Subtest: lowercase email stays unchanged
+    ok 1 - lowercase email stays unchanged
+      ---
+      duration_ms: 2.0879
+      type: 'test'
+      ...
+    # Subtest: uppercase email is lowercased
+    ok 2 - uppercase email is lowercased
+      ---
+      duration_ms: 0.319
+      type: 'test'
+      ...
+    # Subtest: mixed-case email is lowercased
+    ok 3 - mixed-case email is lowercased
+      ---
+      duration_ms: 0.2364
+      type: 'test'
+      ...
+    # Subtest: leading/trailing spaces are trimmed
+    ok 4 - leading/trailing spaces are trimmed
+      ---
+      duration_ms: 0.2493
+      type: 'test'
+      ...
+    # Subtest: non-string input returns empty string
+    ok 5 - non-string input returns empty string
+      ---
+      duration_ms: 0.1564
+      type: 'test'
+      ...
+    # Subtest: all four documented variants normalize to the same value
+    ok 6 - all four documented variants normalize to the same value
+      ---
+      duration_ms: 0.2857
+      type: 'test'
+      ...
+    1..6
+ok 122 - normalizeEmail
+  ---
+  duration_ms: 6.6003
+  type: 'test'
+  ...
+# Subtest: isValidEmailFormat
+    # Subtest: accepts well-formed emails
+    ok 1 - accepts well-formed emails
+      ---
+      duration_ms: 2.0963
+      type: 'test'
+      ...
+    # Subtest: rejects malformed emails
+    ok 2 - rejects malformed emails
+      ---
+      duration_ms: 0.3649
+      type: 'test'
+      ...
+    # Subtest: rejects non-string input
+    ok 3 - rejects non-string input
+      ---
+      duration_ms: 0.2665
+      type: 'test'
+      ...
+    1..3
+ok 123 - isValidEmailFormat
+  ---
+  duration_ms: 3.6881
+  type: 'test'
+  ...
+# Subtest: generateVerificationCode
+    # Subtest: is always exactly 6 digits, nothing else
+    ok 1 - is always exactly 6 digits, nothing else
+      ---
+      duration_ms: 2.8251
+      type: 'test'
+      ...
+    # Subtest: is always within [100000, 999999]
+    ok 2 - is always within [100000, 999999]
+      ---
+      duration_ms: 2.5939
+      type: 'test'
+      ...
+    1..2
+ok 124 - generateVerificationCode
+  ---
+  duration_ms: 7.465
+  type: 'test'
+  ...
+# Subtest: isValidVerificationCodeFormat
+    # Subtest: accepts a well-formed 6-digit code
+    ok 1 - accepts a well-formed 6-digit code
+      ---
+      duration_ms: 0.4002
+      type: 'test'
+      ...
+    # Subtest: rejects codes containing letters (base36 leak from the old bug)
+    ok 2 - rejects codes containing letters (base36 leak from the old bug)
+      ---
+      duration_ms: 0.291
+      type: 'test'
+      ...
+    # Subtest: rejects codes shorter than 6 digits
+    ok 3 - rejects codes shorter than 6 digits
+      ---
+      duration_ms: 0.6219
+      type: 'test'
+      ...
+    # Subtest: rejects codes longer than 6 digits
+    ok 4 - rejects codes longer than 6 digits
+      ---
+      duration_ms: 0.2931
+      type: 'test'
+      ...
+    # Subtest: rejects non-string input
+    ok 5 - rejects non-string input
+      ---
+      duration_ms: 5.1799
+      type: 'test'
+      ...
+    # Subtest: rejects codes with whitespace
+    ok 6 - rejects codes with whitespace
+      ---
+      duration_ms: 0.6657
+      type: 'test'
+      ...
+    1..6
+ok 125 - isValidVerificationCodeFormat
+  ---
+  duration_ms: 10.8799
+  type: 'test'
+  ...
+# Subtest: materializeBlocksAsExercises
+    # Subtest: aplana ejercicios de varios bloques en orden secuencial
+    ok 1 - aplana ejercicios de varios bloques en orden secuencial
+      ---
+      duration_ms: 2.3117
+      type: 'test'
+      ...
+    # Subtest: respeta el order interno de exercises dentro de un bloque
+    ok 2 - respeta el order interno de exercises dentro de un bloque
+      ---
+      duration_ms: 0.4072
+      type: 'test'
+      ...
+    # Subtest: cada set de la plantilla genera un Set real vinculado por _id
+    ok 3 - cada set de la plantilla genera un Set real vinculado por _id
+      ---
+      duration_ms: 1.8129
+      type: 'test'
+      ...
+    # Subtest: sin bloques -> arrays vacíos, no lanza
+    ok 4 - sin bloques -> arrays vacíos, no lanza
+      ---
+      duration_ms: 0.1639
+      type: 'test'
+      ...
+    # Subtest: materializa un Workout.blocks[] real por cada bloque de la plantilla
+    ok 5 - materializa un Workout.blocks[] real por cada bloque de la plantilla
+      ---
+      duration_ms: 0.2779
+      type: 'test'
+      ...
+    1..5
+ok 126 - materializeBlocksAsExercises
+  ---
+  duration_ms: 7.1759
+  type: 'test'
+  ...
+# Subtest: buildBlockFromWorkout
+    # Subtest: envuelve las exercises del workout en un único bloque straight
+    ok 1 - envuelve las exercises del workout en un único bloque straight
+      ---
+      duration_ms: 0.5264
+      type: 'test'
+      ...
+    # Subtest: exercise sin populate (ya es un ObjectId) también funciona
+    ok 2 - exercise sin populate (ya es un ObjectId) también funciona
+      ---
+      duration_ms: 0.274
+      type: 'test'
+      ...
+    # Subtest: workout sin exercises -> un bloque vacío, no lanza
+    ok 3 - workout sin exercises -> un bloque vacío, no lanza
+      ---
+      duration_ms: 0.4263
+      type: 'test'
+      ...
+    # Subtest: agrupa exercises por blockId respetando los bloques reales del workout
+    ok 4 - agrupa exercises por blockId respetando los bloques reales del workout
+      ---
+      duration_ms: 0.6309
+      type: 'test'
+      ...
+    # Subtest: exercises sin blockId (o con blockId huérfano) caen en un bloque final, sin perderse
+    ok 5 - exercises sin blockId (o con blockId huérfano) caen en un bloque final, sin perderse
+      ---
+      duration_ms: 0.2039
+      type: 'test'
+      ...
+    1..5
+ok 127 - buildBlockFromWorkout
+  ---
+  duration_ms: 3.5712
+  type: 'test'
+  ...
+# Subtest: buildBlockFromWorkout con ejercicios sin poblar
+    # Subtest: una referencia pelada no tiene blockId y cae en el bloque de recogida
+    ok 1 - una referencia pelada no tiene blockId y cae en el bloque de recogida
+      ---
+      duration_ms: 0.2224
+      type: 'test'
+      ...
+    # Subtest: con los mismos ejercicios poblados, el reparto es el correcto
+    ok 2 - con los mismos ejercicios poblados, el reparto es el correcto
+      ---
+      duration_ms: 0.1958
+      type: 'test'
+      ...
+    1..2
+ok 128 - buildBlockFromWorkout con ejercicios sin poblar
+  ---
+  duration_ms: 0.6913
+  type: 'test'
+  ...
+# Subtest: sanitizeSoreness
+    # Subtest: conserva los grupos válidos con su nivel
+    ok 1 - conserva los grupos válidos con su nivel
+      ---
+      duration_ms: 3.4061
+      type: 'test'
+      ...
+    # Subtest: devuelve los grupos en el orden del catálogo, no en el de llegada
+    ok 2 - devuelve los grupos en el orden del catálogo, no en el de llegada
+      ---
+      duration_ms: 0.2436
+      type: 'test'
+      ...
+    # Subtest: descarta el nivel 1: 'no me duele' de 16 grupos es ruido
+    ok 3 - descarta el nivel 1: 'no me duele' de 16 grupos es ruido
+      ---
+      duration_ms: 0.1851
+      type: 'test'
+      ...
+    # Subtest: descarta músculos que no están en el catálogo
+    ok 4 - descarta músculos que no están en el catálogo
+      ---
+      duration_ms: 0.2818
+      type: 'test'
+      ...
+    # Subtest: descarta niveles fuera de rango o no enteros
+    ok 5 - descarta niveles fuera de rango o no enteros
+      ---
+      duration_ms: 0.336
+      type: 'test'
+      ...
+    # Subtest: un músculo repetido se queda con su último valor, no con dos filas
+    ok 6 - un músculo repetido se queda con su último valor, no con dos filas
+      ---
+      duration_ms: 1.0721
+      type: 'test'
+      ...
+    # Subtest: entradas no válidas devuelven un array vacío, nunca revientan
+    ok 7 - entradas no válidas devuelven un array vacío, nunca revientan
+      ---
+      duration_ms: 0.1906
+      type: 'test'
+      ...
+    # Subtest: acepta el nivel máximo que anuncian las anclas
+    ok 8 - acepta el nivel máximo que anuncian las anclas
+      ---
+      duration_ms: 0.3435
+      type: 'test'
+      ...
+    1..8
+ok 129 - sanitizeSoreness
+  ---
+  duration_ms: 9.1434
+  type: 'test'
+  ...
+# Subtest: catálogo de agujetas
+    # Subtest: 16 grupos, sin repetidos ni vacíos
+    ok 1 - 16 grupos, sin repetidos ni vacíos
+      ---
+      duration_ms: 0.5874
+      type: 'test'
+      ...
+    # Subtest: 5 niveles con frase, sin repetidos ni vacías
+    ok 2 - 5 niveles con frase, sin repetidos ni vacías
+      ---
+      duration_ms: 0.1713
+      type: 'test'
+      ...
+    1..2
+ok 130 - catálogo de agujetas
+  ---
+  duration_ms: 1.1256
+  type: 'test'
+  ...
+# Subtest: el catálogo de agujetas del front es idéntico al del backend
+    # Subtest: mismos músculos y mismas anclas
+    ok 1 - mismos músculos y mismas anclas
+      ---
+      duration_ms: 0.6211
+      type: 'test'
+      ...
+    1..1
+ok 131 - el catálogo de agujetas del front es idéntico al del backend
+  ---
+  duration_ms: 0.8649
+  type: 'test'
+  ...
+1..131
+# tests 614
+# suites 0
+# pass 614
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 22883.494
