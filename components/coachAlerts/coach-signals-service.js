@@ -371,10 +371,13 @@ function detectPlanEndingSoon({ planEndingSoon, clientName }) {
   return {
     type: "plan_ending_soon",
     priority: daysLeft <= SIGNAL_THRESHOLDS.planEndingCriticalDays ? "high" : "medium",
+    // "Se acaba la estimación", no "caduca": desde 2026-09 una fase no termina
+    // sola en ninguna fecha — sigue corriendo hasta que el entrenador abre la
+    // siguiente. Esto es un recordatorio de revisarla, no un vencimiento.
     reason:
       daysLeft === 0
-        ? `El plan de nutrición de ${clientName} caduca hoy.`
-        : `El plan de nutrición de ${clientName} caduca en ${daysLeft} día${daysLeft === 1 ? "" : "s"}.`,
+        ? `La fase de nutrición de ${clientName} llega hoy a su duración estimada: toca revisarla.`
+        : `La fase de nutrición de ${clientName} llega a su duración estimada en ${daysLeft} día${daysLeft === 1 ? "" : "s"}.`,
     context: { metric: "plan", daysLeft, endDate: planEndingSoon.endDate || null },
   };
 }

@@ -4,6 +4,16 @@ const Schema = mongoose.Schema;
 const ClientNutritionPreferencesSchema = new Schema({
   clientId: { type: Schema.Types.ObjectId, ref: "User", required: true, unique: true, index: true },
   allergies: { type: String, default: "", trim: true, maxlength: 1000 },
+  // Restricciones dietéticas ESTRUCTURADas — filtro duro del cajón de
+  // sugerencias de dieta (se cruzan contra DietTemplate.suitableFor). El
+  // texto libre de `allergies` se queda para los matices que no encajan en
+  // un flag ("alergia a frutos secos"). Mismos valores que los flags de
+  // Product/CustomProduct.
+  dietaryFlags: {
+    type: [String],
+    enum: ["vegan", "vegetarian", "lactoseFree", "glutenFree"],
+    default: () => [],
+  },
   favoriteFoods: { type: String, default: "", trim: true, maxlength: 1000 },
   dislikedFoods: { type: String, default: "", trim: true, maxlength: 1000 },
   cooksAtHome: { type: String, enum: ["yes", "no", "sometimes", null], default: null },

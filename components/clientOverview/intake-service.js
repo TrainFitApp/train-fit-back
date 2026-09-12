@@ -1,6 +1,6 @@
 const { CoachingStage } = require("./overview-schema");
 const { resolveStage, recheckAccess } = require("./stage-service");
-const { MEASUREMENT_CATALOG, CONTEXT_FIELDS, NUTRITION_FIELDS, fail, fingerprint, pick, normalizeMeasurements, normalizeContext, requestId } = require("./overview-domain");
+const { MEASUREMENT_CATALOG, CONTEXT_FIELDS, NUTRITION_FIELDS, DIETARY_FLAGS, fail, fingerprint, pick, normalizeMeasurements, normalizeContext, requestId } = require("./overview-domain");
 const Intake = require("../clientIntake/client-intake-schema");
 const Config = require("../trainerIntakeConfig/trainer-intake-config-service");
 const Preferences = require("../nutritionPreferences/nutrition-preferences-schema");
@@ -9,7 +9,7 @@ const { civilToday } = require("./body-metrics");
 const { getTimeZone, setTimeZone } = require("./measurement-profile");
 const { upsertMeasurement } = require("./measurement-write");
 
-const LABELS = { goals: "Objetivo personal", healthConditions: "Salud y limitaciones declaradas", experienceLevel: "Experiencia", availability: "Disponibilidad", equipment: "Lugar y equipamiento", allergies: "Alergias", favoriteFoods: "Alimentos favoritos", dislikedFoods: "Alimentos que evita", cooksAtHome: "Cocina en casa" };
+const LABELS = { goals: "Objetivo personal", healthConditions: "Salud y limitaciones declaradas", experienceLevel: "Experiencia", availability: "Disponibilidad", equipment: "Lugar y equipamiento", allergies: "Alergias", favoriteFoods: "Alimentos favoritos", dislikedFoods: "Alimentos que evita", cooksAtHome: "Cocina en casa", dietaryFlags: "Restricciones dietéticas", profileBiometrics: "Peso, altura, edad y sexo", activityProfile: "Pasos, actividad y frecuencia de entrenamiento", objective: "Objetivo de peso" };
 async function configFor(trainerId) { return Config.getMyConfig(trainerId); }
 function missingFields(stage) { return (stage.measurementFields || []).filter((key) => !(stage.baselines || []).some((b) => b.key === key)); }
 async function writeMeasurements({ trainerId, clientId, stageId, measurements, id, actorId, source, today }) {
@@ -59,7 +59,12 @@ async function prepareIntake(trainerId, clientId, data) {
   });
   const nutrition = pick(data, NUTRITION_FIELDS);
   for (const [key, value] of Object.entries(nutrition)) {
-    if (key === "cooksAtHome" ? ![null, "yes", "no", "sometimes"].includes(value) : typeof value !== "string" || value.length > 1000) fail("Preferencia nutricional inválida");
+    if (key === "cooksAtHome") {
+      if (![null, "yes", "no", "sometimes"].includes(value)) fail("Preferencia nutricional inválida");
+    } else if (key === "dietaryFlags") {
+      if (!Array.isArray(value) || value.some((flag) => !DIETARY_FLAGS.includes(flag))) fail("Preferencia nutricional inválida");
+      nutrition.dietaryFlags = [...new Set(value)];
+    } else if (typeof value !== "string" || value.length > 1000) fail("Preferencia nutricional inválida");
   }
   const snapshot = { legacy: !modern, submittedAt: new Date(), configVersion: config.version,
     questions: [...config.enabledFields.map((key) => ({ key, label: LABELS[key] || key })), ...config.customQuestions.filter((q) => q.enabled).map((q) => ({ key: q.id, label: q.label, custom: true })), ...MEASUREMENT_CATALOG.filter((m) => config.measurementFields.includes(m.key))],

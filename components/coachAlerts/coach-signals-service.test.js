@@ -424,16 +424,16 @@ test("detectPendingReview / detectPlanEndingSoon", async (t) => {
     assert.equal(detectPendingReview({ clientName: "Nil", relationStatus: "active" }), null);
   });
 
-  await t.test("plan que caduca hoy -> frase específica y prioridad alta", () => {
+  await t.test("fase que llega hoy a su estimación -> frase específica y prioridad alta", () => {
     const signal = detectPlanEndingSoon({
       clientName: "Nil",
       planEndingSoon: { daysLeft: 0, endDate: isoDaysAgo(0) },
     });
-    assert.match(signal.reason, /caduca hoy/);
+    assert.match(signal.reason, /hoy a su duración estimada/);
     assert.equal(signal.priority, "high");
   });
 
-  await t.test("plan que caduca en 5 días -> prioridad media y singular/plural correcto", () => {
+  await t.test("estimación a 5 días -> prioridad media y singular/plural correcto", () => {
     assert.equal(detectPlanEndingSoon({ clientName: "Nil", planEndingSoon: { daysLeft: 5 } }).priority, "medium");
     assert.match(
       detectPlanEndingSoon({ clientName: "Nil", planEndingSoon: { daysLeft: 1 } }).reason,

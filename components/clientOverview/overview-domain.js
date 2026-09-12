@@ -5,7 +5,10 @@ const MEASUREMENT_CATALOG = CHECKIN_FIELDS.filter((f) => f.key === "weight" || f
   .map((f) => ({ key: f.anthropometryField, label: f.label, unit: f.unit, min: f.min, max: f.max, hint: f.hint }));
 const CONTEXT_FIELDS = ["goals", "healthConditions", "experienceLevel", "availability", "equipment", "trainingLocation", "equipmentTags", "customAnswers"];
 const PROFILE_FIELDS = ["name", "lastname", "birth", "sex", "height", "activity"];
-const NUTRITION_FIELDS = ["allergies", "favoriteFoods", "dislikedFoods", "cooksAtHome"];
+// Mismos valores que ClientNutritionPreferences.dietaryFlags — filtro duro
+// del cajon de sugerencias de dieta.
+const DIETARY_FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
+const NUTRITION_FIELDS = ["allergies", "favoriteFoods", "dislikedFoods", "cooksAtHome", "dietaryFlags"];
 const LIVE_STATUSES = ["active", "en_revision", "cuestionario_pendiente"];
 function fail(message, status = 400, code = "INVALID_OVERVIEW") { const e = new Error(message); e.status = status; e.code = code; throw e; }
 function stable(value) {
@@ -65,4 +68,4 @@ function groupRelations(relations) {
   }
   return groups;
 }
-module.exports = { MEASUREMENT_CATALOG, CONTEXT_FIELDS, PROFILE_FIELDS, NUTRITION_FIELDS, LIVE_STATUSES, fail, fingerprint, pick, validDate, requestId, validateMeasurementFields, normalizeMeasurements, normalizeContext, groupRelations };
+module.exports = { MEASUREMENT_CATALOG, CONTEXT_FIELDS, PROFILE_FIELDS, NUTRITION_FIELDS, DIETARY_FLAGS, LIVE_STATUSES, fail, fingerprint, pick, validDate, requestId, validateMeasurementFields, normalizeMeasurements, normalizeContext, groupRelations };

@@ -267,7 +267,7 @@ function buildClientSnapshots(context, now) {
       // necesita la métrica pain_max y lo único barato para toda la cartera.
       painEntries: context.painEntriesByClient?.get(clientKey) || [],
       planEndingSoon: endingSoon
-        ? { daysLeft: endingSoon.daysLeft, endDate: endingSoon.endDate }
+        ? { daysLeft: endingSoon.daysLeft, endDate: endingSoon.estimatedEndDate }
         : null,
       lastActivityAt: lastActivityFor({ lastResponseAt, entries, adherence, now }),
       weightPlanCompliance,

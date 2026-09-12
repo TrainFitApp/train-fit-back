@@ -127,6 +127,15 @@ function sumMealsKcal(meals) {
   return (meals || []).reduce((acc, meal) => acc + kcalForMeal(meal), 0);
 }
 
+// Como kcalForMeal pero con los 4 macros — lo usa diet-macro-profile.js para
+// el perfil de una plantilla (sugerencias de dieta).
+function macrosForMeal(meal) {
+  return sumMacroList([
+    ...(meal?.customProducts || []).map(ingredientMacros),
+    ...(meal?.customRecipes || []).map(macrosForCustomRecipe),
+  ]);
+}
+
 // % de items pautados (customProducts + customRecipes de todas las comidas
 // del día) que el cliente marcó como hechos. Meal.completed cuenta todos
 // sus items como hechos aunque algún flag individual no se haya tocado —
@@ -258,8 +267,12 @@ function computeRangeAdherence(days, periodDays) {
 
 module.exports = {
   mergeRecipeIngredients,
+  ingredientMacros,
+  macrosForCustomRecipe,
+  sumMacroList,
   kcalForCustomRecipe,
   kcalForMeal,
+  macrosForMeal,
   sumMealsKcal,
   countMealItems,
   computeDayCompletion,
