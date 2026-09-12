@@ -69,7 +69,12 @@ function toAssignmentResponse(doc, extra = {}) {
     startDate: doc.startDate,
     endMode: doc.endMode,
     endDate: doc.endDate,
+    // Duración estimada de la fase (no la corta, ver diet-template-schema.js).
+    estimatedEndDate: doc.estimatedEndDate ?? null,
     status: doc.status,
+    // Nº de días del ciclo — el calendario del entrenador lo necesita para
+    // numerar las vueltas (C1, C2, C3…) sin bajarse el contenido entero.
+    daysCount: (doc.days || []).length,
     supersededBy: doc.supersededBy,
     sourceTemplateId: doc.sourceTemplateId,
     createdAt: doc.createdAt,
@@ -233,6 +238,44 @@ module.exports = {
         : null;
 
     return res.send(toAssignmentResponse(assignment, { stuckDaysCount, recurringPatterns }));
+  },
+
+  // GET /trainer/clients/:clientId/nutrition-plans/:planId
+  // Editor de fase/ciclo ya asignado — contenido completo (days/dayPatterns)
+  // de ESTA copia, para precargar el builder. Distinto de getActive/getHistory
+  // (toAssignmentResponse), que solo devuelven el resumen para listas.
+  async getPlanContent(req, res) {
+    const { clientId, planId } = req.params;
+    const plan = await planAssignmentService.getPlanContent(req.auth.userId, clientId, planId);
+    if (!plan) return res.status(404).send({ message: "Plan no encontrado" });
+    return res.send(plan);
+  },
+
+  // PUT /trainer/clients/:clientId/nutrition-plans/:planId
+  // body: { name?, mode?, days?, dayPatterns? } — mismo shape "clipboard" que
+  // PUT /trainer/diet-templates/:id, pero editando la copia de ESTE cliente,
+  // nunca una plantilla de biblioteca. Funciona igual para el ciclo 1 que
+  // para cualquier ciclo posterior (sin sourceTemplateId).
+  async updateContent(req, res) {
+    const { clientId, planId } = req.params;
+    const patch = {};
+    if (req.body?.name !== undefined) {
+      const name = (req.body.name || "").trim();
+      if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
+      patch.name = name;
+    }
+    if (req.body?.mode !== undefined) patch.mode = sanitizeMode(req.body.mode);
+    if (req.body?.days !== undefined) patch.days = sanitizeDays(req.body.days);
+    if (req.body?.dayPatterns !== undefined) patch.dayPatterns = sanitizeDayPatterns(req.body.dayPatterns);
+
+    const plan = await planAssignmentService.updateAssignmentContent({
+      trainerId: req.auth.userId,
+      clientId,
+      planId,
+      ...patch,
+    });
+    if (!plan) return res.status(404).send({ message: "Plan no encontrado" });
+    return res.send(plan);
   },
 
   // GET /trainer/clients/:clientId/nutrition-plans/history

@@ -193,6 +193,7 @@ module.exports = {
       startDate: schedule.startDate ?? null,
       endMode: schedule.endMode ?? null,
       endDate: schedule.endDate ?? null,
+      estimatedEndDate: schedule.estimatedEndDate ?? null,
       status: schedule.status ?? null,
       name: source.name,
       mode: source.mode,
@@ -222,6 +223,7 @@ module.exports = {
       startDate: schedule.startDate ?? null,
       endMode: schedule.endMode ?? "indefinite",
       endDate: schedule.endDate ?? null,
+      estimatedEndDate: schedule.estimatedEndDate ?? null,
       status: schedule.status ?? "active",
       cycleTargetKcal: schedule.cycleTarget?.kcal ?? null,
       cycleTargetMacros: schedule.cycleTarget?.macros ?? undefined,
@@ -278,6 +280,7 @@ module.exports = {
       startDate: schedule.startDate ?? null,
       endMode: schedule.endMode ?? null,
       endDate: schedule.endDate ?? null,
+      estimatedEndDate: schedule.estimatedEndDate ?? null,
       status: schedule.status ?? null,
       ...phaseFields(schedule.phase, schedule.cycleTarget),
     });
@@ -394,6 +397,37 @@ module.exports = {
     return recomputeSuitability(id);
   },
 
+  // Edición de fases/ciclos — mismo mecanismo que `update` (arriba) pero con
+  // el filtro que ahí falta: exige que la copia sea de ESTE cliente
+  // concreto, no solo del trainer. Nunca toca una plantilla de biblioteca
+  // (`clientId: null` no puede matchear aquí) ni la copia de otro cliente.
+  // Funciona igual para el ciclo 1 que para cualquier ciclo posterior
+  // (creado por "Siguiente ciclo") porque opera sobre el `_id` de la propia
+  // copia, sin pasar por `sourceTemplateId`.
+  async updateAssignedContent(trainerId, clientId, id, { name, mode, days, dayPatterns }) {
+    const existing = await DietTemplate.findOne({ _id: id, trainerId, clientId });
+    if (!existing) return null;
+
+    const setOps = {};
+    if (name !== undefined) setOps.name = name;
+    if (mode !== undefined) setOps.mode = mode;
+
+    const replacingDays = days !== undefined;
+    const replacingPatterns = dayPatterns !== undefined;
+    if (replacingDays || replacingPatterns) {
+      const ids = DietTemplate.collectContentIds({
+        days: replacingDays ? existing.days : [],
+        dayPatterns: replacingPatterns ? existing.dayPatterns : [],
+      });
+      await deleteContentIds(ids);
+    }
+    if (replacingDays) setOps.days = await materializeDays(days);
+    if (replacingPatterns) setOps.dayPatterns = await materializeDayPatterns(dayPatterns);
+
+    await DietTemplate.updateOne({ _id: id }, { $set: setOps });
+    return recomputeSuitability(id);
+  },
+
   // deleteOne (no deleteMany) dispara el hook en cascada de
   // diet-template-schema.js que borra los CustomProduct/CustomRecipe de la
   // plantilla (y, si es una copia, sus DietException).
@@ -433,8 +467,15 @@ module.exports = {
       status: { $ne: "ended" },
       // La existente empieza antes de que acabe la nueva.
       ...(endDate ? { startDate: { $lte: endDate } } : {}),
-      // Y acaba después de que empiece la nueva (o no acaba nunca).
-      $or: [{ endDate: null }, { endDate: { $gte: startDate } }],
+      // Y acaba después de que empiece la nueva (o no acaba nunca). El fin
+      // EFECTIVO es el real si ya se cortó; si sigue corriendo, su estimación
+      // (que reserva el tramo aunque no lo cierre); y si no hay ninguna de las
+      // dos, no acaba nunca.
+      $or: [
+        { endDate: { $gte: startDate } },
+        { endDate: null, estimatedEndDate: { $gte: startDate } },
+        { endDate: null, estimatedEndDate: null },
+      ],
     };
     if (excludeId) query._id = { $ne: excludeId };
     return DietTemplate.find(query).sort({ startDate: 1 });
@@ -451,26 +492,34 @@ module.exports = {
   },
 
   // Dashboard trainer, "Requiere tu atención" — copias activas de CUALQUIER
-  // cliente de este trainer cuyo endDate cae dentro del rango dado (p.ej.
-  // próximos 7 días) — a diferencia de findActiveForClient, que es de un
-  // cliente concreto. clientId: {$ne: null} de más (endDate nunca se pone en
-  // una plantilla real), pero deja la consulta autoexplicativa. endDate:null
-  // (indefinido) queda fuera a propósito: nada que "caduque pronto" ahí.
+  // cliente de este trainer cuya ESTIMACIÓN se acaba dentro del rango dado
+  // (p.ej. próximos 7 días) — a diferencia de findActiveForClient, que es de un
+  // cliente concreto. clientId: {$ne: null} de más (estimatedEndDate nunca se
+  // pone en una plantilla real), pero deja la consulta autoexplicativa.
+  //
+  // Mira estimatedEndDate y no endDate: una fase activa ya nunca tiene fin
+  // real (se estampa solo al cortarla), así que con endDate esta señal se
+  // habría quedado muda. Sin estimación no hay nada que avisar.
   async listEndingSoonForTrainer(trainerId, fromDateStr, toDateStr) {
     return DietTemplate.find({
       trainerId,
       clientId: { $ne: null },
       status: "active",
-      endDate: { $ne: null, $gte: fromDateStr, $lte: toDateStr },
+      estimatedEndDate: { $ne: null, $gte: fromDateStr, $lte: toDateStr },
     })
       .populate("clientId", "name lastname")
       .lean();
   },
 
-  async markSuperseded(id, supersededBy) {
+  // `endDate` = fin REAL de la fase que se corta (el día anterior al inicio de
+  // la que entra). Desde que la duración es una estimación, ninguna asignación
+  // nace con fecha de fin: si no se estampara aquí, el historial entero se
+  // quedaría sin fechas de fin y no habría forma de cerrar los tramos del
+  // calendario ni de saber cuánto duró de verdad cada fase.
+  async markSuperseded(id, supersededBy, endDate = null) {
     return DietTemplate.findByIdAndUpdate(
       id,
-      { $set: { status: "superseded", supersededBy } },
+      { $set: { status: "superseded", supersededBy, ...(endDate ? { endDate } : {}) } },
       { new: true }
     );
   },

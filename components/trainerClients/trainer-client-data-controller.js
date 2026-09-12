@@ -7,6 +7,7 @@ const dietDaysUtil = require("../dietDays/diet-days-util");
 const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
+const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
 const trainerNoteDao = require("../trainerNotes/trainer-note-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
@@ -449,6 +450,29 @@ module.exports = {
   },
 
   // POST /trainer/clients/:clientId/nutritional-goals — F13, requireActiveClient("nutrition")
+  // POST /trainer/clients/:clientId/nutrition-target
+  // body: { objetiveKcalDelta }
+  //
+  // Mismo cálculo que el cajón de sugerencias de dieta
+  // (nutrition-target-resolver.js), pero sin rankear plantillas: solo el
+  // número, para autorrellenar el panel de "Asignar objetivos" antes de que
+  // el entrenador lo retoque a mano.
+  async getNutritionTarget(req, res) {
+    const { clientId } = req.params;
+    const objetiveKcalDelta = Number(req.body?.objetiveKcalDelta) || 0;
+
+    const resolved = await resolveClientNutritionTarget(clientId, objetiveKcalDelta);
+    if (!resolved.ok) {
+      return res.status(422).send({ code: "MISSING_BIOMETRICS", missing: resolved.missing });
+    }
+
+    return res.send({
+      target: { ...resolved.target, objetiveKcalDelta },
+      weightSource: resolved.weightSource,
+      clientObjetive: resolved.clientObjetive,
+    });
+  },
+
   async assignNutritionalGoal(req, res) {
     const clientId = req.params.clientId;
     const trainerId = req.auth.userId;

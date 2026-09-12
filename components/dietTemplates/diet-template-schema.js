@@ -102,8 +102,23 @@ const DietTemplateSchema = new Schema(
     startDate: { type: String }, // "YYYY-MM-DD"
     // null sigue en el enum: una asignación indefinida escribe endMode
     // explícito y Mongoose no lo deja pasar gratis si no está listado.
+    //
+    // 2026-09 — endMode se queda SOLO por los documentos viejos: desde que la
+    // duración pasó a ser una estimación (ver estimatedEndDate), toda
+    // asignación nueva nace "indefinite".
     endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null] },
-    endDate: { type: String }, // "YYYY-MM-DD" o null si indefinido
+    // Fin REAL. null mientras la fase sigue corriendo; se estampa el día en
+    // que otra fase la corta (markSuperseded). Antes de 2026-09 guardaba la
+    // fecha calculada al asignar ("8 semanas" -> fecha concreta), que actuaba
+    // como límite duro; eso vive ahora en estimatedEndDate.
+    endDate: { type: String }, // "YYYY-MM-DD" o null si sigue vigente
+    // Duración ESTIMADA: hasta cuándo se calcula que durará la fase. No corta
+    // nada (el fin real lo decide el entrenador al abrir el siguiente ciclo),
+    // pero sí reserva el tramo: no se puede PROGRAMAR otra fase dentro de él
+    // (ver blocksNewPhase en plan-assignment-service.js), y alimenta el aviso
+    // de "toca revisar" del dashboard (listEndingSoonForTrainer).
+    // null = sin estimación, la fase corre hasta nuevo aviso.
+    estimatedEndDate: { type: String }, // "YYYY-MM-DD" o null
     status: { type: String, enum: ["active", "superseded", "ended", null] },
     // Encadena con la copia que la sustituyó — permite reconstruir el
     // historial de fases sin perder rastro de lo que regía antes. Ausente

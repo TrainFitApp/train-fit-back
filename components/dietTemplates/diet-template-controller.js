@@ -135,9 +135,28 @@ module.exports = {
     );
   },
 
+  // GET /trainer/diet-templates/:id — una sola plantilla con su contenido
+  // completo (days/dayPatterns). listTemplates ya devuelve esto para TODA la
+  // lista; este endpoint es para cuando el consumidor solo conoce el id de
+  // UNA (p. ej. precargar el builder con la plantilla elegida en el cajón de
+  // sugerencias antes de aplicarla — ver diet-suggestion-drawer).
+  async getTemplate(req, res) {
+    const template = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
+    if (!template) return res.status(404).send({ message: "Plantilla no encontrada" });
+    const doc = template.toObject ? template.toObject() : template;
+    return res.send({ ...doc, macroProfile: cycleMacroProfile(doc) });
+  },
+
   async updateTemplate(req, res) {
     const existing = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
     if (!existing) return res.status(404).send({ message: "Plantilla no encontrada" });
+    // Esta ruta es solo para plantillas de BIBLIOTECA. La copia congelada de
+    // un cliente (clientId puesto) se edita por su propio endpoint
+    // (plan-assignment-controller.js#updateContent), que sí exige que
+    // pertenezca a ESE cliente concreto — aquí ni siquiera se comprueba eso,
+    // así que dejarla pasar podría editar la dieta de un cliente por el
+    // camino equivocado.
+    if (existing.clientId) return res.status(404).send({ message: "Plantilla no encontrada" });
 
     const patch = {};
     if (req.body?.name !== undefined) {

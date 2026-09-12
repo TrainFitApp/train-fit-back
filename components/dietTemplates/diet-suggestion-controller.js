@@ -2,19 +2,10 @@ const dietTemplateDao = require("./diet-template-dao");
 const { cycleMacroProfile } = require("./diet-macro-profile");
 const { rankTemplates } = require("./diet-suggestion");
 const { effectiveSuitability } = require("./diet-suitability");
-const { computeNutritionTarget } = require("../nutritionalGoals/nutrition-target");
-const userSchema = require("../users/schema");
-const anthropometryDao = require("../anthropometry/anthropometry-dao");
+const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 
 const VALID_FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
-
-function ageFromBirth(birth) {
-  if (!birth) return null;
-  const ms = Date.now() - new Date(birth).getTime();
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-  return Math.floor(ms / (1000 * 3600 * 24) / 365.25);
-}
 
 module.exports = {
   // POST /trainer/clients/:clientId/diet-suggestions
@@ -27,46 +18,15 @@ module.exports = {
     const { clientId } = req.params;
     const objetiveKcalDelta = Number(req.body?.objetiveKcalDelta) || 0;
 
-    const [user, anthros, prefs] = await Promise.all([
-      userSchema.findById(clientId).select("sex height birth activity steps training weight objetive").lean(),
-      anthropometryDao.getAllAnthropometriesByUserId(clientId),
+    const [resolved, prefs] = await Promise.all([
+      resolveClientNutritionTarget(clientId, objetiveKcalDelta),
       nutritionPreferencesDao.getByClientId(clientId),
     ]);
 
-    // El peso sale de la última antropometría; si el cliente todavía no tiene
-    // ninguna (recién registrado, invitado por un entrenador), se usa el que
-    // metió en el registro (`User.weight`). Antes esto daba 422 aunque el
-    // dato existía.
-    const latestAnthroWeight = (anthros || []).find((a) => Number.isFinite(a.weight));
-    const weightKg = latestAnthroWeight?.weight ?? (Number.isFinite(user?.weight) ? user.weight : null);
-    const weightSource = latestAnthroWeight
-      ? { weightKg: latestAnthroWeight.weight, date: latestAnthroWeight.date, from: "anthropometry" }
-      : weightKg !== null
-      ? { weightKg, from: "signup" }
-      : null;
-    const age = ageFromBirth(user?.birth);
-
-    // Guard — sin biométricos no hay objetivo (mismo criterio que la pantalla
-    // de objetivo del cliente).
-    const missing = [];
-    if (weightKg === null) missing.push("peso");
-    if (!user?.height) missing.push("altura");
-    if (age === null) missing.push("fecha de nacimiento");
-    if (user?.sex === undefined || user?.sex === null) missing.push("sexo");
-    if (missing.length) {
-      return res.status(422).send({ code: "MISSING_BIOMETRICS", missing });
+    if (!resolved.ok) {
+      return res.status(422).send({ code: "MISSING_BIOMETRICS", missing: resolved.missing });
     }
-
-    const target = computeNutritionTarget({
-      weightKg,
-      heightCm: user.height,
-      age,
-      sex: user.sex,
-      activity: user.activity,
-      steps: user.steps,
-      training: user.training,
-      objetiveKcalDelta,
-    });
+    const { target, weightSource, clientObjetive } = resolved;
 
     const requiredFlags = Array.isArray(req.body?.dietaryFlags)
       ? req.body.dietaryFlags.filter((f) => VALID_FLAGS.includes(f))
@@ -108,7 +68,7 @@ module.exports = {
       // El objetivo que el cliente eligió al registrarse (delta kcal con
       // signo) — el cajón lo usa para arrancar en Definir/Mantener/Volumen
       // en vez de siempre Definir. El entrenador manda igual.
-      clientObjetive: Number.isFinite(user.objetive) ? user.objetive : null,
+      clientObjetive,
       // Restricciones que el cliente declaró en el intake — el cajón las
       // pre-marca la primera vez (mismo criterio que clientObjetive).
       clientDietaryFlags: (prefs?.dietaryFlags || []).filter((f) => VALID_FLAGS.includes(f)),

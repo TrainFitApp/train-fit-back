@@ -11,6 +11,7 @@ const router = express.Router();
 // El controller distingue admin vs trainer para ese campo concreto.
 router.postAsync("/trainer/diet-templates", auth(["trainer", "admin"]), controller.createTemplate);
 router.getAsync("/trainer/diet-templates", auth(["trainer", "admin"]), controller.listTemplates);
+router.getAsync("/trainer/diet-templates/:id", auth(["trainer", "admin"]), controller.getTemplate);
 router.putAsync("/trainer/diet-templates/:id", auth(["trainer", "admin"]), controller.updateTemplate);
 router.deleteAsync("/trainer/diet-templates/:id", auth(["trainer", "admin"]), controller.deleteTemplate);
 
