@@ -9,6 +9,7 @@ const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysService = require("../dietDays/diet-days-service");
 const userSchema = require("../users/schema");
 const planChangeService = require("../planChanges/plan-change-service");
+const { contentCycleDays } = require("./cycle-window");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -16,27 +17,21 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-// Compartida por applyPlan y createDirect — mismos campos de fecha/duración
-// en los dos, solo cambia de dónde sale el contenido de la dieta.
-function validateScheduleFields({ startDate, endMode, fixedEndDate, durationValue }) {
+// Compartida por applyPlan y createDirect: solo hace falta saber CUÁNDO
+// empieza. No hay fin ni duración (una fase acaba cuando empieza otra).
+function validateScheduleFields({ startDate }) {
   if (!ISO_DATE.test(startDate || "")) return "startDate inválida (YYYY-MM-DD)";
-  if (!["fixedDate", "duration", "indefinite"].includes(endMode)) {
-    return "endMode debe ser fixedDate, duration o indefinite";
-  }
-  if (endMode === "fixedDate" && !ISO_DATE.test(fixedEndDate || "")) return "fixedEndDate inválida (YYYY-MM-DD)";
-  if (endMode === "duration" && !(Number(durationValue) > 0)) return "durationValue debe ser mayor que 0";
   return null;
 }
 
 const PHASE_FOCUS = ["cut", "maintain", "bulk"];
 
-// Sugerencias de dieta — el bloque `phase` que manda el cajón al empezar una
-// fase. `cycleTarget` = el objetivo (kcal + macros) ya calculado por el
-// front para el ciclo 1. Ausentes = aplicar un plan al estilo de siempre.
+// El bloque `phase` con el que nace toda fase (objetivo elegido en el
+// builder al crear el C1, o en el cajón de sugerencias). Sin él la copia es
+// un plan "de siempre", sin ciclos.
 function sanitizePhase(body) {
   const p = body?.phase;
-  const ct = body?.cycleTarget;
-  if (!p || !ct || !Number.isFinite(Number(ct.kcal))) return { phase: null, cycleTarget: null };
+  if (!p) return { phase: null };
   return {
     phase: {
       name: String(p.name || "").trim().slice(0, 100) || null,
@@ -44,15 +39,13 @@ function sanitizePhase(body) {
       targetKcalDelta: Number.isFinite(Number(p.targetKcalDelta)) ? Number(p.targetKcalDelta) : 0,
       ratePerCycle: Number.isFinite(Number(p.ratePerCycle)) ? Number(p.ratePerCycle) : 0,
     },
-    cycleTarget: {
-      kcal: Math.round(Number(ct.kcal)),
-      macros: {
-        protein: Number(ct.macros?.protein) || 0,
-        carbs: Number(ct.macros?.carbs) || 0,
-        fat: Number(ct.macros?.fat) || 0,
-      },
-    },
   };
+}
+
+function sanitizeChoiceCycleDays(value) {
+  if (value === undefined || value === null) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 7;
 }
 
 // La copia congelada de DietTemplate ES la asignación (ver
@@ -67,37 +60,34 @@ function toAssignmentResponse(doc, extra = {}) {
     clientId: doc.clientId,
     trainerId: doc.trainerId,
     startDate: doc.startDate,
-    endMode: doc.endMode,
     endDate: doc.endDate,
-    // Duración estimada de la fase (no la corta, ver diet-template-schema.js).
-    estimatedEndDate: doc.estimatedEndDate ?? null,
     status: doc.status,
-    // Nº de días del ciclo — el calendario del entrenador lo necesita para
-    // numerar las vueltas (C1, C2, C3…) sin bajarse el contenido entero.
     daysCount: (doc.days || []).length,
+    // Días que dura un ciclo de ESTE doc (contenido, ver cycle-window.js).
+    cycleDays: contentCycleDays(doc),
+    choiceCycleDays: doc.choiceCycleDays ?? null,
     supersededBy: doc.supersededBy,
     sourceTemplateId: doc.sourceTemplateId,
     createdAt: doc.createdAt,
     planName: doc.name,
     mode: doc.mode,
-    // Sugerencias de dieta — la fase a la que pertenece este ciclo.
+    // La fase a la que pertenece este ciclo (phaseId = self en el head).
     phaseId: doc.phaseId || null,
     phaseName: doc.phaseName || null,
     phaseFocus: doc.phaseFocus || null,
-    cycleTargetKcal: doc.cycleTargetKcal ?? null,
     ...extra,
   };
 }
 
 module.exports = {
   // POST /trainer/clients/:clientId/nutrition-plans/:planId/apply
-  // body: { startDate, endMode: "fixedDate"|"duration"|"indefinite", fixedEndDate?, durationValue?, durationUnit? }
+  // body: { startDate, phase? }
   // Crea UNA copia-asignación — no recorre días. Si el cliente ya tenía una
   // activa, esta la sustituye (encadenado de fases).
   async applyPlan(req, res) {
     const trainerId = req.auth.userId;
     const { clientId, planId } = req.params;
-    const { startDate, endMode, fixedEndDate, durationValue, durationUnit } = req.body || {};
+    const { startDate } = req.body || {};
 
     const scheduleError = validateScheduleFields(req.body || {});
     if (scheduleError) return res.status(400).send({ message: scheduleError });
@@ -117,10 +107,6 @@ module.exports = {
         clientId,
         template: plan,
         startDate,
-        endMode,
-        fixedEndDate,
-        durationValue,
-        durationUnit,
         ...sanitizePhase(req.body),
       });
     } catch (error) {
@@ -148,14 +134,13 @@ module.exports = {
   },
 
   // POST /trainer/clients/:clientId/nutrition-plans
-  // body: { name, days, mode, dayPatterns, startDate, endMode, fixedEndDate?, durationValue?, durationUnit? }
+  // body: { name, days, mode, dayPatterns, choiceCycleDays?, startDate, phase? }
   // "Crear dieta" — igual que applyPlan pero sin plantilla de origen: el
   // contenido lo construye el trainer aquí mismo, directo para este cliente.
   async createDirect(req, res) {
     const trainerId = req.auth.userId;
     const { clientId } = req.params;
-    const { name, days, mode, dayPatterns, startDate, endMode, fixedEndDate, durationValue, durationUnit } =
-      req.body || {};
+    const { name, days, mode, dayPatterns, choiceCycleDays, startDate } = req.body || {};
 
     const trimmedName = (name || "").trim();
     if (!trimmedName) return res.status(400).send({ message: "El nombre es obligatorio" });
@@ -174,11 +159,8 @@ module.exports = {
         days: sanitizeDays(days),
         mode: sanitizeMode(mode),
         dayPatterns: sanitizeDayPatterns(dayPatterns),
+        choiceCycleDays: sanitizeChoiceCycleDays(choiceCycleDays),
         startDate,
-        endMode,
-        fixedEndDate,
-        durationValue,
-        durationUnit,
         ...sanitizePhase(req.body),
       });
     } catch (error) {
@@ -267,6 +249,7 @@ module.exports = {
     if (req.body?.mode !== undefined) patch.mode = sanitizeMode(req.body.mode);
     if (req.body?.days !== undefined) patch.days = sanitizeDays(req.body.days);
     if (req.body?.dayPatterns !== undefined) patch.dayPatterns = sanitizeDayPatterns(req.body.dayPatterns);
+    if (req.body?.choiceCycleDays !== undefined) patch.choiceCycleDays = sanitizeChoiceCycleDays(req.body.choiceCycleDays);
 
     const plan = await planAssignmentService.updateAssignmentContent({
       trainerId: req.auth.userId,
@@ -359,14 +342,13 @@ module.exports = {
     return res.status(201).send(exception);
   },
 
-  // --- Progresión ciclo a ciclo ---
+  // --- Ciclos por contenido (docs/plan-ciclos-por-contenido.md) ---
 
-  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/next-cycle-suggestion
-  async getNextCycleSuggestion(req, res) {
+  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles
+  async getPhaseCycles(req, res) {
     const { clientId, phaseId } = req.params;
     try {
-      const result = await planAssignmentService.buildNextCycleSuggestion(clientId, phaseId);
-      return res.send(result);
+      return res.send(await planAssignmentService.getPhaseCycles(clientId, phaseId));
     } catch (error) {
       if (error.code === "DIET_PHASE_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
@@ -375,19 +357,32 @@ module.exports = {
     }
   },
 
-  // POST /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles
-  // body: { startDate?, mode?, days?, dayPatterns?, cycleTargetKcal, cycleTargetMacros?, name? }
-  async advanceCycle(req, res) {
+  // POST /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next/scale
+  // body: { kcal } → contenido del ciclo vigente escalado a esas kcal, para
+  // abrir el builder precargado. No escribe nada.
+  async scaleNextCycle(req, res) {
+    const { clientId, phaseId } = req.params;
+    const kcal = Number(req.body?.kcal);
+    if (!Number.isFinite(kcal) || kcal <= 0) return res.status(400).send({ message: "kcal debe ser mayor que 0" });
+    try {
+      return res.send(await planAssignmentService.scaleNextCycle(clientId, phaseId, kcal));
+    } catch (error) {
+      if (error.code === "DIET_PHASE_NOT_FOUND") {
+        return res.status(404).send({ message: error.message, code: error.code });
+      }
+      throw error;
+    }
+  },
+
+  // PUT /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next
+  // body: { mode?, days?, dayPatterns?, choiceCycleDays? }
+  // Sin startDate a propósito: la fecha la decide el servidor (inicio del
+  // ciclo siguiente). 204 = el contenido no cambia nada, no se persiste.
+  async prepareNextCycle(req, res) {
     const trainerId = req.auth.userId;
     const { clientId, phaseId } = req.params;
     const b = req.body || {};
 
-    if (!Number.isFinite(Number(b.cycleTargetKcal))) {
-      return res.status(400).send({ message: "cycleTargetKcal es obligatorio" });
-    }
-    if (b.startDate && !ISO_DATE.test(b.startDate)) {
-      return res.status(400).send({ message: "startDate inválida (YYYY-MM-DD)" });
-    }
     const hasContent =
       (Array.isArray(b.days) && b.days.length) ||
       (Array.isArray(b.dayPatterns) && b.dayPatterns.length);
@@ -397,21 +392,14 @@ module.exports = {
 
     let result;
     try {
-      result = await planAssignmentService.advanceCycle({
+      result = await planAssignmentService.prepareNextCycle({
         trainerId,
         clientId,
         phaseId,
-        startDate: b.startDate,
         mode: sanitizeMode(b.mode),
         days: sanitizeDays(b.days),
         dayPatterns: sanitizeDayPatterns(b.dayPatterns),
-        cycleTargetKcal: Math.round(Number(b.cycleTargetKcal)),
-        cycleTargetMacros: {
-          protein: Number(b.cycleTargetMacros?.protein) || 0,
-          carbs: Number(b.cycleTargetMacros?.carbs) || 0,
-          fat: Number(b.cycleTargetMacros?.fat) || 0,
-        },
-        name: b.name,
+        choiceCycleDays: sanitizeChoiceCycleDays(b.choiceCycleDays),
       });
     } catch (error) {
       if (error.code === "DIET_PHASE_NOT_FOUND") {
@@ -423,6 +411,31 @@ module.exports = {
       throw error;
     }
 
-    return res.status(201).send(toAssignmentResponse(result.cycle, { goalId: result.goal?._id }));
+    if (result.unchanged) return res.status(204).send();
+    return res.send(toAssignmentResponse(result.cycle));
+  },
+
+  // DELETE /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next
+  async discardNextCycle(req, res) {
+    const { clientId, phaseId } = req.params;
+    try {
+      await planAssignmentService.discardNextCycle(clientId, phaseId);
+    } catch (error) {
+      if (error.code === "DIET_PHASE_NOT_FOUND") {
+        return res.status(404).send({ message: error.message, code: error.code });
+      }
+      throw error;
+    }
+    return res.status(204).send();
+  },
+
+  // GET /trainer/clients/:clientId/diet-timeline?from&to
+  async getCycleTimeline(req, res) {
+    const { clientId } = req.params;
+    const { from, to } = req.query || {};
+    if (!ISO_DATE.test(from || "") || !ISO_DATE.test(to || "")) {
+      return res.status(400).send({ message: "from y to (YYYY-MM-DD) son obligatorios" });
+    }
+    return res.send(await planAssignmentService.getCycleTimeline(clientId, from, to));
   },
 };

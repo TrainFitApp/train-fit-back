@@ -7,6 +7,10 @@ const userSchema = require("../users/schema");
 const dietDaysDao = require("./diet-days-dao");
 const { buildShoppingList } = require("./shopping-list-service");
 const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
+const mealDao = require("../meals/meal-dao");
+const mealProposalDao = require("../mealProposals/meal-proposal-dao");
+const { computeDayTracking } = require("./diet-days-nutrition-util");
+const { cycleForClientAt } = require("../planAssignments/client-cycle");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -30,6 +34,16 @@ const controller = {
     // para sacar su dietInUse: los días se consultan por dueño directo.
     const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(req.user.id, from, to);
     return res.send({ ...buildShoppingList(days), period: { from, to } });
+  },
+
+  // GET /dietdays/timeline?from&to — fases (color estable por orden de
+  // inicio) y ventanas de ciclo del propio cliente.
+  async getMyDietTimeline(req, res) {
+    const { from, to } = req.query || {};
+    if (!ISO_DATE.test(from || "") || !ISO_DATE.test(to || "")) {
+      return res.status(400).send({ message: "from y to (YYYY-MM-DD) son obligatorios" });
+    }
+    return res.send(await planAssignmentService.getCycleTimeline(req.user.id, from, to));
   },
 
   async getDietDays(req, res) {
@@ -72,7 +86,26 @@ const controller = {
       req.body.date
     );
 
-    return res.send({ dietDay, anthropometry: anthropometry || null });
+    // Ciclos por contenido (plan §9) — la meta del día es lo que suma lo
+    // PAUTADO ese día, no un objetivo guardado aparte. null = nada pautado
+    // (sin plan, o plan "choice" sin menú elegido todavía).
+    const tracking = computeDayTracking(dietDay?.meals);
+    const plannedTarget = tracking.hasPlan
+      ? {
+          kcal: Math.round(tracking.planned.kcal),
+          protein: Math.round(tracking.planned.protein * 10) / 10,
+          carbs: Math.round(tracking.planned.carbs * 10) / 10,
+          fat: Math.round(tracking.planned.fat * 10) / 10,
+        }
+      : null;
+    const cycle = await cycleForClientAt(req.user.id, req.body.date);
+
+    return res.send({
+      dietDay,
+      anthropometry: anthropometry || null,
+      plannedTarget,
+      cycle: cycle ? { phaseId: cycle.phaseId, number: cycle.number, start: cycle.start, end: cycle.end } : null,
+    });
   },
 
   async createDietDay(req, res) {
@@ -198,9 +231,60 @@ const controller = {
     }
 
     const options = (plan.dayPatterns || []).map((p) => p.name);
+    // Preview de cada menú (solo lectura) para que el cliente vea qué hay
+    // antes de elegir: comidas con sus alimentos y cantidades. La 1ª
+    // alternativa de cada comida; las demás llegan como propuestas al
+    // elegir (ver applyResolvedPlanToDietDay).
+    const previews = (plan.dayPatterns || []).map((p) => ({
+      name: p.name,
+      meals: (p.meals || []).map((m) => {
+        const alt = (m.alternatives || [])[0] || {};
+        const round = (q) => (Number.isFinite(Number(q)) ? Math.round(Number(q) * 10) / 10 : null);
+        return {
+          name: m.slot || m.name || "",
+          items: [
+            ...(alt.customProducts || []).map((cp) => ({
+              name: cp?.product?.name || cp?.name || "",
+              quantity: round(cp?.quantity),
+              unit: cp?.product?.unit || "g",
+            })),
+            ...(alt.customRecipes || []).map((cr) => ({
+              name: cr?.recipe?.name || cr?.name || "",
+              quantity: round(cr?.quantity),
+              unit: "ración",
+            })),
+          ],
+        };
+      }),
+    }));
     const dietDay = await dietDayModel.findByUserAndDate(userId, date);
     const selected = dietDay?.dayTypeName || null;
-    return res.send({ needsChoice: !selected, selected, options });
+    return res.send({ needsChoice: !selected, selected, options, previews });
+  },
+
+  // Ciclos por contenido — DELETE /dietdays/date/:date/day-type: "salir del
+  // menú". El día vuelve a quedar sin menú; se quita lo pautado y sus
+  // marcas, lo que el cliente anotó por su cuenta se queda (plan §11).
+  async leaveDayType(req, res) {
+    const userId = req.user.id;
+    const date = req.params.date;
+    if (!ISO_DATE.test(date || "")) {
+      return res.status(400).send({ message: "Fecha inválida (YYYY-MM-DD)" });
+    }
+    const dietDay = await dietDayModel.findByUserAndDate(userId, date);
+    if (!dietDay) return res.status(404).send({ message: "No hay día registrado en esa fecha" });
+
+    for (const meal of dietDay.meals || []) {
+      const mealId = meal?._id || meal;
+      if (mealId) await mealDao.removePlannedItems(mealId);
+    }
+    await dietDayModel.setDayTypeName(dietDay._id, null);
+    // Las alternativas pendientes de elegir del menú que se deja tampoco
+    // tienen ya sentido.
+    await mealProposalDao.deletePendingForDate(userId, date);
+
+    const updated = await dietDayModel.findByUserAndDate(userId, date);
+    return res.send(updated);
   },
 
   // Fase 9 — PUT /dietdays/date/:date/day-type. Reelegible: volver a llamar

@@ -8,7 +8,7 @@
 // peso, adherencia de la fase) y aplica el resultado.
 
 const ON_TRACK_BAND_KG = 0.1; // dentro de esto se considera "va según plan"
-const LOW_ADHERENCE_PCT = 70;
+const LOW_ADHERENCE_PCT = 75;
 const KCAL_PER_KG = 7700;
 const MAX_STEP_KCAL = 400; // tope de un ajuste de un solo ciclo
 const KCAL_FLOOR = 1000; // seguridad dura (el "suelo por sexo" es fase 2)
@@ -66,17 +66,11 @@ function suggestNextCycle(input) {
   const actualWeeklyRateKg =
     Math.round(((weightEndKg - weightStartKg) / daysElapsed) * 7 * 100) / 100;
 
-  // Adherencia baja → el problema no es la dieta. No se toca.
-  if (adherencePct !== null && Number.isFinite(adherencePct) && adherencePct < LOW_ADHERENCE_PCT) {
-    return {
-      hasData: true,
-      deltaKcal: 0,
-      nextCycleKcal: base,
-      actualWeeklyRateKg,
-      flag: "low_adherence",
-      reason: `Adherencia de la fase ${Math.round(adherencePct)} %: primero adherencia, no es momento de tocar kcal.`,
-    };
-  }
+  // Adherencia baja → se AVISA, pero se calcula igual (plan §7): el cliente
+  // puede haber comido otras cosas que también le acerquen al objetivo, y
+  // la decisión es del entrenador, no de un bloqueo.
+  const lowAdherence =
+    adherencePct !== null && Number.isFinite(adherencePct) && adherencePct < LOW_ADHERENCE_PCT;
 
   const gapKg = actualWeeklyRateKg - expectedWeeklyRateKg;
 
@@ -101,12 +95,16 @@ function suggestNextCycle(input) {
   // Si el suelo recorta el ajuste, el delta efectivo cambia.
   const effectiveDelta = nextCycleKcal - base;
 
+  if (lowAdherence) {
+    reason = `Adherencia del ciclo ${Math.round(adherencePct)} % (por debajo del ${LOW_ADHERENCE_PCT} %): el cálculo puede no ser fiable. ${reason}`;
+  }
+
   return {
     hasData: true,
     deltaKcal: effectiveDelta,
     nextCycleKcal,
     actualWeeklyRateKg,
-    flag: null,
+    flag: lowAdherence ? "low_adherence" : null,
     reason,
   };
 }

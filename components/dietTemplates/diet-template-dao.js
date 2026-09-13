@@ -19,16 +19,22 @@ async function recomputeSuitability(id) {
 
 // Campos de FASE que se escriben en el primer ciclo (el "head"). Ausentes si
 // no se está empezando una fase (aplicar un plan al estilo de siempre).
-function phaseFields(phase, cycleTarget) {
+function phaseFields(phase) {
   if (!phase) return {};
   return {
     phaseName: phase.name || null,
     phaseFocus: phase.focus || null,
     phaseTargetKcalDelta: Number.isFinite(phase.targetKcalDelta) ? phase.targetKcalDelta : null,
     targetRatePerCycle: Number.isFinite(phase.ratePerCycle) ? phase.ratePerCycle : null,
-    cycleTargetKcal: cycleTarget?.kcal ?? null,
-    cycleTargetMacros: cycleTarget?.macros ?? undefined,
   };
+}
+
+// Solo tiene sentido en mode "choice"; en el resto no se escribe (undefined
+// = la clave no entra en el doc).
+function choiceCycleDaysField(mode, value) {
+  if (mode !== "choice") return {};
+  const n = Number(value);
+  return { choiceCycleDays: Number.isFinite(n) && n >= 1 ? Math.floor(n) : 7 };
 }
 
 // El head de una fase se apunta a sí mismo con phaseId (patrón supersededBy).
@@ -181,7 +187,7 @@ module.exports = {
   // lean() y days/dayPatterns llegarían con ObjectIds crudos en vez de los
   // CustomProduct/CustomRecipe reales que materializeDays necesita para
   // volver a clonarlos.
-  // `schedule` ({startDate, endMode, endDate, status}) se escribe en la
+  // `schedule` ({startDate, endDate, status, phase}) se escribe en la
   // MISMA creación — la copia ya nace siendo la asignación, no hace falta
   // un segundo documento ni una segunda escritura.
   async cloneForAssignment(template, clientId, schedule = {}) {
@@ -191,44 +197,72 @@ module.exports = {
       clientId,
       sourceTemplateId: source._id,
       startDate: schedule.startDate ?? null,
-      endMode: schedule.endMode ?? null,
       endDate: schedule.endDate ?? null,
-      estimatedEndDate: schedule.estimatedEndDate ?? null,
       status: schedule.status ?? null,
       name: source.name,
       mode: source.mode,
+      ...choiceCycleDaysField(source.mode, source.choiceCycleDays),
       days: await materializeDays(flattenDaysRef(source.days)),
       dayPatterns: await materializeDayPatterns(flattenDayPatternsRef(source.dayPatterns)),
       suitableFor: source.suitableFor || [],
       suitableForOverride: source.suitableForOverride || [],
-      ...phaseFields(schedule.phase, schedule.cycleTarget),
+      ...phaseFields(schedule.phase),
     });
     return finalizePhaseHead(created, schedule.phase);
   },
 
-  // Flujo B — un ciclo nuevo dentro de una fase existente. El contenido ya
-  // viene materializado/escalado por el servicio (cycle-progression.js); el
-  // nombre y el focus de la fase se heredan del primer ciclo (phaseHead).
-  async createCycle({ trainerId, clientId, phaseId, name, mode, days, dayPatterns, schedule = {} }) {
+  // Un ciclo preparado dentro de una fase existente. El contenido llega en
+  // crudo (shape "clipboard", ya escalado por el cliente del builder); el
+  // nombre es el de la fase (los ciclos no se nombran, ver plan). El status
+  // lo pone el servicio: el ciclo preparado no es "active" hasta que
+  // arranque — mientras, rige el head/ciclo anterior.
+  async createCycle({ trainerId, clientId, phaseId, mode, days, dayPatterns, choiceCycleDays, schedule = {} }) {
     const head = await DietTemplate.findById(phaseId).lean();
+    const resolvedMode = mode || head?.mode || "sequential";
     const created = await DietTemplate.create({
       trainerId,
       clientId,
       phaseId,
-      phaseName: undefined, // vive solo en el head
-      name: name || head?.name || "Ciclo",
-      mode: mode || head?.mode || "sequential",
+      name: head?.name || "Ciclo",
+      mode: resolvedMode,
+      ...choiceCycleDaysField(resolvedMode, choiceCycleDays ?? head?.choiceCycleDays),
       days: await materializeDays(days || []),
       dayPatterns: await materializeDayPatterns(dayPatterns || []),
       startDate: schedule.startDate ?? null,
-      endMode: schedule.endMode ?? "indefinite",
       endDate: schedule.endDate ?? null,
-      estimatedEndDate: schedule.estimatedEndDate ?? null,
       status: schedule.status ?? "active",
-      cycleTargetKcal: schedule.cycleTarget?.kcal ?? null,
-      cycleTargetMacros: schedule.cycleTarget?.macros ?? undefined,
     });
     return recomputeSuitability(created._id);
+  },
+
+  // Preparar por segunda vez el mismo ciclo (mismo startDate dentro de la
+  // fase) reescribe su doc en vez de encadenar otro. Contenido en crudo,
+  // igual que en createCycle.
+  async updateCycleOverride(id, { mode, days, dayPatterns, choiceCycleDays }) {
+    const existing = await DietTemplate.findById(id);
+    if (!existing) return null;
+    // Mismo cuidado que updateAssignedContent: el contenido viejo son docs
+    // reales (CustomProduct/CustomRecipe) que quedarían huérfanos.
+    await deleteContentIds(
+      DietTemplate.collectContentIds({ days: existing.days, dayPatterns: existing.dayPatterns })
+    );
+    const resolvedMode = mode || existing.mode;
+    await DietTemplate.updateOne(
+      { _id: id },
+      {
+        $set: {
+          mode: resolvedMode,
+          ...choiceCycleDaysField(resolvedMode, choiceCycleDays ?? existing.choiceCycleDays),
+          days: await materializeDays(days || []),
+          dayPatterns: await materializeDayPatterns(dayPatterns || []),
+        },
+      }
+    );
+    return recomputeSuitability(id);
+  },
+
+  async findCycleByStart(phaseId, startDate) {
+    return DietTemplate.findOne({ phaseId, startDate });
   },
 
   // Contenido de una copia (ciclo) aplanado a "clipboard" y escalado por
@@ -243,6 +277,22 @@ module.exports = {
       })),
       dayPatterns: flattenDayPatternsRef(src.dayPatterns || []).map((p) => ({
         ...p,
+        meals: scaleMealsContent(p.meals, factor),
+      })),
+    };
+  },
+
+  // Igual que scaledCycleContent pero SIN aplanar: los CustomProduct/
+  // CustomRecipe siguen poblados (nombre, macros) — es lo que necesita el
+  // builder para pintar el contenido, no para crear nada.
+  scaledCycleContentPopulated(prevCycle, factor = 1) {
+    const src = prevCycle.toObject ? prevCycle.toObject() : prevCycle;
+    return {
+      mode: src.mode,
+      days: (src.days || []).map((d) => ({ dayLabel: d.dayLabel, meals: scaleMealsContent(d.meals, factor) })),
+      dayPatterns: (src.dayPatterns || []).map((p) => ({
+        name: p.name,
+        appliesTo: p.appliesTo || [],
         meals: scaleMealsContent(p.meals, factor),
       })),
     };
@@ -275,14 +325,13 @@ module.exports = {
       clientId,
       name,
       mode: mode || "sequential",
+      ...choiceCycleDaysField(mode || "sequential", schedule.choiceCycleDays),
       days: await materializeDays(days),
       dayPatterns: await materializeDayPatterns(dayPatterns),
       startDate: schedule.startDate ?? null,
-      endMode: schedule.endMode ?? null,
       endDate: schedule.endDate ?? null,
-      estimatedEndDate: schedule.estimatedEndDate ?? null,
       status: schedule.status ?? null,
-      ...phaseFields(schedule.phase, schedule.cycleTarget),
+      ...phaseFields(schedule.phase),
     });
     const head = await finalizePhaseHead(created, schedule.phase);
     return recomputeSuitability(head._id);
@@ -291,7 +340,7 @@ module.exports = {
   // ownerClientId opcional — puesto, la plantilla es material de biblioteca
   // exclusivo de ese cliente (ver diet-template-schema.js); null, es general
   // y sirve para cualquiera.
-  async create(trainerId, name, days, mode, dayPatterns, ownerClientId = null, verified = false) {
+  async create(trainerId, name, days, mode, dayPatterns, ownerClientId = null, verified = false, choiceCycleDays = null) {
     const created = await DietTemplate.create({
       trainerId,
       name,
@@ -302,6 +351,7 @@ module.exports = {
       ...(verified ? { verified: true } : {}),
       days: await materializeDays(days),
       mode: mode || "sequential",
+      ...choiceCycleDaysField(mode || "sequential", choiceCycleDays),
       dayPatterns: await materializeDayPatterns(dayPatterns),
     });
     // create() no pasa por el middleware de autopopulate (solo corre en
@@ -361,13 +411,16 @@ module.exports = {
     return DietTemplate.find({ clientId: null, $or: or }).sort({ createdAt: -1 });
   },
 
-  async update(trainerId, id, { name, days, mode, dayPatterns, suitableForOverride, verified }) {
+  async update(trainerId, id, { name, days, mode, dayPatterns, suitableForOverride, verified, choiceCycleDays }) {
     const existing = await DietTemplate.findOne({ _id: id, trainerId });
     if (!existing) return null;
 
     const setOps = {};
     if (name !== undefined) setOps.name = name;
     if (mode !== undefined) setOps.mode = mode;
+    if (choiceCycleDays !== undefined) {
+      Object.assign(setOps, choiceCycleDaysField(mode ?? existing.mode, choiceCycleDays));
+    }
 
     const replacingDays = days !== undefined;
     const replacingPatterns = dayPatterns !== undefined;
@@ -404,13 +457,16 @@ module.exports = {
   // Funciona igual para el ciclo 1 que para cualquier ciclo posterior
   // (creado por "Siguiente ciclo") porque opera sobre el `_id` de la propia
   // copia, sin pasar por `sourceTemplateId`.
-  async updateAssignedContent(trainerId, clientId, id, { name, mode, days, dayPatterns }) {
+  async updateAssignedContent(trainerId, clientId, id, { name, mode, days, dayPatterns, choiceCycleDays }) {
     const existing = await DietTemplate.findOne({ _id: id, trainerId, clientId });
     if (!existing) return null;
 
     const setOps = {};
     if (name !== undefined) setOps.name = name;
     if (mode !== undefined) setOps.mode = mode;
+    if (choiceCycleDays !== undefined) {
+      Object.assign(setOps, choiceCycleDaysField(mode ?? existing.mode, choiceCycleDays));
+    }
 
     const replacingDays = days !== undefined;
     const replacingPatterns = dayPatterns !== undefined;
@@ -461,23 +517,22 @@ module.exports = {
    *
    * Dos rangos se cruzan si cada uno empieza antes de que el otro acabe.
    */
-  async findOverlapping(clientId, startDate, endDate, { excludeId } = {}) {
+  async findOverlapping(clientId, startDate, endDate, { excludeId, excludePhaseId } = {}) {
     const query = {
       clientId,
       status: { $ne: "ended" },
       // La existente empieza antes de que acabe la nueva.
       ...(endDate ? { startDate: { $lte: endDate } } : {}),
-      // Y acaba después de que empiece la nueva (o no acaba nunca). El fin
-      // EFECTIVO es el real si ya se cortó; si sigue corriendo, su estimación
-      // (que reserva el tramo aunque no lo cierre); y si no hay ninguna de las
-      // dos, no acaba nunca.
-      $or: [
-        { endDate: { $gte: startDate } },
-        { endDate: null, estimatedEndDate: { $gte: startDate } },
-        { endDate: null, estimatedEndDate: null },
-      ],
+      // Y acaba después de que empiece la nueva (o no acaba nunca).
+      $or: [{ endDate: { $gte: startDate } }, { endDate: null }],
     };
     if (excludeId) query._id = { $ne: excludeId };
+    // El ciclo ABIERTO de esa fase (endDate null) no cuenta: el ciclo nuevo
+    // empieza justo donde lo deja, así que avanzar con una fecha futura
+    // chocaba siempre contra él. Los ciclos ya cerrados de la misma fase sí
+    // siguen reservando su tramo — programar un ciclo encima de uno pasado
+    // es un solape de verdad.
+    if (excludePhaseId) query.$nor = [{ phaseId: excludePhaseId, endDate: null }];
     return DietTemplate.find(query).sort({ startDate: 1 });
   },
 
@@ -491,31 +546,11 @@ module.exports = {
     return DietTemplate.find({ clientId }).sort({ startDate: -1 });
   },
 
-  // Dashboard trainer, "Requiere tu atención" — copias activas de CUALQUIER
-  // cliente de este trainer cuya ESTIMACIÓN se acaba dentro del rango dado
-  // (p.ej. próximos 7 días) — a diferencia de findActiveForClient, que es de un
-  // cliente concreto. clientId: {$ne: null} de más (estimatedEndDate nunca se
-  // pone en una plantilla real), pero deja la consulta autoexplicativa.
-  //
-  // Mira estimatedEndDate y no endDate: una fase activa ya nunca tiene fin
-  // real (se estampa solo al cortarla), así que con endDate esta señal se
-  // habría quedado muda. Sin estimación no hay nada que avisar.
-  async listEndingSoonForTrainer(trainerId, fromDateStr, toDateStr) {
-    return DietTemplate.find({
-      trainerId,
-      clientId: { $ne: null },
-      status: "active",
-      estimatedEndDate: { $ne: null, $gte: fromDateStr, $lte: toDateStr },
-    })
-      .populate("clientId", "name lastname")
-      .lean();
-  },
-
   // `endDate` = fin REAL de la fase que se corta (el día anterior al inicio de
-  // la que entra). Desde que la duración es una estimación, ninguna asignación
-  // nace con fecha de fin: si no se estampara aquí, el historial entero se
-  // quedaría sin fechas de fin y no habría forma de cerrar los tramos del
-  // calendario ni de saber cuánto duró de verdad cada fase.
+  // la que entra). Ninguna asignación nace con fecha de fin: si no se
+  // estampara aquí, el historial entero se quedaría sin fechas de fin y no
+  // habría forma de cerrar los tramos del calendario ni de saber cuánto duró
+  // de verdad cada fase.
   async markSuperseded(id, supersededBy, endDate = null) {
     return DietTemplate.findByIdAndUpdate(
       id,
@@ -543,10 +578,11 @@ module.exports = {
   // Al cancelar la fase "active" (el tip de la cadena) hay que reactivar la
   // que queda más reciente, o el cliente se queda sin ninguna fase "active"
   // — mismo invariante que RoutineAssignment#reactivate.
+  // Vuelve a ser el tip de la cadena: abierto (sin fin real) y sin sucesor.
   async reactivate(id) {
     return DietTemplate.findByIdAndUpdate(
       id,
-      { $set: { status: "active" }, $unset: { supersededBy: "" } },
+      { $set: { status: "active", endDate: null }, $unset: { supersededBy: "" } },
       { new: true }
     );
   },

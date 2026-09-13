@@ -18,10 +18,13 @@ function ageFromBirth(birth) {
 }
 
 /**
+ * @param {{ proteinPerKg?: number, fatPerKg?: number }} [macroOverride]
+ *   Override manual del cajón de sugerencias (g/kg) — ver
+ *   nutrition-target.js#computeNutritionTarget.
  * @returns {{ ok: true, target, weightSource, clientObjetive }
  *          | { ok: false, missing: string[] }}
  */
-async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0) {
+async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0, macroOverride = {}) {
   const [user, anthros] = await Promise.all([
     userSchema.findById(clientId).select("sex height birth activity steps training weight objetive").lean(),
     anthropometryDao.getAllAnthropometriesByUserId(clientId),
@@ -57,6 +60,8 @@ async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0) {
     steps: user.steps,
     training: user.training,
     objetiveKcalDelta,
+    proteinPerKg: macroOverride.proteinPerKg,
+    fatPerKg: macroOverride.fatPerKg,
   });
 
   return {

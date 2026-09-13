@@ -159,6 +159,13 @@ router.getAsync(
   requireActiveClient("nutrition"),
   dataController.getClientNutritionTracking
 );
+// Cumplimiento alimento a alimento del rango — panel de resumen de un ciclo.
+router.getAsync(
+  "/clients/:clientId/nutrition-foods",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.getClientNutritionFoods
+);
 // Movimiento 5 Coach Pro — lista de la compra del plan. requireActiveClient
 // CON scope "nutrition", igual que sus vecinas de arriba: es contenido del
 // plan nutricional, y un entrenador solo de entrenamiento no lo pauta.
@@ -203,6 +210,14 @@ router.postAsync(
   auth(["trainer"]),
   requireActiveClient("nutrition"),
   dataController.requestNutritionPreferences
+);
+// El profesional edita directamente las preferencias del cliente en vez de
+// esperar a que este responda el cuestionario.
+router.putAsync(
+  "/clients/:clientId/nutrition-preferences",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.updateClientNutritionPreferences
 );
 
 // --- Rutinas -> Plantillas (rediseño 2026-08): biblioteca de plantillas de

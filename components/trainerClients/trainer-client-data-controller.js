@@ -21,6 +21,7 @@ const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const { buildShoppingList } = require("../dietDays/shopping-list-service");
+const { summarizeFoodCompliance } = require("../dietDays/food-compliance");
 const planResolver = require("../planAssignments/plan-resolver");
 const planChangeService = require("../planChanges/plan-change-service");
 const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
@@ -817,6 +818,30 @@ module.exports = {
     return res.send({ status: "ok", dailyTracking });
   },
 
+  // GET /trainer/clients/:clientId/nutrition-foods?from=&to=
+  // Cumplimiento ALIMENTO A ALIMENTO del rango, para el panel de resumen de un
+  // ciclo. Hermano de getClientNutritionTracking (que da lo mismo en macros,
+  // sin desglose) y de getClientShoppingList (que agrupa por producto pero
+  // ignora si se consumió).
+  async getClientNutritionFoods(req, res) {
+    const clientId = req.params.clientId;
+
+    // `to` se acota a HOY a propósito: los días que todavía no están
+    // materializados se resuelven al vuelo con `consumed: false` (ver
+    // getTrackingDaysForClient), así que contar el futuro haría parecer que el
+    // cliente incumple lo que aún no le ha llegado.
+    const hoy = todayIsoDate();
+    const pedido = req.query.to || hoy;
+    const to = pedido > hoy ? hoy : pedido;
+    const from = req.query.from || addDaysToIsoDate(to, -30);
+
+    // Un ciclo que empieza mañana no tiene nada que resumir todavía.
+    if (from > to) return res.send({ status: "ok", items: [], from, to });
+
+    const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
+    return res.send({ status: "ok", items: summarizeFoodCompliance(dietDays), from, to });
+  },
+
   // GET /trainer/clients/:clientId/shopping-list?from=&to= — Movimiento 5
   // Coach Pro. Lo que el cliente tiene que comprar para cumplir el plan de
   // ese rango, sumado por producto.
@@ -960,6 +985,62 @@ module.exports = {
     );
 
     await notificationDao.create(req.params.clientId, req.auth.userId, "nutrition_preferences_requested", {});
+
+    return res.send(preferences);
+  },
+
+  // PUT /trainer/clients/:clientId/nutrition-preferences — el profesional
+  // rellena/edita directamente las preferencias en vez de esperar a que el
+  // cliente responda el cuestionario. Misma validación y mismo dao que usa
+  // el cliente para las suyas propias (nutrition-preferences-client-controller.js).
+  async updateClientNutritionPreferences(req, res) {
+    const {
+      allergies,
+      favoriteFoods,
+      dislikedFoods,
+      cooksAtHome,
+      disabledMealSlots,
+      mealSlotLabels,
+    } = req.body || {};
+
+    const cooksAtHomeValues = ["yes", "no", "sometimes"];
+    const validMealSlots = Object.values(dietDaysUtil.MEALS);
+
+    if (cooksAtHome != null && !cooksAtHomeValues.includes(cooksAtHome)) {
+      return res.status(400).send({ message: "cooksAtHome debe ser 'yes', 'no' o 'sometimes'" });
+    }
+    if ([allergies, favoriteFoods, dislikedFoods].some((v) => v != null && String(v).length > 1000)) {
+      return res.status(400).send({ message: "Cada campo de texto no puede superar los 1000 caracteres" });
+    }
+    if (
+      disabledMealSlots != null &&
+      (!Array.isArray(disabledMealSlots) ||
+        !disabledMealSlots.every((slot) => validMealSlots.includes(slot)))
+    ) {
+      return res.status(400).send({
+        message: `disabledMealSlots solo admite: ${validMealSlots.join(", ")}`,
+      });
+    }
+    if (
+      mealSlotLabels != null &&
+      (typeof mealSlotLabels !== "object" ||
+        Array.isArray(mealSlotLabels) ||
+        !Object.keys(mealSlotLabels).every((slot) => validMealSlots.includes(slot)) ||
+        !Object.values(mealSlotLabels).every((label) => typeof label === "string" && label.length <= 50))
+    ) {
+      return res.status(400).send({
+        message: `mealSlotLabels debe mapear slots válidos (${validMealSlots.join(", ")}) a textos de máximo 50 caracteres`,
+      });
+    }
+
+    const preferences = await nutritionPreferencesDao.upsertOwnResponse(req.params.clientId, {
+      allergies,
+      favoriteFoods,
+      dislikedFoods,
+      cooksAtHome,
+      disabledMealSlots,
+      mealSlotLabels,
+    });
 
     return res.send(preferences);
   },

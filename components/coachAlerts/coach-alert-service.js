@@ -4,7 +4,6 @@ const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const trainerClientService = require("../trainerClients/trainer-client-service");
 const checkinDao = require("../trainerCheckins/checkin-dao");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
-const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 const userSchema = require("../users/schema");
@@ -19,10 +18,6 @@ const painDao = require("../painLog/pain-dao");
 // de leer el panel. Ver coach-alert-dao#findLastManuallyClosedByDedupeKey
 // para por qué los cierres automáticos NO cuentan aquí.
 const ALERT_COOLDOWN_DAYS = 14;
-
-// Días de antelación con los que un plan de nutrición a punto de caducar
-// genera alerta. Mismo valor que ya usaba getAttentionItems.
-const PLAN_ENDING_LOOKAHEAD_DAYS = 7;
 
 function isoDaysAgo(days, now) {
   const date = new Date(now.getTime() - days * 86400000);
@@ -76,14 +71,12 @@ async function loadTrainerContext(trainerId, now) {
     pendingReviewRelations,
     checkinConfigs,
     latestResponses,
-    endingSoon,
     checkinResponses,
   ] = await Promise.all([
     trainerClientService.listActiveClientsForTrainer(trainerId),
     trainerClientDao.findByTrainerAndStatusWithClient(trainerId, "en_revision"),
     checkinDao.getAppliedConfigsForTrainer(trainerId),
     checkinDao.getLatestResponseByClient(trainerId),
-    planAssignmentService.listEndingSoonForTrainer(trainerId, PLAN_ENDING_LOOKAHEAD_DAYS),
     // Fase 3 — los VALORES de las respuestas, no solo sus fechas: las reglas
     // del coach pueden condicionar sobre bienestar (estrés, sueño, pasos).
     // Una consulta para toda la cartera, no una por cliente.
@@ -153,9 +146,6 @@ async function loadTrainerContext(trainerId, now) {
       checkinConfigs.filter((c) => c.clientId).map((c) => [String(c.clientId._id), c])
     ),
     lastResponseByClient: new Map(latestResponses.map((r) => [String(r._id), r.respondedAt])),
-    endingSoonByClient: new Map(
-      endingSoon.filter((a) => a.clientId).map((a) => [String(a.clientId._id), a])
-    ),
     anthropometryByClient,
     adherenceByClient,
     checkinResponsesByClient: groupBy(checkinResponses, (r) => String(r.clientId)),
@@ -217,7 +207,6 @@ function buildClientSnapshots(context, now) {
     const adherence = context.adherenceByClient.get(clientKey) || null;
     const lastResponseAt = context.lastResponseByClient.get(clientKey) || null;
     const config = context.checkinByClient.get(clientKey) || null;
-    const endingSoon = context.endingSoonByClient.get(clientKey) || null;
 
     snapshots.push({
       clientId: entry.user._id,
@@ -240,9 +229,6 @@ function buildClientSnapshots(context, now) {
       // Movimiento 3 Coach Pro — solo fecha, zona y nivel: es lo que
       // necesita la métrica pain_max y lo único barato para toda la cartera.
       painEntries: context.painEntriesByClient?.get(clientKey) || [],
-      planEndingSoon: endingSoon
-        ? { daysLeft: endingSoon.daysLeft, endDate: endingSoon.estimatedEndDate }
-        : null,
       lastActivityAt: lastActivityFor({ lastResponseAt, entries, adherence, now }),
     });
   }
@@ -271,7 +257,6 @@ function buildSignalsFromSnapshots(snapshots) {
       checkin: snapshot.checkinConfig
         ? { config: snapshot.checkinConfig, lastResponseAt: snapshot.lastResponseAt }
         : null,
-      planEndingSoon: snapshot.planEndingSoon,
       lastActivityAt: snapshot.lastActivityAt,
     }),
   }));

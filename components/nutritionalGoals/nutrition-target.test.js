@@ -88,6 +88,42 @@ test("computeNutritionTarget", async (t) => {
       null
     );
   });
+
+  await t.test("override g/kg del cajón de sugerencias pisa la fórmula por defecto", () => {
+    const r = computeNutritionTarget({
+      weightKg: 80,
+      heightCm: 180,
+      age: 30,
+      sex: 1,
+      activity: 1.45,
+      steps: 1,
+      training: 1.05,
+      objetiveKcalDelta: -500,
+      proteinPerKg: 2,
+      fatPerKg: 0.8,
+    });
+    assert.equal(r.kcal, 2210); // el override de macros no toca las kcal
+    assert.equal(r.protein, 160); // 2 · 80, no la fórmula por defecto (128)
+    assert.equal(r.fat, 64); // 0.8 · 80, no la fórmula por defecto (60)
+    assert.equal(r.carbs, (2210 - 640 - 576) / 4);
+  });
+
+  await t.test("override no positivo (0/negativo) se ignora, cae a la fórmula", () => {
+    const r = computeNutritionTarget({
+      weightKg: 80,
+      heightCm: 180,
+      age: 30,
+      sex: 1,
+      activity: 1.45,
+      steps: 1,
+      training: 1.05,
+      objetiveKcalDelta: -500,
+      proteinPerKg: 0,
+      fatPerKg: -1,
+    });
+    assert.equal(r.protein, 128);
+    assert.equal(r.fat, 60);
+  });
 });
 
 test("expectedWeeklyRateKg", async (t) => {

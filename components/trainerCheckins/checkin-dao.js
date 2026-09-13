@@ -71,8 +71,28 @@ module.exports = {
   },
 
   // --- CheckinResponse (histórico, solo campos wellbeing-backed) ---
-  async createResponse(trainerId, clientId, values) {
-    return CheckinResponse.create({ trainerId, clientId, values });
+  async createResponse(trainerId, clientId, values, cycle = null) {
+    return CheckinResponse.create({ trainerId, clientId, values, ...(cycle ? { cycle } : {}) });
+  },
+
+  // La respuesta de ESTE ciclo de dieta, si ya existe (una por ciclo).
+  async findResponseForCycle(trainerId, clientId, cycle) {
+    return CheckinResponse.findOne({
+      trainerId,
+      clientId,
+      "cycle.phaseId": cycle.phaseId,
+      "cycle.number": cycle.number,
+    }).sort({ respondedAt: -1 });
+  },
+
+  // Sobreescribir la respuesta del ciclo: valores nuevos y fecha nueva — la
+  // pertenencia al ciclo la fija `cycle`, no respondedAt.
+  async overwriteCycleResponse(responseId, values, now = new Date()) {
+    return CheckinResponse.findByIdAndUpdate(
+      responseId,
+      { $set: { values, respondedAt: now, seenByTrainer: false } },
+      { new: true }
+    );
   },
 
   // La respuesta de ESTE ciclo, si ya existe. Un ciclo es la ventana de

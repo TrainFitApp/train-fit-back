@@ -100,25 +100,11 @@ const DietTemplateSchema = new Schema(
     // ver blocksNewPhase en plan-assignment-service.js), no un hueco — una
     // asignación lo escribe siempre, incluso null.
     startDate: { type: String }, // "YYYY-MM-DD"
-    // null sigue en el enum: una asignación indefinida escribe endMode
-    // explícito y Mongoose no lo deja pasar gratis si no está listado.
-    //
-    // 2026-09 — endMode se queda SOLO por los documentos viejos: desde que la
-    // duración pasó a ser una estimación (ver estimatedEndDate), toda
-    // asignación nueva nace "indefinite".
-    endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null] },
     // Fin REAL. null mientras la fase sigue corriendo; se estampa el día en
-    // que otra fase la corta (markSuperseded). Antes de 2026-09 guardaba la
-    // fecha calculada al asignar ("8 semanas" -> fecha concreta), que actuaba
-    // como límite duro; eso vive ahora en estimatedEndDate.
+    // que otra fase la corta (markSuperseded). No hay fin estimado ni
+    // duración: una fase acaba cuando empieza la siguiente (ciclos por
+    // contenido, docs/plan-ciclos-por-contenido.md).
     endDate: { type: String }, // "YYYY-MM-DD" o null si sigue vigente
-    // Duración ESTIMADA: hasta cuándo se calcula que durará la fase. No corta
-    // nada (el fin real lo decide el entrenador al abrir el siguiente ciclo),
-    // pero sí reserva el tramo: no se puede PROGRAMAR otra fase dentro de él
-    // (ver blocksNewPhase en plan-assignment-service.js), y alimenta el aviso
-    // de "toca revisar" del dashboard (listEndingSoonForTrainer).
-    // null = sin estimación, la fase corre hasta nuevo aviso.
-    estimatedEndDate: { type: String }, // "YYYY-MM-DD" o null
     status: { type: String, enum: ["active", "superseded", "ended", null] },
     // Encadena con la copia que la sustituyó — permite reconstruir el
     // historial de fases sin perder rastro de lo que regía antes. Ausente
@@ -149,18 +135,16 @@ const DietTemplateSchema = new Schema(
     // Mantenimiento/Superávit del cajón de sugerencias, no un dato aparte.
     phaseName: { type: String, trim: true, maxlength: 100 },
     phaseFocus: { type: String, enum: ["cut", "maintain", "bulk", null] },
-    // Delta de kcal elegido en el cajón (−500 / 0 / +300...) y ritmo por
+    // Delta de kcal elegido al crear el C1 (−500 / 0 / +300...) y ritmo por
     // defecto de la rampa (kcal por ciclo, p. ej. −100). Solo primer ciclo.
     phaseTargetKcalDelta: { type: Number },
     targetRatePerCycle: { type: Number },
-    // kcal / macros objetivo resueltos de ESTE ciclo — en todos los ciclos.
-    // Los necesita el cálculo de adherencia y el diff del ciclo siguiente.
-    cycleTargetKcal: { type: Number },
-    cycleTargetMacros: {
-      protein: { type: Number },
-      carbs: { type: Number },
-      fat: { type: Number },
-    },
+    // Ciclos por contenido (docs/plan-ciclos-por-contenido.md): un ciclo
+    // dura lo que dura su contenido (ver cycle-window.js#contentCycleDays),
+    // no se guarda aparte. Las kcal del ciclo tampoco: se derivan de los
+    // alimentos (diet-macro-profile.js). Solo se persisten los ciclos que
+    // cambian algo; el ciclo N es una ventana calculada encadenando las
+    // longitudes de los persistidos.
 
     // --- Aptitud dietética ---
     //
@@ -182,6 +166,10 @@ const DietTemplateSchema = new Schema(
 
     name: { type: String, required: true, trim: true, maxlength: 100 },
     mode: { type: String, enum: ["sequential", "recurring", "choice"], default: "sequential" },
+    // Solo en mode === "choice": cuántos días dura un ciclo. En sequential el
+    // ciclo son sus days[] y en recurring la semana; en choice el cliente
+    // elige menú cada día, así que la longitud del ciclo hay que decirla.
+    choiceCycleDays: { type: Number, min: 1 },
     days: [
       {
         // Etiqueta libre ("Día 1", "Lunes") — NO atada a una fecha real; la

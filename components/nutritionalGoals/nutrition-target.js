@@ -97,6 +97,11 @@ function computeNutritionTarget({
   steps,
   training,
   objetiveKcalDelta = 0,
+  // Override manual del cajón de sugerencias (g/kg de peso) — sin esto,
+  // proteína/grasa salen de la fórmula por defecto según el signo del
+  // delta y el sexo. Los carbohidratos siempre son el resto de las kcal.
+  proteinPerKg,
+  fatPerKg,
 }) {
   const finalWeight = getFinalWeight(weightKg, heightCm, sex);
   const bmr = bmrMifflinStJeor({ weightKg: finalWeight, heightCm, age, sex });
@@ -106,8 +111,8 @@ function computeNutritionTarget({
   const expenditure = energyExpenditure(bmr, { activity, steps, training });
   const kcal = Math.round(expenditure + delta);
 
-  const protein = proteinGrams(delta, finalWeight);
-  const fat = fatGrams(delta, finalWeight, sex);
+  const protein = isPositive(proteinPerKg) ? proteinPerKg * finalWeight : proteinGrams(delta, finalWeight);
+  const fat = isPositive(fatPerKg) ? fatPerKg * finalWeight : fatGrams(delta, finalWeight, sex);
   const carbsKcal = kcal - (protein * KCAL_PER_G.protein + fat * KCAL_PER_G.fat);
   const carbs = carbsKcal / KCAL_PER_G.carbs;
 

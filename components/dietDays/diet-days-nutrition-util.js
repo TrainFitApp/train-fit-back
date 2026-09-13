@@ -141,9 +141,13 @@ function macrosForMeal(meal) {
 // sus items como hechos aunque algún flag individual no se haya tocado —
 // una confirmación explícita de "toda la comida" no debe quedar
 // contradicha por un detalle sin marcar.
+//
+// Solo cuenta lo PAUTADO (isItemPlanned): lo que el cliente añadió por su
+// cuenta no es cumplimiento de nada (plan ciclos por contenido §7) — antes
+// entraba en el denominador y un día con extras parecía peor cumplido.
 function countMealItems(meal) {
-  const products = meal?.customProducts || [];
-  const recipes = meal?.customRecipes || [];
+  const products = (meal?.customProducts || []).filter(isItemPlanned);
+  const recipes = (meal?.customRecipes || []).filter(isItemPlanned);
   const total = products.length + recipes.length;
   if (meal?.completed) return { total, completed: total };
   const completedCount =
@@ -278,4 +282,9 @@ module.exports = {
   computeDayCompletion,
   computeDayTracking,
   computeRangeAdherence,
+  // Las dos reglas de "qué cuenta como pautado" y "qué cuenta como
+  // consumido". Se exportan para que food-compliance.js las reutilice en vez
+  // de reimplementarlas: si el criterio cambia, tiene que cambiar en un sitio.
+  isItemPlanned,
+  isItemConsumed,
 };

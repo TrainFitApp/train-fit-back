@@ -3,6 +3,7 @@ const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const notificationDao = require("../notifications/notification-dao");
 const { cadenceDays } = require("./checkin-due");
+const { cycleForClientAt } = require("../planAssignments/client-cycle");
 const userSchema = require("../users/schema");
 const {
   CHECKIN_FIELDS_BY_KEY,
@@ -232,9 +233,27 @@ module.exports = {
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
 
-    return res.send(
-      visible.map((c) => ({ ...c, trainer: trainersById.get(String(c.trainerId)) || null }))
-    );
+    // Ciclos por contenido — si el cliente está en una fase de dieta, el
+    // check-in va por ciclo: se dice cuál es y si ya lo respondió.
+    const cycle = await cycleForClientAt(req.auth.userId, todayIsoDate());
+    const out = [];
+    for (const c of visible) {
+      let cycleCheckin = null;
+      if (cycle && !c.requestId) {
+        const existing = await checkinDao.findResponseForCycle(c.trainerId, req.auth.userId, cycle);
+        cycleCheckin = {
+          phaseId: cycle.phaseId,
+          number: cycle.number,
+          start: cycle.start,
+          end: cycle.end,
+          hasResponse: !!existing,
+          responseId: existing ? String(existing._id) : null,
+          respondedAt: existing?.respondedAt || null,
+        };
+      }
+      out.push({ ...c, trainer: trainersById.get(String(c.trainerId)) || null, cycleCheckin });
+    }
+    return res.send(out);
   },
 
   // GET /trainer/checkins/mine/history — coach-tab FASE2, "formularios
@@ -406,24 +425,38 @@ module.exports = {
     //
     // `respondedAt` no se toca al reescribir: moverlo cambiaría el ciclo al
     // que pertenece la respuesta y falsearía la adherencia.
+    //
+    // Ciclos por contenido (docs/plan-ciclos-por-contenido.md): con fase de
+    // dieta, el ciclo es el de la DIETA (una respuesta por ciclo, la última
+    // sobreescribe a la anterior y sí actualiza respondedAt). Sin fase, la
+    // ventana de cadencia de siempre.
     let responseDoc = null;
     let updated = false;
     if (submittedKeys.length) {
-      const existente =
-        config?.cadence === "once"
-          ? null
-          : await checkinDao.findResponseInCurrentCycle(
-              trainerId,
-              clientId,
-              cadenceDays(config?.cadence),
-              new Date()
-            );
+      const cycle = await cycleForClientAt(clientId, todayIsoDate());
+      let existente = null;
+      if (cycle) {
+        existente = await checkinDao.findResponseForCycle(trainerId, clientId, cycle);
+      } else if (config?.cadence !== "once") {
+        existente = await checkinDao.findResponseInCurrentCycle(
+          trainerId,
+          clientId,
+          cadenceDays(config?.cadence),
+          new Date()
+        );
+      }
 
-      if (existente) {
+      if (existente && cycle) {
+        responseDoc = await checkinDao.overwriteCycleResponse(existente._id, values);
+        updated = true;
+      } else if (existente) {
         responseDoc = await checkinDao.updateResponseValues(existente._id, values);
         updated = true;
       } else {
-        responseDoc = await checkinDao.createResponse(trainerId, clientId, values);
+        const cycleKey = cycle
+          ? { phaseId: cycle.phaseId, number: cycle.number, start: cycle.start, end: cycle.end }
+          : null;
+        responseDoc = await checkinDao.createResponse(trainerId, clientId, values, cycleKey);
       }
       await notificationDao.createForTrainer(trainerId, clientId, "checkin_responded", {});
     }

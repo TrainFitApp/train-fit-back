@@ -121,6 +121,22 @@ module.exports = {
   // Fase 9 — antes de volver a resolver el plan para esta fecha+comida se
   // retiran las alternativas que quedaran sin elegir, para no dejar restos de
   // una resolución anterior. Una ya elegida no se toca: es historial real.
+  // Todas las comidas del día de golpe — "salir del menú" (diet-days-controller
+  // #leaveDayType) deja el día sin plan, así que ninguna alternativa
+  // pendiente tiene ya sentido.
+  async deletePendingForDate(clientId, date) {
+    const day = await dietDaySchema
+      .findOne({ userId: clientId, date })
+      .select("meals")
+      .lean();
+    if (!day?.meals?.length) return { deletedCount: 0 };
+    const res = await mealSchema.updateMany(
+      { _id: { $in: day.meals }, chosenAlternativeIndex: null },
+      { $set: { alternatives: [], alternativesTrainerId: null } }
+    );
+    return { deletedCount: res.modifiedCount || 0 };
+  },
+
   async deletePendingForDateAndSlot(clientId, date, mealSlot) {
     const day = await dietDaySchema
       .findOne({ userId: clientId, date })

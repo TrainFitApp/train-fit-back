@@ -26,8 +26,19 @@ const CheckinResponseSchema = new Schema({
   // "Reportes" (mismo criterio simple que un contador de no-leídos de bandeja
   // de entrada — no se modela por-respuesta "visto individualmente").
   seenByTrainer: { type: Boolean, default: false },
+  // Ciclos por contenido (docs/plan-ciclos-por-contenido.md) — a qué ciclo de
+  // qué fase de dieta pertenece esta respuesta. UNA por ciclo: un segundo
+  // envío dentro del mismo ciclo la reescribe (ver checkin-controller.js#
+  // respond). Ausente en clientes sin fase de dieta (van por cadencia).
+  cycle: {
+    phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
+    number: { type: Number },
+    start: { type: String },
+    end: { type: String },
+  },
 }, { collection: "checkinresponses" });
 
 CheckinResponseSchema.index({ trainerId: 1, clientId: 1, respondedAt: -1 });
+CheckinResponseSchema.index({ trainerId: 1, clientId: 1, "cycle.phaseId": 1, "cycle.number": 1 });
 
 module.exports = mongoose.model("CheckinResponse", CheckinResponseSchema);

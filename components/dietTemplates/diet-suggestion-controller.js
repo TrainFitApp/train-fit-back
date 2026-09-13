@@ -9,7 +9,7 @@ const VALID_FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
 
 module.exports = {
   // POST /trainer/clients/:clientId/diet-suggestions
-  // body: { objetiveKcalDelta, dietaryFlags?: string[] }
+  // body: { objetiveKcalDelta, dietaryFlags?: string[], proteinPerKg?, fatPerKg? }
   //
   // Devuelve el objetivo calculado del cliente + la lista de plantillas
   // rankeadas por cercanía + las ocultas por el filtro dietético.
@@ -17,9 +17,17 @@ module.exports = {
     const trainerId = req.auth.userId;
     const { clientId } = req.params;
     const objetiveKcalDelta = Number(req.body?.objetiveKcalDelta) || 0;
+    // Override manual de g/kg del cajón de sugerencias — 0/negativo/no-numérico
+    // se descarta y cae a la fórmula por defecto (ver computeNutritionTarget).
+    const proteinPerKg = Number(req.body?.proteinPerKg);
+    const fatPerKg = Number(req.body?.fatPerKg);
+    const macroOverride = {
+      proteinPerKg: proteinPerKg > 0 ? proteinPerKg : undefined,
+      fatPerKg: fatPerKg > 0 ? fatPerKg : undefined,
+    };
 
     const [resolved, prefs] = await Promise.all([
-      resolveClientNutritionTarget(clientId, objetiveKcalDelta),
+      resolveClientNutritionTarget(clientId, objetiveKcalDelta, macroOverride),
       nutritionPreferencesDao.getByClientId(clientId),
     ]);
 
