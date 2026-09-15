@@ -16,6 +16,14 @@ const { isSamePermutation } = require("../util/permutation-util");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
+  // Bug: drop/restPause/FALLO (expectedRir con -1) se clonaban tal cual al
+  // duplicar semana, así que marcar una técnica en un microciclo terminaba
+  // "propagada" al nuevo. Son decisiones de ESA semana, no de la rutina.
+  delete setTemp.drop;
+  delete setTemp.restPause;
+  if (Array.isArray(setTemp.expectedRir) && setTemp.expectedRir.includes(-1)) {
+    setTemp.expectedRir = [];
+  }
 }
 
 // Planificador visual (Fase C) — el nuevo orden de columnas debe ser

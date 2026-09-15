@@ -12,6 +12,13 @@ const { isSamePermutation } = require("../util/permutation-util");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
+  // Mismo criterio que split-dao.js: técnica (drop/restPause/FALLO) es de
+  // esa copia concreta, no algo que deba heredar el workout duplicado.
+  delete setTemp.drop;
+  delete setTemp.restPause;
+  if (Array.isArray(setTemp.expectedRir) && setTemp.expectedRir.includes(-1)) {
+    setTemp.expectedRir = [];
+  }
 }
 
 function cloneSetForTemplateCopy(setTemp) {
@@ -1031,12 +1038,14 @@ module.exports = {
   async deleteWorkouts(workouts) {
     const workoutIds = workouts.map((workoutTemp) => workoutTemp._id);
 
-    const deleteWorkouts = { _id: workoutIds };
-    return new Promise((resolve, reject) =>
-      workoutSchema.deleteMany(deleteWorkouts, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
+    // Bug: faltaba $in — { _id: workoutIds } compara _id (escalar) contra el
+    // array entero, así que nunca hace match. deleteMany resolvía con
+    // deletedCount:0 sin lanzar error, y el entrenamiento nunca se borraba
+    // de verdad (reaparecía al recargar).
+    await splitSchema.updateMany(
+      { workouts: { $in: workoutIds } },
+      { $pull: { workouts: { $in: workoutIds } } },
     );
+    return workoutSchema.deleteMany({ _id: { $in: workoutIds } });
   },
 };
