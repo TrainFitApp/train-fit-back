@@ -73,6 +73,11 @@ module.exports = {
         objetiveKcalDelta,
       },
       weightSource,
+      // Peso sobre el que se aplican los g/kg: el ajustado si IMC ≥ 30
+      // (nutrition-target.js#getFinalWeight), si no el real. El panel lo usa
+      // para pasar los gramos que toca el entrenador a proteinPerKg/fatPerKg
+      // sin que el backend devuelva otros gramos.
+      macroWeightKg: resolved.breakdown?.adjustedWeightKg ?? weightSource?.weightKg ?? null,
       // El objetivo que el cliente eligió al registrarse (delta kcal con
       // signo) — el cajón lo usa para arrancar en Definir/Mantener/Volumen
       // en vez de siempre Definir. El entrenador manda igual.
