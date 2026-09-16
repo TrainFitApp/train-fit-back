@@ -83,20 +83,6 @@ async function record({ trainerId, clientId, entity, entityId, entityName, actio
   });
 }
 
-/** Cambio de objetivo nutricional: el caso del ejemplo (2200 -> 2100 kcal). */
-async function recordGoalChange({ trainerId, clientId, previousGoal, newGoal, action, reason }) {
-  return record({
-    trainerId,
-    clientId,
-    entity: "nutritional_goal",
-    entityId: newGoal?._id,
-    entityName: newGoal?.name,
-    action,
-    changes: diffFields(previousGoal, newGoal, NUTRITIONAL_GOAL_FIELDS),
-    reason,
-  });
-}
-
 /** Cambio de rutina activa: cuál regía antes -> cuál rige ahora. */
 async function recordRoutineChange({ trainerId, clientId, previousTable, newTable, reason }) {
   return record({
@@ -136,7 +122,6 @@ module.exports = {
   ROUTINE_FIELDS,
   diffFields,
   record,
-  recordGoalChange,
   recordRoutineChange,
   recordPlanAssignment,
   listForClient,

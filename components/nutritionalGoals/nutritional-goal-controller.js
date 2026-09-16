@@ -31,18 +31,6 @@ function sendLockedGoal(res) {
   });
 }
 
-// El cliente ve y activa un objetivo pautado por su entrenador, pero no lo
-// edita ni lo borra (ni siquiera vacío/name) — para eso está el chat con el
-// entrenador. El propio trainer sigue pudiendo cambiarlo, pero por SU
-// endpoint (trainer-client-data-controller.js#assignNutritionalGoal, que
-// crea un objetivo nuevo y lo activa), no por esta ruta de cliente.
-function sendTrainerAssignedGoal(res) {
-  return res.status(403).send({
-    message: "Este objetivo lo pauto tu entrenador, no se puede editar ni borrar desde aqui",
-    code: "NUTRITIONAL_GOAL_TRAINER_ASSIGNED",
-  });
-}
-
 function getGoalId(goal) {
   return String(goal?._id || "");
 }
@@ -60,16 +48,11 @@ async function isGoalLockedForPlan(req, goal) {
     return false;
   }
 
-  // MVP-trainers D10/F14: un objetivo asignado por el nutricionista nunca se
-  // bloquea mientras la relación "nutrition" siga activa — ni cuenta contra
-  // el límite propio del cliente para bloquear los DEMÁS objetivos.
-  const { hasActiveNutrition, relevantGoals } = await nutritionalGoalService.getGoalsForLockCheck(req.user.id);
-  if (goal.assignedByTrainerId && hasActiveNutrition) return false;
-
+  const goals = await nutritionalGoalService.getByUserId(req.user.id);
   const limit = featureAccessService.getLimits(req.user).nutritionalGoals;
-  if (relevantGoals.length <= limit) return false;
+  if (goals.length <= limit) return false;
 
-  const unlockedGoalId = getFreeUnlockedGoalId(req.user, relevantGoals);
+  const unlockedGoalId = getFreeUnlockedGoalId(req.user, goals);
   return getGoalId(goal) !== unlockedGoalId;
 }
 
@@ -96,7 +79,7 @@ async function syncActiveGoalAfterDelete(userId, deletedGoalId) {
 
 const controller = {
   async create(req, res) {
-    const used = await nutritionalGoalService.countEffectiveUserGoals(req.user.id);
+    const used = await nutritionalGoalService.countByUserId(req.user.id);
     const limits = featureAccessService.getLimits(req.user);
     const limit = limits.nutritionalGoals;
 
@@ -145,7 +128,6 @@ const controller = {
     const currentGoal = await nutritionalGoalService.getById(req.params.id);
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
-    if (!isAdmin(req) && currentGoal.assignedByTrainerId) return sendTrainerAssignedGoal(res);
     if (await isGoalLockedForPlan(req, currentGoal)) return sendLockedGoal(res);
 
     const goal = isAdmin(req)
@@ -164,7 +146,6 @@ const controller = {
     const currentGoal = await nutritionalGoalService.getById(req.params.id);
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
-    if (!isAdmin(req) && currentGoal.assignedByTrainerId) return sendTrainerAssignedGoal(res);
 
     const ownerId = currentGoal.userId;
     const goalCount = await nutritionalGoalService.countByUserId(ownerId);

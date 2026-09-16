@@ -6,8 +6,8 @@ const { deriveSuitability } = require("./diet-suitability");
 const { scaleMealsContent } = require("../planAssignments/cycle-progression");
 
 // Sugerencias de dieta — `suitableFor` (vegana / sin gluten / ...) es DERIVADO
-// del contenido, nunca tecleado: se recalcula tras cada create/update, igual
-// que basisAmount en FoodExchangeGroup. Necesita el doc ya autopoblado
+// del contenido, nunca tecleado: se recalcula tras cada create/update.
+// Necesita el doc ya autopoblado
 // (customProducts con sus flags), por eso se hace en una segunda pasada.
 async function recomputeSuitability(id) {
   const doc = await DietTemplate.findById(id);
@@ -26,6 +26,11 @@ function phaseFields(phase) {
     phaseFocus: phase.focus || null,
     phaseTargetKcalDelta: Number.isFinite(phase.targetKcalDelta) ? phase.targetKcalDelta : null,
     targetRatePerCycle: Number.isFinite(phase.ratePerCycle) ? phase.ratePerCycle : null,
+    phaseProteinPerKg: Number.isFinite(phase.proteinPerKg) ? phase.proteinPerKg : null,
+    phaseFatPerKg: Number.isFinite(phase.fatPerKg) ? phase.fatPerKg : null,
+    // El snapshot lo calcula el servicio (plan-assignment-service.js
+    // #buildPhaseNeed) antes de crear: así la copia nace ya con él.
+    ...(phase.need ? { phaseNeed: phase.need } : {}),
   };
 }
 

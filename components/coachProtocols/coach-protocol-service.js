@@ -1,6 +1,5 @@
 const CoachProtocol = require("./coach-protocol-schema");
 const checkinDao = require("../trainerCheckins/checkin-dao");
-const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const tableService = require("../tables/table-service");
@@ -8,7 +7,6 @@ const dietTemplateDao = require("../dietTemplates/diet-template-dao");
 const coachRuleDao = require("../coachRules/coach-rule-dao");
 const planChangeService = require("../planChanges/plan-change-service");
 const notificationDao = require("../notifications/notification-dao");
-const userSchema = require("../users/schema");
 
 // Fase 4 Coach Pro — aplicar un protocolo a un cliente.
 //
@@ -18,8 +16,8 @@ const userSchema = require("../users/schema");
 // (una aprendería a notificar al cliente, la otra no; una respetaría un
 // límite nuevo, la otra no).
 //
-// Cada paso es independiente: si el plan de dieta falla, el objetivo y el
-// check-in que ya se aplicaron se conservan y el resultado lo dice paso a
+// Cada paso es independiente: si el plan de dieta falla, el check-in que
+// ya se aplicó se conserva y el resultado lo dice paso a
 // paso. Abortar entero dejaría al coach sin saber qué quedó a medias, y
 // deshacer lo ya aplicado exigiría transacciones que este proyecto no usa
 // en ningún otro sitio.
@@ -34,40 +32,6 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
       steps.push({ key, label, status: "failed", error: error.message });
     }
   };
-
-  await step("nutritionalGoal", "Objetivo nutricional", async () => {
-    const macros = protocol.nutritionalGoal || {};
-    if (macros.kcalTotal === null || macros.kcalTotal === undefined) return "skipped";
-
-    const client = await userSchema.findById(clientId).select("goalInUse").lean();
-    const previousGoal = client?.goalInUse
-      ? await nutritionalGoalService.getById(client.goalInUse)
-      : null;
-
-    const goal = await nutritionalGoalService.create({
-      userId: clientId,
-      assignedByTrainerId: trainerId,
-      name: protocol.name,
-      kcalTotal: macros.kcalTotal || 0,
-      proteinsGTotal: macros.proteinsGTotal || 0,
-      carbohydratesGTotal: macros.carbohydratesGTotal || 0,
-      fatGTotal: macros.fatGTotal || 0,
-    });
-    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
-    await notificationDao.create(clientId, trainerId, "goal_assigned", {
-      goalName: goal.name,
-      kcalTotal: goal.kcalTotal,
-    });
-    await planChangeService.recordGoalChange({
-      trainerId,
-      clientId,
-      previousGoal,
-      newGoal: goal,
-      action: previousGoal ? "replaced" : "assigned",
-      reason: reason || `Aplicado el protocolo "${protocol.name}"`,
-    });
-    return true;
-  });
 
   await step("checkin", "Plantilla de check-in", async () => {
     if (!protocol.checkinTemplateId) return "skipped";

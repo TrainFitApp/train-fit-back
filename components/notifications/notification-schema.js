@@ -4,8 +4,8 @@ const Schema = mongoose.Schema;
 // Tab Coach, Fase 3 — centro de notificaciones in-app (nunca push remoto, ver
 // 00-riesgos.md R5). Un registro por cada acción relevante que un profesional
 // realiza sobre un cliente concreto (proponer comida, crear cobro, solicitar
-// check-in/preferencias, asignar rutina/objetivo). También sirve de histórico
-// de contenido asignado: los eventos "routine_assigned"/"goal_assigned" ya
+// check-in/preferencias, asignar rutina). También sirve de histórico
+// de contenido asignado: los eventos como "routine_assigned" ya
 // son, por sí mismos, el registro de qué se asignó y cuándo — no se duplica
 // en una colección aparte.
 //
@@ -32,7 +32,6 @@ const NotificationSchema = new Schema(
         "checkin_requested",
         "checkin_reviewed",
         "routine_assigned",
-        "goal_assigned",
         "task_assigned",
         "intake_submitted",
         "client_confirmed",

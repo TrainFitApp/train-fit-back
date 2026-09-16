@@ -87,30 +87,6 @@ router.getAsync(
   requireActiveClient("nutrition"),
   dataController.getClientDiet
 );
-router.getAsync(
-  "/clients/:clientId/nutritional-goals",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.getClientNutritionalGoals
-);
-router.postAsync(
-  "/clients/:clientId/nutritional-goals",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.assignNutritionalGoal
-);
-router.postAsync(
-  "/clients/:clientId/nutrition-target",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.getNutritionTarget
-);
-router.putAsync(
-  "/clients/:clientId/nutritional-goals/:goalId/activate",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.activateNutritionalGoal
-);
 router.postAsync(
   "/clients/:clientId/diet-days/:date/meals/:mealId/prescribe",
   auth(["trainer"]),
@@ -250,12 +226,6 @@ router.postAsync(
   "/meals/apply-to-clients",
   auth(["trainer"]),
   dataController.applyMealToClientsDirect
-);
-router.postAsync(
-  "/clients/:clientId/nutrition-goals/apply-to-clients",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.applyGoalToClients
 );
 
 // --- Lado cliente ---

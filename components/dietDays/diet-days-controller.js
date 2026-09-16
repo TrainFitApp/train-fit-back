@@ -279,9 +279,8 @@ const controller = {
       if (mealId) await mealDao.removePlannedItems(mealId);
     }
     await dietDayModel.setDayTypeName(dietDay._id, null);
-    // Las alternativas pendientes de elegir del menú que se deja tampoco
-    // tienen ya sentido.
-    await mealProposalDao.deletePendingForDate(userId, date);
+    // El selector de opciones del menú que se deja tampoco tiene ya sentido.
+    await mealProposalDao.clearForDate(userId, date);
 
     const updated = await dietDayModel.findByUserAndDate(userId, date);
     return res.send(updated);

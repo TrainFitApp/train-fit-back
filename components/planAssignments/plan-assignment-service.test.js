@@ -54,4 +54,24 @@ test("blocksNewPhase", async (t) => {
     const enCurso = { startDate: "2026-09-01", endDate: null, estimatedEndDate: "2026-11-26" };
     assert.equal(blocksNewPhase(enCurso, "2026-09-10", HOY), false);
   });
+
+  // Ciclos por contenido: con el siguiente ciclo preparado, el ciclo en
+  // curso lleva endDate y el preparado empieza en el futuro — los dos
+  // bloqueaban empezar otra fase HOY, justo lo que el 409 decía que hiciera.
+  await t.test("los ciclos de la fase que rige no bloquean empezar HOY", () => {
+    const enCursoCortado = { phaseId: "f1", startDate: "2026-09-13", endDate: "2026-09-15" };
+    const preparado = { phaseId: "f1", startDate: "2026-09-16", endDate: null };
+    assert.equal(blocksNewPhase(enCursoCortado, HOY, HOY, "f1"), false);
+    assert.equal(blocksNewPhase(preparado, HOY, HOY, "f1"), false);
+  });
+
+  await t.test("pero sí bloquean programar una fase FUTURA encima", () => {
+    const preparado = { phaseId: "f1", startDate: "2026-09-16", endDate: null };
+    assert.equal(blocksNewPhase(preparado, "2026-09-20", HOY, "f1"), true);
+  });
+
+  await t.test("los ciclos de OTRA fase siguen bloqueando aunque haya una que rige", () => {
+    const otra = { phaseId: "f2", startDate: "2026-09-16", endDate: null };
+    assert.equal(blocksNewPhase(otra, HOY, HOY, "f1"), true);
+  });
 });

@@ -139,6 +139,31 @@ const DietTemplateSchema = new Schema(
     // defecto de la rampa (kcal por ciclo, p. ej. −100). Solo primer ciclo.
     phaseTargetKcalDelta: { type: Number },
     targetRatePerCycle: { type: Number },
+    // g/kg de proteína y grasa que el entrenador fijó en el cajón al empezar
+    // la fase (null = fórmula por defecto de nutrition-target.js). Solo
+    // primer ciclo; los ciclos 2+ recalculan la necesidad con estos mismos.
+    phaseProteinPerKg: { type: Number, default: null },
+    phaseFatPerKg: { type: Number, default: null },
+    // Cómo se calculó la necesidad del cliente al empezar la fase
+    // (docs/plan-info-calculo-fase.md): snapshot de los datos que entraron
+    // (peso y de dónde, altura, edad, sexo, pasos, entrenamiento, delta,
+    // g/kg) y del desglose (BMR, factor, gasto, kcal y macros). Solo en el
+    // head; los ciclos 2+ se calculan al vuelo a fecha de inicio del ciclo.
+    // `missing` con contenido = no se pudo calcular (faltaban biométricos).
+    // Sin este campo = fase creada antes de guardar el cálculo.
+    phaseNeed: {
+      type: new Schema(
+        {
+          computedAt: Date,
+          missing: { type: [String], default: undefined },
+          inputs: Schema.Types.Mixed,
+          breakdown: Schema.Types.Mixed,
+          target: Schema.Types.Mixed,
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
     // Ciclos por contenido (docs/plan-ciclos-por-contenido.md): un ciclo
     // dura lo que dura su contenido (ver cycle-window.js#contentCycleDays),
     // no se guarda aparte. Las kcal del ciclo tampoco: se derivan de los
@@ -151,8 +176,7 @@ const DietTemplateSchema = new Schema(
     // `suitableFor` es DERIVADO del contenido: la plantilla lleva "vegan" si
     // TODOS sus CustomProduct tienen vegan === true (igual para vegetarian /
     // lactoseFree / glutenFree). Se recalcula en cada guardado
-    // (diet-template-dao.js), nunca se teclea — como los campos basis legacy
-    // de FoodExchangeGroup. Un flag `null` en un producto = "desconocido",
+    // (diet-template-dao.js), nunca se teclea. Un flag `null` en un producto = "desconocido",
     // no certifica.
     suitableFor: { type: [String], default: () => [] },
     // Aptitudes que el entrenador FUERZA a mano cuando sabe que la dieta es

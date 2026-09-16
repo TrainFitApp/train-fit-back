@@ -43,6 +43,26 @@ function validEnabledFields(enabledFields) {
   );
 }
 
+// Un obligatorio que no está activado no tiene sentido (el cliente no lo
+// vería y nunca podría enviar): se exige que sea subconjunto de enabledFields.
+function requiredFieldsError(requiredFields, enabledFields) {
+  if (requiredFields === undefined) return null;
+  if (!validEnabledFields(requiredFields)) return "requiredFields contiene una clave no reconocida en el catálogo";
+  if (enabledFields && requiredFields.some((f) => !enabledFields.includes(f))) {
+    return "Un campo obligatorio tiene que estar activado en la plantilla";
+  }
+  return null;
+}
+
+// Primer campo del catálogo obligatorio sin responder, o null.
+function missingRequiredField(requiredFields, values) {
+  for (const key of requiredFields || []) {
+    const value = values[key];
+    if (value === null || value === undefined || value === "") return CHECKIN_FIELDS_BY_KEY.get(key)?.label || key;
+  }
+  return null;
+}
+
 module.exports = {
   // --- Lado profesional: CRUD de plantillas maestras ---
   async listDefinitions(req, res) {
@@ -51,13 +71,15 @@ module.exports = {
   },
 
   async createDefinition(req, res) {
-    const { name, enabledFields, cadence, customQuestions } = req.body || {};
+    const { name, enabledFields, requiredFields, cadence, customQuestions } = req.body || {};
     if (!name || !name.trim()) {
       return res.status(400).send({ message: "name es obligatorio" });
     }
     if (!validEnabledFields(enabledFields || [])) {
       return res.status(400).send({ message: "enabledFields contiene una clave no reconocida en el catálogo" });
     }
+    const requiredError = requiredFieldsError(requiredFields, enabledFields || []);
+    if (requiredError) return res.status(400).send({ message: requiredError });
     const questionError = validateCustomQuestions(customQuestions);
     if (questionError) return res.status(400).send({ message: questionError });
 
@@ -67,7 +89,8 @@ module.exports = {
         name.trim(),
         enabledFields || [],
         cadence || "weekly",
-        customQuestions || []
+        customQuestions || [],
+        requiredFields || []
       );
       return res.status(201).send(definition);
     } catch (e) {
@@ -79,16 +102,19 @@ module.exports = {
   },
 
   async updateDefinition(req, res) {
-    const { name, enabledFields, cadence, customQuestions } = req.body || {};
+    const { name, enabledFields, requiredFields, cadence, customQuestions } = req.body || {};
     if (enabledFields && !validEnabledFields(enabledFields)) {
       return res.status(400).send({ message: "enabledFields contiene una clave no reconocida en el catálogo" });
     }
+    const requiredError = requiredFieldsError(requiredFields, enabledFields);
+    if (requiredError) return res.status(400).send({ message: requiredError });
     const questionError = validateCustomQuestions(customQuestions);
     if (questionError) return res.status(400).send({ message: questionError });
 
     const updates = {};
     if (name !== undefined) updates.name = name.trim();
     if (enabledFields !== undefined) updates.enabledFields = enabledFields;
+    if (requiredFields !== undefined) updates.requiredFields = requiredFields;
     if (cadence !== undefined) updates.cadence = cadence;
     if (customQuestions !== undefined) updates.customQuestions = customQuestions;
 
@@ -317,6 +343,13 @@ module.exports = {
 
     // Las obligatorias se comprueban ANTES que nada: si falta una, el
     // check-in entero se rechaza sin guardar la mitad de las respuestas.
+    const missingField = missingRequiredField(config?.requiredFields, values);
+    if (missingField) {
+      return res.status(400).send({
+        message: `"${missingField}" es obligatoria`,
+        code: "CHECKIN_REQUIRED_MISSING",
+      });
+    }
     for (const [questionId, question] of customQuestions) {
       if (!question.required) continue;
       const key = `custom:${questionId}`;

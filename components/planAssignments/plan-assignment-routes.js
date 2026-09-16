@@ -66,6 +66,12 @@ router.getAsync(
   requireActiveClient("nutrition"),
   controller.getPhaseCycles
 );
+router.getAsync(
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/:number/need",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.getCycleNeed
+);
 router.postAsync(
   "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next/scale",
   auth(["trainer"]),
@@ -91,10 +97,10 @@ router.getAsync(
   controller.getCycleTimeline
 );
 router.getAsync(
-  "/trainer/clients/:clientId/diet-exceptions",
+  "/trainer/clients/:clientId/nutrition-history",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.listExceptions
+  controller.getNutritionHistory
 );
 
 module.exports = router;

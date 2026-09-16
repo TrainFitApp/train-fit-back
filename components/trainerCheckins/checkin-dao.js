@@ -5,11 +5,12 @@ const CheckinResponse = require("./checkin-response-schema");
 
 module.exports = {
   // --- CheckinTemplateDefinition (plantillas maestras) ---
-  async createDefinition(trainerId, name, enabledFields, cadence, customQuestions = []) {
+  async createDefinition(trainerId, name, enabledFields, cadence, customQuestions = [], requiredFields = []) {
     return CheckinTemplateDefinition.create({
       trainerId,
       name,
       enabledFields,
+      requiredFields,
       cadence,
       customQuestions,
     });
@@ -44,6 +45,7 @@ module.exports = {
       {
         $set: {
           enabledFields: definition.enabledFields,
+          requiredFields: definition.requiredFields || [],
           cadence: definition.cadence,
           calendarManaged: false,
           // Fase 5 — las preguntas propias se copian igual que el resto,
@@ -76,6 +78,23 @@ module.exports = {
   },
 
   // La respuesta de ESTE ciclo de dieta, si ya existe (una por ciclo).
+  // Historial de nutrición del trainer — todas las respuestas ligadas a un
+  // ciclo de dieta (las de cadencia, sin `cycle`, no entran).
+  async listCycleResponses(clientId) {
+    return CheckinResponse.find({ clientId, "cycle.phaseId": { $ne: null } })
+      .select("respondedAt values cycle")
+      .lean();
+  },
+
+  // La respuesta del ciclo N de una fase, venga del profesional que venga
+  // (la necesidad por ciclo no sabe de trainerId). Solo `values` y fecha.
+  async findCycleResponse(clientId, phaseId, number) {
+    return CheckinResponse.findOne({ clientId, "cycle.phaseId": phaseId, "cycle.number": number })
+      .sort({ respondedAt: -1 })
+      .select("values respondedAt")
+      .lean();
+  },
+
   async findResponseForCycle(trainerId, clientId, cycle) {
     return CheckinResponse.findOne({
       trainerId,

@@ -1,5 +1,4 @@
 const nutritionalGoalDao = require("./nutritional-goal-dao");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const userSchema = require("../users/schema");
 const { computeNutritionTarget } = require("./nutrition-target");
 
@@ -19,10 +18,6 @@ module.exports = {
     return nutritionalGoalDao.findById(id);
   },
 
-  async getByIdAndUserId(id, userId) {
-    return nutritionalGoalDao.findByIdAndUserId(id, userId);
-  },
-
   async getByUserId(userId) {
     return nutritionalGoalDao.findByUserId(userId);
   },
@@ -33,28 +28,6 @@ module.exports = {
 
   async countByUserId(userId) {
     return nutritionalGoalDao.countByUserId(userId);
-  },
-
-  // MVP-trainers D10 — mismo criterio que table-service.js#countEffectiveUserTables.
-  async countEffectiveUserGoals(userId) {
-    const hasActiveNutrition = await trainerClientDao.hasActiveRelation(userId, "nutrition");
-    return hasActiveNutrition
-      ? nutritionalGoalDao.countOwnByUserId(userId)
-      : nutritionalGoalDao.countByUserId(userId);
-  },
-
-  // Para la lógica de "bloqueo" (isGoalLockedForPlan en el controller): indica
-  // si hay relación nutrition activa AHORA (los objetivos asignados nunca se
-  // bloquean mientras dure) y qué objetivos cuentan contra el límite.
-  async getGoalsForLockCheck(userId) {
-    const [hasActiveNutrition, allGoals] = await Promise.all([
-      trainerClientDao.hasActiveRelation(userId, "nutrition"),
-      nutritionalGoalDao.findByUserId(userId),
-    ]);
-    const relevantGoals = hasActiveNutrition
-      ? allGoals.filter((g) => !g.assignedByTrainerId)
-      : allGoals;
-    return { hasActiveNutrition, allGoals, relevantGoals };
   },
 
   async update(id, data) {
@@ -76,8 +49,7 @@ module.exports = {
   // Recalcula el objetivo "Default" del cliente a partir de su perfil en
   // `User` (Mifflin + gasto + reparto de macros — el mismo cálculo que hace
   // la app del cliente, ver nutrition-target.js). Lo usa el intake al
-  // reescribir peso/pasos/etc. NO pisa un objetivo asignado por un
-  // profesional (assignedByTrainerId) — ese es una prescripción.
+  // reescribir peso/pasos/etc.
   async recomputeDefaultForClient(clientId) {
     const user = await userSchema
       .findById(clientId)
@@ -106,12 +78,9 @@ module.exports = {
     };
 
     const current = user.goalInUse ? await nutritionalGoalDao.findById(user.goalInUse) : null;
-    if (current && !current.assignedByTrainerId) {
+    if (current) {
       await nutritionalGoalDao.update(current._id, macros);
       return current._id;
-    }
-    if (current && current.assignedByTrainerId) {
-      return null; // prescripción de un profesional — no se toca
     }
     // Sin objetivo activo: crear el Default y ponerlo en uso.
     const goal = await nutritionalGoalDao.create({ userId: clientId, name: "Default", ...macros });

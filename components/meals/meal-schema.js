@@ -8,7 +8,7 @@ const MealSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
   notes: { type: String, trim: true, maxlength: 500 },
   // TAREA 1 (coach-tab) — presente si un profesional pautó esta comida
-  // (prescribeMeal). Mismo criterio que Table/NutritionalGoal.assignedByTrainerId:
+  // (prescribeMeal). Mismo criterio que Table.assignedByTrainerId:
   // permanente, protege de edición directa del cliente (ver
   // meal-service.js#assertMealEditable) — la única vía controlada para
   // cambiarla es una MealProposal nueva del propio profesional.
@@ -63,8 +63,9 @@ const MealSchema = Schema({
     ],
     default: [],
   },
-  // null mientras el cliente no haya elegido ninguna (equivalente al
-  // chosenIndex:null de la colección que sustituye).
+  // Opciones de comida (2026-09): con alternativas siempre está puesto —
+  // la comida nace con la opción 1 aplicada (índice 0) y el cliente alterna
+  // desde ahí. null = sin alternativas.
   chosenAlternativeIndex: { type: Number, default: null },
   // Quién propuso las alternativas (null si no hay ninguna) — era
   // MealProposal.trainerId; se conserva porque el cliente ve "te ha

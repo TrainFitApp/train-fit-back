@@ -8,7 +8,7 @@ const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
 /**
  * DATOS DE DEMO para todo lo construido en Coach Pro (7 fases + 5
  * movimientos): Cartera, alertas, adherencia, calculadora corporal, dolor,
- * intercambios, suplementos, lista de la compra, puntuaciones de ejercicio,
+ * suplementos, lista de la compra, puntuaciones de ejercicio,
  * panel de carga de sesión, microciclos con objetivo y descarga...
  *
  * POR QUÉ ESTE SCRIPT ES ASÍ DE PARANOICO
@@ -573,148 +573,7 @@ async function sembrarRutinas(trainerId, clientes) {
 // NUTRICIÓN
 // ---------------------------------------------------------------------------
 
-// Grupos de intercambio del ENTRENADOR. Llevan base numérica (Movimiento 5)
-// para que la calculadora de etiquetas tenga con qué dividir. El sistema
-// sigue sin inventar equivalencias: las cantidades las escribe él.
-const GRUPOS_INTERCAMBIO = [
-  {
-    clave: "proteina",
-    name: "Proteína magra",
-    category: "Proteína",
-    equivalenceNote: "Equivalen en PROTEÍNA (unos 20 g), no en calorías. La grasa cambia entre ellos.",
-    basis: "protein",
-    basisAmount: 20,
-    // `producto` enlaza con ALIMENTOS (los productos propios del entrenador
-    // que siembra sembrarAlimentos). Es lo que permite que el perfil de la
-    // ración se calcule y que la verificación tenga contra qué comparar.
-    // A propósito quedan dos sin enlazar (Tofu, Avena, Pimiento): un grupo a
-    // medio vincular es el estado normal de una biblioteca real, y la demo
-    // tiene que enseñar cómo se ve.
-    items: [
-      { name: "Pechuga de pollo", quantity: 100, unit: "g", note: "en crudo", producto: "Pechuga de pollo" },
-      { name: "Pavo", quantity: 105, unit: "g", note: "en crudo", producto: "Pavo" },
-      { name: "Merluza", quantity: 115, unit: "g", note: "", producto: "Merluza" },
-      { name: "Atún al natural", quantity: 90, unit: "g", note: "escurrido", producto: "Atún al natural" },
-      { name: "Claras de huevo", quantity: 180, unit: "g", note: "", producto: "Claras de huevo" },
-      { name: "Tofu firme", quantity: 160, unit: "g", note: "" },
-    ],
-  },
-  {
-    clave: "hidratos",
-    name: "Hidratos",
-    category: "Carbohidrato",
-    equivalenceNote: "Equivalen en HIDRATOS (15 g por ración). Pesa siempre en crudo.",
-    basis: "carbs",
-    basisAmount: 15,
-    items: [
-      { name: "Arroz basmati", quantity: 20, unit: "g", note: "en crudo", producto: "Arroz basmati" },
-      { name: "Pasta integral", quantity: 21, unit: "g", note: "en crudo", producto: "Pasta integral" },
-      { name: "Patata", quantity: 85, unit: "g", note: "", producto: "Patata" },
-      { name: "Pan integral", quantity: 32, unit: "g", note: "", producto: "Pan integral" },
-      { name: "Avena", quantity: 25, unit: "g", note: "" },
-    ],
-  },
-  {
-    clave: "grasa",
-    name: "Grasas",
-    category: "Grasa",
-    equivalenceNote: "Equivalen en GRASA (10 g por ración).",
-    basis: "fat",
-    basisAmount: 10,
-    items: [
-      { name: "Aceite de oliva virgen extra", quantity: 11, unit: "ml", note: "", producto: "Aceite de oliva virgen extra" },
-      { name: "Aguacate", quantity: 65, unit: "g", note: "", producto: "Aguacate" },
-      { name: "Almendras", quantity: 18, unit: "g", note: "crudas", producto: "Almendras" },
-      { name: "Mantequilla de cacahuete", quantity: 20, unit: "g", note: "100% cacahuete", producto: "Mantequilla de cacahuete" },
-    ],
-  },
-  {
-    // `freeQuantity` EXPLÍCITO y no deducido de que no haya perfil: sus
-    // alimentos sí están vinculados y sí se les puede calcular las macros,
-    // pero este grupo no se pesa y no debe entrar en el cuadre del día. "No
-    // se puede calcular" y "no se cuenta" son cosas distintas, y solo el
-    // entrenador sabe cuál es cuál.
-    clave: "verduras",
-    name: "Verduras libres",
-    category: "Verdura",
-    equivalenceNote: "Cantidad libre. Son intercambiables entre sí sin pesar.",
-    basis: null,
-    basisAmount: null,
-    freeQuantity: true,
-    items: [
-      { name: "Brócoli", quantity: 200, unit: "g", note: "", producto: "Brócoli" },
-      { name: "Calabacín", quantity: 200, unit: "g", note: "", producto: "Calabacín" },
-      { name: "Espinacas", quantity: 150, unit: "g", note: "", producto: "Espinacas" },
-      { name: "Pimiento", quantity: 200, unit: "g", note: "" },
-    ],
-  },
-];
-
-async function sembrarIntercambios(trainerId) {
-  const FoodExchangeGroup = require("../components/foodExchanges/food-exchange-schema");
-  const { computeServing, hasServing } = require("../components/foodExchanges/exchange-profile");
-
-  // Las macros por 100 g de los alimentos propios del entrenador, para poder
-  // calcular el perfil de la ración aquí mismo. Se usa el MISMO módulo que
-  // el backend y la migración: si la demo calculara por su cuenta, dejaría
-  // de demostrar lo que hace la aplicación.
-  const macrosPorNombre = new Map(
-    ALIMENTOS.map(([nombre, kcal, prot, hc, grasa]) => [
-      nombre,
-      {
-        energyKcal100g: kcal,
-        protein100g: prot,
-        carbohydrates100g: hc,
-        fat100g: grasa,
-      },
-    ])
-  );
-
-  const ids = {};
-  for (const g of GRUPOS_INTERCAMBIO) {
-    const _id = oid("exgrp:" + g.clave);
-
-    const items = g.items.map(({ producto, ...item }) => ({
-      ...item,
-      productId: producto ? oid("prod:" + producto) : null,
-      product: producto ? macrosPorNombre.get(producto) || null : null,
-    }));
-
-    const { serving } = computeServing(items);
-    // La cifra que el entrenador declaró gana sobre la calculada, igual que
-    // en el controlador: el catálogo puede estar mal, su criterio no.
-    if (g.basis && g.basisAmount > 0) serving[g.basis] = g.basisAmount;
-    const freeQuantity = g.freeQuantity === true || (!g.basis && !hasServing(serving));
-
-    await FoodExchangeGroup.updateOne(
-      { _id },
-      {
-        $set: {
-          trainerId,
-          name: g.name,
-          category: g.category,
-          equivalenceNote: g.equivalenceNote,
-          anchor: g.basis,
-          serving,
-          servingSource: g.basis && g.basisAmount > 0 ? "manual" : "computed",
-          freeQuantity,
-          tolerancePct: 10,
-          // LEGACY, derivados del perfil como hace el controlador.
-          basis: g.basis,
-          basisAmount: g.basis ? serving[g.basis] : null,
-          items: items.map(({ product, ...item }) => item),
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true }
-    );
-    ids[g.clave] = { _id, name: g.name, serving, freeQuantity };
-  }
-  console.log("   " + GRUPOS_INTERCAMBIO.length + " grupos de intercambio (3 con perfil de ración, 1 libre)");
-  return ids;
-}
-
-async function sembrarObjetivos(trainerId, clientes, grupos) {
+async function sembrarObjetivos(trainerId, clientes) {
   const NutritionalGoal = require("../components/nutritionalGoals/nutritional-goal-schema");
   const User = require("../components/users/schema");
 
@@ -728,76 +587,16 @@ async function sembrarObjetivos(trainerId, clientes, grupos) {
       carbohydratesGTotal: Math.round(kcal * 0.42 / 4),
       fatGTotal: Math.round(kcal * 0.28 / 9),
       fiberGTotal: 30,
-      assignedByTrainerId: trainerId,
       startDate: isoHace(28),
       endMode: "indefinite",
       updatedAt: new Date(),
     };
 
-    // Solo Lucía se pauta TAMBIÉN por intercambios repartidos por comida.
-    // Los otros dos van en gramos: es la decisión del usuario de que las dos
-    // formas convivan, y con los tres iguales no se vería.
-    //
-    // Las raciones están elegidas para que el reparto CUADRE con los gramos
-    // de arriba (±10 %): 13 de hidratos, 5 de proteína y 4,5 de grasa contra
-    // 1850 kcal / 136 P / 194 HC / 58 G. Es el estado que la demo tiene que
-    // enseñar — que las dos formas de pautar el mismo día dicen lo mismo.
-    // La verificación por alimento sí deja ver el otro lado: dentro de los
-    // grupos hay equivalencias que se salen de la tolerancia.
-    if (c.clave === "lucia") {
-      // El perfil se congela AQUÍ, como hace el controlador al pautar: si el
-      // entrenador retoca el grupo mañana, esta pauta no cambia de
-      // significado sola.
-      const racion = (grupo, count) =>
-        grupo.freeQuantity
-          ? { groupId: grupo._id, groupName: grupo.name, count, freeQuantity: true, servingFrozenAt: new Date() }
-          : {
-              groupId: grupo._id,
-              groupName: grupo.name,
-              count,
-              serving: grupo.serving,
-              servingFrozenAt: new Date(),
-            };
-
-      doc.mealExchanges = [
-        {
-          name: "Desayuno",
-          exchanges: [
-            racion(grupos.hidratos, 3),
-            racion(grupos.proteina, 1),
-            racion(grupos.grasa, 1),
-          ],
-        },
-        {
-          name: "Comida",
-          exchanges: [
-            racion(grupos.proteina, 2),
-            racion(grupos.hidratos, 4),
-            racion(grupos.grasa, 1.5),
-            racion(grupos.verduras, 1),
-          ],
-        },
-        {
-          name: "Post-entreno",
-          exchanges: [racion(grupos.proteina, 1), racion(grupos.hidratos, 4)],
-        },
-        {
-          name: "Cena",
-          exchanges: [
-            racion(grupos.proteina, 1),
-            racion(grupos.grasa, 2),
-            racion(grupos.hidratos, 2),
-            racion(grupos.verduras, 1),
-          ],
-        },
-      ];
-    }
-
     const _id = oid("goal:" + c.clave);
     await NutritionalGoal.updateOne({ _id }, { $set: doc }, { upsert: true });
     await User.updateOne({ _id: c._id }, { $set: { goalInUse: _id } });
   }
-  console.log("   " + clientes.length + " objetivos nutricionales (1 con reparto por intercambios)");
+  console.log("   " + clientes.length + " objetivos nutricionales");
 }
 
 // Comidas pautadas de los últimos 14 días. Alimentan tres cosas a la vez: la
@@ -1127,7 +926,7 @@ async function sembrarHistorial(trainerId, clientes) {
 
   const POR_CLIENTE = {
     lucia: [
-      { dias: 42, entity: "nutritional_goal", action: "updated", entityName: "Definición Lucía",
+      { dias: 42, entity: "diet_plan", action: "updated", entityName: "Definición Lucía",
         reason: "Bajaba 600 g/semana, demasiado rápido. Subo 150 kcal para frenar.",
         changes: [
           { field: "kcalTotal", label: "Calorías", previousValue: 1700, newValue: 1850 },
@@ -1147,7 +946,7 @@ async function sembrarHistorial(trainerId, clientes) {
       { dias: 14, entity: "protocol", action: "assigned", entityName: "Alta de cliente nuevo (demo)",
         reason: "",
         changes: [{ field: "dailyTasks", label: "Hábitos diarios", previousValue: 0, newValue: 3 }] },
-      { dias: 2, entity: "nutritional_goal", action: "updated", entityName: "Mantenimiento Marcos",
+      { dias: 2, entity: "diet_plan", action: "updated", entityName: "Mantenimiento Marcos",
         reason: "Cuatro semanas plano CUMPLIENDO. No es adherencia: bajo 200 kcal y subo pasos.",
         changes: [
           { field: "kcalTotal", label: "Calorías", previousValue: 2450, newValue: 2250 },
@@ -1187,7 +986,7 @@ async function sembrarHistorial(trainerId, clientes) {
   console.log("   " + n + " cambios de plan con motivo");
 }
 
-async function sembrarMetodo(trainerId, clientes, grupos) {
+async function sembrarMetodo(trainerId, clientes) {
   const CoachRule = require("../components/coachRules/coach-rule-schema");
   const CoachProtocol = require("../components/coachProtocols/coach-protocol-schema");
   const CoachTask = require("../components/coachTasks/coach-task-schema");
@@ -1243,8 +1042,7 @@ async function sembrarMetodo(trainerId, clientes, grupos) {
       $set: {
         trainerId,
         name: "Alta de cliente nuevo (demo)",
-        description: "Lo que le monto a cualquiera el primer dia: objetivo de mantenimiento, check-in semanal y los tres habitos base.",
-        nutritionalGoal: { kcalTotal: 2200, proteinsGTotal: 160, carbohydratesGTotal: 230, fatGTotal: 68 },
+        description: "Lo que le monto a cualquiera el primer dia: check-in semanal y los tres habitos base.",
         checkinTemplateId: null,
         dietTemplateId: null,
         routineTemplateId: null,
@@ -1900,7 +1698,6 @@ async function limpiar() {
     Workout: require("../components/workouts/workout-schema"),
     CustomExercise: require("../components/customExercises/custom-exercise-schema"),
     Set: require("../components/sets/set-schema"),
-    FoodExchangeGroup: require("../components/foodExchanges/food-exchange-schema"),
     Product: require("../components/products/product-schema"),
     Recipe: require("../components/recipes/recipe-schema"),
     CustomRecipe: require("../components/customRecipes/custom-recipe-schema"),
@@ -1975,7 +1772,6 @@ async function limpiar() {
   push("PainThreshold", "painthr:marcos:rodilla");
   push("PainThreshold", "painthr:lucia:hombro");
 
-  for (const g of ["proteina", "hidratos", "grasa", "verduras"]) push("FoodExchangeGroup", "exgrp:" + g);
   for (const [nombre] of ALIMENTOS) push("Product", "prod:" + nombre);
 
   // --- Biblioteca ---
@@ -2110,18 +1906,15 @@ async function main() {
   await sembrarDolor(clientes);
   await sembrarPuntuaciones(trainerId);
   await sembrarRutinas(trainerId, clientes);
-  // Los alimentos van ANTES que los intercambios: los grupos vinculan sus
-  // items a estos productos y calculan el perfil de la ración con sus macros.
   const alimentos = await sembrarAlimentos(trainerId);
-  const grupos = await sembrarIntercambios(trainerId);
-  await sembrarObjetivos(trainerId, clientes, grupos);
+  await sembrarObjetivos(trainerId, clientes);
   await sembrarDietas(trainerId, clientes, alimentos);
   await sembrarSuplementos(trainerId, clientes);
   await sembrarHabitos(trainerId, clientes);
   await sembrarNotasYCobros(trainerId, clientes);
   await sembrarHistorial(trainerId, clientes);
   await sembrarBiblioteca(trainerId, alimentos);
-  await sembrarMetodo(trainerId, clientes, grupos);
+  await sembrarMetodo(trainerId, clientes);
 
   // Las alertas NO se insertan a mano: se dispara el mismo evaluador que
   // corre cada noche. Así lo que ves en el panel es lo que el motor genera

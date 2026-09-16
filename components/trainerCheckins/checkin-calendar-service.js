@@ -34,6 +34,9 @@ function validateAnswers(request, input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { error: "Responde al menos una pregunta" };
   const values = {};
   const questions = new Map((request.customQuestions || []).filter(q => q.enabled !== false).map(q => [`custom:${q._id}`, q]));
+  for (const key of request.requiredFields || []) {
+    if (input[key] == null || input[key] === "") return { error: `Falta responder: ${CHECKIN_FIELDS_BY_KEY.get(key)?.label || key}` };
+  }
   for (const [key, question] of questions) {
     if (question.required && (input[key] == null || input[key] === "")) return { error: `Falta responder: ${question.label}` };
   }
@@ -67,7 +70,7 @@ async function queueNotice(request, type = "checkin_requested", recipient = "cli
 
 function snapshot(schedule) {
   return { trainerId: schedule.trainerId, clientId: schedule.clientId, scheduleId: schedule._id,
-    name: schedule.name, enabledFields: schedule.enabledFields, customQuestions: schedule.customQuestions,
+    name: schedule.name, enabledFields: schedule.enabledFields, requiredFields: schedule.requiredFields || [], customQuestions: schedule.customQuestions,
     timeZone: schedule.timeZone };
 }
 

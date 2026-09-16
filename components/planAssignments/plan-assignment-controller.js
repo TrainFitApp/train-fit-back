@@ -10,6 +10,7 @@ const dietDaysService = require("../dietDays/diet-days-service");
 const userSchema = require("../users/schema");
 const planChangeService = require("../planChanges/plan-change-service");
 const { contentCycleDays } = require("./cycle-window");
+const { resyncPlannedDays } = require("../dietDays/diet-day-resolver");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -38,8 +39,17 @@ function sanitizePhase(body) {
       focus: PHASE_FOCUS.includes(p.focus) ? p.focus : null,
       targetKcalDelta: Number.isFinite(Number(p.targetKcalDelta)) ? Number(p.targetKcalDelta) : 0,
       ratePerCycle: Number.isFinite(Number(p.ratePerCycle)) ? Number(p.ratePerCycle) : 0,
+      // g/kg tocados en el cajón (null = fórmula por defecto), ver
+      // docs/plan-info-calculo-fase.md.
+      proteinPerKg: positiveOrNull(p.proteinPerKg),
+      fatPerKg: positiveOrNull(p.fatPerKg),
     },
   };
+}
+
+function positiveOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function sanitizeChoiceCycleDays(value) {
@@ -130,6 +140,7 @@ module.exports = {
       reason: req.body?.reason,
     });
 
+    await resyncPlannedDays(clientId, assignment.startDate, assignment.endDate);
     return res.status(201).send(toAssignmentResponse(assignment));
   },
 
@@ -181,6 +192,7 @@ module.exports = {
       reason: req.body?.reason,
     });
 
+    await resyncPlannedDays(clientId, assignment.startDate, assignment.endDate);
     return res.status(201).send(toAssignmentResponse(assignment));
   },
 
@@ -258,7 +270,17 @@ module.exports = {
       ...patch,
     });
     if (!plan) return res.status(404).send({ message: "Plan no encontrado" });
+    // Los días que el cliente ya tenía abiertos dentro de este ciclo recogen
+    // la edición (ver diet-day-resolver.js#resyncPlannedDays).
+    await resyncPlannedDays(clientId, plan.startDate, plan.endDate);
     return res.send(plan);
+  },
+
+  // GET /trainer/clients/:clientId/nutrition-history
+  // Feed de eventos (fases, ciclos, check-ins, excepciones) para el bloque
+  // "Historial de nutrición" de la ficha. Ver nutrition-history.js.
+  async getNutritionHistory(req, res) {
+    return res.send(await planAssignmentService.getNutritionHistory(req.params.clientId));
   },
 
   // GET /trainer/clients/:clientId/nutrition-plans/history
@@ -303,15 +325,6 @@ module.exports = {
     return res.status(204).send();
   },
 
-  // GET /trainer/clients/:clientId/diet-exceptions
-  // TASK-045 (MASTER_BACKLOG.md) — nuevo: listado de excepciones puntuales
-  // ("hoy salto la dieta", "hoy como fuera") para el historial de nutrición
-  // del trainer. Antes solo se podían crear/consultar por fecha exacta.
-  async listExceptions(req, res) {
-    const exceptions = await dietExceptionDao.findAllForClient(req.params.clientId);
-    return res.send(exceptions);
-  },
-
   // POST /trainer/clients/:clientId/diet-exceptions
   // body: { date, mealSlot?, action: "override"|"skip", override? }
   async createException(req, res) {
@@ -351,6 +364,24 @@ module.exports = {
       return res.send(await planAssignmentService.getPhaseCycles(clientId, phaseId));
     } catch (error) {
       if (error.code === "DIET_PHASE_NOT_FOUND") {
+        return res.status(404).send({ message: error.message, code: error.code });
+      }
+      throw error;
+    }
+  },
+
+  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/:number/need
+  // Cómo se calculó la necesidad de ese ciclo (docs/plan-info-calculo-fase.md).
+  async getCycleNeed(req, res) {
+    const { clientId, phaseId, number } = req.params;
+    const n = Number(number);
+    if (!Number.isInteger(n) || n < 1) {
+      return res.status(400).send({ message: "Número de ciclo inválido" });
+    }
+    try {
+      return res.send(await planAssignmentService.getCycleNeed(clientId, phaseId, n));
+    } catch (error) {
+      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_CYCLE_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
       }
       throw error;
@@ -412,6 +443,7 @@ module.exports = {
     }
 
     if (result.unchanged) return res.status(204).send();
+    await resyncPlannedDays(clientId, result.cycle.startDate, result.cycle.endDate);
     return res.send(toAssignmentResponse(result.cycle));
   },
 

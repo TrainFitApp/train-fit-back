@@ -12,11 +12,9 @@ const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
 // Borra:
 //   · DietTemplate con clientId (copias asignadas = fases/ciclos), en cascada
 //     con sus CustomProduct/CustomRecipe (hook pre deleteMany del schema).
-//   · NutritionalGoal asignados por trainer (los de ciclo lo eran).
 //   · DietDay (todos), en cascada con Meal → CustomProduct/CustomRecipe.
 //   · CheckinResponse (todos).
 //   · PlanChange de nutrición (diet_plan / nutritional_goal).
-// Repunta User.goalInUse a null si apuntaba a un objetivo borrado.
 // Quita de las plantillas de biblioteca los campos que ya no existen en el
 // schema (cycleTargetKcal, cycleTargetMacros, estimatedEndDate, endMode,
 // cycleDays) — por la colección nativa, mongoose en strict los ignoraría.
@@ -42,25 +40,16 @@ async function main() {
   require("../components/customRecipes/custom-recipe-schema");
   require("../components/recipes/recipe-schema");
   require("../components/meals/meal-schema");
-  const User = require("../components/users/schema");
   const DietTemplate = require("../components/dietTemplates/diet-template-schema");
   const DietDay = require("../components/dietDays/diet-days-schema");
-  const NutritionalGoal = require("../components/nutritionalGoals/nutritional-goal-schema");
   const CheckinResponse = require("../components/trainerCheckins/checkin-response-schema");
   const PlanChange = require("../components/planChanges/plan-change-schema");
 
   const assignedFilter = { clientId: { $ne: null } };
-  // OJO: solo campos que sigan en el schema. Con strictQuery, un campo que ya
-  // no exista en NutritionalGoalSchema se elimina del filtro y {$or:[{}]}
-  // borra TODO — pasó en la primera ejecución en pre (phaseId/cycleId ya
-  // se habían quitado del schema). Los goals de ciclo viejos se reconocen
-  // por assignedByTrainerId, que sí sigue existiendo.
-  const goalFilter = { assignedByTrainerId: { $ne: null } };
   const planChangeFilter = { entityType: { $in: ["diet_plan", "nutritional_goal"] } };
 
   const counts = {
     assignedTemplates: await DietTemplate.countDocuments(assignedFilter),
-    goals: await NutritionalGoal.countDocuments(goalFilter),
     dietDays: await DietDay.countDocuments({}),
     checkinResponses: await CheckinResponse.countDocuments({}),
     planChanges: await PlanChange.countDocuments(planChangeFilter),
@@ -74,15 +63,7 @@ async function main() {
     return;
   }
 
-  // Orden: primero los objetivos (para saber qué goalInUse repuntar), luego
-  // el resto. deleteMany (no la colección nativa) para que disparen los hooks.
-  const goalIds = (await NutritionalGoal.find(goalFilter).select("_id").lean()).map((g) => g._id);
-  const goalsRes = await NutritionalGoal.deleteMany(goalFilter);
-  log(`NutritionalGoal deleted: ${goalsRes.deletedCount}`);
-  if (goalIds.length) {
-    const usersRes = await User.updateMany({ goalInUse: { $in: goalIds } }, { $set: { goalInUse: null } });
-    log(`User.goalInUse reset: ${usersRes.modifiedCount}`);
-  }
+  // deleteMany (no la colección nativa) para que disparen los hooks.
 
   const templatesRes = await DietTemplate.deleteMany(assignedFilter);
   log(`DietTemplate (assigned) deleted: ${templatesRes.deletedCount}`);

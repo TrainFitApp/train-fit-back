@@ -5,7 +5,7 @@
 // user.service.ts#setUserMacrosAndKcal): Mifflin-St Jeor + factor de gasto +
 // reparto de macros por g/kg según el signo de `objetive`. Se replica aquí,
 // número a número, porque backend y front son paquetes npm distintos y no
-// comparten módulos — mismo caso que exchange-profile.js. El test cruza los
+// comparten módulos. El test cruza los
 // resultados contra los del front (body-metrics) para que no se
 // desincronicen.
 //
@@ -88,7 +88,26 @@ function fatGrams(objetiveKcalDelta, weightKg, sex) {
  *
  * @returns {{ kcal, protein, carbs, fat }|null}  kcal redondeadas, macros en g
  */
-function computeNutritionTarget({
+function computeNutritionTarget(params) {
+  const explained = explainNutritionTarget(params);
+  return explained ? explained.target : null;
+}
+
+/**
+ * Lo mismo que computeNutritionTarget, pero enseñando la cuenta: cada paso
+ * intermedio que el entrenador ve en el resumen de ciclo ("cómo se calculó
+ * la necesidad"). Es LA implementación — computeNutritionTarget solo se
+ * queda con el resultado, así los dos no pueden desincronizarse.
+ *
+ * @returns {{ target: { kcal, protein, carbs, fat }, breakdown }|null}
+ *   breakdown: {
+ *     weightKg, adjustedWeightKg (null si IMC < 30), bmr,
+ *     usesActivity (true = perfil "no cuenta pasos": entra `activity`),
+ *     activityFactor, trainingFactor, factor (el producto que multiplica al BMR),
+ *     expenditure, delta, proteinPerKg, fatPerKg
+ *   }
+ */
+function explainNutritionTarget({
   weightKg,
   heightCm,
   age,
@@ -111,17 +130,44 @@ function computeNutritionTarget({
   const expenditure = energyExpenditure(bmr, { activity, steps, training });
   const kcal = Math.round(expenditure + delta);
 
-  const protein = isPositive(proteinPerKg) ? proteinPerKg * finalWeight : proteinGrams(delta, finalWeight);
-  const fat = isPositive(fatPerKg) ? fatPerKg * finalWeight : fatGrams(delta, finalWeight, sex);
+  const usesActivity = steps === STEPS_NOT_COUNTED;
+  const activityFactor = usesActivity ? (isPositive(activity) ? activity : 1.2) : null;
+  const trainingFactorUsed = isPositive(training) ? training : 1;
+
+  const effectiveProteinPerKg = isPositive(proteinPerKg)
+    ? proteinPerKg
+    : proteinGrams(delta, finalWeight) / finalWeight;
+  const effectiveFatPerKg = isPositive(fatPerKg) ? fatPerKg : fatGrams(delta, finalWeight, sex) / finalWeight;
+  const protein = effectiveProteinPerKg * finalWeight;
+  const fat = effectiveFatPerKg * finalWeight;
   const carbsKcal = kcal - (protein * KCAL_PER_G.protein + fat * KCAL_PER_G.fat);
   const carbs = carbsKcal / KCAL_PER_G.carbs;
 
   return {
-    kcal,
-    protein: round1(protein),
-    carbs: round1(Math.max(0, carbs)),
-    fat: round1(fat),
+    target: {
+      kcal,
+      protein: round1(protein),
+      carbs: round1(Math.max(0, carbs)),
+      fat: round1(fat),
+    },
+    breakdown: {
+      weightKg,
+      adjustedWeightKg: finalWeight !== weightKg ? round1(finalWeight) : null,
+      bmr,
+      usesActivity,
+      activityFactor,
+      trainingFactor: trainingFactorUsed,
+      factor: round3(expenditure / bmr),
+      expenditure: Math.round(expenditure),
+      delta,
+      proteinPerKg: round2(effectiveProteinPerKg),
+      fatPerKg: round2(effectiveFatPerKg),
+    },
   };
+}
+
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
 }
 
 function round1(value) {
@@ -151,5 +197,6 @@ module.exports = {
   proteinGrams,
   fatGrams,
   computeNutritionTarget,
+  explainNutritionTarget,
   expectedWeeklyRateKg,
 };

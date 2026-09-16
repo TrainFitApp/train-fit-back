@@ -63,7 +63,7 @@ module.exports = {
     const routines = await tableService.countEffectiveUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
-    const nutritionalGoals = await nutritionalGoalService.countEffectiveUserGoals(user.id);
+    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
     const hasActiveTrainerRelation = await trainerClientDao.hasActiveRelation(user._id);
 
     return res.send(
@@ -92,7 +92,7 @@ module.exports = {
     const routines = await tableService.countEffectiveUserTables(user._id);
     const customExercises = await exerciseModel.countByUserId(user.id);
     const recipes = await recipeModel.countByUserId(user.id);
-    const nutritionalGoals = await nutritionalGoalService.countEffectiveUserGoals(user.id);
+    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
     const hasActiveTrainerRelation = await trainerClientDao.hasActiveRelation(user._id);
 
     return res.send(

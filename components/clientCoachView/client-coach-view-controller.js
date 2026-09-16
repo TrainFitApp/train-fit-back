@@ -6,7 +6,6 @@ const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-prefe
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
-const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
 const { isCheckinDue } = require("../trainerCheckins/checkin-due");
 
 module.exports = {
@@ -113,8 +112,8 @@ module.exports = {
         };
       });
 
-    // --- Rutina / objetivo asignados actualmente ---
-    const user = await userSchema.findById(clientId).select("tableInUse goalInUse");
+    // --- Rutina asignada actualmente ---
+    const user = await userSchema.findById(clientId).select("tableInUse");
     let assignedRoutine = null;
     if (user?.tableInUse) {
       const table = await Table.findById(user.tableInUse).select("name assignedByTrainerId");
@@ -129,26 +128,6 @@ module.exports = {
           name: table.name,
           assignedByTrainerName: trainerName(table.assignedByTrainerId),
           assignedAt,
-        };
-      }
-    }
-
-    let assignedGoal = null;
-    if (user?.goalInUse) {
-      const goal = await NutritionalGoal.findById(user.goalInUse).select(
-        "name kcalTotal proteinsGTotal carbohydratesGTotal fatGTotal assignedByTrainerId updatedAt"
-      );
-      if (goal?.assignedByTrainerId && activeTrainerIdSet.has(String(goal.assignedByTrainerId))) {
-        touchActivity(goal.assignedByTrainerId, goal.updatedAt);
-        assignedGoal = {
-          goalId: goal._id,
-          name: goal.name,
-          kcalTotal: goal.kcalTotal,
-          proteinsGTotal: goal.proteinsGTotal,
-          carbohydratesGTotal: goal.carbohydratesGTotal,
-          fatGTotal: goal.fatGTotal,
-          assignedByTrainerName: trainerName(goal.assignedByTrainerId),
-          assignedAt: goal.updatedAt,
         };
       }
     }
@@ -171,7 +150,6 @@ module.exports = {
       nutritionPreferences,
       pendingPayments,
       assignedRoutine,
-      assignedGoal,
     });
   },
 

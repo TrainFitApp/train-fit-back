@@ -2,49 +2,43 @@ const userSchema = require("../users/schema");
 const dietDaysService = require("./diet-days-service");
 const dietDaysUtil = require("./diet-days-util");
 const dietDaySchema = require("./diet-days-schema");
-const mealModel = require("../meals/meal-service");
 const planResolver = require("../planAssignments/plan-resolver");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 
 // Fase 9 — aplica un `resolved` de plan-resolver.js#resolvePlanForDate
 // ({slot: {alternatives:[...]}}) sobre un DietDay YA EXISTENTE, comida a
-// comida: 0 alternativas no hace nada (slot se queda como estaba), 1
-// alternativa se pastea directa (mismo criterio que siempre, sin elección
-// posible), 2+ generan una MealProposal para que el cliente elija — la MISMA
-// pieza que ya usa `proposeMealAlternatives` (F28) cuando el entrenador
-// propone a mano, así que el banner de elección ya existente en la app del
-// cliente (`meal.component.html`) la recoge sin ningún cambio en el consumidor.
-// Reutilizable tanto al crear el día por primera vez como al elegir/cambiar
-// el tipo de día explícitamente (ver diet-days-controller.js#chooseDayType).
-async function applyResolvedPlanToDietDay(dietDayDoc, date, resolved, trainerId, clientId) {
-  const mealIds = dietDayDoc.meals.map((m) => (m && m._id ? m._id : m));
+// comida. Opciones de comida (2026-09): 1 alternativa se pautea directa;
+// 2+ se guardan en la comida con la PRIMERA ya aplicada (el cliente alterna
+// desde el selector de `meal.component.html`, sin estado "pendiente");
+// 0 alternativas (plan sin nada para ese hueco, o excepción "skip") retira
+// lo pautado y el selector. Lo que el cliente añadió por su cuenta nunca se
+// toca (ver meal-proposal-dao.js#applyAlternative). Reutilizable tanto al
+// crear el día por primera vez como al elegir/cambiar el tipo de día
+// explícitamente (ver diet-days-controller.js#chooseDayType).
+// `clearMissing`: un slot que el plan ya no menciona se trata como vacío
+// (solo al resincronizar un día ya creado — al crear/elegir menú se deja
+// como estaba, que es lo de siempre).
+async function applyResolvedPlanToDietDay(dietDayDoc, date, resolved, trainerId, clientId, { clearMissing = false } = {}) {
   // dietDaysService.createDietDay MUTA standardDietDay.meals (sustituye los
   // objetos {name,...} por sus _id ya creados) — dietDaysUtil.MEALS es la
   // fuente de verdad original (índice -> nombre de slot) que usó
   // getStandardDietDay para construirlos, así que se lee de ahí y no de un
   // array que pudiera venir ya mutado.
   let appliedAny = false;
-  for (let i = 0; i < mealIds.length; i++) {
+  for (let i = 0; i < dietDayDoc.meals.length; i++) {
     const slotName = dietDaysUtil.MEALS[i];
-    const clipboard = resolved[slotName];
+    const clipboard = resolved[slotName] || (clearMissing ? { alternatives: [] } : null);
     if (!clipboard) continue;
     const alternatives = clipboard.alternatives || [];
     const nonEmpty = alternatives.filter(
       (alt) => (alt.customProducts || []).length || (alt.customRecipes || []).length
     );
-    if (!nonEmpty.length) continue;
-
-    if (nonEmpty.length === 1) {
-      await mealModel.pasteMeal(
-        { customProducts: nonEmpty[0].customProducts, customRecipes: nonEmpty[0].customRecipes },
-        { _id: mealIds[i], customProducts: [], customRecipes: [] },
-        false,
-        trainerId
-      );
-    } else {
-      await mealProposalDao.deletePendingForDateAndSlot(clientId, date, slotName);
-      await mealProposalDao.create(trainerId, clientId, date, slotName, nonEmpty);
+    if (!nonEmpty.length) {
+      await mealProposalDao.clearForDateAndSlot(clientId, date, slotName);
+      continue;
     }
+
+    await mealProposalDao.create(trainerId, clientId, date, slotName, nonEmpty);
     appliedAny = true;
   }
   return appliedAny;
@@ -152,4 +146,54 @@ async function resolveOwnedMealById(userId, mealId) {
   throw err;
 }
 
-module.exports = { resolveOwnedDietDay, resolveOwnedMealById, applyResolvedPlanToDietDay };
+// Opciones de comida (2026-09) — el profesional edita una fase/ciclo ya
+// asignado (añade una opción, cambia cantidades…) y los días que el cliente
+// YA había abierto no se enteraban: solo se resolvía el plan al crear el día
+// o si seguía vacío. Vuelve a aplicar el plan sobre los DietDay existentes
+// del cliente en [from, to] (to null = sin tope), pasados incluidos: un día
+// sin nada marcado no es histórico real, es un día que el cliente aún no ha
+// seguido. Se salta:
+//   · días con algún alimento pautado ya marcado como consumido (el cliente
+//     ya está siguiendo ese día tal como estaba),
+//   · días para los que el plan no resuelve nada (fuera de plan, o modo
+//     "choice" sin menú elegido).
+// Lo que el cliente añadió por su cuenta se conserva (applyAlternative).
+// Nunca lanza: un fallo aquí no debe tumbar la edición del plan.
+async function resyncPlannedDays(clientId, from, to = null) {
+  if (!from) return 0;
+  const dateFilter = { $gte: from };
+  if (to) dateFilter.$lte = to;
+
+  let resynced = 0;
+  try {
+    const days = await dietDaySchema
+      .find({ userId: clientId, date: dateFilter })
+      .select("_id date meals dayTypeName")
+      .sort({ date: 1 });
+
+    for (const day of days) {
+      const meals = day.meals || [];
+      const hasConsumedPlanned = meals.some(
+        (meal) =>
+          (meal?.customProducts || []).some((cp) => cp?.assignedByTrainerId && cp?.consumed) ||
+          (meal?.customRecipes || []).some((cr) => cr?.assignedByTrainerId && cr?.consumed)
+      );
+      if (hasConsumedPlanned) continue;
+
+      const result = await planResolver.resolvePlanForDate(clientId, day.date, {
+        chosenPatternName: day.dayTypeName || undefined,
+      });
+      if (!result) continue;
+
+      await applyResolvedPlanToDietDay(day, day.date, result.resolved, result.trainerId, clientId, {
+        clearMissing: true,
+      });
+      resynced += 1;
+    }
+  } catch (e) {
+    console.error("[resyncPlannedDays] Error resincronizando días con el plan:", e.message);
+  }
+  return resynced;
+}
+
+module.exports = { resolveOwnedDietDay, resolveOwnedMealById, applyResolvedPlanToDietDay, resyncPlannedDays };

@@ -16,19 +16,9 @@ function validateDailyTasks(tasks) {
 }
 
 function buildPayload(body) {
-  const macros = body.nutritionalGoal || {};
   return {
     name: String(body.name || "").trim(),
     description: String(body.description || "").trim(),
-    // Un protocolo sin objetivo nutricional es válido (p. ej. uno solo de
-    // entrenamiento): null significa "este protocolo no toca los macros",
-    // distinto de 0 kcal.
-    nutritionalGoal: {
-      kcalTotal: macros.kcalTotal ?? null,
-      proteinsGTotal: macros.proteinsGTotal ?? null,
-      carbohydratesGTotal: macros.carbohydratesGTotal ?? null,
-      fatGTotal: macros.fatGTotal ?? null,
-    },
     checkinTemplateId: body.checkinTemplateId || null,
     dietTemplateId: body.dietTemplateId || null,
     routineTemplateId: body.routineTemplateId || null,
