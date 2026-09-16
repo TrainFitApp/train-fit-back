@@ -12,6 +12,7 @@ const SET_UPDATE_FIELDS = [
   "expectedReps",
   "drop",
   "restPause",
+  "restSeconds",
   "doned",
   // DEPRECATED: reemplazados por time/expectedTime. Mantenidos temporalmente
   // (rollout en fases, hay apps viejas instaladas) — quitar junto con los

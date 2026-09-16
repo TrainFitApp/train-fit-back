@@ -62,6 +62,13 @@ async function buildOwnTablesMatch(idUser) {
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
+  // Mismo criterio que split-dao.js: técnica (drop/restPause/FALLO) es de
+  // esa copia concreta, no algo que deba heredar la tabla duplicada.
+  delete setTemp.drop;
+  delete setTemp.restPause;
+  if (Array.isArray(setTemp.expectedRir) && setTemp.expectedRir.includes(-1)) {
+    setTemp.expectedRir = [];
+  }
 }
 
 async function copyHierarchy(tableDoc) {
