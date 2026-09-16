@@ -1,11 +1,11 @@
 const trainerClientService = require("../trainerClients/trainer-client-service");
 const checkinDao = require("../trainerCheckins/checkin-dao");
+const { cycleForClientAt } = require("../planAssignments/client-cycle");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
-const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
 const { isCheckinDue } = require("../trainerCheckins/checkin-due");
 
 module.exports = {
@@ -42,12 +42,22 @@ module.exports = {
     // --- Check-ins pendientes ---
     const appliedConfigs = await checkinDao.getAppliedConfigsForClient(clientId);
     const visibleConfigs = appliedConfigs.filter((c) => activeTrainerIdSet.has(String(c.trainerId)));
+    // Ciclos por contenido — con fase de dieta, "pendiente" = el ciclo de hoy
+    // aún no tiene respuesta; sin fase, la cadencia de siempre.
+    const cycle = await cycleForClientAt(clientId, new Date().toISOString().slice(0, 10));
     const pendingCheckins = [];
     for (const config of visibleConfigs) {
       const responses = await checkinDao.listResponses(config.trainerId, clientId);
       touchActivity(config.trainerId, config.updatedAt);
-      if (isCheckinDue(config, responses)) {
-        pendingCheckins.push({ trainerId: config.trainerId, trainerName: trainerName(config.trainerId) });
+      const due = cycle
+        ? !config.calendarManaged && !(await checkinDao.findResponseForCycle(config.trainerId, clientId, cycle))
+        : isCheckinDue(config, responses);
+      if (due) {
+        pendingCheckins.push({
+          trainerId: config.trainerId,
+          trainerName: trainerName(config.trainerId),
+          ...(cycle ? { cycleNumber: cycle.number } : {}),
+        });
       }
     }
 
@@ -102,8 +112,8 @@ module.exports = {
         };
       });
 
-    // --- Rutina / objetivo asignados actualmente ---
-    const user = await userSchema.findById(clientId).select("tableInUse goalInUse");
+    // --- Rutina asignada actualmente ---
+    const user = await userSchema.findById(clientId).select("tableInUse");
     let assignedRoutine = null;
     if (user?.tableInUse) {
       const table = await Table.findById(user.tableInUse).select("name assignedByTrainerId");
@@ -118,26 +128,6 @@ module.exports = {
           name: table.name,
           assignedByTrainerName: trainerName(table.assignedByTrainerId),
           assignedAt,
-        };
-      }
-    }
-
-    let assignedGoal = null;
-    if (user?.goalInUse) {
-      const goal = await NutritionalGoal.findById(user.goalInUse).select(
-        "name kcalTotal proteinsGTotal carbohydratesGTotal fatGTotal assignedByTrainerId updatedAt"
-      );
-      if (goal?.assignedByTrainerId && activeTrainerIdSet.has(String(goal.assignedByTrainerId))) {
-        touchActivity(goal.assignedByTrainerId, goal.updatedAt);
-        assignedGoal = {
-          goalId: goal._id,
-          name: goal.name,
-          kcalTotal: goal.kcalTotal,
-          proteinsGTotal: goal.proteinsGTotal,
-          carbohydratesGTotal: goal.carbohydratesGTotal,
-          fatGTotal: goal.fatGTotal,
-          assignedByTrainerName: trainerName(goal.assignedByTrainerId),
-          assignedAt: goal.updatedAt,
         };
       }
     }
@@ -160,7 +150,6 @@ module.exports = {
       nutritionPreferences,
       pendingPayments,
       assignedRoutine,
-      assignedGoal,
     });
   },
 

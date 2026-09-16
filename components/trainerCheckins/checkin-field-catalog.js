@@ -182,7 +182,7 @@ const CHECKIN_FIELDS = [
       "Agotado: me cuesta hacer vida normal",
     ],
   },
-  { key: "daily_steps", label: "Pasos diarios (media semanal)", type: "number", unit: "pasos", group: "bienestar", storage: "wellbeing", hint: "La media diaria que te dé el móvil o el reloj para esta semana.", min: 0, max: 100000 },
+  { key: "daily_steps", label: "Pasos diarios (media semanal)", type: "number", unit: "pasos", group: "bienestar", storage: "wellbeing", hint: "La media diaria que te dé el móvil o el reloj desde el último check-in. Tu entrenador la usa para calcular el siguiente ciclo.", min: 0, max: 100000 },
   {
     key: "nutrition_plan_adherence",
     label: "Seguimiento del plan nutricional",

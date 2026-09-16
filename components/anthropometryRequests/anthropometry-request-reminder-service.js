@@ -5,7 +5,7 @@ const notificationDao = require("../notifications/notification-dao");
 // notificación in-app en vez de email: "que le aparezcan las
 // notificaciones" es justo eso — no hace falta infraestructura de correo
 // nueva para una notificación que el cliente ya ve en su bandeja (mismo
-// canal que "goal_assigned"/"checkin_requested").
+// canal que "checkin_requested").
 const CADENCE_DAYS = { daily: 1, weekly: 7, monthly: 30 };
 
 function intervalDaysFor(request) {

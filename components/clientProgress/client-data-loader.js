@@ -60,7 +60,7 @@ async function loadTrainingWindow(clientId, to) {
 async function loadClientWindow(trainerId, clientId, { from, to }) {
   const client = await userSchema
     .findById(clientId)
-    .select("name lastname goalInUse tableInUse")
+    .select("name lastname tableInUse")
     .lean();
 
   if (!client) return null;

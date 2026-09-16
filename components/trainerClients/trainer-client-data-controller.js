@@ -1,4 +1,3 @@
-const mongoose = require("mongoose");
 const userSchema = require("../users/schema");
 const tableModel = require("../tables/table-service");
 const anthropometryService = require("../anthropometry/anthropometry-service");
@@ -6,8 +5,6 @@ const dietDaysService = require("../dietDays/diet-days-service");
 const dietDaysUtil = require("../dietDays/diet-days-util");
 const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
-const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
-const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
 const trainerNoteDao = require("../trainerNotes/trainer-note-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
@@ -15,12 +12,11 @@ const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("./trainer-client-dao");
-const FoodExchangeGroup = require("../foodExchanges/food-exchange-schema");
-const { isCompleteServing } = require("../foodExchanges/exchange-profile");
 const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const { buildShoppingList } = require("../dietDays/shopping-list-service");
+const { summarizeFoodCompliance } = require("../dietDays/food-compliance");
 const planResolver = require("../planAssignments/plan-resolver");
 const planChangeService = require("../planChanges/plan-change-service");
 const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
@@ -140,109 +136,6 @@ function handleKnownError(res, e) {
 // Extraído a diet-day-resolver.js (2026-08-01) para reutilizarlo también en F28.
 const resolveOwnedMeal = resolveOwnedDietDay;
 
-// Fibra: vacío/ausente significa "este objetivo no la pauta", que no es lo
-// mismo que 0 g. Number(null) y Number("") son 0, así que hay que descartar
-// "sin valor" ANTES de convertir — mismo cuidado que toFiniteOrNull en
-// workouts/workout-controller.js.
-function toFiberOrNull(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-/**
- * Los grupos de intercambio del PROPIO entrenador que aparecen en el reparto.
- *
- * Una consulta para todo el objetivo, filtrada por `trainerId`: el perfil de
- * un grupo de otro entrenador no puede congelarse en esta pauta.
- */
-async function loadOwnExchangeGroups(meals, trainerId) {
-  const ids = (Array.isArray(meals) ? meals : []).flatMap((meal) =>
-    (Array.isArray(meal?.exchanges) ? meal.exchanges : [])
-      .map((exchange) => exchange?.groupId)
-      .filter((id) => id && mongoose.isValidObjectId(id))
-  );
-  if (!ids.length) return new Map();
-
-  const groups = await FoodExchangeGroup.find({
-    _id: { $in: [...new Set(ids.map(String))] },
-    trainerId,
-  })
-    .select("name serving freeQuantity")
-    .lean();
-  return new Map(groups.map((group) => [String(group._id), group]));
-}
-
-/**
- * Movimiento 5 Coach Pro — reparto del día en intercambios.
- *
- * Se descarta lo que no encaje en vez de rechazar la petición entera: esto
- * viaja junto a los gramos, y un grupo mal formado no puede impedir que se
- * guarde un objetivo calórico. Un reparto vacío es el estado normal de todos
- * los objetivos que existían antes de esta función.
- */
-async function sanitizeMealExchanges(meals, trainerId) {
-  // El perfil se congela desde la BASE DE DATOS, no desde lo que manda el
-  // front: es lo que después cuadra el día contra las kcal del objetivo, y
-  // aceptarlo del cliente sería dejar que el navegador decida cuánto suma
-  // una ración. De paso ata el grupo a su dueño — hasta ahora `groupId`
-  // entraba tal cual desde el body sin comprobar de quién era.
-  const groupsById = await loadOwnExchangeGroups(meals, trainerId);
-
-  return (Array.isArray(meals) ? meals : [])
-    .map((meal) => {
-      const name = String(meal?.name || "").trim().slice(0, 60);
-      if (!name) return null;
-
-      const seen = new Set();
-      const exchanges = (Array.isArray(meal?.exchanges) ? meal.exchanges : [])
-        .map((exchange) => {
-          const groupId = exchange?.groupId;
-          const groupName = String(exchange?.groupName || "").trim().slice(0, 100);
-          const count = Number(exchange?.count);
-          if (!groupId || !groupName) return null;
-          if (!Number.isFinite(count) || count <= 0) return null;
-          // Un grupo repetido en la misma comida son dos filas que suman lo
-          // mismo que una con el doble: se queda la primera.
-          const key = String(groupId);
-          if (seen.has(key)) return null;
-          seen.add(key);
-
-          const group = groupsById.get(key);
-          // Grupo que no es suyo, o borrado entre que abrió el editor y
-          // guardó: la ración se conserva SIN perfil en vez de descartarla.
-          // El cuadre ya sabe decir qué grupos le faltan (exchange-profile.js
-          // #sumReparto), y eso es mejor que hacer desaparecer parte de una
-          // pauta que él acaba de escribir.
-          if (!group) return { groupId, groupName, count };
-          // Un grupo libre se congela como libre aunque tenga perfil: lo que
-          // decide si suma es la decisión del entrenador, no si se pudo
-          // calcular.
-          if (group.freeQuantity) {
-            return { groupId, groupName: group.name || groupName, count, freeQuantity: true };
-          }
-          if (!isCompleteServing(group.serving)) {
-            return { groupId, groupName, count };
-          }
-          return {
-            groupId,
-            // El nombre del documento y no el del body: si el front tenía uno
-            // viejo en pantalla, la copia congelada debe decir cómo se llama
-            // el grupo de verdad.
-            groupName: group.name || groupName,
-            count,
-            serving: group.serving,
-            servingFrozenAt: new Date(),
-          };
-        })
-        .filter(Boolean);
-
-      // Una comida sin ninguna ración no es una pauta, es un nombre suelto.
-      return exchanges.length ? { name, exchanges } : null;
-    })
-    .filter(Boolean);
-}
-
 const TRAINING_GOAL_TYPES = ["strength", "hypertrophy", "endurance", "mobility", "general"];
 
 module.exports = {
@@ -284,7 +177,7 @@ module.exports = {
       tableModel.getTablesAssignedByTrainer(req.params.clientId, req.auth.userId, page, limit),
       userSchema.findById(req.params.clientId).select("tableInUse").lean(),
     ]);
-    // Mismo criterio que getClientNutritionalGoals#isInUse: la tabla en uso
+    // La tabla en uso
     // se resuelve contra User.tableInUse (puntero único), no contra un campo
     // propio de Table — así activar una desactiva las demás por construcción.
     const tableInUseId = String(client?.tableInUse || "");
@@ -431,143 +324,6 @@ module.exports = {
     return res.send({ ...dietDayObj, dietId: client?._id?.toString() || null });
   },
 
-  // GET /trainer/clients/:clientId/nutritional-goals — F10, requireActiveClient("nutrition")
-  // Enriquecido con isInUse por goal (no expone goalInUse crudo, no hace
-  // falta): el trainer necesita ver cuál es el activo del cliente AHORA
-  // MISMO, no solo cuál asignó él — antes no había ninguna forma de
-  // distinguirlo en esta pantalla.
-  async getClientNutritionalGoals(req, res) {
-    const [goals, client] = await Promise.all([
-      nutritionalGoalService.getByUserId(req.params.clientId),
-      userSchema.findById(req.params.clientId).select("goalInUse").lean(),
-    ]);
-    const goalInUseId = String(client?.goalInUse || "");
-    const enriched = goals.map((goal) => ({
-      ...(typeof goal.toObject === "function" ? goal.toObject() : goal),
-      isInUse: String(goal._id) === goalInUseId,
-    }));
-    return res.send(enriched);
-  },
-
-  // POST /trainer/clients/:clientId/nutritional-goals — F13, requireActiveClient("nutrition")
-  // POST /trainer/clients/:clientId/nutrition-target
-  // body: { objetiveKcalDelta }
-  //
-  // Mismo cálculo que el cajón de sugerencias de dieta
-  // (nutrition-target-resolver.js), pero sin rankear plantillas: solo el
-  // número, para autorrellenar el panel de "Asignar objetivos" antes de que
-  // el entrenador lo retoque a mano.
-  async getNutritionTarget(req, res) {
-    const { clientId } = req.params;
-    const objetiveKcalDelta = Number(req.body?.objetiveKcalDelta) || 0;
-
-    const resolved = await resolveClientNutritionTarget(clientId, objetiveKcalDelta);
-    if (!resolved.ok) {
-      return res.status(422).send({ code: "MISSING_BIOMETRICS", missing: resolved.missing });
-    }
-
-    return res.send({
-      target: { ...resolved.target, objetiveKcalDelta },
-      weightSource: resolved.weightSource,
-      clientObjetive: resolved.clientObjetive,
-    });
-  },
-
-  async assignNutritionalGoal(req, res) {
-    const clientId = req.params.clientId;
-    const trainerId = req.auth.userId;
-
-    // Fase 4 Coach Pro — el objetivo que regía ANTES, leído antes de tocar
-    // nada: es la mitad de la entrada del historial ("2200 -> 2100"), y una
-    // vez actualizado goalInUse ya no hay forma de saber cuál era.
-    const client = await userSchema.findById(clientId).select("goalInUse").lean();
-    const previousGoal = client?.goalInUse
-      ? await nutritionalGoalService.getById(client.goalInUse)
-      : null;
-
-    const goal = await nutritionalGoalService.create({
-      userId: clientId,
-      assignedByTrainerId: trainerId,
-      name: req.body.name || "Objetivo asignado",
-      kcalTotal: req.body.kcalTotal || 0,
-      proteinsGTotal: req.body.proteinsGTotal || 0,
-      carbohydratesGTotal: req.body.carbohydratesGTotal || 0,
-      fatGTotal: req.body.fatGTotal || 0,
-      // La fibra se añadió al esquema en la Fase 5 y al formulario del
-      // profesional, pero NO a esta lista: el valor que escribía el
-      // entrenador se descartaba aquí en silencio y el objetivo se guardaba
-      // sin fibra. `|| 0` no vale — vacío significa "este objetivo no pauta
-      // fibra", que no es lo mismo que 0 g (ver nutritional-goal-schema.js).
-      fiberGTotal: toFiberOrNull(req.body.fiberGTotal),
-      // Movimiento 5 Coach Pro — reparto del día en intercambios. Viaja en
-      // la MISMA petición que los gramos porque son dos formas de pautar el
-      // mismo objetivo.
-      mealExchanges: await sanitizeMealExchanges(req.body.mealExchanges, trainerId),
-    });
-
-    // A diferencia del flujo del propio cliente (nutritional-goal-controller.js
-    // #create, que solo activa si no había ninguno — ahí tiene sentido, un
-    // cliente puede crear varios presets sin querer cambiar cuál sigue):
-    // un objetivo ASIGNADO POR EL TRAINER es una prescripción, siempre pasa
-    // a ser el vigente. Bug real corregido en esta sesión — antes copiaba
-    // literalmente la condición "solo si no tenía ninguno", que casi nunca
-    // se cumple (todo cliente real ya tiene un objetivo activo), así que el
-    // objetivo asignado se creaba pero quedaba huérfano sin activarse.
-    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
-
-    await notificationDao.create(clientId, trainerId, "goal_assigned", {
-      goalName: goal.name,
-      kcalTotal: goal.kcalTotal,
-    });
-
-    // Fase 4 — historial con el motivo que el coach haya escrito. `reason`
-    // es opcional: si no lo pone, se registra igual el qué y el cuánto.
-    await planChangeService.recordGoalChange({
-      trainerId,
-      clientId,
-      previousGoal,
-      newGoal: goal,
-      action: previousGoal ? "replaced" : "assigned",
-      reason: req.body.reason,
-    });
-
-    return res.status(201).send(goal);
-  },
-
-  // PUT /trainer/clients/:clientId/nutritional-goals/:goalId/activate
-  // Tocar una card de objetivo ya existente la pone en uso — sin crear ni
-  // editar nada, a diferencia de assignNutritionalGoal (crea + activa).
-  async activateNutritionalGoal(req, res) {
-    const { clientId, goalId } = req.params;
-
-    const goal = await nutritionalGoalService.getByIdAndUserId(goalId, clientId);
-    if (!goal) {
-      return res.status(404).send({ message: "Objetivo no encontrado para este cliente" });
-    }
-
-    const client = await userSchema.findById(clientId).select("goalInUse").lean();
-    const previousGoal = client?.goalInUse
-      ? await nutritionalGoalService.getById(client.goalInUse)
-      : null;
-
-    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
-
-    // Fase 4 — cambiar de objetivo activo es un cambio de prescripción tanto
-    // como crear uno nuevo, aunque aquí no se edite ningún valor.
-    if (String(previousGoal?._id) !== String(goal._id)) {
-      await planChangeService.recordGoalChange({
-        trainerId: req.auth.userId,
-        clientId,
-        previousGoal,
-        newGoal: goal,
-        action: "replaced",
-        reason: req.body?.reason,
-      });
-    }
-
-    return res.send({ _id: goal._id });
-  },
-
   // POST /trainer/clients/:clientId/diet-days/:date/meals/:mealId/prescribe
   // F12, requireActiveClient("nutrition"). body: { customProducts, customRecipes, merge }
   async prescribeMeal(req, res) {
@@ -664,17 +420,14 @@ module.exports = {
   },
 
   // GET /trainer/clients/:clientId/adherence?from=&to= — F20, requireActiveClient("nutrition")
+  //
+  // Adherencia calórica contra lo PAUTADO de cada día, no contra un objetivo
+  // guardado aparte: con fases y ciclos la meta del día es lo que suma la
+  // pauta (plannedTarget), y un objetivo fijo daba "fuera de margen" en cuanto
+  // un ciclo subía o bajaba kcal aunque el cliente cumpliera. Un día cuadra si
+  // lo consumido (marcado + lo que añadió él) queda a ±15 % de lo pautado.
   async getClientAdherence(req, res) {
     const clientId = req.params.clientId;
-    const client = await userSchema.findById(clientId).select("goalInUse").lean();
-
-    if (!client?.goalInUse) {
-      return res.send({ status: "no_goal" });
-    }
-    const goal = await nutritionalGoalService.getById(client.goalInUse);
-    if (!goal || !goal.kcalTotal) {
-      return res.send({ status: "no_goal" });
-    }
 
     const to = req.query.to || todayIsoDate();
     const from = req.query.from || addDaysToIsoDate(to, -30);
@@ -689,36 +442,27 @@ module.exports = {
     const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
 
     const dailyBreakdown = dietDays
-      .filter((d) => (d.meals || []).length)
+      .map((d) => ({ date: d.date, ...dietDaysNutritionUtil.computeDayTracking(d.meals) }))
+      .filter((d) => d.hasPlan && d.planned.kcal > 0)
       .map((d) => {
-        const kcal = dietDaysNutritionUtil.sumMealsKcal(d.meals);
-        const withinMargin = Math.abs(kcal - goal.kcalTotal) <= goal.kcalTotal * ADHERENCE_TOLERANCE;
-        return { date: d.date, kcal, withinMargin };
+        const kcal = Math.round(d.consumed.kcal);
+        const plannedKcal = Math.round(d.planned.kcal);
+        const withinMargin = Math.abs(d.consumed.kcal - d.planned.kcal) <= d.planned.kcal * ADHERENCE_TOLERANCE;
+        return { date: d.date, kcal, plannedKcal, withinMargin };
       });
 
     const daysWithinMargin = dailyBreakdown.filter((d) => d.withinMargin).length;
     const daysCounted = dailyBreakdown.length;
 
-    // Fase 1 Coach Pro — BUG corregido: el denominador eran TODOS los días
-    // del calendario del rango, no los días que realmente tenían algo
-    // pautado. Un cliente con un plan de 10 días dentro de un rango de 30
-    // salía con un 33% como máximo aunque hubiera cumplido los 10 a la
-    // perfección — un número que hacía parecer mal a clientes que iban bien,
-    // y sobre el que además ahora se apoyan las alertas.
-    //
-    // Se devuelven DOS números en vez de uno, porque son dos preguntas
-    // distintas y un solo porcentaje oculta cuál de las dos falla:
+    // Dos números y no uno, porque son dos preguntas distintas:
     //   - percentage: de los días con plan, cuántos cuadraron. `null` si no
     //     hubo ninguno — no es un 0%, es "no hay nada que medir todavía".
     //   - coveragePercentage: qué parte del rango tenía plan.
-    // `daysInRange` y `daysCounted` se mantienen tal cual: ya los consume el
-    // frontend y siguen significando exactamente lo mismo.
     const percentage = daysCounted > 0 ? Math.round((daysWithinMargin / daysCounted) * 100) : null;
     const coveragePercentage =
       rangeDays > 0 ? Math.round((daysCounted / rangeDays) * 100) : 0;
 
     return res.send({
-      status: "ok",
       percentage,
       coveragePercentage,
       daysCounted,
@@ -815,6 +559,30 @@ module.exports = {
     }
 
     return res.send({ status: "ok", dailyTracking });
+  },
+
+  // GET /trainer/clients/:clientId/nutrition-foods?from=&to=
+  // Cumplimiento ALIMENTO A ALIMENTO del rango, para el panel de resumen de un
+  // ciclo. Hermano de getClientNutritionTracking (que da lo mismo en macros,
+  // sin desglose) y de getClientShoppingList (que agrupa por producto pero
+  // ignora si se consumió).
+  async getClientNutritionFoods(req, res) {
+    const clientId = req.params.clientId;
+
+    // `to` se acota a HOY a propósito: los días que todavía no están
+    // materializados se resuelven al vuelo con `consumed: false` (ver
+    // getTrackingDaysForClient), así que contar el futuro haría parecer que el
+    // cliente incumple lo que aún no le ha llegado.
+    const hoy = todayIsoDate();
+    const pedido = req.query.to || hoy;
+    const to = pedido > hoy ? hoy : pedido;
+    const from = req.query.from || addDaysToIsoDate(to, -30);
+
+    // Un ciclo que empieza mañana no tiene nada que resumir todavía.
+    if (from > to) return res.send({ status: "ok", items: [], from, to });
+
+    const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
+    return res.send({ status: "ok", items: summarizeFoodCompliance(dietDays), from, to });
   },
 
   // GET /trainer/clients/:clientId/shopping-list?from=&to= — Movimiento 5
@@ -964,6 +732,76 @@ module.exports = {
     return res.send(preferences);
   },
 
+  // PUT /trainer/clients/:clientId/nutrition-preferences — el profesional
+  // rellena/edita directamente las preferencias en vez de esperar a que el
+  // cliente responda el cuestionario. Misma validación y mismo dao que usa
+  // el cliente para las suyas propias (nutrition-preferences-client-controller.js).
+  async updateClientNutritionPreferences(req, res) {
+    const {
+      allergies,
+      favoriteFoods,
+      dislikedFoods,
+      cooksAtHome,
+      dietaryFlags,
+      disabledMealSlots,
+      mealSlotLabels,
+    } = req.body || {};
+
+    const cooksAtHomeValues = ["yes", "no", "sometimes"];
+    // Mismo catálogo que nutrition-preferences-dao.js#upsertOwnResponse.
+    const validDietaryFlags = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
+    const validMealSlots = Object.values(dietDaysUtil.MEALS);
+
+    if (cooksAtHome != null && !cooksAtHomeValues.includes(cooksAtHome)) {
+      return res.status(400).send({ message: "cooksAtHome debe ser 'yes', 'no' o 'sometimes'" });
+    }
+    // El profesional SÍ puede pautar las restricciones desde aquí (el
+    // cliente no: las fija el intake). Si no viene, el dao no las toca.
+    if (
+      dietaryFlags != null &&
+      (!Array.isArray(dietaryFlags) || !dietaryFlags.every((flag) => validDietaryFlags.includes(flag)))
+    ) {
+      return res.status(400).send({
+        message: `dietaryFlags solo admite: ${validDietaryFlags.join(", ")}`,
+      });
+    }
+    if ([allergies, favoriteFoods, dislikedFoods].some((v) => v != null && String(v).length > 1000)) {
+      return res.status(400).send({ message: "Cada campo de texto no puede superar los 1000 caracteres" });
+    }
+    if (
+      disabledMealSlots != null &&
+      (!Array.isArray(disabledMealSlots) ||
+        !disabledMealSlots.every((slot) => validMealSlots.includes(slot)))
+    ) {
+      return res.status(400).send({
+        message: `disabledMealSlots solo admite: ${validMealSlots.join(", ")}`,
+      });
+    }
+    if (
+      mealSlotLabels != null &&
+      (typeof mealSlotLabels !== "object" ||
+        Array.isArray(mealSlotLabels) ||
+        !Object.keys(mealSlotLabels).every((slot) => validMealSlots.includes(slot)) ||
+        !Object.values(mealSlotLabels).every((label) => typeof label === "string" && label.length <= 50))
+    ) {
+      return res.status(400).send({
+        message: `mealSlotLabels debe mapear slots válidos (${validMealSlots.join(", ")}) a textos de máximo 50 caracteres`,
+      });
+    }
+
+    const preferences = await nutritionPreferencesDao.upsertOwnResponse(req.params.clientId, {
+      allergies,
+      favoriteFoods,
+      dislikedFoods,
+      cooksAtHome,
+      dietaryFlags,
+      disabledMealSlots,
+      mealSlotLabels,
+    });
+
+    return res.send(preferences);
+  },
+
   // GET /trainer/routines — Rutinas -> Plantillas (rediseño 2026-08):
   // biblioteca de plantillas de rutina COMPLETA (microciclos/splits/
   // workouts) propia del profesional — distinto de WorkoutTemplate
@@ -1086,39 +924,6 @@ module.exports = {
         await mealModel.markAssignedByTrainer(targetMeal._id, req.auth.userId);
       }
       await notificationDao.create(targetClientId, req.auth.userId, "meal_prescribed", { date, mealName: targetMeal.name });
-    });
-    return res.send(results);
-  },
-
-  // POST /trainer/clients/:clientId/nutrition-goals/apply-to-clients — F30, reutiliza
-  // literalmente la creación de objetivos de F13, una vez por cliente destino.
-  async applyGoalToClients(req, res) {
-    const targetClientIds = req.body?.targetClientIds;
-    if (!Array.isArray(targetClientIds) || !targetClientIds.length) {
-      return res.status(400).send({ message: "Debes seleccionar al menos un cliente destino" });
-    }
-
-    const goalData = {
-      name: req.body?.name || "Objetivo asignado",
-      kcalTotal: req.body?.kcalTotal || 0,
-      proteinsGTotal: req.body?.proteinsGTotal || 0,
-      carbohydratesGTotal: req.body?.carbohydratesGTotal || 0,
-      fatGTotal: req.body?.fatGTotal || 0,
-    };
-
-    const results = await applyToTargets(req.auth.userId, targetClientIds, "nutrition", async (targetClientId) => {
-      const goal = await nutritionalGoalService.create({
-        ...goalData,
-        userId: targetClientId,
-        assignedByTrainerId: req.auth.userId,
-      });
-      // Mismo fix que assignNutritionalGoal: una asignación del trainer
-      // siempre pasa a ser el objetivo vigente, no solo "si no tenía ninguno".
-      await userSchema.findByIdAndUpdate(targetClientId, { $set: { goalInUse: goal._id } });
-      await notificationDao.create(targetClientId, req.auth.userId, "goal_assigned", {
-        goalName: goal.name,
-        kcalTotal: goal.kcalTotal,
-      });
     });
     return res.send(results);
   },

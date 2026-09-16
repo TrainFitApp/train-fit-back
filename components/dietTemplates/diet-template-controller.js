@@ -60,6 +60,14 @@ function sanitizeMode(mode) {
   return mode === "recurring" || mode === "choice" ? mode : "sequential";
 }
 
+// Días por ciclo en mode "choice" (ver diet-template-schema.js). undefined
+// si no viene: el dao no toca el campo.
+function sanitizeChoiceCycleDays(value) {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 7;
+}
+
 module.exports = {
   // Funciones puras exportadas para test (diet-template-controller.test.js)
   // — mismo criterio que assertMealEditable en meal-service.js.
@@ -98,7 +106,8 @@ module.exports = {
       sanitizeMode(req.body?.mode),
       sanitizeDayPatterns(req.body?.dayPatterns),
       ownerClientId,
-      verified
+      verified,
+      sanitizeChoiceCycleDays(req.body?.choiceCycleDays)
     );
     return res.send(template);
   },
@@ -167,6 +176,7 @@ module.exports = {
     if (req.body?.days !== undefined) patch.days = sanitizeDays(req.body.days);
     if (req.body?.mode !== undefined) patch.mode = sanitizeMode(req.body.mode);
     if (req.body?.dayPatterns !== undefined) patch.dayPatterns = sanitizeDayPatterns(req.body.dayPatterns);
+    if (req.body?.choiceCycleDays !== undefined) patch.choiceCycleDays = sanitizeChoiceCycleDays(req.body.choiceCycleDays);
     // Sugerencias de dieta — aptitudes que el entrenador fuerza a mano
     // (cuando la deriva no basta por productos sin flag). El array derivado
     // (suitableFor) NUNCA se acepta del body: lo recalcula el dao.

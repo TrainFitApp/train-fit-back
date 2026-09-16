@@ -7,6 +7,7 @@ const schema = new mongoose.Schema({
   occurrenceKey: { type: String, required: true, unique: true },
   name: { type: String, required: true },
   enabledFields: [String],
+  requiredFields: { type: [String], default: [] },
   customQuestions: { type: [CustomCheckinQuestionSchema], default: [] },
   scheduledAt: { type: Date, required: true },
   closesAt: { type: Date, default: null },

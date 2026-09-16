@@ -7,6 +7,7 @@ const schema = new mongoose.Schema({
   sourceTemplateId: { type: mongoose.Schema.Types.ObjectId, default: null },
   legacyConfigId: { type: mongoose.Schema.Types.ObjectId, default: null },
   enabledFields: [String],
+  requiredFields: { type: [String], default: [] },
   customQuestions: { type: [CustomCheckinQuestionSchema], default: [] },
   startDate: { type: String, required: true },
   time: { type: String, required: true },

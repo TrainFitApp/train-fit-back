@@ -87,30 +87,6 @@ router.getAsync(
   requireActiveClient("nutrition"),
   dataController.getClientDiet
 );
-router.getAsync(
-  "/clients/:clientId/nutritional-goals",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.getClientNutritionalGoals
-);
-router.postAsync(
-  "/clients/:clientId/nutritional-goals",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.assignNutritionalGoal
-);
-router.postAsync(
-  "/clients/:clientId/nutrition-target",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.getNutritionTarget
-);
-router.putAsync(
-  "/clients/:clientId/nutritional-goals/:goalId/activate",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.activateNutritionalGoal
-);
 router.postAsync(
   "/clients/:clientId/diet-days/:date/meals/:mealId/prescribe",
   auth(["trainer"]),
@@ -159,6 +135,13 @@ router.getAsync(
   requireActiveClient("nutrition"),
   dataController.getClientNutritionTracking
 );
+// Cumplimiento alimento a alimento del rango — panel de resumen de un ciclo.
+router.getAsync(
+  "/clients/:clientId/nutrition-foods",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.getClientNutritionFoods
+);
 // Movimiento 5 Coach Pro — lista de la compra del plan. requireActiveClient
 // CON scope "nutrition", igual que sus vecinas de arriba: es contenido del
 // plan nutricional, y un entrenador solo de entrenamiento no lo pauta.
@@ -204,6 +187,14 @@ router.postAsync(
   requireActiveClient("nutrition"),
   dataController.requestNutritionPreferences
 );
+// El profesional edita directamente las preferencias del cliente en vez de
+// esperar a que este responda el cuestionario.
+router.putAsync(
+  "/clients/:clientId/nutrition-preferences",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.updateClientNutritionPreferences
+);
 
 // --- Rutinas -> Plantillas (rediseño 2026-08): biblioteca de plantillas de
 // rutina completa del profesional, editada con el mismo Planificador que ya
@@ -235,12 +226,6 @@ router.postAsync(
   "/meals/apply-to-clients",
   auth(["trainer"]),
   dataController.applyMealToClientsDirect
-);
-router.postAsync(
-  "/clients/:clientId/nutrition-goals/apply-to-clients",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.applyGoalToClients
 );
 
 // --- Lado cliente ---

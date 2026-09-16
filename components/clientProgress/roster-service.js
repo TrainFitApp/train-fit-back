@@ -259,7 +259,6 @@ async function buildRoster(trainerId, now = new Date()) {
       sessions: (snapshot.workoutDates || []).length,
       openAlerts: alerts.total,
       urgentAlerts: alerts.high,
-      planEndingSoon: snapshot.planEndingSoon || null,
     };
   });
 }

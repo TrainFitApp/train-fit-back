@@ -59,24 +59,48 @@ router.postAsync(
   requireActiveClient("nutrition"),
   controller.createException
 );
-// --- Progresión ciclo a ciclo dentro de una fase ---
+// --- Ciclos por contenido (docs/plan-ciclos-por-contenido.md) ---
 router.getAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/next-cycle-suggestion",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  controller.getNextCycleSuggestion
-);
-router.postAsync(
   "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.advanceCycle
+  controller.getPhaseCycles
 );
 router.getAsync(
-  "/trainer/clients/:clientId/diet-exceptions",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/:number/need",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.listExceptions
+  controller.getCycleNeed
+);
+router.postAsync(
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next/scale",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.scaleNextCycle
+);
+router.putAsync(
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.prepareNextCycle
+);
+router.deleteAsync(
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.discardNextCycle
+);
+router.getAsync(
+  "/trainer/clients/:clientId/diet-timeline",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.getCycleTimeline
+);
+router.getAsync(
+  "/trainer/clients/:clientId/nutrition-history",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.getNutritionHistory
 );
 
 module.exports = router;

@@ -1,6 +1,4 @@
 const mealProposalDao = require("./meal-proposal-dao");
-const mealModel = require("../meals/meal-service");
-const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
 
 module.exports = {
   // GET /diets/:date/meal-proposals — cliente, TODAS las propuestas de ese
@@ -12,9 +10,9 @@ module.exports = {
   },
 
   // POST /diets/:date/meal-proposals/:proposalId/choose — cliente elige (o
-  // cambia) una alternativa. Sin límite de una sola vez: pasteMeal ya
-  // reemplaza el contenido de la comida en cada llamada (merge:false), así
-  // que alternar entre opciones varias veces es seguro y no acumula nada.
+  // cambia) una alternativa. Sin límite de una sola vez: cada llamada quita
+  // lo pautado anterior y aplica la opción nueva, así que alternar entre
+  // opciones varias veces es seguro y no acumula nada.
   async choose(req, res) {
     const proposal = await mealProposalDao.findById(req.params.proposalId);
     if (!proposal || String(proposal.clientId) !== String(req.auth.userId)) {
@@ -30,23 +28,12 @@ module.exports = {
       return res.status(400).send({ message: "chosenIndex no corresponde a ninguna alternativa" });
     }
 
-    const dietDay = await resolveOwnedDietDay(req.auth.userId, proposal.date);
-    const targetMeal = (dietDay.meals || []).find((meal) => meal.name === proposal.mealSlot);
-    if (!targetMeal) {
-      return res.status(400).send({ message: `No existe la comida "${proposal.mealSlot}" en tu dieta de hoy` });
+    // Solo se sustituye lo pautado; lo que el cliente añadió por su cuenta a
+    // esta comida se queda (ver meal-proposal-dao.js#applyAlternative).
+    const updatedMeal = await mealProposalDao.choose(proposal._id, chosenIndex);
+    if (!updatedMeal) {
+      return res.status(404).send({ message: "Propuesta no encontrada" });
     }
-
-    const mealClipboard = {
-      customProducts: alternative.customProducts || [],
-      customRecipes: alternative.customRecipes || [],
-    };
-    const updatedMeal = await mealModel.pasteMeal(mealClipboard, targetMeal, false, proposal.trainerId);
-    // TAREA 1 (coach-tab) — igual que prescribeMeal: el resultado de elegir
-    // una alternativa propuesta por el profesional también queda protegido
-    // de edición libre, mismo mecanismo de assignedByTrainerId.
-    await mealModel.markAssignedByTrainer(targetMeal._id, proposal.trainerId);
-
-    await mealProposalDao.setChosenIndex(proposal._id, chosenIndex);
 
     return res.send(updatedMeal);
   },

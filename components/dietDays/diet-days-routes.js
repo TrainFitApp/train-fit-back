@@ -13,6 +13,9 @@ const router = express.Router();
 // lados. La lógica está en un servicio puro compartido
 // (shopping-list-service.js), no duplicada en cada controller.
 router.getAsync("/shopping-list", auth(["admin", "user"]), controller.getMyShoppingList);
+// Ciclos por contenido — fases y ciclos del cliente en un rango, para el
+// slider de días de su pantalla de dieta.
+router.getAsync("/timeline", auth(["admin", "user"]), controller.getMyDietTimeline);
 
 router.getAsync("/", auth(["admin", "user"]), controller.getDietDays);
 // Las rutas que llevaban el id de la Diet en la URL (:id / :dietInUseId /
@@ -76,5 +79,6 @@ router.deleteAsync(
 // resuelta contra req.user.id, nunca contra un DietDay._id suelto.
 router.getAsync("/date/:date/day-type", auth(["admin", "user"]), controller.getDayType);
 router.putAsync("/date/:date/day-type", auth(["admin", "user"]), controller.chooseDayType);
+router.deleteAsync("/date/:date/day-type", auth(["admin", "user"]), controller.leaveDayType);
 
 module.exports = router;

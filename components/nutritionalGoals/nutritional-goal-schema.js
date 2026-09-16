@@ -1,63 +1,6 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
-// Movimiento 5 Coach Pro — pauta por INTERCAMBIOS, repartida por comida.
-//
-// Convive con los gramos, no los sustituye (decisión explícita del usuario).
-// Son dos formas de pautar lo mismo y cada entrenador usa la suya: los
-// gramos dicen "180 g de proteína al día", los intercambios dicen "2
-// raciones de proteína en la comida" y dejan que el cliente elija cuál. Un
-// objetivo puede tener las dos, una, o ninguna.
-//
-// `count` en decimal a propósito: media ración es una pauta real ("medio
-// intercambio de grasa en el desayuno") y forzar enteros la haría imposible.
-const GoalMealExchangeSchema = new Schema(
-  {
-    groupId: { type: Schema.Types.ObjectId, ref: "FoodExchangeGroup", required: true },
-    // Nombre del grupo copiado en el momento de pautar. Igual que en
-    // ExchangeItemSchema: si el grupo se renombra o se borra, la pauta que
-    // el cliente ya tiene debe seguir siendo legible.
-    groupName: { type: String, required: true, trim: true, maxlength: 100 },
-    count: { type: Number, required: true, min: 0 },
-    // El perfil de la ración CONGELADO en el momento de pautar, igual que
-    // `groupName` y por el mismo motivo llevado un paso más lejos: si el
-    // entrenador retoca el grupo mañana (cambia una cantidad, añade un
-    // alimento, corrige el perfil), la pauta que este cliente ya tiene no
-    // puede cambiar de significado sola. Sin congelarlo, un cuadre que salió
-    // verde en marzo dice otra cosa en abril sin que nadie haya tocado el
-    // objetivo, y el entrenador no tendría forma de saber cuál de las dos
-    // cifras fue la que él aprobó.
-    //
-    // Vacío = pautado antes de que existiera el perfil, o grupo sin perfil.
-    // No suma en el cuadre y se dice cuál falta (ver exchange-profile.js
-    // #sumReparto): un total al que le faltan grupos parece correcto y no lo
-    // es.
-    serving: {
-      kcal: { type: Number, default: null, min: 0 },
-      protein: { type: Number, default: null, min: 0 },
-      carbs: { type: Number, default: null, min: 0 },
-      fat: { type: Number, default: null, min: 0 },
-    },
-    servingFrozenAt: { type: Date, default: null },
-    // Congelado junto al perfil: un grupo libre no suma en el cuadre y está
-    // bien que no sume, mientras que uno sin perfil es un agujero. Sin esta
-    // marca los dos se leerían igual y el aviso de "no cuadrable" saltaría
-    // en repartos perfectamente definidos que llevan verduras.
-    freeQuantity: { type: Boolean, default: false },
-  },
-  { _id: false }
-);
-
-const GoalMealSchema = new Schema(
-  {
-    // Nombre libre ("Desayuno", "Post-entreno"): cada entrenador reparte el
-    // día a su manera, y un enum de cinco comidas dejaría fuera la mitad.
-    name: { type: String, required: true, trim: true, maxlength: 60 },
-    exchanges: { type: [GoalMealExchangeSchema], default: [] },
-  },
-  { _id: false }
-);
-
 const NutritionalGoalSchema = new Schema({
   userId: {
     type: Schema.Types.ObjectId,
@@ -81,14 +24,6 @@ const NutritionalGoalSchema = new Schema({
   // la pauta. Todo lo que ya existía sigue funcionando igual — el campo es
   // opcional y nada lo exige.
   fiberGTotal: { type: Number, default: null },
-  // Movimiento 5 Coach Pro — reparto por comidas en intercambios. Array
-  // vacío = este objetivo se pauta solo en gramos, que es exactamente lo que
-  // hacían todos los objetivos hasta ahora. Nada existente cambia.
-  mealExchanges: { type: [GoalMealSchema], default: [] },
-  // MVP-trainers F13/F14/D10: presente si un nutricionista asignó este
-  // objetivo. Mismo criterio que Table.assignedByTrainerId — permanente,
-  // exención de límite depende de relación activa, no de este campo solo.
-  assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
   // Auditoría de arquitectura (nutrición) — mismo concepto de periodo que
   // PlanAssignment, opcional y retrocompatible: un objetivo sin estos campos
   // se sigue comportando exactamente como hoy (el "actual" es el que apunta
@@ -97,14 +32,6 @@ const NutritionalGoalSchema = new Schema({
   startDate: { type: String, default: null },
   endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null], default: null },
   endDate: { type: String, default: null },
-  // Sugerencias de dieta + progresión — cada ciclo de una fase crea su
-  // objetivo junto a su copia de dieta, con el mismo phaseId y las fechas
-  // del ciclo. Así la adherencia de la fase (que abarca varios ciclos con
-  // targets distintos) puede resolver "qué objetivo regía el 3 de marzo"
-  // por fecha, en vez de depender solo del puntero User.goalInUse.
-  // Ausentes en objetivos creados fuera de una fase (comportamiento de hoy).
-  phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null, index: true },
-  cycleId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

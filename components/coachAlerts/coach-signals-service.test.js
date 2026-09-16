@@ -11,7 +11,6 @@ const {
   detectInactivity,
   detectCheckinOverdue,
   detectPendingReview,
-  detectPlanEndingSoon,
 } = require("./coach-signals-service");
 
 const NOW = new Date("2026-08-23T05:00:00.000Z");
@@ -353,7 +352,7 @@ test("detectCheckinOverdue", async (t) => {
   });
 });
 
-test("detectPendingReview / detectPlanEndingSoon", async (t) => {
+test("detectPendingReview", async (t) => {
   await t.test("cuestionario en revisión -> prioridad alta (bloquea al cliente)", () => {
     const signal = detectPendingReview({ clientName: "Nil", relationStatus: "en_revision" });
     assert.ok(signal);
@@ -362,27 +361,6 @@ test("detectPendingReview / detectPlanEndingSoon", async (t) => {
 
   await t.test("relación activa -> nada que revisar", () => {
     assert.equal(detectPendingReview({ clientName: "Nil", relationStatus: "active" }), null);
-  });
-
-  await t.test("fase que llega hoy a su estimación -> frase específica y prioridad alta", () => {
-    const signal = detectPlanEndingSoon({
-      clientName: "Nil",
-      planEndingSoon: { daysLeft: 0, endDate: isoDaysAgo(0) },
-    });
-    assert.match(signal.reason, /hoy a su duración estimada/);
-    assert.equal(signal.priority, "high");
-  });
-
-  await t.test("estimación a 5 días -> prioridad media y singular/plural correcto", () => {
-    assert.equal(detectPlanEndingSoon({ clientName: "Nil", planEndingSoon: { daysLeft: 5 } }).priority, "medium");
-    assert.match(
-      detectPlanEndingSoon({ clientName: "Nil", planEndingSoon: { daysLeft: 1 } }).reason,
-      /en 1 día\./
-    );
-  });
-
-  await t.test("sin plan próximo a caducar -> sin alerta", () => {
-    assert.equal(detectPlanEndingSoon({ clientName: "Nil", planEndingSoon: null }), null);
   });
 });
 
@@ -395,7 +373,6 @@ test("buildSignalsForClient", async (t) => {
       entries: weightEntries([[21, 80], [0, 78.5]]),
       adherence: goodAdherence(95),
       checkin: { config: { cadence: "weekly" }, lastResponseAt: new Date(NOW.getTime() - 86400000) },
-      planEndingSoon: null,
       lastActivityAt: NOW,
     });
     assert.deepEqual(signals, []);
@@ -412,14 +389,12 @@ test("buildSignalsForClient", async (t) => {
         config: { cadence: "weekly" },
         lastResponseAt: new Date(NOW.getTime() - 30 * 86400000),
       },
-      planEndingSoon: { daysLeft: 1 },
       lastActivityAt: new Date(NOW.getTime() - 30 * 86400000),
     });
 
     const types = signals.map((s) => s.type);
     assert.ok(types.includes("stagnation"));
     assert.ok(types.includes("checkin_overdue"));
-    assert.ok(types.includes("plan_ending_soon"));
     assert.ok(types.includes("inactive_client"));
     assert.equal(new Set(types).size, types.length, "ningún tipo repetido");
   });
@@ -443,7 +418,6 @@ test("buildSignalsForClient", async (t) => {
       entries: weightEntries([[21, 80], [7, 80], [0, 76]]),
       adherence: goodAdherence(30),
       checkin: { config: { cadence: "weekly" }, lastResponseAt: null },
-      planEndingSoon: { daysLeft: 3 },
       lastActivityAt: new Date(NOW.getTime() - 20 * 86400000),
     });
 

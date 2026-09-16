@@ -5,8 +5,8 @@ const Schema = mongoose.Schema;
 //
 // "Definición", "Volumen", "Recomposición": cada coach tiene sus propios
 // protocolos, y dar de alta a un cliente en uno significa hoy repetir cinco
-// operaciones a mano (objetivo nutricional, plantilla de check-in, plan de
-// dieta, rutina, tareas diarias) sin nada que garantice que no se olvida
+// operaciones a mano (plantilla de check-in, plan de dieta, rutina, tareas
+// diarias) sin nada que garantice que no se olvida
 // ninguna.
 //
 // Un protocolo NO es una entidad nueva de contenido: es una LISTA DE
@@ -20,18 +20,7 @@ const CoachProtocolSchema = new Schema(
     name: { type: String, required: true, trim: true, maxlength: 100 },
     description: { type: String, trim: true, maxlength: 500, default: "" },
 
-    // Los macros van copiados y no referenciados a propósito: NutritionalGoal
-    // es un documento POR CLIENTE (userId obligatorio), así que un protocolo
-    // no puede apuntar a uno — tiene que llevar los valores con los que
-    // crear el del cliente al aplicarlo.
-    nutritionalGoal: {
-      kcalTotal: { type: Number, default: null },
-      proteinsGTotal: { type: Number, default: null },
-      carbohydratesGTotal: { type: Number, default: null },
-      fatGTotal: { type: Number, default: null },
-    },
-
-    // El resto sí son plantillas del profesional, reutilizables tal cual.
+    // Plantillas del profesional, reutilizables tal cual.
     checkinTemplateId: { type: Schema.Types.ObjectId, ref: "CheckinTemplateDefinition", default: null },
     dietTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
     routineTemplateId: { type: Schema.Types.ObjectId, ref: "Table", default: null },

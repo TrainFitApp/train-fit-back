@@ -11,19 +11,27 @@ test("suggestNextCycle", async (t) => {
     assert.match(r.reason, /no ha metido check-ins/);
   });
 
-  await t.test("adherencia baja → no toca kcal", () => {
+  // Plan ciclos por contenido §7: la adherencia baja avisa, no bloquea — el
+  // ajuste por peso se calcula igual y decide el entrenador.
+  await t.test("adherencia baja → avisa pero calcula igual", () => {
     const r = suggestNextCycle({
       previousCycleKcal: 2400,
       weightStartKg: 80,
-      weightEndKg: 79.8,
+      weightEndKg: 79.8, // −0.2 kg/sem, esperaba −0.45 → va lento → baja kcal
       daysElapsed: 7,
       expectedWeeklyRateKg: -0.45,
       adherencePct: 55,
       targetRatePerCycle: -100,
     });
     assert.equal(r.flag, "low_adherence");
-    assert.equal(r.deltaKcal, 0);
-    assert.match(r.reason, /Adherencia/);
+    assert.ok(r.deltaKcal < 0);
+    assert.match(r.reason, /Adherencia del ciclo 55 %/);
+  });
+
+  await t.test("el umbral es 75 %: 74 avisa, 75 no", () => {
+    const base = { previousCycleKcal: 2400, weightStartKg: 80, weightEndKg: 79.55, daysElapsed: 7, expectedWeeklyRateKg: -0.45, targetRatePerCycle: -100 };
+    assert.equal(suggestNextCycle({ ...base, adherencePct: 74 }).flag, "low_adherence");
+    assert.equal(suggestNextCycle({ ...base, adherencePct: 75 }).flag, null);
   });
 
   await t.test("va según plan → aplica el paso previsto de la rampa", () => {

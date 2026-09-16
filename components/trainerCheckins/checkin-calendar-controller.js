@@ -73,7 +73,7 @@ module.exports = {
     } else {
       schedule = await Schedule.create({ ...scope(req), ...timing, name: data.name.trim(), nextRunAt: occurrenceAt(timing, 0),
         sourceTemplateId: data.sourceTemplateId || content.sourceTemplateId || null, legacyConfigId: data.legacyConfigId || null,
-        enabledFields: content.enabledFields, customQuestions: content.customQuestions || [],
+        enabledFields: content.enabledFields, requiredFields: content.requiredFields || [], customQuestions: content.customQuestions || [],
       });
       if (data.legacyConfigId) await Legacy.updateOne({ ...scope(req), _id: data.legacyConfigId }, { $set: { calendarManaged: true } });
     }

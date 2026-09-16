@@ -57,6 +57,12 @@ test("valida la instantánea, no acepta campos ajenos ni escalas fuera de rango"
   assert.deepEqual(service.validateAnswers(request, { "custom:effort": 3, urine_color: 8, weight: 80 }).values, { "custom:effort": 3, urine_color: 8, weight: 80 });
 });
 
+test("un campo del catálogo marcado obligatorio bloquea la respuesta si falta", () => {
+  const request = { enabledFields: ["weight", "sleep_quality"], requiredFields: ["weight"], customQuestions: [] };
+  assert.equal(service.validateAnswers(request, { sleep_quality: 3 }).error, "Falta responder: Peso");
+  assert.deepEqual(service.validateAnswers(request, { weight: 80 }).values, { weight: 80 });
+});
+
 test("recupera ciclos atrasados sin duplicarlos y sólo deja abierta la última solicitud", async () => {
   const stored = new Map();
   let current = { ...schedule };

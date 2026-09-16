@@ -1127,6 +1127,43 @@ module.exports = {
     );
   },
 
+  // Ciclos por contenido — "salir del menú" en un plan choice: fuera lo
+  // PAUTADO (assignedByTrainerId) y sus marcas; lo que el cliente añadió por
+  // su cuenta se queda. Es el espejo de deleteMealCustomProducts.
+  async removePlannedItems(id) {
+    const doc = await mealSchema.findById(id);
+    if (!doc) return null;
+    const plannedProducts = [];
+    const keptProducts = [];
+    for (const item of doc.customProducts || []) {
+      const itemId = item._id || item;
+      if (item?.assignedByTrainerId) plannedProducts.push(itemId);
+      else keptProducts.push(itemId);
+    }
+    const plannedRecipes = [];
+    const keptRecipes = [];
+    for (const item of doc.customRecipes || []) {
+      const itemId = item._id || item;
+      if (item?.assignedByTrainerId) plannedRecipes.push(itemId);
+      else keptRecipes.push(itemId);
+    }
+    if (plannedProducts.length) await customProductSchema.deleteMany({ _id: { $in: plannedProducts } });
+    if (plannedRecipes.length) await customRecipeSchema.deleteMany({ _id: { $in: plannedRecipes } });
+    return mealSchema.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          customProducts: keptProducts,
+          customRecipes: keptRecipes,
+          completed: false,
+          wasOverridden: false,
+          assignedByTrainerId: null,
+        },
+      },
+      { new: true }
+    );
+  },
+
   // Pautados sobreviven — antes borraba TODOS los customProducts de la
   // comida sin distinción; con items pautados individuales (ver
   // pasteMeal/assignedByTrainerId de arriba), un "vaciar comida" del

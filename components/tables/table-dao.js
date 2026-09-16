@@ -146,8 +146,7 @@ module.exports = {
   },
 
   // MVP-trainers — comprobación de propiedad para activateTableForClient:
-  // igual que nutritionalGoalDao.findByIdAndUserId, evita activar una tabla
-  // que no es de este cliente (ver auditoría de seguridad de exercises,
+  // evita activar una tabla que no es de este cliente (ver auditoría de seguridad de exercises,
   // mismo criterio: nunca confiar en un id de ruta sin verificar dueño).
   async getTableByIdAndUserId(id, userId) {
     return tableSchema.findOne({ _id: id, userId }).exec();

@@ -43,7 +43,6 @@ const coachTaskRoutes = require("../components/coachTasks/coach-task-routes");
 const clientProgressRoutes = require("../components/clientProgress/client-progress-routes");
 const coachRuleRoutes = require("../components/coachRules/coach-rule-routes");
 const coachProtocolRoutes = require("../components/coachProtocols/coach-protocol-routes");
-const foodExchangeRoutes = require("../components/foodExchanges/food-exchange-routes");
 const painRoutes = require("../components/painLog/pain-routes");
 const supplementRoutes = require("../components/supplements/supplement-routes");
 const exerciseScoreRoutes = require("../components/exerciseScores/exercise-score-routes");
@@ -102,7 +101,6 @@ router.use("/trainer", coachTaskRoutes);
 router.use("/trainer", clientProgressRoutes);
 router.use("/trainer", coachRuleRoutes);
 router.use("/trainer", coachProtocolRoutes);
-router.use("/trainer", foodExchangeRoutes);
 // Movimiento 6 Coach Pro — puntuaciones músculo/articulación por ejercicio.
 // Bajo /trainer y sin :clientId: no son de un cliente, son del método del
 // profesional.

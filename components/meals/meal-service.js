@@ -156,7 +156,7 @@ module.exports = {
 
   // TAREA 1 — marca esta comida como pautada por el profesional, tras
   // pasteMeal (prescribeMeal). Permanente, mismo criterio que
-  // Table/NutritionalGoal.assignedByTrainerId — no se borra al revocar.
+  // Table.assignedByTrainerId — no se borra al revocar.
   async markAssignedByTrainer(id, trainerId) {
     return mealDao.markAssignedByTrainer(id, trainerId);
   },

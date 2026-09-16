@@ -30,7 +30,6 @@ const {
   listTrackedWorkoutNames,
 } = require("./training-service");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
-const NutritionalGoal = require("../nutritionalGoals/nutritional-goal-schema");
 const Table = require("../tables/table-schema");
 const User = require("../users/schema");
 const { buildRoster, ROSTER_WINDOW_DAYS } = require("./roster-service");
@@ -172,14 +171,9 @@ module.exports = {
     const data = await loadClientWindow(trainerId, clientId, { from, to });
     if (!data) return res.status(404).send({ message: "Cliente no encontrado" });
 
-    const [alerts, activePlan, goal, routine] = await Promise.all([
+    const [alerts, activePlan, routine] = await Promise.all([
       coachAlertDao.listForClient(trainerId, clientId, { status: "open" }),
       planAssignmentService.getActiveForClient(clientId),
-      data.client.goalInUse
-        ? NutritionalGoal.findById(data.client.goalInUse)
-            .select("name kcalTotal proteinsGTotal carbohydratesGTotal fatGTotal")
-            .lean()
-        : null,
       data.client.tableInUse
         ? Table.findById(data.client.tableInUse).select("name").lean()
         : null,
@@ -215,9 +209,13 @@ module.exports = {
       lastCheckinAt: lastResponse?.respondedAt ?? null,
       checkinCadence: data.checkinConfig?.cadence ?? null,
       activePlan: activePlan
-        ? { _id: activePlan._id, startDate: activePlan.startDate, endDate: activePlan.endDate }
+        ? {
+            _id: activePlan._id,
+            name: activePlan.phaseName || activePlan.name,
+            startDate: activePlan.startDate,
+            endDate: activePlan.endDate,
+          }
         : null,
-      goal,
       routine,
     });
   },

@@ -50,8 +50,6 @@ const SIGNAL_THRESHOLDS = {
 
   inactiveDays: 14,
   inactiveCriticalDays: 21,
-
-  planEndingCriticalDays: 2,
   // Un check-in vencido más de 2 ciclos completos ya no es un olvido.
   checkinOverdueCriticalCycles: 2,
 };
@@ -330,24 +328,6 @@ function detectPendingReview({ relationStatus, clientName }) {
   };
 }
 
-function detectPlanEndingSoon({ planEndingSoon, clientName }) {
-  if (!planEndingSoon) return null;
-  const { daysLeft } = planEndingSoon;
-
-  return {
-    type: "plan_ending_soon",
-    priority: daysLeft <= SIGNAL_THRESHOLDS.planEndingCriticalDays ? "high" : "medium",
-    // "Se acaba la estimación", no "caduca": desde 2026-09 una fase no termina
-    // sola en ninguna fecha — sigue corriendo hasta que el entrenador abre la
-    // siguiente. Esto es un recordatorio de revisarla, no un vencimiento.
-    reason:
-      daysLeft === 0
-        ? `La fase de nutrición de ${clientName} llega hoy a su duración estimada: toca revisarla.`
-        : `La fase de nutrición de ${clientName} llega a su duración estimada en ${daysLeft} día${daysLeft === 1 ? "" : "s"}.`,
-    context: { metric: "plan", daysLeft, endDate: planEndingSoon.endDate || null },
-  };
-}
-
 // Punto de entrada: todas las señales de UN cliente. Devuelve [] si no hay
 // nada que reportar — el caso normal para un cliente que va bien.
 function buildSignalsForClient(input) {
@@ -356,7 +336,6 @@ function buildSignalsForClient(input) {
 
   return [
     detectPendingReview(base),
-    detectPlanEndingSoon(base),
     detectCheckinOverdue(base),
     detectSharpWeightChange(base),
     detectLowAdherence(base),
@@ -379,5 +358,4 @@ module.exports = {
   detectInactivity,
   detectCheckinOverdue,
   detectPendingReview,
-  detectPlanEndingSoon,
 };

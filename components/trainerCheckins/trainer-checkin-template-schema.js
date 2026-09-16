@@ -18,6 +18,17 @@ const TrainerCheckinTemplateSchema = new Schema({
       message: "Campo de check-in no reconocido en el catálogo",
     },
   },
+  // Obligatorios: subconjunto de enabledFields que el cliente no puede dejar
+  // en blanco (mismo trato que `required` en una pregunta propia). Vacío =
+  // todo opcional, que es como funcionaban las plantillas anteriores.
+  requiredFields: {
+    type: [String],
+    default: [],
+    validate: {
+      validator: (fields) => fields.every((f) => CHECKIN_FIELD_KEYS.includes(f)),
+      message: "Campo obligatorio no reconocido en el catálogo",
+    },
+  },
   // coach-tab FASE2 — "once" es una plantilla de una sola vez (nunca vuelve
   // a estar pendiente tras la primera respuesta), "biweekly" cada 14 días.
   cadence: { type: String, enum: ["weekly", "biweekly", "once"], default: "weekly" },
