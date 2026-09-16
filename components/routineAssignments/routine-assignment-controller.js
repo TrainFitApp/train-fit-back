@@ -2,7 +2,7 @@ const routineAssignmentService = require("./routine-assignment-service");
 const tableService = require("../tables/table-service");
 const tableDao = require("../tables/table-dao");
 const planChangeService = require("../planChanges/plan-change-service");
-const { projectionInRange, getProjectedPhaseEndDate } = require("./routine-assignment-projection");
+const { projectionAcrossAssignments, getProjectedPhaseEndDate } = require("./routine-assignment-projection");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -91,8 +91,13 @@ module.exports = {
   },
 
   // GET /trainer/clients/:clientId/routine-assignments/active/schedule?from=&to=
-  // Proyección de la rutina activa sobre un rango de calendario — para el
-  // calendario de Entrenamiento (capa de "previsto", distinta de "hecho").
+  // Proyección sobre un rango de calendario — para el calendario de
+  // Entrenamiento (capa de "previsto", distinta de "hecho"). A pesar del
+  // nombre de la ruta (histórico: antes solo proyectaba "la activa"), esto
+  // recorre TODAS las fases del cliente que caen dentro del rango pedido,
+  // cada una con su propia tabla — una fase futura ya recién programada no
+  // debe tapar los días que, hasta que empiece de verdad, siguen rigiendo la
+  // fase anterior (ver projectionAcrossAssignments).
   async getActiveSchedule(req, res) {
     const { clientId } = req.params;
     const { from, to } = req.query;
@@ -100,13 +105,16 @@ module.exports = {
       return res.status(400).send({ message: "from/to inválidos (YYYY-MM-DD)" });
     }
 
-    const assignment = await routineAssignmentService.getActiveForClient(clientId);
-    if (!assignment) return res.send([]);
+    const assignments = (await routineAssignmentService.listForClient(clientId)).filter(
+      (a) => a.status !== "ended"
+    );
+    if (!assignments.length) return res.send([]);
 
-    const table = await tableDao.getTableById(assignment.tableId);
-    if (!table) return res.send([]);
+    const tableIds = [...new Set(assignments.map((a) => String(a.tableId)))];
+    const tables = await Promise.all(tableIds.map((id) => tableDao.getTableById(id)));
+    const tableById = new Map(tables.filter(Boolean).map((t) => [String(t._id), t]));
 
-    return res.send(projectionInRange(assignment.startDate, table.splits, from, to));
+    return res.send(projectionAcrossAssignments(assignments, tableById, from, to));
   },
 
   // DELETE /trainer/clients/:clientId/routine-assignments/:assignmentId
