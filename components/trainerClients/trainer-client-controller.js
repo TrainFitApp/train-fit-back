@@ -130,6 +130,15 @@ const controller = {
     return res.send(trainerClientDto.multipleAggregated(aggregated));
   },
 
+  // GET /trainer/clients/lifetime-count — "Mi cuenta" > tarjeta "Número de
+  // cambios". Ruta propia y aditiva (no reemplaza listMyClients: ese array
+  // completo lo siguen consumiendo dashboard/select-clients-modal/etc. tal
+  // cual, cambiar su forma de respuesta los rompería).
+  async getLifetimeClientsCount(req, res) {
+    const total = await trainerClientDao.countLifetimeActiveClients(req.auth.userId);
+    return res.send({ total });
+  },
+
   // GET /trainer/payments/summary — cobros agregados de TODOS los clientes
   // del trainer (dashboard, tarjeta + gráfica "Cobros"): pendiente/vencido
   // actual + serie mensual de los últimos 6 meses + variación vs mes

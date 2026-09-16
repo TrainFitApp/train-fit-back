@@ -218,6 +218,21 @@ module.exports = {
     return TrainerClient.countDocuments(query);
   },
 
+  // "Mi cuenta" > tarjeta "Número de cambios" — clientes DISTINTOS que en
+  // algún momento llegaron a "active" con este trainer (cualquier scope),
+  // estén hoy vinculados o no. Cuenta también a los "revoked" a propósito:
+  // es precisamente el turnover lo que se quiere reflejar. "pending"/
+  // "cuestionario_pendiente"/"en_revision"/"declined" se excluyen porque esa
+  // persona nunca llegó a ser realmente su cliente (revoked SIEMPRE viene
+  // de haber pasado por "active" antes — ver trainer-client-schema.js).
+  async countLifetimeActiveClients(trainerId) {
+    const clientIds = await TrainerClient.distinct("clientId", {
+      trainerId,
+      status: { $in: ["active", "revoked"] },
+    });
+    return clientIds.length;
+  },
+
   // TAREA 3 (coach-tab) — relaciones de un (trainerId, clientId) en cualquiera
   // de los estados dados, sin filtrar por scope. Usado por el flujo de
   // cuestionario inicial (que es UNO por par trainer-cliente, no por scope).
