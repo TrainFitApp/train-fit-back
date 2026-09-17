@@ -151,8 +151,9 @@ async function loadTrainerContext(trainerId, now) {
     checkinResponsesByClient: groupBy(checkinResponses, (r) => String(r.clientId)),
     workoutDatesByClient: groupBy(workoutDates, (row) => String(row.userId)),
     painEntriesByClient: groupBy(painEntries, (row) => String(row.userId)),
-    // Solo lo consume la Cartera (roster-service.js); las señales nocturnas
-    // no miran la rutina asignada, ver detectInactivity.
+    // Lo consume la Cartera (roster-service.js) y, desde la auditoría
+    // 2026-09, detectNoTrainingActivity (solo para saber SI hay rutina, no
+    // recorre su contenido).
     tableIdByClient,
   };
 }
@@ -223,9 +224,14 @@ function buildClientSnapshots(context, now) {
       checkinConfig: config,
       checkinResponses: context.checkinResponsesByClient.get(clientKey) || [],
       // Fase 6 — solo las FECHAS de las sesiones: es lo que necesita la
-      // métrica de regla "sesiones entrenadas", y lo único que sale barato
-      // para toda la cartera.
+      // métrica de regla "sesiones entrenadas" y ahora también
+      // detectNoTrainingActivity, y lo único que sale barato para toda la
+      // cartera.
       workoutDates: (context.workoutDatesByClient?.get(clientKey) || []).map((row) => row.date),
+      // Auditoría 2026-09 — ya se cargaba para la Cartera (tableIdByClient)
+      // pero no viajaba a los snapshots; detectNoTrainingActivity lo necesita
+      // para no avisar de "no entrena" a quien ni siquiera tiene rutina.
+      hasRoutine: Boolean(context.tableIdByClient?.get(clientKey)),
       // Movimiento 3 Coach Pro — solo fecha, zona y nivel: es lo que
       // necesita la métrica pain_max y lo único barato para toda la cartera.
       painEntries: context.painEntriesByClient?.get(clientKey) || [],
@@ -258,6 +264,8 @@ function buildSignalsFromSnapshots(snapshots) {
         ? { config: snapshot.checkinConfig, lastResponseAt: snapshot.lastResponseAt }
         : null,
       lastActivityAt: snapshot.lastActivityAt,
+      hasRoutine: snapshot.hasRoutine,
+      workoutDates: snapshot.workoutDates,
     }),
   }));
 }

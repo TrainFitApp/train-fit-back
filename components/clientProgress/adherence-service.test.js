@@ -28,6 +28,24 @@ test("nutritionDimension", async (t) => {
     assert.equal(nutritionDimension(null).applicable, false);
     assert.equal(nutritionDimension({ percentage: null, daysWithData: 0, periodDays: 28 }).applicable, false);
   });
+
+  // Auditoría 2026-09 — bug real visto en BD: un plan de dieta recién
+  // asignado (o sin contenido configurado) tenía <3 días con datos igual que
+  // un cliente sin ningún plan, y las dos cosas decían "sin_datos" — el
+  // frontend tapaba la diferencia añadiendo el nombre del plan al texto, pero
+  // "sin datos suficientes" con un plan real de por medio leía como mentira.
+  await t.test("sin ningún plan de dieta el motivo es 'sin_plan_nutricion', no 'sin_datos'", () => {
+    const d = nutritionDimension({ percentage: null, daysWithData: 0, periodDays: 28, hasActivePlan: false });
+    assert.equal(d.applicable, false);
+    assert.equal(d.reason, "sin_plan_nutricion");
+  });
+
+  await t.test("con plan activo pero pocos días trackeados el motivo sigue siendo 'sin_datos'", () => {
+    const d = nutritionDimension({ percentage: null, daysWithData: 1, periodDays: 28, hasActivePlan: true });
+    assert.equal(d.applicable, false);
+    assert.equal(d.reason, "sin_datos");
+    assert.notEqual(d.reason, "sin_plan_nutricion");
+  });
 });
 
 test("trainingDimension", async (t) => {
@@ -36,31 +54,45 @@ test("trainingDimension", async (t) => {
   // periodo, así que 2 micros de 2 sesiones (4 en total) se anunciaban como
   // "8 esperadas" — el número no salía del plan, salía de la extrapolación.
   await t.test("sesiones hechas frente a las del plan entero", () => {
-    const d = trainingDimension({ completedSessions: 3, plannedTotal: 4 });
+    const d = trainingDimension({ completedSessions: 3, plannedTotal: 4, scheduledDays: 4 });
     assert.equal(d.percentage, 75);
     assert.equal(d.detail, "3 de 4 sesiones del plan");
   });
 
   await t.test("dos microciclos de dos sesiones son 4, no 8", () => {
-    const d = trainingDimension({ completedSessions: 4, plannedTotal: 4 });
+    const d = trainingDimension({ completedSessions: 4, plannedTotal: 4, scheduledDays: 4 });
     assert.equal(d.percentage, 100);
     assert.equal(d.plannedTotal, 4);
   });
 
   await t.test("entrenar de más se topa en 100, no da 160%", () => {
-    assert.equal(trainingDimension({ completedSessions: 20, plannedTotal: 12 }).percentage, 100);
+    assert.equal(
+      trainingDimension({ completedSessions: 20, plannedTotal: 12, scheduledDays: 12 }).percentage,
+      100
+    );
   });
 
   await t.test("sin rutina asignada no aplica — el caso normal de un cliente solo de nutrición", () => {
-    const d = trainingDimension({ completedSessions: 0, plannedTotal: 0 });
+    const d = trainingDimension({ completedSessions: 0, plannedTotal: 0, scheduledDays: 0 });
     assert.equal(d.applicable, false);
     assert.equal(d.reason, "sin_plan");
   });
 
   await t.test("cero sesiones con rutina asignada SÍ aplica, y es un 0% real", () => {
-    const d = trainingDimension({ completedSessions: 0, plannedTotal: 12 });
+    const d = trainingDimension({ completedSessions: 0, plannedTotal: 12, scheduledDays: 12 });
     assert.equal(d.applicable, true);
     assert.equal(d.percentage, 0);
+  });
+
+  // Auditoría 2026-09 — bug real visto en BD: una fase que empieza HOY (ventana
+  // de un solo día) cuyo primer entrenamiento de la rutina es de descanso
+  // planificado salía como "sin_plan" (sin_plan == "sin fase en curso"),
+  // siendo mentira: SÍ hay una fase vigente, solo que hoy tocaba descanso.
+  await t.test("fase vigente cuya ventana solo cae en días de descanso no es 'sin plan'", () => {
+    const d = trainingDimension({ completedSessions: 0, plannedTotal: 0, scheduledDays: 1 });
+    assert.equal(d.applicable, false);
+    assert.equal(d.reason, "sin_sesiones_en_ventana");
+    assert.notEqual(d.reason, "sin_plan");
   });
 });
 
@@ -179,7 +211,7 @@ test("computeAdherence", async (t) => {
     // check-in. Debe salir 80, no 20.
     const result = computeAdherence({
       nutrition: { percentage: 80, daysWithData: 20, periodDays: 28 },
-      training: { completedSessions: 0, plannedTotal: 0 },
+      training: { completedSessions: 0, plannedTotal: 0, scheduledDays: 0 },
       habits: { habits: [] },
       checkins: { respondedAt: [], cadence: undefined, periodDays: 28 },
     });
@@ -190,7 +222,7 @@ test("computeAdherence", async (t) => {
   await t.test("con cuatro dimensiones activas promedia las cuatro", () => {
     const result = computeAdherence({
       nutrition: { percentage: 100, daysWithData: 28, periodDays: 28 },
-      training: { completedSessions: 12, plannedTotal: 12 }, // 100
+      training: { completedSessions: 12, plannedTotal: 12, scheduledDays: 12 }, // 100
       habits: { habits: [{ id: "1", label: "Pasos", completions: 28, activeDays: 28 }] }, // 100
       checkins: {
         respondedAt: [NOW_TEST, new Date(NOW_TEST.getTime() - 8 * 86400000)],
@@ -206,7 +238,7 @@ test("computeAdherence", async (t) => {
   await t.test("señala DÓNDE falla, no solo la media", () => {
     const result = computeAdherence({
       nutrition: { percentage: 95, daysWithData: 28, periodDays: 28 },
-      training: { completedSessions: 3, plannedTotal: 12 }, // 25
+      training: { completedSessions: 3, plannedTotal: 12, scheduledDays: 12 }, // 25
       habits: { habits: [] },
       checkins: {
         respondedAt: [0, 8, 16, 24].map((d) => new Date(NOW_TEST.getTime() - d * 86400000)),
@@ -223,7 +255,7 @@ test("computeAdherence", async (t) => {
   await t.test("un cliente sin ningún dato da overall null, nunca 0", () => {
     const result = computeAdherence({
       nutrition: null,
-      training: { completedSessions: 0, plannedTotal: 0 },
+      training: { completedSessions: 0, plannedTotal: 0, scheduledDays: 0 },
       habits: { habits: [] },
       checkins: { respondedAt: [], cadence: undefined, periodDays: 28 },
     });

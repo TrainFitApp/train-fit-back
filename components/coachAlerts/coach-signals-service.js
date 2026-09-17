@@ -50,6 +50,11 @@ const SIGNAL_THRESHOLDS = {
 
   inactiveDays: 14,
   inactiveCriticalDays: 21,
+  // Mismo umbral que inactiveDays: es el número que el propio panel ya usa
+  // para "esto lleva demasiado sin novedad" — no se inventa uno nuevo solo
+  // para entrenamiento.
+  noTrainingDays: 14,
+  noTrainingCriticalDays: 21,
   // Un check-in vencido más de 2 ciclos completos ya no es un olvido.
   checkinOverdueCriticalCycles: 2,
 };
@@ -316,6 +321,56 @@ function detectCheckinOverdue({ checkin, now, clientName }) {
   };
 }
 
+// Auditoría 2026-09 — hueco real encontrado al depurar el badge de estado:
+// existía detectLowAdherence para NUTRICIÓN pero nada equivalente para
+// entrenamiento, así que un cliente con rutina asignada y 0 sesiones
+// completadas nunca generaba alerta (ni siquiera "inactivo", que excluye
+// entrenamiento a propósito — ver comentario de detectInactivity).
+//
+// A propósito NO es un % contra el plan (a diferencia de detectLowAdherence):
+// calcular "sesiones planificadas" exige el recorrido Table -> splits ->
+// workouts con autopopulate completo, justo el coste que este job evita para
+// toda la cartera cada noche (ver loadTrainerContext en coach-alert-service.js).
+// `workoutDates` sí es barato — ya se carga en lote para el motor de reglas
+// (Fase 6) — así que la señal se queda en algo más tosco pero honesto: "¿ha
+// completado ALGUNA sesión en los últimos N días?", no "¿cuántas de las que
+// tocaban?". Esa pregunta más precisa la sigue respondiendo Resumen, al
+// momento, con el dato ya cargado para esa ficha (ver clientStatus).
+function detectNoTrainingActivity({ hasRoutine, workoutDates, lastActivityAt, now, clientName }) {
+  if (!hasRoutine) return null;
+
+  const mostRecentSession = (workoutDates || []).reduce(
+    (latest, date) => (!latest || new Date(date) > latest ? new Date(date) : latest),
+    null
+  );
+
+  // Sin NINGUNA sesión nunca: solo es una señal fiable si el cliente lleva
+  // tiempo de verdad dando señales de vida por otro lado (lastActivityAt, ya
+  // calculado a partir de check-ins/medidas/dieta). Sin este respaldo, una
+  // rutina asignada hace 5 minutos dispararía "high" al momento — mismo
+  // motivo por el que detectInactivity nunca asume el peor caso cuando no
+  // tiene con qué compararlo.
+  const reference = mostRecentSession || (lastActivityAt ? new Date(lastActivityAt) : null);
+  if (!reference) return null;
+
+  const days = daysBetween(reference, now);
+  if (days < SIGNAL_THRESHOLDS.noTrainingDays) return null;
+
+  const isCritical = days >= SIGNAL_THRESHOLDS.noTrainingCriticalDays;
+  return {
+    type: "no_training_activity",
+    priority: isCritical ? "high" : "medium",
+    reason: mostRecentSession
+      ? `${clientName} tiene rutina asignada pero no ha completado ninguna sesión en ${days} días.`
+      : `${clientName} tiene rutina asignada y no ha completado ninguna sesión registrada (sin actividad desde hace ${days} días).`,
+    context: {
+      metric: "training_sessions",
+      daysSinceLastSession: days,
+      lastSessionAt: mostRecentSession,
+    },
+  };
+}
+
 function detectPendingReview({ relationStatus, clientName }) {
   if (relationStatus !== "en_revision") return null;
   return {
@@ -342,6 +397,7 @@ function buildSignalsForClient(input) {
     detectStagnation(base),
     detectSharpMeasurementChange(base),
     detectInactivity(base),
+    detectNoTrainingActivity(base),
   ].filter(Boolean);
 }
 
@@ -356,6 +412,7 @@ module.exports = {
   detectSharpMeasurementChange,
   detectLowAdherence,
   detectInactivity,
+  detectNoTrainingActivity,
   detectCheckinOverdue,
   detectPendingReview,
 };

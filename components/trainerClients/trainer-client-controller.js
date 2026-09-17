@@ -291,6 +291,29 @@ const controller = {
     return res.send(intake);
   },
 
+  // PUT /trainer/clients/:clientId/intake — el profesional corrige el
+  // cuestionario del cliente (mismo control de acceso que getClientIntake).
+  // A propósito NO pasa por trainerClientService.submitIntake: ese método
+  // exige status "cuestionario_pendiente" y además reescribe preferencias
+  // nutricionales/perfil de User — aquí solo se corrigen los campos propios
+  // de ClientIntake, sin tocar el estado de la relación ni disparar de nuevo
+  // esos efectos secundarios pensados para el envío inicial del cliente.
+  async updateClientIntake(req, res) {
+    const trainerId = req.auth.userId;
+    const clientId = req.params.clientId;
+    const relations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
+      "en_revision",
+      "active",
+    ]);
+    if (!relations.length) {
+      return res.status(403).send({
+        message: "No tienes una relación con este cliente que permita editar su cuestionario",
+      });
+    }
+    const intake = await clientIntakeDao.upsert(trainerId, clientId, req.body || {});
+    return res.send(intake);
+  },
+
   // POST /trainer/clients/:clientId/confirm — el profesional confirma
   // explícitamente al cliente tras revisar su cuestionario.
   async confirmClient(req, res) {

@@ -4,6 +4,7 @@ const dietDaysUtil = require("./diet-days-util");
 const dietDaySchema = require("./diet-days-schema");
 const planResolver = require("../planAssignments/plan-resolver");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
+const { daysInRange, addDaysToIsoDate } = require("../util/date-util");
 
 // Fase 9 — aplica un `resolved` de plan-resolver.js#resolvePlanForDate
 // ({slot: {alternatives:[...]}}) sobre un DietDay YA EXISTENTE, comida a
@@ -196,4 +197,74 @@ async function resyncPlannedDays(clientId, from, to = null) {
   return resynced;
 }
 
-module.exports = { resolveOwnedDietDay, resolveOwnedMealById, applyResolvedPlanToDietDay, resyncPlannedDays };
+// F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
+// YA EXISTEN como documento; la resolución de un plan es LAZY
+// (resolveOwnedDietDay materializa un día la primera vez que alguien lo
+// abre — el cliente en su app, o el entrenador al mirar esa fecha desde la
+// ficha). La inmensa mayoría de los días de una ventana de 30/90 días
+// nunca se han "abierto" por nadie, así que adherencia/cumplimiento/
+// seguimiento salían casi vacíos para un plan recién aplicado aunque SÍ lo
+// cubriera — bug real, no "sin datos". Para cada fecha del rango sin
+// DietDay real, resuelve el plan sobre la marcha (resolvePlanForDate, sin
+// escribir nada en BD — un GET no debe materializar 90 documentos) y
+// construye una comida "sintética" con lo pautado (primera alternativa de
+// cada slot, mismo criterio que el total de macros del builder). Sin
+// datos de consumo real —nada se ha marcado porque nadie ha abierto ese
+// día—, pero eso es justo lo correcto: hasPlan=true, 0% consumido.
+//
+// Extraída de trainer-client-data-controller.js (F20-undecies) para
+// reutilizarla también en client-data-loader.js (Resumen de la ficha,
+// Auditoría 2026-09): el mismo bug de materialización que ya se arregló
+// para "Seguimiento" seguía vivo en el cálculo de adherencia del Resumen,
+// que leía los DietDay materializados directamente sin pasar por aquí.
+async function getTrackingDaysForClient(clientId, dietId, from, to) {
+  const materialized = dietId
+    ? await dietDaysService.getFullyPopulatedDietDaysForUser(dietId, from, to)
+    : [];
+  const materializedDates = new Set(materialized.map((d) => d.date));
+
+  const days = [...materialized];
+  const totalDays = daysInRange(from, to);
+  for (let i = 0; i < totalDays; i++) {
+    const date = addDaysToIsoDate(from, i);
+    if (materializedDates.has(date)) continue;
+
+    let result;
+    try {
+      result = await planResolver.resolvePlanForDate(clientId, date);
+    } catch (e) {
+      continue;
+    }
+    if (!result) continue;
+
+    const meals = Object.values(result.resolved || {})
+      .map((slot) => slot.alternatives?.[0])
+      .filter((alt) => alt && ((alt.customProducts || []).length || (alt.customRecipes || []).length))
+      .map((alt) => ({
+        completed: false,
+        customProducts: (alt.customProducts || []).map((cp) => ({
+          ...(typeof cp.toObject === "function" ? cp.toObject() : cp),
+          assignedByTrainerId: result.trainerId,
+          consumed: false,
+        })),
+        customRecipes: (alt.customRecipes || []).map((cr) => ({
+          ...(typeof cr.toObject === "function" ? cr.toObject() : cr),
+          assignedByTrainerId: result.trainerId,
+          consumed: false,
+        })),
+      }));
+
+    if (meals.length) days.push({ date, meals });
+  }
+
+  days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return days;
+}
+
+module.exports = {
+  resolveOwnedDietDay,
+  resolveOwnedMealById,
+  applyResolvedPlanToDietDay,
+  resyncPlannedDays,
+  getTrackingDaysForClient,
+};

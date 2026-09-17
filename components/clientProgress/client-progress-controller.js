@@ -10,6 +10,7 @@ const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 const { taskLabel } = require("../trainerTasks/task-label");
 const coachAlertDao = require("../coachAlerts/coach-alert-dao");
 const tableDao = require("../tables/table-dao");
+const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
 const {
   buildWeeklyTraining,
   buildPersonalRecords,
@@ -99,7 +100,7 @@ function diasActivos(task, periodDays, now) {
   return Math.max(0, Math.min(periodDays, desdeCreacion));
 }
 
-function buildAdherenceInput(data, periodDays, now = new Date()) {
+function buildAdherenceInput(data, periodDays, now = new Date(), activePlan = null) {
   // Solo cuentan las marcas POSTERIORES a la creación del hábito. Sin este
   // filtro un hábito creado ayer podía mostrar "16 de 2 días" si arrastraba
   // marcas antiguas, y el porcentaje quedaba topado a 100 escondiendo que
@@ -116,10 +117,20 @@ function buildAdherenceInput(data, periodDays, now = new Date()) {
   }
 
   return {
-    nutrition: dietDaysNutritionUtil.computeRangeAdherence(data.dietDays, periodDays),
+    nutrition: {
+      // Auditoría 2026-09 — "sin datos suficientes" salía igual con y sin
+      // plan asignado (getTrackingDaysForClient ya resuelve los días sin
+      // materializar, pero un plan recién asignado o sin contenido sigue
+      // pudiendo tener <3 días con datos). hasActivePlan deja que
+      // nutritionDimension distinga "no hay plan" de "hay plan, aún sin
+      // datos" en vez de decir lo mismo para los dos casos.
+      ...dietDaysNutritionUtil.computeRangeAdherence(data.dietDays, periodDays),
+      hasActivePlan: !!activePlan,
+    },
     training: {
       completedSessions: data.planProgress.completedTotal,
       plannedTotal: data.planProgress.plannedTotal,
+      scheduledDays: data.planProgress.scheduledDays,
     },
     habits: {
       habits: data.activeTasks.map((task) => ({
@@ -171,16 +182,28 @@ module.exports = {
     const data = await loadClientWindow(trainerId, clientId, { from, to });
     if (!data) return res.status(404).send({ message: "Cliente no encontrado" });
 
-    const [alerts, activePlan, routine] = await Promise.all([
+    const [alerts, activePlan, currentRoutinePhase] = await Promise.all([
       coachAlertDao.listForClient(trainerId, clientId, { status: "open" }),
       planAssignmentService.getActiveForClient(clientId),
-      data.client.tableInUse
-        ? Table.findById(data.client.tableInUse).select("name").lean()
-        : null,
+      routineAssignmentDao.findCoveringDate(clientId, to),
     ]);
 
+    // Antes se leía data.client.tableInUse: un puntero CACHEADO que solo se
+    // refresca al abrir la pestaña de Tablas (ver
+    // routine-assignment-service.js#syncTableInUseIfDue, que aquí no se
+    // llama) — podía quedar desfasado o vacío aunque hubiera una fase
+    // vigente de verdad, mostrando en Resumen una rutina distinta (o
+    // ninguna) de la que ya calculan por fecha tanto la adherencia de
+    // entrenamiento de aquí mismo (loadTrainingWindow#findCoveringDate)
+    // como la cabecera del frontend (client-detail.page.ts#currentRoutinePhase).
+    // Con findCoveringDate también aquí, las tres fuentes leen lo mismo.
+    const routineTable = currentRoutinePhase
+      ? await Table.findById(currentRoutinePhase.tableId).select("name").lean()
+      : null;
+    const routine = routineTable ? { _id: routineTable._id, name: routineTable.name } : null;
+
     const weeks = SUMMARY_WINDOW_DAYS / 7;
-    const adherence = computeAdherence(buildAdherenceInput(data, SUMMARY_WINDOW_DAYS));
+    const adherence = computeAdherence(buildAdherenceInput(data, SUMMARY_WINDOW_DAYS, new Date(), activePlan));
 
     // La tendencia de peso del resumen se calcula sobre la MISMA serie
     // semanal que sirve la pestaña de comparativas — no con una segunda

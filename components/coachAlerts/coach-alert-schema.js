@@ -40,6 +40,13 @@ const CoachAlertSchema = new Schema(
         "measurement_change", // variación brusca de un perímetro
         "low_adherence", // adherencia nutricional por debajo del umbral
         "inactive_client", // sin registrar nada (check-in/medida/dieta) en N días
+        // Auditoría 2026-09 — hueco real: había alerta de baja adherencia de
+        // NUTRICIÓN pero ninguna de entrenamiento, y detectInactivity excluye
+        // a propósito el entrenamiento (recorrer Table->splits->workouts es
+        // caro para 30 clientes cada noche). Esta usa dato YA cargado en lote
+        // para el motor de reglas (workoutDates) — coarse a propósito: cuenta
+        // sesiones completadas, no % contra el plan.
+        "no_training_activity", // rutina asignada, cero sesiones completadas en N días
         // Fase 3 — generada por una regla del propio coach. Un único valor
         // para todas: lo que la distingue no es un tipo del sistema sino
         // QUÉ regla la creó, y eso ya vive en `ruleId`. Añadir un tipo por

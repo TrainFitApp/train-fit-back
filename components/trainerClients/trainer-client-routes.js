@@ -22,6 +22,7 @@ router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByT
 // --- TAREA 3: cuestionario inicial — el profesional revisa/confirma ANTES
 // de que la relación esté "active", por eso NO llevan requireActiveClient.
 router.getAsync("/clients/:clientId/intake", auth(["trainer"]), controller.getClientIntake);
+router.putAsync("/clients/:clientId/intake", auth(["trainer"]), controller.updateClientIntake);
 router.postAsync("/clients/:clientId/confirm", auth(["trainer"]), controller.confirmClient);
 
 // --- Datos del cliente (F09/F10/F11/F13) ---
@@ -116,7 +117,13 @@ router.patchAsync(
   "/clients/:clientId/notes/:noteId",
   auth(["trainer"]),
   requireActiveClient(),
-  dataController.setNotePinned
+  dataController.updateNote
+);
+router.deleteAsync(
+  "/clients/:clientId/notes/:noteId",
+  auth(["trainer"]),
+  requireActiveClient(),
+  dataController.deleteNote
 );
 router.getAsync(
   "/clients/:clientId/adherence",

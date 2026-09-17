@@ -1,7 +1,7 @@
 const userSchema = require("../users/schema");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const checkinDao = require("../trainerCheckins/checkin-dao");
-const dietDaysDao = require("../dietDays/diet-days-dao");
+const { getTrackingDaysForClient } = require("../dietDays/diet-day-resolver");
 const tableDao = require("../tables/table-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
@@ -32,7 +32,7 @@ const { todayIsoDate } = require("../util/date-util");
 async function loadTrainingWindow(clientId, to) {
   const periodEndClamped = to < todayIsoDate() ? to : todayIsoDate();
   const currentPhase = await routineAssignmentDao.findCoveringDate(clientId, periodEndClamped);
-  if (!currentPhase) return { plannedTotal: 0, completedSessions: 0 };
+  if (!currentPhase) return { plannedTotal: 0, completedSessions: 0, scheduledDays: 0 };
 
   const splitsByTableId = await tableDao.getSplitsForTables([String(currentPhase.tableId)]);
   return computeWindowedTrainingProgress(
@@ -77,8 +77,15 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, from, to),
     checkinDao.listResponses(trainerId, clientId),
     checkinDao.getAppliedConfig(trainerId, clientId),
+    // Auditoría 2026-09 — antes leía SOLO DietDay ya materializados
+    // (getFullyPopulatedDietDaysForUser), igual que el bug ya arreglado en
+    // Seguimiento (F20-undecies, ver diet-day-resolver.js): un plan recién
+    // asignado que nadie ha abierto todavía salía "sin datos suficientes"
+    // pese a cubrir días reales de la ventana. getTrackingDaysForClient
+    // resuelve además los días sin materializar (sin escribir en BD), dando
+    // hasPlan=true/0% consumido en vez de excluirlos del cálculo.
     client._id
-      ? dietDaysDao.getFullyPopulatedDietDaysForUser(client._id, from, to)
+      ? getTrackingDaysForClient(clientId, client._id, from, to)
       : [],
     tableDao.listCompletedWorkoutDates(
       clientId,
@@ -113,7 +120,11 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     checkinConfig,
     dietDays,
     workoutDates,
-    planProgress: { plannedTotal: trainingWindow.plannedTotal, completedTotal: trainingWindow.completedSessions },
+    planProgress: {
+      plannedTotal: trainingWindow.plannedTotal,
+      completedTotal: trainingWindow.completedSessions,
+      scheduledDays: trainingWindow.scheduledDays,
+    },
     activeTasks,
     taskCompletions,
   };

@@ -9,6 +9,7 @@ const {
   detectSharpMeasurementChange,
   detectLowAdherence,
   detectInactivity,
+  detectNoTrainingActivity,
   detectCheckinOverdue,
   detectPendingReview,
 } = require("./coach-signals-service");
@@ -279,6 +280,90 @@ test("detectInactivity", async (t) => {
 
   await t.test("sin ninguna actividad conocida -> sin alerta (no se inventa antigüedad)", () => {
     assert.equal(detectInactivity({ clientName: "Marc", now: NOW, lastActivityAt: null }), null);
+  });
+});
+
+test("detectNoTrainingActivity", async (t) => {
+  await t.test("sin rutina asignada -> sin alerta, aunque no haya sesiones", () => {
+    assert.equal(
+      detectNoTrainingActivity({
+        clientName: "Marc",
+        now: NOW,
+        hasRoutine: false,
+        workoutDates: [],
+        lastActivityAt: new Date(NOW.getTime() - 30 * 86400000),
+      }),
+      null
+    );
+  });
+
+  await t.test("rutina asignada, última sesión hace 14 días -> alerta media", () => {
+    const signal = detectNoTrainingActivity({
+      clientName: "Marc",
+      now: NOW,
+      hasRoutine: true,
+      workoutDates: [isoDaysAgo(14), isoDaysAgo(20)],
+      lastActivityAt: NOW,
+    });
+    assert.ok(signal);
+    assert.equal(signal.priority, "medium");
+    assert.match(signal.reason, /no ha completado ninguna sesión en 14 días/);
+  });
+
+  await t.test("21 días o más sin sesión -> prioridad alta", () => {
+    assert.equal(
+      detectNoTrainingActivity({
+        clientName: "Marc",
+        now: NOW,
+        hasRoutine: true,
+        workoutDates: [isoDaysAgo(25)],
+        lastActivityAt: NOW,
+      }).priority,
+      "high"
+    );
+  });
+
+  await t.test("sesión reciente -> sin alerta", () => {
+    assert.equal(
+      detectNoTrainingActivity({
+        clientName: "Marc",
+        now: NOW,
+        hasRoutine: true,
+        workoutDates: [isoDaysAgo(2)],
+        lastActivityAt: NOW,
+      }),
+      null
+    );
+  });
+
+  // Caso real que motivó esta prueba: rutina asignada hace minutos, cero
+  // sesiones porque no ha habido tiempo de hacer ninguna todavía. Sin
+  // lastActivityAt que respalde una antigüedad real, no se asume el peor
+  // caso (mismo criterio que detectInactivity con lastActivityAt: null).
+  await t.test("rutina recién asignada, sin sesiones ni otra actividad -> sin alerta", () => {
+    assert.equal(
+      detectNoTrainingActivity({
+        clientName: "Marc",
+        now: NOW,
+        hasRoutine: true,
+        workoutDates: [],
+        lastActivityAt: null,
+      }),
+      null
+    );
+  });
+
+  await t.test("nunca ha entrenado, pero SÍ hay actividad de sobra en otros lados -> alerta", () => {
+    const signal = detectNoTrainingActivity({
+      clientName: "Marc",
+      now: NOW,
+      hasRoutine: true,
+      workoutDates: [],
+      lastActivityAt: new Date(NOW.getTime() - 25 * 86400000),
+    });
+    assert.ok(signal);
+    assert.equal(signal.priority, "high");
+    assert.match(signal.reason, /no ha completado ninguna sesión registrada/);
   });
 });
 

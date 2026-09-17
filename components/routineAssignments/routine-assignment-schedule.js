@@ -59,6 +59,16 @@ function pickCurrentPhase(phases, today) {
 function computeWindowedTrainingProgress(phasesAsc, splitsByTableId, periodStart, periodEndClamped) {
   let plannedTotal = 0;
   let completedSessions = 0;
+  // Auditoría 2026-09 — total de días proyectados EN LA VENTANA, contando
+  // también los de descanso planificado (a diferencia de plannedTotal, que
+  // los excluye a propósito). Sin esto, adherence-service.js no puede
+  // distinguir "no hay ninguna fase/tabla" (scheduledDays 0, de verdad
+  // "sin_plan") de "hay fase y proyección, pero en esta ventana tan corta
+  // solo tocaba descanso" (scheduledDays > 0, plannedTotal 0) — antes las
+  // dos caían en el mismo "Sin fase en curso", que para el segundo caso es
+  // sencillamente falso (visto en BD: una fase que empieza HOY, cuyo primer
+  // día de rutina es de descanso, salía como "sin fase" en cuanto empezaba).
+  let scheduledDays = 0;
 
   (phasesAsc || []).forEach((phase, index) => {
     const next = phasesAsc[index + 1];
@@ -70,6 +80,7 @@ function computeWindowedTrainingProgress(phasesAsc, splitsByTableId, periodStart
     const splits = splitsByTableId.get(String(phase.tableId))?.splits || [];
 
     const projected = projectionInRange(phase.startDate, splits, lower, upper);
+    scheduledDays += projected.length;
     plannedTotal += projected.filter((row) => !row.isPlannedRestDay).length;
 
     // Conteo por cantidad, no por emparejamiento exacto fecha-a-fecha con la
@@ -84,7 +95,7 @@ function computeWindowedTrainingProgress(phasesAsc, splitsByTableId, periodStart
     }).length;
   });
 
-  return { plannedTotal, completedSessions };
+  return { plannedTotal, completedSessions, scheduledDays };
 }
 
 module.exports = { sortPhasesAscending, computeWindowedTrainingProgress, pickCurrentPhase };

@@ -133,7 +133,7 @@ function diasActivosDeTarea(task, periodDays, now) {
 // consulta extra por cliente.
 function computeCurrentPhaseTraining(phases, splitsByTableId, today) {
   const currentPhase = pickCurrentPhase(phases, today);
-  if (!currentPhase) return { plannedTotal: 0, completedSessions: 0 };
+  if (!currentPhase) return { plannedTotal: 0, completedSessions: 0, scheduledDays: 0 };
 
   return computeWindowedTrainingProgress(
     [currentPhase],

@@ -1,13 +1,12 @@
 const userSchema = require("../users/schema");
 const tableModel = require("../tables/table-service");
 const anthropometryService = require("../anthropometry/anthropometry-service");
-const dietDaysService = require("../dietDays/diet-days-service");
 const dietDaysUtil = require("../dietDays/diet-days-util");
 const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
 const trainerNoteDao = require("../trainerNotes/trainer-note-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
-const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
+const { resolveOwnedDietDay, getTrackingDaysForClient } = require("../dietDays/diet-day-resolver");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
@@ -34,63 +33,10 @@ const ADHERENCE_TOLERANCE = 0.15;
 // denominador salga corrido.
 const { todayIsoDate, addDaysToIsoDate, daysInRange } = require("../util/date-util");
 
-// F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
-// YA EXISTEN como documento; la resolución de un plan es LAZY
-// (resolveOwnedDietDay materializa un día la primera vez que alguien lo
-// abre — el cliente en su app, o el entrenador al mirar esa fecha desde la
-// ficha). La inmensa mayoría de los días de una ventana de 30/90 días
-// nunca se han "abierto" por nadie, así que adherencia/cumplimiento/
-// seguimiento salían casi vacíos para un plan recién aplicado aunque SÍ lo
-// cubriera — bug real, no "sin datos". Para cada fecha del rango sin
-// DietDay real, resuelve el plan sobre la marcha (resolvePlanForDate, sin
-// escribir nada en BD — un GET no debe materializar 90 documentos) y
-// construye una comida "sintética" con lo pautado (primera alternativa de
-// cada slot, mismo criterio que el total de macros del builder). Sin
-// datos de consumo real —nada se ha marcado porque nadie ha abierto ese
-// día—, pero eso es justo lo correcto: hasPlan=true, 0% consumido.
-async function getTrackingDaysForClient(clientId, dietId, from, to) {
-  const materialized = dietId
-    ? await dietDaysService.getFullyPopulatedDietDaysForUser(dietId, from, to)
-    : [];
-  const materializedDates = new Set(materialized.map((d) => d.date));
-
-  const days = [...materialized];
-  const totalDays = daysInRange(from, to);
-  for (let i = 0; i < totalDays; i++) {
-    const date = addDaysToIsoDate(from, i);
-    if (materializedDates.has(date)) continue;
-
-    let result;
-    try {
-      result = await planResolver.resolvePlanForDate(clientId, date);
-    } catch (e) {
-      continue;
-    }
-    if (!result) continue;
-
-    const meals = Object.values(result.resolved || {})
-      .map((slot) => slot.alternatives?.[0])
-      .filter((alt) => alt && ((alt.customProducts || []).length || (alt.customRecipes || []).length))
-      .map((alt) => ({
-        completed: false,
-        customProducts: (alt.customProducts || []).map((cp) => ({
-          ...(typeof cp.toObject === "function" ? cp.toObject() : cp),
-          assignedByTrainerId: result.trainerId,
-          consumed: false,
-        })),
-        customRecipes: (alt.customRecipes || []).map((cr) => ({
-          ...(typeof cr.toObject === "function" ? cr.toObject() : cr),
-          assignedByTrainerId: result.trainerId,
-          consumed: false,
-        })),
-      }));
-
-    if (meals.length) days.push({ date, meals });
-  }
-
-  days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  return days;
-}
+// getTrackingDaysForClient vive ahora en diet-day-resolver.js (Auditoría
+// 2026-09) — client-data-loader.js (Resumen de la ficha) necesitaba la misma
+// resolución de días no materializados y una función de controller no era un
+// sitio reutilizable desde otro componente.
 
 // MVP-trainers F30 — orquesta la MISMA operación individual (F11/F12/F13) sobre
 // varios clientes destino, cada uno con su propia comprobación de relación
@@ -407,16 +353,36 @@ module.exports = {
     return res.status(201).send(note);
   },
 
-  // PATCH /trainer/clients/:clientId/notes/:noteId — F19, requireActiveClient() sin scope
-  async setNotePinned(req, res) {
-    const note = await trainerNoteDao.setPinned(
-      req.auth.userId,
-      req.params.clientId,
-      req.params.noteId,
-      req.body?.pinned
-    );
+  // PATCH /trainer/clients/:clientId/notes/:noteId — F19, requireActiveClient()
+  // sin scope. Un solo endpoint para fijar/desfijar y/o corregir el texto —
+  // el body trae solo lo que cambia (pinned y/o text).
+  async updateNote(req, res) {
+    const { text, pinned } = req.body || {};
+    if (text !== undefined) {
+      const trimmed = String(text).trim();
+      if (!trimmed) {
+        return res.status(400).send({ message: "text no puede estar vacío" });
+      }
+      if (trimmed.length > 2000) {
+        return res.status(400).send({ message: "text no puede superar los 2000 caracteres" });
+      }
+    }
+    if (pinned !== undefined && typeof pinned !== "boolean") {
+      return res.status(400).send({ message: "pinned debe ser true o false" });
+    }
+    const note = await trainerNoteDao.update(req.auth.userId, req.params.clientId, req.params.noteId, {
+      text,
+      pinned,
+    });
     if (!note) return res.status(404).send({ message: "Nota no encontrada" });
     return res.send(note);
+  },
+
+  // DELETE /trainer/clients/:clientId/notes/:noteId — F19, requireActiveClient() sin scope
+  async deleteNote(req, res) {
+    const note = await trainerNoteDao.remove(req.auth.userId, req.params.clientId, req.params.noteId);
+    if (!note) return res.status(404).send({ message: "Nota no encontrada" });
+    return res.send({ success: true });
   },
 
   // GET /trainer/clients/:clientId/adherence?from=&to= — F20, requireActiveClient("nutrition")

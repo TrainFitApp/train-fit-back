@@ -34,7 +34,18 @@ function pct(part, total) {
  */
 function nutritionDimension(rangeAdherence) {
   if (!rangeAdherence || rangeAdherence.daysWithData < MIN_DAYS_FOR_SIGNAL) {
-    return { applicable: false, reason: "sin_datos" };
+    // Auditoría 2026-09 — bug real visto en BD: un cliente CON plan de dieta
+    // activo (recién asignado, sin contenido configurado, o modo "choice" sin
+    // elegir todavía) decía "sin_datos" exactamente igual que un cliente SIN
+    // ningún plan. El frontend apañaba la diferencia añadiendo "— plan
+    // asignado: X" al texto, pero "sin datos suficientes" junto a un plan
+    // real leía como contradicción (mismo tipo de bug que sin_plan/
+    // sin_sesiones_en_ventana en trainingDimension). hasActivePlan distingue
+    // los dos casos de verdad.
+    return {
+      applicable: false,
+      reason: rangeAdherence?.hasActivePlan ? "sin_datos" : "sin_plan_nutricion",
+    };
   }
   return {
     applicable: true,
@@ -57,9 +68,18 @@ function nutritionDimension(rangeAdherence) {
  * Ahora se compara contra el plan entero: 3 de 4 sesiones hechas es 75%,
  * dure lo que dure. Sin plan asignado la dimensión no aplica.
  */
-function trainingDimension({ completedSessions, plannedTotal }) {
-  if (!plannedTotal) {
+function trainingDimension({ completedSessions, plannedTotal, scheduledDays }) {
+  // Auditoría 2026-09 — scheduledDays cuenta TODOS los días proyectados de
+  // la ventana (entreno + descanso); plannedTotal excluye los de descanso a
+  // propósito. Sin scheduledDays no se podía distinguir "no hay ninguna
+  // fase/tabla" de "hay fase, pero en esta ventana tan corta solo tocaba
+  // descanso" — visto en BD: una fase que empieza HOY cuyo primer día es de
+  // descanso planificado salía como "sin fase en curso", siendo mentira.
+  if (!scheduledDays) {
     return { applicable: false, reason: "sin_plan" };
+  }
+  if (!plannedTotal) {
+    return { applicable: false, reason: "sin_sesiones_en_ventana" };
   }
   return {
     applicable: true,
