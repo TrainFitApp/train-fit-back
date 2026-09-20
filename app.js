@@ -26,35 +26,30 @@ app.use(express.urlencoded({ extended: false, limit: "50mb" }));
 app.use(cookieParser()); // Parse cookies for refresh token
 
 const cors = require("cors");
-const allowedOrigins = [
-  "capacitor://localhost",
-  "ionic://localhost",
-  "https://localhost",
-  "http://localhost",
-  "http://localhost:8100",
-  "http://localhost:8101",
-];
+const { isOriginAllowed } = require("./components/util/cors-origin");
+
 const useCredentials = true;
 
-// CORS_OPEN=1 (ver npm run serve:open) refleja CUALQUIER origen — para
-// developeo local cuando la IP de turno (simulador/dispositivo fisico/otro
-// puerto de livereload) no vale la pena mantener en el allowlist a mano.
-// Nunca activo por defecto ("npm start"/"npm run serve" siguen con el
-// allowlist normal) — esto es un modo explicito, no el comportamiento base.
+// Los permisos anchos de CORS se piden explícitamente al arrancar: los
+// scripts de desarrollo ponen NODE_ENV=development (ver package.json) y el
+// servidor arranca `./bin/www` a secas, así que en producción no hay nada
+// que desactivar ni recordar (ver cors-origin.js).
+const isDevelopment = process.env.NODE_ENV === "development";
+
+// CORS_OPEN=1 (ver npm run serve:open) refleja CUALQUIER origen, localhost o
+// no — es para cuando el origen es una IP de la red local (simulador o
+// dispositivo físico con livereload). Para otro puerto de `ionic serve` ya no
+// hace falta: cualquier puerto local vale con `npm run serve`.
 const corsFullyOpen = process.env.CORS_OPEN === "1";
-if (corsFullyOpen) {
-  console.warn(
-    "[CORS] CORS_OPEN=1 — cualquier origen aceptado. Modo dev, no usar en produccion."
-  );
+if (corsFullyOpen && isDevelopment) {
+  console.warn("[CORS] CORS_OPEN=1 — cualquier origen aceptado. Modo dev, no usar en produccion.");
 }
 
 const corsOptions = {
   origin(origin, callback) {
-    if (corsFullyOpen) return callback(null, true);
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    // TEMPORAL: origen exacto que se esta rechazando (quitar en cuanto se
-    // resuelva el problema del livereload en dispositivo fisico).
+    if (isOriginAllowed(origin, { isDevelopment, fullyOpen: corsFullyOpen })) {
+      return callback(null, true);
+    }
     console.error("[CORS] Rechazado origin:", JSON.stringify(origin));
     callback(new Error("Not allowed by CORS"));
   },

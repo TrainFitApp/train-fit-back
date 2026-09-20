@@ -5,12 +5,31 @@ module.exports = {
     return Supplement.find({ trainerId, clientId }).sort({ createdAt: 1 }).lean();
   },
 
-  // Los suplementos que ve EL CLIENTE: de todos sus profesionales, y solo
-  // los activos. Sin trainerId a propósito — el cliente no distingue quién
-  // se lo pautó cuando va a tomárselo. El controller filtra por relación
-  // activa, mismo criterio que trainer-task-dao#listActiveForClient.
-  async listActiveForClient(clientId) {
-    return Supplement.find({ clientId, active: true }).sort({ createdAt: 1 }).lean();
+  // Los suplementos que ve EL CLIENTE: de todos sus profesionales, activos
+  // y VIGENTES en la fecha pedida (hoy por defecto). Sin trainerId a
+  // propósito — el cliente no distingue quién se lo pautó cuando va a
+  // tomárselo. El controller filtra por relación activa, mismo criterio que
+  // trainer-task-dao#listActiveForClient.
+  async listActiveForClient(clientId, date = null) {
+    const filter = { clientId, active: true };
+    if (date) {
+      filter.startDate = { $lte: date };
+      filter.$or = [{ endDate: null }, { endDate: { $gte: date } }];
+    }
+    return Supplement.find(filter).sort({ createdAt: 1 }).lean();
+  },
+
+  // Los que se solapan con un rango de fechas — para pintarlos en el
+  // calendario del entrenador y del cliente.
+  async listInRange(clientId, from, to) {
+    return Supplement.find({
+      clientId,
+      active: true,
+      startDate: { $lte: to },
+      $or: [{ endDate: null }, { endDate: { $gte: from } }],
+    })
+      .sort({ startDate: 1 })
+      .lean();
   },
 
   async create(trainerId, clientId, data) {

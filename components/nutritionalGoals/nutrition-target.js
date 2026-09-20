@@ -1,5 +1,5 @@
 // Sugerencias de dieta — el objetivo calórico y de macros de un cliente, para
-// rankear plantillas contra él y para calcular la progresión ciclo a ciclo.
+// rankear plantillas contra él y para calcular la progresión revisión a revisión.
 //
 // PORT del cálculo que ya hace la app del cliente (shared-core
 // user.service.ts#setUserMacrosAndKcal): Mifflin-St Jeor + factor de gasto +
@@ -95,7 +95,7 @@ function computeNutritionTarget(params) {
 
 /**
  * Lo mismo que computeNutritionTarget, pero enseñando la cuenta: cada paso
- * intermedio que el entrenador ve en el resumen de ciclo ("cómo se calculó
+ * intermedio que el entrenador ve en el resumen de la revisión ("cómo se calculó
  * la necesidad"). Es LA implementación — computeNutritionTarget solo se
  * queda con el resultado, así los dos no pueden desincronizarse.
  *

@@ -39,9 +39,9 @@ async function main() {
     ok("trainer/client/product de prueba creados");
 
     // --- 1) createDirectPlan crea contenido propio, sin plantilla de origen ---
-    const days = [
+    const menus = [
       {
-        dayLabel: "Día 1",
+        name: "Menú 1",
         meals: [
           {
             slot: "Desayuno",
@@ -57,9 +57,7 @@ async function main() {
       trainerId: created.trainer._id,
       clientId: created.client._id,
       name: `Dieta directa ${runId}`,
-      days,
-      mode: "sequential",
-      dayPatterns: [],
+      menus,
       startDate: "2026-01-01",
       endMode: "fixedDate",
       fixedEndDate: "2026-01-31",
@@ -73,7 +71,7 @@ async function main() {
     assert.equal(assignment1.endDate, "2026-01-31");
 
     const fetched = await dietTemplateSchema.findById(assignment1._id);
-    assert.equal(fetched.days[0].meals[0].alternatives[0].customProducts[0].product.name, `Producto directo ${runId}`);
+    assert.equal(fetched.menus[0].meals[0].alternatives[0].customProducts[0].product.name, `Producto directo ${runId}`);
     ok("createDirectPlan() crea contenido propio con sourceTemplateId: null");
 
     // --- 2) nunca aparece en listByTrainer ---
@@ -88,9 +86,7 @@ async function main() {
           trainerId: created.trainer._id,
           clientId: created.client._id,
           name: "Solapada",
-          days: [],
-          mode: "sequential",
-          dayPatterns: [],
+          menus: [],
           startDate: "2026-01-15",
           endMode: "indefinite",
         }),
@@ -104,9 +100,7 @@ async function main() {
       trainerId: created.trainer._id,
       clientId: created.client._id,
       name: `Dieta directa fase 2 ${runId}`,
-      days: [],
-      mode: "sequential",
-      dayPatterns: [],
+      menus: [],
       startDate: "2026-02-01",
       endMode: "indefinite",
     });

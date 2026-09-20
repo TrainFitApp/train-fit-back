@@ -1127,7 +1127,7 @@ module.exports = {
     );
   },
 
-  // Ciclos por contenido — "salir del menú" en un plan choice: fuera lo
+  // "Salir del menú": fuera lo
   // PAUTADO (assignedByTrainerId) y sus marcas; lo que el cliente añadió por
   // su cuenta se queda. Es el espejo de deleteMealCustomProducts.
   async removePlannedItems(id) {
@@ -1156,7 +1156,6 @@ module.exports = {
           customProducts: keptProducts,
           customRecipes: keptRecipes,
           completed: false,
-          wasOverridden: false,
           assignedByTrainerId: null,
         },
       },

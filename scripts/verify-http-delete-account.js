@@ -51,7 +51,7 @@ async function main() {
 
   const template = await workoutSchema.create({ trainerId: trainer._id, name: "Plantilla a borrar" });
   const snippet = await mealSchema.create({ trainerId: trainer._id, name: "Snippet a borrar" });
-  const dietTpl = await dietTemplateSchema.create({ trainerId: trainer._id, name: "Dieta a borrar", days: [] });
+  const dietTpl = await dietTemplateSchema.create({ trainerId: trainer._id, name: "Dieta a borrar", menus: [] });
   ok("trainer con contenido en 4 colecciones (relación, workout template, meal snippet, diet template) listo");
 
   const sessionId = TokenService.generateSessionId();

@@ -54,6 +54,12 @@ const SupplementSchema = new Schema(
     // Días de la semana en los que tomarlo (0 = domingo). Vacío = todos los
     // días, que es el caso normal y no obliga a marcar siete casillas.
     weekdays: { type: [Number], default: [] },
+    // Desde cuándo y hasta cuándo se toma ("YYYY-MM-DD"). Una pauta de
+    // suplementación tiene fechas como cualquier otra cosa que se pauta: por
+    // eso aparece en el calendario y desaparece sola cuando termina.
+    // `endDate` null = sin fecha de fin (se toma hasta nueva orden).
+    startDate: { type: String, required: true },
+    endDate: { type: String, default: null },
     active: { type: Boolean, default: true },
   },
   { timestamps: true }

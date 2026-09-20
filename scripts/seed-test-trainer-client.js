@@ -4,6 +4,7 @@ require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 const crypto = require("crypto");
 const mongoose = require("mongoose");
 const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
+const { buildSearchFields } = require("../components/util/search-index");
 
 /**
  * Cuenta de prueba mínima: un entrenador (t@t.t) con un cliente (u@u.u) ya
@@ -51,21 +52,39 @@ const REL_TRAINING_ID = oid("rel:training");
 const REL_NUTRITION_ID = oid("rel:nutrition");
 const GOAL_ID = oid("goal:u@u.u");
 
+// Los alimentos son Product REALES, no macros sueltas: una plantilla de
+// biblioteca guarda {product, quantity} y todo lo que la lee (constructor
+// del entrenador, perfil de macros, aptitud vegana/sin gluten) saca los
+// datos del Product poblado. Sembrar CustomProducts sin `product` colaba en
+// base de datos pero el constructor no podía pintarlos: la dieta se abría
+// vacía y al guardarla esos alimentos se perdían.
+//
 // quantity:100 => el aporte del producto == sus *_100g (mismo helper que
 // seed-diet-suggestions-demo.js).
-const P = (kcal, protein, carbs, fat, flags) => ({
-  quantity: 100,
-  energyKcal100g: kcal,
-  protein100g: protein,
-  carbohydrates100g: carbs,
-  fat100g: fat,
-  vegan: !!flags.vegan,
-  vegetarian: !!flags.vegetarian,
-  lactoseFree: !!flags.lactoseFree,
-  glutenFree: !!flags.glutenFree,
-});
-const day = (products) => [
-  { dayLabel: "Día 1", meals: [{ slot: "Comida", alternatives: [{ label: "", customProducts: products, customRecipes: [] }] }] },
+const FOODS = new Map();
+const P = (name, kcal, protein, carbs, fat, flags) => {
+  const _id = oid("product:" + name);
+  if (!FOODS.has(name)) {
+    const fullName = name + TEMPLATE_MARK;
+    FOODS.set(name, {
+      _id,
+      name: fullName,
+      userId: TRAINER_ID,
+      energyKcal100g: kcal,
+      protein100g: protein,
+      carbohydrates100g: carbs,
+      fat100g: fat,
+      vegan: !!flags.vegan,
+      vegetarian: !!flags.vegetarian,
+      lactoseFree: !!flags.lactoseFree,
+      glutenFree: !!flags.glutenFree,
+      ...buildSearchFields({ name: fullName }),
+    });
+  }
+  return { quantity: 100, product: _id };
+};
+const menu = (products) => [
+  { name: "Menú 1", meals: [{ slot: "Comida", alternatives: [{ label: "", customProducts: products, customRecipes: [] }] }] },
 ];
 const OMNI = { lactoseFree: true, glutenFree: true };
 const VEGAN = { vegan: true, vegetarian: true, lactoseFree: true, glutenFree: true };
@@ -75,11 +94,17 @@ const VEG = { vegetarian: true, glutenFree: true };
 // ver computeNutritionTarget más abajo) para que el ranking tenga sentido:
 // la vegetariana cae prácticamente encima, la omnívora balanceada también,
 // la alta en proteína y la vegana quedan más lejos pero dentro de rango.
+const O = () => P("Base omnívora", 1700, 60, 300, 28, OMNI);
+const PRO = () => P("Base alta en proteína", 1700, 90, 255, 28, OMNI);
+const V = () => P("Base vegetariana", 1700, 60, 300, 28, VEG);
+const VG1 = () => P("Base vegana comida", 1400, 55, 220, 30, VEGAN);
+const VG2 = () => P("Base vegana cena", 1300, 50, 200, 28, VEGAN);
+
 const TEMPLATES = [
-  ["Definición omnívora" + TEMPLATE_MARK, day([P(1700, 60, 300, 28, OMNI), P(1700, 60, 300, 28, OMNI)])],
-  ["Alta en proteína" + TEMPLATE_MARK, day([P(1700, 90, 255, 28, OMNI), P(1700, 90, 255, 28, OMNI)])],
-  ["Vegetariana equilibrada" + TEMPLATE_MARK, day([P(1700, 60, 300, 28, VEG), P(1700, 60, 300, 28, VEG)])],
-  ["Vegana ligera" + TEMPLATE_MARK, day([P(1400, 55, 220, 30, VEGAN), P(1300, 50, 200, 28, VEGAN)])],
+  ["Definición omnívora" + TEMPLATE_MARK, menu([O(), O()])],
+  ["Alta en proteína" + TEMPLATE_MARK, menu([PRO(), PRO()])],
+  ["Vegetariana equilibrada" + TEMPLATE_MARK, menu([V(), V()])],
+  ["Vegana ligera" + TEMPLATE_MARK, menu([VG1(), VG2()])],
 ];
 
 function ageFromBirth(birth) {
@@ -102,7 +127,7 @@ async function main() {
   const dietTemplateDao = require("../components/dietTemplates/diet-template-dao");
   const DietTemplate = require("../components/dietTemplates/diet-template-schema");
   const { computeNutritionTarget } = require("../components/nutritionalGoals/nutrition-target");
-  require("../components/products/product-schema");
+  const Product = require("../components/products/product-schema");
   require("../components/customProducts/custom-product-schema");
   require("../components/customRecipes/custom-recipe-schema");
   require("../components/recipes/recipe-schema");
@@ -110,6 +135,9 @@ async function main() {
   if (clean) {
     await TrainerClient.deleteMany({ _id: { $in: [REL_TRAINING_ID, REL_NUTRITION_ID] } });
     const tpls = await DietTemplate.deleteMany({ trainerId: TRAINER_ID, name: { $regex: TEMPLATE_NAME_RX } });
+    // Después de las plantillas: su cascada ya borró los CustomProduct que
+    // apuntaban a estos alimentos.
+    await Product.deleteMany({ _id: { $in: [...FOODS.values()].map((f) => f._id) } });
     await NutritionalGoal.deleteMany({ userId: CLIENT_ID });
     await mongoose.model("Anthropometry").deleteMany({ userId: CLIENT_ID }); // registrado por anthropometryDao arriba
     await NP.deleteOne({ clientId: CLIENT_ID });
@@ -245,8 +273,12 @@ async function main() {
   // alta en proteína salen SIEMPRE; vegetariana/vegana pasan también el
   // filtro duro con dietaryFlags=['vegetarian']).
   await DietTemplate.deleteMany({ trainerId: TRAINER_ID, name: { $regex: TEMPLATE_NAME_RX } });
-  for (const [name, days] of TEMPLATES) {
-    const created = await dietTemplateDao.create(TRAINER_ID, name, days, "sequential", []);
+  for (const food of FOODS.values()) {
+    await Product.updateOne({ _id: food._id }, { $set: food }, { upsert: true });
+  }
+  console.log("[test-account] alimentos ->", FOODS.size, "productos del catálogo de t@t.t");
+  for (const [name, menus] of TEMPLATES) {
+    const created = await dietTemplateDao.create(TRAINER_ID, name, menus);
     console.log("  +", name, "-> suitableFor", JSON.stringify(created.suitableFor));
   }
 

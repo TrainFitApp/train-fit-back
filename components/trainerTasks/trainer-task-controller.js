@@ -4,6 +4,7 @@ const notificationDao = require("../notifications/notification-dao");
 const userSchema = require("../users/schema");
 
 const TASK_TYPES = ["steps", "water", "sleep", "cardio", "custom"];
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -20,7 +21,7 @@ module.exports = {
 
   // POST /trainer/clients/:clientId/tasks — requireActiveClient() sin scope
   async createTask(req, res) {
-    const { type, label, target, unit } = req.body || {};
+    const { type, label, target, targetMax, unit } = req.body || {};
     if (!TASK_TYPES.includes(type)) {
       return res.status(400).send({ message: `type debe ser uno de: ${TASK_TYPES.join(", ")}` });
     }
@@ -34,6 +35,12 @@ module.exports = {
     if (!unit || !unit.trim()) {
       return res.status(400).send({ message: "unit es obligatorio" });
     }
+    // Rango opcional ("10.000 a 15.000 pasos"): si viene, tiene que ser un
+    // tope por encima del objetivo, no otro número suelto.
+    const numericTargetMax = targetMax === undefined || targetMax === null || targetMax === "" ? null : Number(targetMax);
+    if (numericTargetMax !== null && (!Number.isFinite(numericTargetMax) || numericTargetMax <= numericTarget)) {
+      return res.status(400).send({ message: "El tope del rango debe ser mayor que el objetivo" });
+    }
 
     const trainerId = req.auth.userId;
     const clientId = req.params.clientId;
@@ -42,6 +49,7 @@ module.exports = {
       type,
       label: type === "custom" ? label.trim() : label,
       target: numericTarget,
+      targetMax: numericTargetMax,
       unit: unit.trim(),
     });
 
@@ -69,8 +77,10 @@ module.exports = {
 
   // --- Lado cliente ---
 
-  // GET /trainer/tasks/mine — tareas activas de HOY, de cualquier profesional
-  // con relación activa, con el estado de cumplimiento de hoy ya resuelto.
+  // GET /trainer/tasks/mine?date=YYYY-MM-DD — hábitos activos del cliente,
+  // de cualquier profesional con relación activa, con el cumplimiento de ESE
+  // día ya resuelto. La pantalla de dieta los pinta bajo las comidas del día
+  // que se esté mirando, así que el día no siempre es hoy.
   async listMine(req, res) {
     const clientId = req.auth.userId;
     const tasks = await trainerTaskDao.listActiveForClient(clientId);
@@ -86,10 +96,10 @@ module.exports = {
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
 
-    const today = todayIsoDate();
+    const date = ISO_DATE.test(req.query?.date || "") ? req.query.date : todayIsoDate();
     const completions = await trainerTaskDao.listCompletionsForTasks(
       visible.map((t) => t._id),
-      today
+      date
     );
     const completedTaskIds = new Set(completions.map((c) => String(c.taskId)));
 
@@ -103,13 +113,17 @@ module.exports = {
         type: task.type,
         label: taskDisplayLabel(task),
         target: task.target,
+        targetMax: task.targetMax ?? null,
         unit: task.unit,
+        date,
         completedToday: completedTaskIds.has(String(task._id)),
       }))
     );
   },
 
-  // POST /trainer/tasks/:taskId/toggle — body: { completed: boolean }
+  // POST /trainer/tasks/:taskId/toggle — body: { completed: boolean, date? }
+  // `date` para marcar un día que no es hoy (la pantalla de dieta se mira
+  // día a día). Nunca el futuro: un hábito no se cumple por adelantado.
   async toggleCompletion(req, res) {
     const clientId = req.auth.userId;
     const task = await trainerTaskDao.findById(req.params.taskId);
@@ -122,8 +136,14 @@ module.exports = {
       return res.status(403).send({ message: "No tienes una relación activa con este profesional" });
     }
 
+    const today = todayIsoDate();
+    const date = ISO_DATE.test(req.body?.date || "") ? req.body.date : today;
+    if (date > today) {
+      return res.status(400).send({ message: "Todavía no puedes marcar un día que no ha llegado" });
+    }
+
     const completed = req.body?.completed !== false;
-    await trainerTaskDao.setCompletion(task._id, todayIsoDate(), completed);
-    return res.send({ taskId: task._id, date: todayIsoDate(), completed });
+    await trainerTaskDao.setCompletion(task._id, date, completed);
+    return res.send({ taskId: task._id, date, completed });
   },
 };

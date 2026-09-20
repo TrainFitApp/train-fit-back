@@ -1513,19 +1513,17 @@ async function sembrarPlantillasRutina(trainerId, ejercicios) {
  * Los slots tienen que coincidir con diet-days-util.js#MEALS para poder
  * resolverse contra el DietDay real del cliente.
  *
- * Se siembran las tres modalidades que admite el modelo:
- *   - `sequential`: días numerados que se aplican en orden.
- *   - `choice`: una comida con VARIAS alternativas, y el cliente elige.
- * Con una sola alternativa por comida el comportamiento es el de siempre.
+ * Una plantilla es una lista de MENÚS entre los que el cliente elige cada
+ * día, y dentro de cada comida puede haber varias `alternativas` (con una
+ * sola, no hay nada que elegir en esa comida).
  */
 const PLANTILLAS_DIETA = [
   {
     clave: "2200-4comidas",
     name: "1.900 kcal · 4 comidas",
-    mode: "sequential",
     dias: [
       {
-        dayLabel: "Día 1",
+        name: "Menú 1",
         comidas: [
           { slot: "Desayuno", alternativas: [{ label: "", recetas: ["avena-proteica"] }] },
           { slot: "Comida", alternativas: [{ label: "", recetas: ["pollo-arroz"] }] },
@@ -1534,7 +1532,7 @@ const PLANTILLAS_DIETA = [
         ],
       },
       {
-        dayLabel: "Día 2",
+        name: "Menú 2",
         comidas: [
           { slot: "Desayuno", alternativas: [{ label: "", productos: [["Pan integral", 110], ["Huevo entero", 150], ["Aguacate", 60]] }] },
           { slot: "Comida", alternativas: [{ label: "", recetas: ["lentejas-verduras"] }] },
@@ -1543,7 +1541,7 @@ const PLANTILLAS_DIETA = [
         ],
       },
       {
-        dayLabel: "Día 3",
+        name: "Menú 3",
         comidas: [
           { slot: "Desayuno", alternativas: [{ label: "", recetas: ["avena-proteica"] }] },
           { slot: "Comida", alternativas: [{ label: "", recetas: ["pasta-ternera"] }] },
@@ -1556,10 +1554,9 @@ const PLANTILLAS_DIETA = [
   {
     clave: "elige-comida",
     name: "Comida a elegir · plantilla flexible",
-    mode: "sequential",
     dias: [
       {
-        dayLabel: "Cualquier día",
+        name: "Menú flexible",
         comidas: [
           { slot: "Desayuno", alternativas: [
             { label: "Dulce", recetas: ["avena-proteica"] },
@@ -1644,12 +1641,12 @@ async function sembrarPlantillasDieta(trainerId, alimentos, recetas) {
         comidas.push({ slot: comida.slot, alternatives: alternativas });
       }
 
-      dias.push({ dayLabel: dia.dayLabel, meals: comidas });
+      dias.push({ name: dia.name, meals: comidas });
     }
 
     await DietTemplate.updateOne(
       { _id: oid("dt:" + t.clave) },
-      { $set: { trainerId, name: t.name, mode: t.mode, days: dias, dayPatterns: [] } },
+      { $set: { trainerId, name: t.name, menus: dias } },
       { upsert: true }
     );
   }

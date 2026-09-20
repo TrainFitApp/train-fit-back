@@ -1,18 +1,18 @@
 const express = require("@awaitjs/express");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./checkin-controller");
-const calendar = require("./checkin-calendar-controller");
+const agenda = require("./checkin-agenda-controller");
 const { requireActiveClient } = require("../trainerClients/require-active-client");
 
 const router = express.Router();
 
-router.getAsync("/clients/:clientId/checkin-calendar", auth(["trainer"]), requireActiveClient(), calendar.calendar);
-router.postAsync("/clients/:clientId/checkin-schedules", auth(["trainer"]), requireActiveClient(), calendar.saveSchedule);
-router.putAsync("/clients/:clientId/checkin-schedules/:scheduleId", auth(["trainer"]), requireActiveClient(), calendar.saveSchedule);
-router.patchAsync("/clients/:clientId/checkin-schedules/:scheduleId/active", auth(["trainer"]), requireActiveClient(), calendar.setActive);
-router.postAsync("/clients/:clientId/checkin-schedules/:scheduleId/request", auth(["trainer"]), requireActiveClient(), calendar.requestNow);
-router.postAsync("/clients/:clientId/checkin-requests/:requestId/review", auth(["trainer"]), requireActiveClient(), calendar.review);
-router.postAsync("/checkins/requests/:requestId/respond", auth(["user", "admin"]), calendar.respond);
+// --- Lado profesional: agenda y programación de un cliente ---
+router.getAsync("/clients/:clientId/checkin-agenda", auth(["trainer"]), requireActiveClient(), agenda.agenda);
+router.postAsync("/clients/:clientId/checkin-schedules", auth(["trainer"]), requireActiveClient(), agenda.saveSchedule);
+router.putAsync("/clients/:clientId/checkin-schedules/:scheduleId", auth(["trainer"]), requireActiveClient(), agenda.saveSchedule);
+router.patchAsync("/clients/:clientId/checkin-schedules/:scheduleId/active", auth(["trainer"]), requireActiveClient(), agenda.setActive);
+router.deleteAsync("/clients/:clientId/checkin-schedules/:scheduleId", auth(["trainer"]), requireActiveClient(), agenda.deleteSchedule);
+router.postAsync("/clients/:clientId/checkin-responses/:responseId/review", auth(["trainer"]), requireActiveClient(), agenda.review);
 
 // --- Lado profesional: plantillas maestras ---
 router.getAsync("/checkin-templates", auth(["trainer"]), controller.listDefinitions);
@@ -25,14 +25,6 @@ router.postAsync("/checkin-templates/:id/apply", auth(["trainer"]), controller.a
 router.getAsync("/checkins/responses", auth(["trainer"]), controller.getMyCheckinResponses);
 router.getAsync("/checkins/unseen-count", auth(["trainer"]), controller.getUnseenCount);
 router.postAsync("/checkins/mark-seen", auth(["trainer"]), controller.markSeen);
-
-// --- Lado profesional: configuración/histórico de un cliente concreto ---
-router.getAsync(
-  "/clients/:clientId/checkin-config",
-  auth(["trainer"]),
-  requireActiveClient(),
-  controller.getClientCheckinConfig
-);
 router.getAsync(
   "/clients/:clientId/checkin-responses",
   auth(["trainer"]),
@@ -42,8 +34,7 @@ router.getAsync(
 
 // --- Lado cliente ---
 router.getAsync("/checkins/mine", auth(["user", "admin"]), controller.listMine);
-// coach-tab FASE2 — "formularios completados", histórico agregado del cliente.
 router.getAsync("/checkins/mine/history", auth(["user", "admin"]), controller.listMyHistory);
-router.postAsync("/checkins/:trainerId/respond", auth(["user", "admin"]), controller.respond);
+router.postAsync("/checkins/:scheduleId/respond", auth(["user", "admin"]), controller.respond);
 
 module.exports = router;

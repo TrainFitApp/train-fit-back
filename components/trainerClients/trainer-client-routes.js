@@ -143,7 +143,7 @@ router.getAsync(
   requireActiveClient("nutrition"),
   dataController.getClientNutritionTracking
 );
-// Cumplimiento alimento a alimento del rango — panel de resumen de un ciclo.
+// Cumplimiento alimento a alimento del rango — panel de resumen de una revisión.
 router.getAsync(
   "/clients/:clientId/nutrition-foods",
   auth(["trainer"]),

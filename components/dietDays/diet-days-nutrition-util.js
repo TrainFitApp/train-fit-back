@@ -139,7 +139,7 @@ function macrosForMeal(meal) {
 // contradicha por un detalle sin marcar.
 //
 // Solo cuenta lo PAUTADO (isItemPlanned): lo que el cliente añadió por su
-// cuenta no es cumplimiento de nada (plan ciclos por contenido §7) — antes
+// cuenta no es cumplimiento de nada (docs/plan-revisiones.md) — antes
 // entraba en el denominador y un día con extras parecía peor cumplido.
 function countMealItems(meal) {
   const products = (meal?.customProducts || []).filter(isItemPlanned);

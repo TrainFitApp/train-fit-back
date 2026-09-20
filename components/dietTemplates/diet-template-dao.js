@@ -3,7 +3,7 @@ const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const { deriveSuitability } = require("./diet-suitability");
-const { scaleMealsContent } = require("../planAssignments/cycle-progression");
+const { scaleMealsContent } = require("../planAssignments/revision-progression");
 
 // Sugerencias de dieta — `suitableFor` (vegana / sin gluten / ...) es DERIVADO
 // del contenido, nunca tecleado: se recalcula tras cada create/update.
@@ -17,29 +17,31 @@ async function recomputeSuitability(id) {
   return DietTemplate.findById(id);
 }
 
-// Campos de FASE que se escriben en el primer ciclo (el "head"). Ausentes si
+// Campos de FASE que se escriben en el primera revisión (el "head"). Ausentes si
 // no se está empezando una fase (aplicar un plan al estilo de siempre).
 function phaseFields(phase) {
   if (!phase) return {};
   return {
     phaseName: phase.name || null,
-    phaseFocus: phase.focus || null,
-    phaseTargetKcalDelta: Number.isFinite(phase.targetKcalDelta) ? phase.targetKcalDelta : null,
-    targetRatePerCycle: Number.isFinite(phase.ratePerCycle) ? phase.ratePerCycle : null,
+    // Objetivo con el que se pauta la fase: calculado del cliente o tecleado
+    // a mano por el entrenador (docs/plan-revisiones.md §11).
+    ...(phase.target
+      ? {
+          phaseTarget: {
+            kcal: phase.target.kcal,
+            protein: phase.target.protein,
+            carbs: phase.target.carbs,
+            fat: phase.target.fat,
+            source: phase.target.source === "manual" ? "manual" : "calculated",
+          },
+        }
+      : {}),
     phaseProteinPerKg: Number.isFinite(phase.proteinPerKg) ? phase.proteinPerKg : null,
     phaseFatPerKg: Number.isFinite(phase.fatPerKg) ? phase.fatPerKg : null,
     // El snapshot lo calcula el servicio (plan-assignment-service.js
     // #buildPhaseNeed) antes de crear: así la copia nace ya con él.
     ...(phase.need ? { phaseNeed: phase.need } : {}),
   };
-}
-
-// Solo tiene sentido en mode "choice"; en el resto no se escribe (undefined
-// = la clave no entra en el doc).
-function choiceCycleDaysField(mode, value) {
-  if (mode !== "choice") return {};
-  const n = Number(value);
-  return { choiceCycleDays: Number.isFinite(n) && n >= 1 ? Math.floor(n) : 7 };
 }
 
 // El head de una fase se apunta a sí mismo con phaseId (patrón supersededBy).
@@ -94,22 +96,10 @@ async function materializeMeals(meals) {
   return result;
 }
 
-async function materializeDays(days) {
+async function materializeMenus(menus) {
   const result = [];
-  for (const day of days || []) {
-    result.push({ dayLabel: day.dayLabel, meals: await materializeMeals(day.meals) });
-  }
-  return result;
-}
-
-async function materializeDayPatterns(dayPatterns) {
-  const result = [];
-  for (const pattern of dayPatterns || []) {
-    result.push({
-      name: pattern.name,
-      appliesTo: pattern.appliesTo,
-      meals: await materializeMeals(pattern.meals),
-    });
+  for (const menu of menus || []) {
+    result.push({ name: menu.name, meals: await materializeMeals(menu.meals) });
   }
   return result;
 }
@@ -120,11 +110,11 @@ async function deleteContentIds({ productIds, recipeIds }) {
 }
 
 // Inverso de la population que hace autopopulate — cloneForAssignment parte
-// de una plantilla ya autopoblada (days/dayPatterns con customProducts/
-// customRecipes como documentos reales, no ObjectIds) y materializeDays/
-// materializeDayPatterns esperan justo lo contrario: el shape "clipboard" en
-// crudo que manda el frontend (product/recipe como id suelto, sin _id
-// propio). Sin este paso, customRecipeDao.createCustomRecipe reutiliza el
+// de una plantilla ya autopoblada (menús con customProducts/customRecipes
+// como documentos reales, no ObjectIds) y materializeMenus espera justo lo
+// contrario: el shape "clipboard" en crudo que manda el frontend
+// (product/recipe como id suelto, sin _id propio). Sin este paso,
+// customRecipeDao.createCustomRecipe reutiliza el
 // _id ya poblado del original en vez de crear uno nuevo -> choca con el
 // documento que sigue vivo en la plantilla origen.
 function flattenCustomProductRef(cp) {
@@ -163,34 +153,25 @@ function flattenMealsRef(meals) {
   }));
 }
 
-function flattenDaysRef(days) {
-  return (days || []).map((day) => ({ dayLabel: day.dayLabel, meals: flattenMealsRef(day.meals) }));
-}
-
-function flattenDayPatternsRef(dayPatterns) {
-  return (dayPatterns || []).map((pattern) => ({
-    name: pattern.name,
-    appliesTo: pattern.appliesTo,
-    meals: flattenMealsRef(pattern.meals),
-  }));
+function flattenMenusRef(menus) {
+  return (menus || []).map((menu) => ({ name: menu.name, meals: flattenMealsRef(menu.meals) }));
 }
 
 module.exports = {
   // Exportadas para reuso en scripts/migrate-diet-template-refs.js (mismo
   // criterio que materializeBlocksAsExercises en workoutTemplates).
-  materializeDays,
-  materializeDayPatterns,
+  materializeMenus,
 
   // Congela una copia de `template` para una asignación concreta — mismo
   // criterio que workoutTemplateDao#applyToSplit, pero reusando
-  // materializeDays/materializeDayPatterns en vez de un segundo camino de
+  // materializeMenus en vez de un segundo camino de
   // clonado: la copia nunca comparte CustomProduct/CustomRecipe ni con la
   // plantilla original ni con otras copias, así que editar o borrar la
   // plantilla después nunca afecta a un cliente ya asignado.
   // `template` debe venir autopoblado (p. ej. findOwnedByTrainer) — .toObject()
   // y no .lean() en su fetch, porque el plugin autopopulate no actúa sobre
-  // lean() y days/dayPatterns llegarían con ObjectIds crudos en vez de los
-  // CustomProduct/CustomRecipe reales que materializeDays necesita para
+  // lean() y los menús llegarían con ObjectIds crudos en vez de los
+  // CustomProduct/CustomRecipe reales que materializeMenus necesita para
   // volver a clonarlos.
   // `schedule` ({startDate, endDate, status, phase}) se escribe en la
   // MISMA creación — la copia ya nace siendo la asignación, no hace falta
@@ -205,10 +186,7 @@ module.exports = {
       endDate: schedule.endDate ?? null,
       status: schedule.status ?? null,
       name: source.name,
-      mode: source.mode,
-      ...choiceCycleDaysField(source.mode, source.choiceCycleDays),
-      days: await materializeDays(flattenDaysRef(source.days)),
-      dayPatterns: await materializeDayPatterns(flattenDayPatternsRef(source.dayPatterns)),
+      menus: await materializeMenus(flattenMenusRef(source.menus)),
       suitableFor: source.suitableFor || [],
       suitableForOverride: source.suitableForOverride || [],
       ...phaseFields(schedule.phase),
@@ -216,23 +194,19 @@ module.exports = {
     return finalizePhaseHead(created, schedule.phase);
   },
 
-  // Un ciclo preparado dentro de una fase existente. El contenido llega en
+  // Un revisión preparada dentro de una fase existente. El contenido llega en
   // crudo (shape "clipboard", ya escalado por el cliente del builder); el
-  // nombre es el de la fase (los ciclos no se nombran, ver plan). El status
-  // lo pone el servicio: el ciclo preparado no es "active" hasta que
-  // arranque — mientras, rige el head/ciclo anterior.
-  async createCycle({ trainerId, clientId, phaseId, mode, days, dayPatterns, choiceCycleDays, schedule = {} }) {
+  // nombre es el de la fase (las revisiones no se nombran, ver plan). El status
+  // lo pone el servicio: la revisión preparada no es "active" hasta que
+  // arranque — mientras, rige el head/revisión anterior.
+  async createRevisionOverride({ trainerId, clientId, phaseId, menus, schedule = {} }) {
     const head = await DietTemplate.findById(phaseId).lean();
-    const resolvedMode = mode || head?.mode || "sequential";
     const created = await DietTemplate.create({
       trainerId,
       clientId,
       phaseId,
-      name: head?.name || "Ciclo",
-      mode: resolvedMode,
-      ...choiceCycleDaysField(resolvedMode, choiceCycleDays ?? head?.choiceCycleDays),
-      days: await materializeDays(days || []),
-      dayPatterns: await materializeDayPatterns(dayPatterns || []),
+      name: head?.name || "Revisión",
+      menus: await materializeMenus(menus || []),
       startDate: schedule.startDate ?? null,
       endDate: schedule.endDate ?? null,
       status: schedule.status ?? "active",
@@ -240,70 +214,46 @@ module.exports = {
     return recomputeSuitability(created._id);
   },
 
-  // Preparar por segunda vez el mismo ciclo (mismo startDate dentro de la
+  // Preparar por segunda vez la misma revisión (mismo startDate dentro de la
   // fase) reescribe su doc en vez de encadenar otro. Contenido en crudo,
-  // igual que en createCycle.
-  async updateCycleOverride(id, { mode, days, dayPatterns, choiceCycleDays }) {
+  // igual que en createRevisionOverride.
+  async updateRevisionOverride(id, { menus }) {
     const existing = await DietTemplate.findById(id);
     if (!existing) return null;
     // Mismo cuidado que updateAssignedContent: el contenido viejo son docs
     // reales (CustomProduct/CustomRecipe) que quedarían huérfanos.
-    await deleteContentIds(
-      DietTemplate.collectContentIds({ days: existing.days, dayPatterns: existing.dayPatterns })
-    );
-    const resolvedMode = mode || existing.mode;
-    await DietTemplate.updateOne(
-      { _id: id },
-      {
-        $set: {
-          mode: resolvedMode,
-          ...choiceCycleDaysField(resolvedMode, choiceCycleDays ?? existing.choiceCycleDays),
-          days: await materializeDays(days || []),
-          dayPatterns: await materializeDayPatterns(dayPatterns || []),
-        },
-      }
-    );
+    await deleteContentIds(DietTemplate.collectContentIds({ menus: existing.menus }));
+    await DietTemplate.updateOne({ _id: id }, { $set: { menus: await materializeMenus(menus || []) } });
     return recomputeSuitability(id);
   },
 
-  async findCycleByStart(phaseId, startDate) {
+  async findRevisionByStart(phaseId, startDate) {
     return DietTemplate.findOne({ phaseId, startDate });
   },
 
-  // Contenido de una copia (ciclo) aplanado a "clipboard" y escalado por
-  // `factor` — listo para createCycle. `factor` 1 = copia idéntica.
-  scaledCycleContent(prevCycle, factor = 1) {
-    const src = prevCycle.toObject ? prevCycle.toObject() : prevCycle;
+  // Contenido de una copia (revisión) aplanado a "clipboard" y escalado por
+  // `factor` — listo para createRevisionOverride. `factor` 1 = copia idéntica.
+  scaledRevisionContent(prevRevision, factor = 1) {
+    const src = prevRevision.toObject ? prevRevision.toObject() : prevRevision;
     return {
-      mode: src.mode,
-      days: flattenDaysRef(src.days || []).map((d) => ({
-        ...d,
-        meals: scaleMealsContent(d.meals, factor),
-      })),
-      dayPatterns: flattenDayPatternsRef(src.dayPatterns || []).map((p) => ({
-        ...p,
-        meals: scaleMealsContent(p.meals, factor),
+      menus: flattenMenusRef(src.menus || []).map((m) => ({
+        ...m,
+        meals: scaleMealsContent(m.meals, factor),
       })),
     };
   },
 
-  // Igual que scaledCycleContent pero SIN aplanar: los CustomProduct/
+  // Igual que scaledRevisionContent pero SIN aplanar: los CustomProduct/
   // CustomRecipe siguen poblados (nombre, macros) — es lo que necesita el
   // builder para pintar el contenido, no para crear nada.
-  scaledCycleContentPopulated(prevCycle, factor = 1) {
-    const src = prevCycle.toObject ? prevCycle.toObject() : prevCycle;
+  scaledRevisionContentPopulated(prevRevision, factor = 1) {
+    const src = prevRevision.toObject ? prevRevision.toObject() : prevRevision;
     return {
-      mode: src.mode,
-      days: (src.days || []).map((d) => ({ dayLabel: d.dayLabel, meals: scaleMealsContent(d.meals, factor) })),
-      dayPatterns: (src.dayPatterns || []).map((p) => ({
-        name: p.name,
-        appliesTo: p.appliesTo || [],
-        meals: scaleMealsContent(p.meals, factor),
-      })),
+      menus: (src.menus || []).map((m) => ({ name: m.name, meals: scaleMealsContent(m.meals, factor) })),
     };
   },
 
-  async findCyclesOfPhase(phaseId) {
+  async findPhaseMembers(phaseId) {
     return DietTemplate.find({ phaseId }).sort({ startDate: 1, createdAt: 1 });
   },
 
@@ -311,28 +261,25 @@ module.exports = {
     return DietTemplate.findById(phaseId);
   },
 
-  // La fase "vigente" para un cliente = la del ciclo activo (tip de la cadena).
+  // La fase "vigente" para un cliente = la de la revisión activa (tip de la cadena).
   async findActivePhaseId(clientId) {
     const active = await DietTemplate.findOne({ clientId, status: "active" }).select("phaseId").lean();
     return active?.phaseId || null;
   },
 
   // "Crear dieta" — el trainer construye el contenido directo para ESTE
-  // cliente, sin pasar por una plantilla de la biblioteca. `days`/`dayPatterns`
-  // llegan en crudo (mismo shape "clipboard" que create()), así que reusa
-  // materializeDays/materializeDayPatterns directo — a diferencia de
-  // cloneForAssignment no hace falta flatten porque no hay nada ya poblado
-  // que desarmar. sourceTemplateId se queda en null: no hay plantilla de
-  // origen, y eso ya es un estado válido (ver diet-template-schema.js).
-  async createDirectAssignment(trainerId, clientId, name, days, mode, dayPatterns, schedule = {}) {
+  // cliente, sin pasar por una plantilla de la biblioteca. Los menús llegan
+  // en crudo (mismo shape "clipboard" que create()), así que reusa
+  // materializeMenus directo — a diferencia de cloneForAssignment no hace
+  // falta flatten porque no hay nada ya poblado que desarmar.
+  // sourceTemplateId se queda en null: no hay plantilla de origen, y eso ya
+  // es un estado válido (ver diet-template-schema.js).
+  async createDirectAssignment(trainerId, clientId, name, menus, schedule = {}) {
     const created = await DietTemplate.create({
       trainerId,
       clientId,
       name,
-      mode: mode || "sequential",
-      ...choiceCycleDaysField(mode || "sequential", schedule.choiceCycleDays),
-      days: await materializeDays(days),
-      dayPatterns: await materializeDayPatterns(dayPatterns),
+      menus: await materializeMenus(menus),
       startDate: schedule.startDate ?? null,
       endDate: schedule.endDate ?? null,
       status: schedule.status ?? null,
@@ -345,7 +292,7 @@ module.exports = {
   // ownerClientId opcional — puesto, la plantilla es material de biblioteca
   // exclusivo de ese cliente (ver diet-template-schema.js); null, es general
   // y sirve para cualquiera.
-  async create(trainerId, name, days, mode, dayPatterns, ownerClientId = null, verified = false, choiceCycleDays = null) {
+  async create(trainerId, name, menus, ownerClientId = null, verified = false) {
     const created = await DietTemplate.create({
       trainerId,
       name,
@@ -354,10 +301,7 @@ module.exports = {
       ...(ownerClientId ? { ownerClientId } : {}),
       // Sugerencias de dieta — dieta de fábrica (solo admin, ver controller).
       ...(verified ? { verified: true } : {}),
-      days: await materializeDays(days),
-      mode: mode || "sequential",
-      ...choiceCycleDaysField(mode || "sequential", choiceCycleDays),
-      dayPatterns: await materializeDayPatterns(dayPatterns),
+      menus: await materializeMenus(menus),
     });
     // create() no pasa por el middleware de autopopulate (solo corre en
     // find/findOne) — se relee para devolver customProducts/customRecipes ya
@@ -416,33 +360,20 @@ module.exports = {
     return DietTemplate.find({ clientId: null, $or: or }).sort({ createdAt: -1 });
   },
 
-  async update(trainerId, id, { name, days, mode, dayPatterns, suitableForOverride, verified, choiceCycleDays }) {
+  async update(trainerId, id, { name, menus, suitableForOverride, verified }) {
     const existing = await DietTemplate.findOne({ _id: id, trainerId });
     if (!existing) return null;
 
     const setOps = {};
     if (name !== undefined) setOps.name = name;
-    if (mode !== undefined) setOps.mode = mode;
-    if (choiceCycleDays !== undefined) {
-      Object.assign(setOps, choiceCycleDaysField(mode ?? existing.mode, choiceCycleDays));
-    }
 
-    const replacingDays = days !== undefined;
-    const replacingPatterns = dayPatterns !== undefined;
-    if (replacingDays || replacingPatterns) {
+    if (menus !== undefined) {
       // Fuera el CustomProduct/CustomRecipe viejo del contenido que se
       // reemplaza, dentro el nuevo materializado — mismo criterio que
-      // workoutTemplates/workout-template-dao.js#update. Solo se limpia lo
-      // que de verdad se reemplaza (days o dayPatterns, no ambos si el body
-      // solo tocó uno).
-      const ids = DietTemplate.collectContentIds({
-        days: replacingDays ? existing.days : [],
-        dayPatterns: replacingPatterns ? existing.dayPatterns : [],
-      });
-      await deleteContentIds(ids);
+      // workoutTemplates/workout-template-dao.js#update.
+      await deleteContentIds(DietTemplate.collectContentIds({ menus: existing.menus }));
+      setOps.menus = await materializeMenus(menus);
     }
-    if (replacingDays) setOps.days = await materializeDays(days);
-    if (replacingPatterns) setOps.dayPatterns = await materializeDayPatterns(dayPatterns);
 
     if (Array.isArray(suitableForOverride)) {
       setOps.suitableForOverride = suitableForOverride.filter((f) =>
@@ -455,35 +386,24 @@ module.exports = {
     return recomputeSuitability(id);
   },
 
-  // Edición de fases/ciclos — mismo mecanismo que `update` (arriba) pero con
+  // Edición de fases/revisiones — mismo mecanismo que `update` (arriba) pero con
   // el filtro que ahí falta: exige que la copia sea de ESTE cliente
   // concreto, no solo del trainer. Nunca toca una plantilla de biblioteca
   // (`clientId: null` no puede matchear aquí) ni la copia de otro cliente.
-  // Funciona igual para el ciclo 1 que para cualquier ciclo posterior
-  // (creado por "Siguiente ciclo") porque opera sobre el `_id` de la propia
+  // Funciona igual para la revisión 1 que para cualquier revisión posterior
+  // (creado por "Siguiente revisión") porque opera sobre el `_id` de la propia
   // copia, sin pasar por `sourceTemplateId`.
-  async updateAssignedContent(trainerId, clientId, id, { name, mode, days, dayPatterns, choiceCycleDays }) {
+  async updateAssignedContent(trainerId, clientId, id, { name, menus }) {
     const existing = await DietTemplate.findOne({ _id: id, trainerId, clientId });
     if (!existing) return null;
 
     const setOps = {};
     if (name !== undefined) setOps.name = name;
-    if (mode !== undefined) setOps.mode = mode;
-    if (choiceCycleDays !== undefined) {
-      Object.assign(setOps, choiceCycleDaysField(mode ?? existing.mode, choiceCycleDays));
-    }
 
-    const replacingDays = days !== undefined;
-    const replacingPatterns = dayPatterns !== undefined;
-    if (replacingDays || replacingPatterns) {
-      const ids = DietTemplate.collectContentIds({
-        days: replacingDays ? existing.days : [],
-        dayPatterns: replacingPatterns ? existing.dayPatterns : [],
-      });
-      await deleteContentIds(ids);
+    if (menus !== undefined) {
+      await deleteContentIds(DietTemplate.collectContentIds({ menus: existing.menus }));
+      setOps.menus = await materializeMenus(menus);
     }
-    if (replacingDays) setOps.days = await materializeDays(days);
-    if (replacingPatterns) setOps.dayPatterns = await materializeDayPatterns(dayPatterns);
 
     await DietTemplate.updateOne({ _id: id }, { $set: setOps });
     return recomputeSuitability(id);
@@ -491,7 +411,7 @@ module.exports = {
 
   // deleteOne (no deleteMany) dispara el hook en cascada de
   // diet-template-schema.js que borra los CustomProduct/CustomRecipe de la
-  // plantilla (y, si es una copia, sus DietException).
+  // plantilla.
   async delete(trainerId, id) {
     return DietTemplate.deleteOne({ _id: id, trainerId });
   },
@@ -532,10 +452,10 @@ module.exports = {
       $or: [{ endDate: { $gte: startDate } }, { endDate: null }],
     };
     if (excludeId) query._id = { $ne: excludeId };
-    // El ciclo ABIERTO de esa fase (endDate null) no cuenta: el ciclo nuevo
+    // La revisión ABIERTA de esa fase (endDate null) no cuenta: la revisión nueva
     // empieza justo donde lo deja, así que avanzar con una fecha futura
-    // chocaba siempre contra él. Los ciclos ya cerrados de la misma fase sí
-    // siguen reservando su tramo — programar un ciclo encima de uno pasado
+    // chocaba siempre contra él. Las revisiones ya cerradas de la misma fase sí
+    // siguen reservando su tramo — programar una revisión encima de una pasada
     // es un solape de verdad.
     if (excludePhaseId) query.$nor = [{ phaseId: excludePhaseId, endDate: null }];
     return DietTemplate.find(query).sort({ startDate: 1 });
@@ -578,6 +498,17 @@ module.exports = {
   // "findOneAndDelete", no sobre el borrado del documento en sí.
   async deleteById(id) {
     return DietTemplate.findByIdAndDelete(id);
+  },
+
+  // Mover las fechas de un documento de fase (inicio y/o fin). Lo usa
+  // "editar fechas de la fase" en la ficha del cliente: una fase se crea
+  // para el día en que se crea y sus fechas se corrigen después.
+  async updateSchedule(id, { startDate, endDate }) {
+    const setOps = {};
+    if (startDate !== undefined) setOps.startDate = startDate;
+    if (endDate !== undefined) setOps.endDate = endDate;
+    if (!Object.keys(setOps).length) return DietTemplate.findById(id);
+    return DietTemplate.findByIdAndUpdate(id, { $set: setOps }, { new: true });
   },
 
   // Al cancelar la fase "active" (el tip de la cadena) hay que reactivar la

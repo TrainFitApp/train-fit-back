@@ -106,33 +106,32 @@ test("explainNutritionTarget — mismo resultado que computeNutritionTarget, con
   });
 });
 
-test("resolveSteps — perfil vs pasos registrados", async (t) => {
+test("resolveSteps — perfil vs rango del hábito de pasos", async (t) => {
   const user = { steps: 1.46, training: 1.387 }; // 7000–9000, 3–4 días
-  await t.test("sin media → perfil", () => {
+  await t.test("sin rango del hábito → perfil", () => {
     const r = resolveSteps(user, null);
     assert.equal(r.stepsFrom, "profile");
     assert.equal(r.stepsValue, 1.46);
     assert.equal(r.trainingValue, 1.387);
     assert.equal(r.trainingDays.id, 3);
   });
-  await t.test("media del check-in → rango nuevo y factor recalculado con los mismos días", () => {
-    const r = resolveSteps(user, 12000);
-    assert.equal(r.stepsFrom, "logged");
+  await t.test("rango del hábito → factor recalculado con los mismos días de entreno", () => {
+    const r = resolveSteps(user, "betweenThan10000And15000");
+    assert.equal(r.stepsFrom, "habit");
     assert.equal(r.stepsValue, 1.55);
-    assert.equal(r.stepsAvg, 12000);
+    assert.equal(r.stepsRangeKey, "betweenThan10000And15000");
     assert.equal(r.trainingValue, 1.472); // fila 1.55, columna 3–4 días
     assert.equal(r.trainingDays.id, 3);
   });
-  await t.test("perfil 'no cuento pasos' + check-in → pasa a fórmula con pasos", () => {
-    const r = resolveSteps({ steps: 1, training: 1.05 }, 8000);
-    assert.equal(r.stepsFrom, "logged");
+  await t.test("perfil 'no cuento pasos' + hábito → pasa a fórmula con pasos", () => {
+    const r = resolveSteps({ steps: 1, training: 1.05 }, "between7000And9000");
+    assert.equal(r.stepsFrom, "habit");
     assert.equal(r.stepsValue, 1.46);
     assert.equal(r.trainingValue, 1.387);
   });
   await t.test("perfil con rango irreconocible → perfil, con motivo", () => {
-    const r = resolveSteps({ steps: 1.5, training: 1.3 }, 8000);
+    const r = resolveSteps({ steps: 1.5, training: 1.3 }, "between7000And9000");
     assert.equal(r.stepsFrom, "profile");
     assert.equal(r.stepsFallbackReason, "profile_unresolved");
-    assert.equal(r.stepsAvg, 8000);
   });
 });

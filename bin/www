@@ -4,10 +4,6 @@ mongoose.set("strictQuery", true);
 const app = require("../app");
 const { buildMongoUri, redactMongoUri } = require("../scripts/_mongo-uri");
 const billingReconciliationJob = require("../components/billing/billing-reconciliation-job");
-const { startCheckinReminderCron } = require("../components/trainerCheckins/checkin-reminder-cron");
-const {
-  startAnthropometryRequestReminderCron,
-} = require("../components/anthropometryRequests/anthropometry-request-reminder-cron");
 const { startCoachAlertCron } = require("../components/coachAlerts/coach-alert-cron");
 
 // -------------------------------------------------------
@@ -57,12 +53,8 @@ function connectWithRetry() {
       });
       serv.timeout = 300000;
       billingReconciliationJob.start();
-      // TASK-025 existía desde antes pero nunca se llamaba desde el
-      // arranque real (confirmado por grep: cero require() del módulo
-      // fuera de sí mismo) — el cron de recordatorios de check-in llevaba
-      // construido pero inerte. Arrancado aquí junto al nuevo de medidas.
-      startCheckinReminderCron();
-      startAnthropometryRequestReminderCron();
+      // Los check-ins NO tienen cron: sus solicitudes son fechas calculadas
+      // y el aviso lo ve el cliente al abrir la app (docs/plan-revisiones.md).
       // Fase 1 Coach Pro — evaluador nocturno de señales que alimenta las
       // alertas del panel del profesional (05:00, ver coach-alert-cron.js).
       startCoachAlertCron();

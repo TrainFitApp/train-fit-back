@@ -1,6 +1,7 @@
 const userSchema = require("../users/schema");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const checkinDao = require("../trainerCheckins/checkin-dao");
+const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
 const { getTrackingDaysForClient } = require("../dietDays/diet-day-resolver");
 const tableDao = require("../tables/table-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
@@ -68,7 +69,7 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
   const [
     anthropometryDesc,
     allCheckinResponses,
-    checkinConfig,
+    checkinAgendaData,
     dietDays,
     workoutDates,
     trainingWindow,
@@ -76,7 +77,9 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
   ] = await Promise.all([
     anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, from, to),
     checkinDao.listResponses(trainerId, clientId),
-    checkinDao.getAppliedConfig(trainerId, clientId),
+    // Las solicitudes de la ventana, para medir adherencia de check-in
+    // contra fechas reales y no contra una cadencia estimada.
+    checkinAgenda.agendaFor(trainerId, clientId, from, to),
     // Auditoría 2026-09 — antes leía SOLO DietDay ya materializados
     // (getFullyPopulatedDietDaysForUser), igual que el bug ya arreglado en
     // Seguimiento (F20-undecies, ver diet-day-resolver.js): un plan recién
@@ -117,7 +120,14 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
       .filter((r) => isoDate(r.respondedAt) >= from && isoDate(r.respondedAt) <= to)
       .reverse(),
     allCheckinResponses,
-    checkinConfig,
+    // Adherencia de check-in: solicitudes que YA han llegado en la ventana
+    // frente a las respondidas.
+    checkinWindow: {
+      expected: checkinAgendaData.entries.filter((entry) => entry.status !== "scheduled").length,
+      answered: checkinAgendaData.entries.filter((entry) => entry.responseId).length,
+    },
+    checkinSchedules: checkinAgendaData.schedules,
+    nextCheckinDate: checkinAgenda.nextOccurrenceForClient(checkinAgendaData.schedules, checkinAgenda.todayIso()),
     dietDays,
     workoutDates,
     planProgress: {

@@ -142,12 +142,7 @@ function buildAdherenceInput(data, periodDays, now = new Date(), activePlan = nu
         activeDays: diasActivos(task, periodDays, now),
       })),
     },
-    checkins: {
-      respondedAt: data.checkinResponses.map((r) => r.respondedAt),
-      cadence: data.checkinConfig?.cadence,
-      periodDays,
-      now,
-    },
+    checkins: data.checkinWindow || { expected: 0, answered: 0 },
   };
 }
 
@@ -230,7 +225,7 @@ module.exports = {
       latestWeight: lastEntry?.weight ?? null,
       latestWeightDate: lastEntry?.date ?? null,
       lastCheckinAt: lastResponse?.respondedAt ?? null,
-      checkinCadence: data.checkinConfig?.cadence ?? null,
+      nextCheckinDate: data.nextCheckinDate ?? null,
       activePlan: activePlan
         ? {
             _id: activePlan._id,

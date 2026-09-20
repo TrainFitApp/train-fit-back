@@ -49,7 +49,7 @@ async function main() {
       `Plantilla original ${runId}`,
       [
         {
-          dayLabel: "Día 1",
+          name: "Menú 1",
           meals: [
             {
               slot: "Desayuno",
@@ -64,10 +64,8 @@ async function main() {
           ],
         },
       ],
-      "sequential",
-      []
     );
-    const originalAlt = created.template.days[0].meals[0].alternatives[0];
+    const originalAlt = created.template.menus[0].meals[0].alternatives[0];
     const originalCustomProductId = String(originalAlt.customProducts[0]._id);
     const originalCustomRecipeId = String(originalAlt.customRecipes[0]._id);
     ok("plantilla original creada", created.template._id);
@@ -98,9 +96,9 @@ async function main() {
     assert.equal(frozenCopy.startDate, startDate);
     assert.equal(frozenCopy.endMode, "indefinite");
     assert.equal(frozenCopy.status, "active");
-    assert.equal(frozenCopy.days[0].meals[0].alternatives[0].customProducts[0].product.name, `Producto asignación ${runId}`);
-    const copyCustomProductId = String(frozenCopy.days[0].meals[0].alternatives[0].customProducts[0]._id);
-    const copyCustomRecipeId = String(frozenCopy.days[0].meals[0].alternatives[0].customRecipes[0]._id);
+    assert.equal(frozenCopy.menus[0].meals[0].alternatives[0].customProducts[0].product.name, `Producto asignación ${runId}`);
+    const copyCustomProductId = String(frozenCopy.menus[0].meals[0].alternatives[0].customProducts[0]._id);
+    const copyCustomRecipeId = String(frozenCopy.menus[0].meals[0].alternatives[0].customRecipes[0]._id);
     assert.notEqual(copyCustomProductId, originalCustomProductId, "la copia no debe compartir el CustomProduct con la plantilla");
     assert.notEqual(copyCustomRecipeId, originalCustomRecipeId, "la copia no debe compartir el CustomRecipe con la plantilla");
     ok("la copia es un clon real con sus propios campos de fecha/estado");
@@ -114,17 +112,17 @@ async function main() {
     // --- 4) editar la plantilla original después de asignar NO afecta a la copia ---
     await dietTemplateDao.update(created.trainer._id, created.template._id, {
       name: `Plantilla EDITADA ${runId}`,
-      days: [
+      menus: [
         {
-          dayLabel: "Día 1 editado",
+          name: "Menú 1 editado",
           meals: [{ slot: "Desayuno", alternatives: [{ label: "", customProducts: [], customRecipes: [] }] }],
         },
       ],
     });
     const copyAfterEdit = await dietTemplateSchema.findById(assignment._id);
-    assert.equal(copyAfterEdit.days[0].dayLabel, "Día 1", "la copia ya asignada no debe cambiar cuando se edita la plantilla original");
+    assert.equal(copyAfterEdit.menus[0].name, "Menú 1", "la copia ya asignada no debe cambiar cuando se edita la plantilla original");
     assert.equal(
-      copyAfterEdit.days[0].meals[0].alternatives[0].customProducts.length,
+      copyAfterEdit.menus[0].meals[0].alternatives[0].customProducts.length,
       1,
       "la copia ya asignada debe conservar su contenido original"
     );

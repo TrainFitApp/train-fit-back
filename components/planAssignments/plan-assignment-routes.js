@@ -29,7 +29,7 @@ router.getAsync(
   requireActiveClient("nutrition"),
   controller.getHistory
 );
-// Editor de fase/ciclo ya asignado — contenido completo, nunca la plantilla
+// Editor de una fase/revisión ya asignada — contenido completo, nunca la plantilla
 // de biblioteca de origen. Registradas DESPUÉS de /active y /history para que
 // esas rutas literales no las intercepte el :planId genérico.
 router.getAsync(
@@ -54,47 +54,53 @@ router.deleteAsync(
   controller.cancelPhase
 );
 router.postAsync(
-  "/trainer/clients/:clientId/diet-exceptions",
+  "/trainer/clients/:clientId/skipped-days",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.createException
+  controller.markSkippedDay
 );
-// --- Ciclos por contenido (docs/plan-ciclos-por-contenido.md) ---
+// --- Revisiones (docs/plan-revisiones.md) ---
 router.getAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.getPhaseCycles
+  controller.getPhaseRevisions
 );
 router.getAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/:number/need",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/:number/need",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.getCycleNeed
+  controller.getRevisionNeed
 );
 router.postAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next/scale",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next/scale",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.scaleNextCycle
+  controller.scaleNextRevision
 );
 router.putAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.prepareNextCycle
+  controller.prepareNextRevision
 );
 router.deleteAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.discardNextCycle
+  controller.discardNextRevision
+);
+router.patchAsync(
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/dates",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  controller.updatePhaseDates
 );
 router.getAsync(
   "/trainer/clients/:clientId/diet-timeline",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.getCycleTimeline
+  controller.getRevisionTimeline
 );
 router.getAsync(
   "/trainer/clients/:clientId/nutrition-history",

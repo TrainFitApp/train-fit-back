@@ -16,20 +16,12 @@ const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 // (autopopulate + cascada de borrado), y un blob Mixed aparte solo duplicaba
 // esa forma sin aportar nada — se materializan al crear/actualizar la
 // plantilla (diet-template-dao.js), no al aplicar como antes.
-// Auditoría de arquitectura (nutrición) — `mode` generaliza esta plantilla en
-// tres formas de repetirse, sin romper nada de lo existente:
-//   - "sequential" (default, TODO documento existente lo es): el `days[]` de
-//     siempre — una secuencia finita "Día 1, Día 2…" que se aplica a partir
-//     de una fecha de inicio, un día calendario por índice.
-//   - "recurring": en vez de una secuencia finita, `dayPatterns[]` particiona
-//     los 7 días de la semana (p. ej. "Entreno" L-V, "Descanso" S-D) — lo que
-//     varía es el DÍA DE LA SEMANA, no una posición en una secuencia.
-//   - "choice" (Fase 9): igual que "recurring" pero SIN día de la semana fijo
-//     — el propio cliente elige, día a día, cuál de los `dayPatterns[]` le
-//     toca (p. ej. "Entrenamiento" / "Descanso", ninguno atado a L-M-X...).
-//     `appliesTo` no se usa en este modo.
-// Un documento nunca usa `days` y `dayPatterns` a la vez — el campo que no
-// corresponde al `mode` actual queda vacío.
+// 2026-09 — una plantilla es SIEMPRE una lista de MENÚS: días
+// intercambiables ("Entrenamiento", "Descanso"…) entre los que el cliente
+// elige cada día. Los otros dos modos que existían (una secuencia Día 1..N
+// desde una fecha de inicio, y patrones atados a días de la semana) se han
+// eliminado: ninguno aportaba nada que un menú no cubra y triplicaban el
+// camino de resolución, el editor y las etiquetas.
 //
 // Fase 9 — cada comida admite VARIAS alternativas (antes un único
 // customProducts/customRecipes por slot). 0 alternativas = comida vacía; 1 =
@@ -102,8 +94,8 @@ const DietTemplateSchema = new Schema(
     startDate: { type: String }, // "YYYY-MM-DD"
     // Fin REAL. null mientras la fase sigue corriendo; se estampa el día en
     // que otra fase la corta (markSuperseded). No hay fin estimado ni
-    // duración: una fase acaba cuando empieza la siguiente (ciclos por
-    // contenido, docs/plan-ciclos-por-contenido.md).
+    // duración: una fase acaba cuando empieza la siguiente
+    // (docs/plan-revisiones.md).
     endDate: { type: String }, // "YYYY-MM-DD" o null si sigue vigente
     status: { type: String, enum: ["active", "superseded", "ended", null] },
     // Encadena con la copia que la sustituyó — permite reconstruir el
@@ -112,45 +104,57 @@ const DietTemplateSchema = new Schema(
     supersededBy: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
     // Informativo — de qué plantilla se copió, solo para "ver plantilla
     // aplicada" en el frontend. Nunca se lee para resolver contenido (eso ya
-    // es la copia en sí) ni para el `mode`/`days`/`dayPatterns` reales.
+    // es la copia en sí) ni para los `menus` reales.
     // Puede quedar huérfano si la plantilla original se borra después, y
     // está ausente en una asignación creada de cero ("Crear dieta"), que no
     // sale de ninguna plantilla.
     sourceTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
 
-    // --- Fase / ciclo (sugerencias de dieta + progresión) ---
+    // --- Fase / revisiones (sugerencias de dieta + progresión) ---
     //
     // Vocabulario: una **fase** (Hipertrofia, Minicut, Definición...) es un
-    // grupo de **ciclos** encadenados. Lo que antes era "una fase" (una copia
-    // congelada suelta) pasa a ser un ciclo; la fase es el grupo. Todos estos
-    // campos SOLO existen en copias (clientId puesto) — en una plantilla de
-    // biblioteca no significan nada, igual que startDate/status.
+    // periodo del plan del cliente, partido en **revisiones** por sus
+    // check-ins (docs/plan-revisiones.md). Solo se persiste el CONTENIDO que
+    // cambia: el primer documento de la fase y cada vez que el entrenador
+    // prepara la revisión siguiente con comida o cantidades distintas.
+    // Todos estos campos SOLO existen en copias (clientId puesto) — en una
+    // plantilla de biblioteca no significan nada, igual que startDate/status.
     //
-    // `phaseId` apunta al PRIMER ciclo de la fase (auto-ref, mismo patrón que
-    // supersededBy). El primer ciclo se apunta a sí mismo. find({phaseId})
-    // devuelve todos los ciclos de una fase; renombrar la fase = tocar 1 doc.
+    // `phaseId` apunta al PRIMER documento de la fase (auto-ref, mismo patrón
+    // que supersededBy), que se apunta a sí mismo. find({phaseId}) devuelve
+    // toda la fase; renombrarla = tocar 1 doc.
     phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate", index: true },
-    // Nombre y enfoque de la FASE — solo en el primer ciclo, se leen vía
-    // phaseId desde los demás. `phaseFocus` es la elección Déficit/
-    // Mantenimiento/Superávit del cajón de sugerencias, no un dato aparte.
+    // Nombre de la FASE — solo en el primer documento, se lee vía phaseId
+    // desde los demás.
     phaseName: { type: String, trim: true, maxlength: 100 },
-    phaseFocus: { type: String, enum: ["cut", "maintain", "bulk", null] },
-    // Delta de kcal elegido al crear el C1 (−500 / 0 / +300...) y ritmo por
-    // defecto de la rampa (kcal por ciclo, p. ej. −100). Solo primer ciclo.
-    phaseTargetKcalDelta: { type: Number },
-    targetRatePerCycle: { type: Number },
+    // Objetivo con el que se pauta la fase: el valor calculado del cliente,
+    // o el que el entrenador tecleó encima (`source: "manual"`). Sustituye
+    // al trío enfoque + ajuste de kcal + ritmo por revisión: lo que importa es
+    // con qué números se pauta, no de qué preset salieron.
+    phaseTarget: {
+      type: new Schema(
+        {
+          kcal: Number,
+          protein: Number,
+          carbs: Number,
+          fat: Number,
+          source: { type: String, enum: ["calculated", "manual"], default: "calculated" },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
     // g/kg de proteína y grasa que el entrenador fijó en el cajón al empezar
-    // la fase (null = fórmula por defecto de nutrition-target.js). Solo
-    // primer ciclo; los ciclos 2+ recalculan la necesidad con estos mismos.
+    // la fase (null = fórmula por defecto de nutrition-target.js). Solo el
+    // primer documento; las revisiones recalculan con estos mismos.
     phaseProteinPerKg: { type: Number, default: null },
     phaseFatPerKg: { type: Number, default: null },
-    // Cómo se calculó la necesidad del cliente al empezar la fase
-    // (docs/plan-info-calculo-fase.md): snapshot de los datos que entraron
-    // (peso y de dónde, altura, edad, sexo, pasos, entrenamiento, delta,
-    // g/kg) y del desglose (BMR, factor, gasto, kcal y macros). Solo en el
-    // head; los ciclos 2+ se calculan al vuelo a fecha de inicio del ciclo.
+    // Cómo se calculó la necesidad del cliente al empezar la fase: snapshot
+    // de los datos que entraron (peso y de dónde, altura, edad, sexo, rango
+    // de pasos del hábito cumplido, entrenamiento, g/kg) y del desglose (BMR, factor,
+    // gasto, kcal y macros). Solo en el head; las revisiones siguientes se
+    // calculan al vuelo a su fecha de inicio.
     // `missing` con contenido = no se pudo calcular (faltaban biométricos).
-    // Sin este campo = fase creada antes de guardar el cálculo.
     phaseNeed: {
       type: new Schema(
         {
@@ -159,17 +163,15 @@ const DietTemplateSchema = new Schema(
           inputs: Schema.Types.Mixed,
           breakdown: Schema.Types.Mixed,
           target: Schema.Types.Mixed,
+          stepsFromHabit: Schema.Types.Mixed,
         },
         { _id: false }
       ),
       default: undefined,
     },
-    // Ciclos por contenido (docs/plan-ciclos-por-contenido.md): un ciclo
-    // dura lo que dura su contenido (ver cycle-window.js#contentCycleDays),
-    // no se guarda aparte. Las kcal del ciclo tampoco: se derivan de los
-    // alimentos (diet-macro-profile.js). Solo se persisten los ciclos que
-    // cambian algo; el ciclo N es una ventana calculada encadenando las
-    // longitudes de los persistidos.
+    // Las kcal de una revisión no se guardan: se derivan de los alimentos
+    // (diet-macro-profile.js). Sus FECHAS tampoco: las marcan los check-ins
+    // programados del cliente (revision-window.js).
 
     // --- Aptitud dietética ---
     //
@@ -189,29 +191,13 @@ const DietTemplateSchema = new Schema(
     verified: { type: Boolean, default: false },
 
     name: { type: String, required: true, trim: true, maxlength: 100 },
-    mode: { type: String, enum: ["sequential", "recurring", "choice"], default: "sequential" },
-    // Solo en mode === "choice": cuántos días dura un ciclo. En sequential el
-    // ciclo son sus days[] y en recurring la semana; en choice el cliente
-    // elige menú cada día, así que la longitud del ciclo hay que decirla.
-    choiceCycleDays: { type: Number, min: 1 },
-    days: [
-      {
-        // Etiqueta libre ("Día 1", "Lunes") — NO atada a una fecha real; la
-        // fecha real se decide al aplicar la plantilla a un cliente.
-        dayLabel: { type: String, trim: true, maxlength: 50, required: true },
-        meals: [MealStructureSchema],
-      },
-    ],
-    // Solo relevante si mode === "recurring".
-    dayPatterns: [
+    // Los menús entre los que el cliente elige cada día. El nombre es libre
+    // ("Entrenamiento", "Descanso") y es la CLAVE de la elección: se guarda
+    // en DietDay.menuName, así que dos menús de la misma plantilla no pueden
+    // llamarse igual (validado en el controller).
+    menus: [
       {
         name: { type: String, trim: true, maxlength: 50, required: true },
-        // Índices de día de la semana que cubre este patrón: 0=domingo … 6=sábado
-        // (mismo criterio que Date#getDay()). La unión de todos los patrones de
-        // una plantilla debería cubrir 0-6 sin solapes — validado en el
-        // controller, no aquí (Mongoose no valida invariantes entre elementos
-        // de un array con facilidad).
-        appliesTo: { type: [Number], default: [] },
         meals: [MealStructureSchema],
       },
     ],
@@ -227,12 +213,11 @@ DietTemplateSchema.plugin(mongooseAutopopulate);
 // vez de escanear toda la colección (plantillas incluidas).
 DietTemplateSchema.index({ clientId: 1, status: 1, startDate: 1 });
 
-// Recorre days[] y dayPatterns[] (mismo shape .meals[].alternatives[]) y
-// junta los ids de CustomProduct/CustomRecipe referenciados en TODO el
-// documento — usado tanto por la cascada de borrado de aquí abajo como por
-// diet-template-dao.js#update para limpiar el contenido viejo que se
-// reemplaza (expuesto como propiedad del modelo, no como export aparte, para
-// no crear un require circular schema<->dao).
+// Recorre los menús y junta los ids de CustomProduct/CustomRecipe
+// referenciados en TODO el documento — usado tanto por la cascada de borrado
+// de aquí abajo como por diet-template-dao.js#update para limpiar el
+// contenido viejo que se reemplaza (expuesto como propiedad del modelo, no
+// como export aparte, para no crear un require circular schema<->dao).
 function collectIdsFromMeals(containers) {
   const productIds = [];
   const recipeIds = [];
@@ -248,12 +233,7 @@ function collectIdsFromMeals(containers) {
 }
 
 function collectContentIds(doc) {
-  const fromDays = collectIdsFromMeals(doc?.days);
-  const fromPatterns = collectIdsFromMeals(doc?.dayPatterns);
-  return {
-    productIds: [...fromDays.productIds, ...fromPatterns.productIds],
-    recipeIds: [...fromDays.recipeIds, ...fromPatterns.recipeIds],
-  };
+  return collectIdsFromMeals(doc?.menus);
 }
 
 async function deleteContentIds({ productIds, recipeIds }) {
@@ -261,10 +241,10 @@ async function deleteContentIds({ productIds, recipeIds }) {
   if (recipeIds.length) await customRecipeSchema.deleteMany({ _id: { $in: recipeIds } });
 }
 
-// Refactor nutrición (2026-09) — ya no hay DietException que arrastrar: una
-// desviación es una marca en el DietDay/Meal real del cliente (skipped /
-// wasOverridden), y esos documentos son suyos, no de la asignación: siguen
-// siendo su historial aunque el plan que regía entonces se borre.
+// Refactor nutrición (2026-09) — no hay nada más que arrastrar: saltarse un
+// día es una marca en el DietDay real del cliente (skipped), y ese documento
+// es suyo, no de la asignación: sigue siendo su historial aunque el plan que
+// regía entonces se borre.
 const handleDeleteOne = async function (next) {
   try {
     const doc = await this.model.findOne(this.getQuery());

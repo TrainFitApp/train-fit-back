@@ -2,7 +2,7 @@ const { groupKey } = require("./shopping-list-service");
 const { isItemPlanned, isItemConsumed } = require("./diet-days-nutrition-util");
 
 // Cumplimiento ALIMENTO A ALIMENTO de un rango de días — para el panel de
-// resumen de un ciclo ("¿qué se come de verdad y qué se salta siempre?").
+// resumen de una revisión ("¿qué se come de verdad y qué se salta siempre?").
 //
 // Lo que ya había se quedaba corto para esa pregunta: computeDayCompletion
 // CUENTA items (total vs hechos) tirando los nombres, computeDayTracking suma
@@ -104,8 +104,8 @@ function identify(item, kind) {
   return { key, name: (item?.product?.name || item?.name || "").trim() || "Sin nombre" };
 }
 
-// Desvíos DÍA A DÍA de un rango — para la sugerencia del ciclo siguiente
-// (plan ciclos por contenido §7): qué comió el cliente fuera de pauta y qué
+// Desvíos DÍA A DÍA de un rango — para la sugerencia de la revisión siguiente
+// (docs/plan-revisiones.md): qué comió el cliente fuera de pauta y qué
 // comidas pautadas no marcó. Solo días con algo que contar; un día sin
 // pautado y sin extras no aparece. `hasPlan` false = ese día no tenía nada
 // pautado (p. ej. `choice` sin menú elegido): cuenta como no seguido.

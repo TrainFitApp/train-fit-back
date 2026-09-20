@@ -2,8 +2,25 @@ const TrainerTask = require("./trainer-task-schema");
 const TaskCompletion = require("./task-completion-schema");
 
 module.exports = {
-  async create(trainerId, clientId, { type, label, target, unit }) {
-    return TrainerTask.create({ trainerId, clientId, type, label: label || null, target, unit });
+  async create(trainerId, clientId, { type, label, target, targetMax, unit }) {
+    return TrainerTask.create({
+      trainerId,
+      clientId,
+      type,
+      label: label || null,
+      target,
+      targetMax: targetMax ?? null,
+      unit,
+    });
+  },
+
+  // El hábito de PASOS que rige para el cliente, de cualquier profesional:
+  // es lo que pauta cuánto anda y, con ello, su factor de gasto. Si hubiera
+  // más de uno (dos profesionales), manda el más reciente.
+  async findActiveStepsTask(clientId) {
+    return TrainerTask.findOne({ clientId, type: "steps", active: true })
+      .sort({ createdAt: -1 })
+      .lean();
   },
 
   async listForClient(trainerId, clientId) {
@@ -39,7 +56,7 @@ module.exports = {
     // etiqueta, el objetivo y sobre todo `createdAt`, que es contra lo que
     // se miden los días activos de cada hábito.
     return TrainerTask.find({ trainerId, clientId: { $in: clientIds }, active: true })
-      .select("clientId type label target unit createdAt")
+      .select("clientId type label target targetMax unit createdAt")
       .lean();
   },
 

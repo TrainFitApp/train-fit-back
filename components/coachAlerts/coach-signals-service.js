@@ -3,14 +3,13 @@ const {
   isPlausibleAnthropometry,
   isPlausibleAnthropometryChange,
 } = require("../trainerCheckins/checkin-field-catalog");
-const { isCheckinDue, checkinOverdueCycles } = require("../trainerCheckins/checkin-due");
 
 // Fase 1 Coach Pro — el CÁLCULO de las señales, separado de dónde salen los
 // datos y de dónde se escriben las alertas (eso es coach-alert-service.js).
 // Todo aquí es puro: entra un objeto con los datos ya cargados, sale una
 // lista de señales. Sin `require` de modelos, sin await, sin Date.now()
 // implícito (`now` siempre se pasa). Así se prueba entero sin BD ni mocks —
-// mismo criterio que findDueReminders en checkin-reminder-service.js.
+// mismo criterio que el resto de señales por cadencia.
 
 // --- Umbrales ---
 // Fase 1: fijos. Se convierten en configurables por coach en la Fase 3,
@@ -55,8 +54,8 @@ const SIGNAL_THRESHOLDS = {
   // para entrenamiento.
   noTrainingDays: 14,
   noTrainingCriticalDays: 21,
-  // Un check-in vencido más de 2 ciclos completos ya no es un olvido.
-  checkinOverdueCriticalCycles: 2,
+  // Dos solicitudes seguidas sin responder ya no es un olvido.
+  checkinOverdueCriticalMissed: 2,
 };
 
 // Perímetros vigilados por la señal de "cambio brusco de medidas". Derivados
@@ -298,24 +297,25 @@ function detectInactivity({ lastActivityAt, now, clientName }) {
   };
 }
 
+// Vencido = una solicitud concreta se cerró sin respuesta, no "han pasado N
+// días desde la última". Las fechas las pone la programación del cliente
+// (docs/plan-revisiones.md), así que contar ventanas vacías es exacto: ya no
+// hay que estimar cuántos ciclos de cadencia caben en el silencio.
 function detectCheckinOverdue({ checkin, now, clientName }) {
-  if (!checkin?.config) return null;
-  const responses = checkin.lastResponseAt ? [{ respondedAt: checkin.lastResponseAt }] : [];
-  if (!isCheckinDue(checkin.config, responses, now)) return null;
+  if (!checkin?.missed) return null;
 
-  const cycles = checkinOverdueCycles(checkin.config, responses, now);
-  const isCritical = cycles >= SIGNAL_THRESHOLDS.checkinOverdueCriticalCycles;
-
+  const isCritical = checkin.missed >= SIGNAL_THRESHOLDS.checkinOverdueCriticalMissed;
   return {
     type: "checkin_overdue",
     priority: isCritical ? "high" : "medium",
     reason: checkin.lastResponseAt
-      ? `${clientName} no responde su check-in desde hace ${daysBetween(checkin.lastResponseAt, now)} días.`
-      : `${clientName} todavía no ha respondido a su primer check-in.`,
+      ? `${clientName} ha dejado sin responder ${checkin.missed} ${checkin.missed === 1 ? "check-in" : "check-ins"}; el último que respondió fue hace ${daysBetween(checkin.lastResponseAt, now)} días.`
+      : `${clientName} todavía no ha respondido a ningún check-in.`,
     context: {
       metric: "checkin",
-      cadence: checkin.config.cadence,
-      overdueCycles: cycles,
+      missed: checkin.missed,
+      lastMissedDate: checkin.lastMissedDate || null,
+      nextDate: checkin.nextDate || null,
       lastResponseAt: checkin.lastResponseAt || null,
     },
   };

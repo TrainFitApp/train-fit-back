@@ -14,7 +14,7 @@ const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 // colecciones que dependen del trainer o del cliente (TrainerClient,
 // TrainerNote, TrainerPayment, TrainerTask+TaskCompletion, ClientIntake,
 // TrainerIntakeConfig, CheckinResponse, TrainerCheckinTemplate,
-// CheckinTemplateDefinition, DietTemplate(copia)+DietException,
+// CheckinTemplateDefinition, DietTemplate(copia),
 // Notification, Recipe, BillingCustomer, BillingEvent), borra al TRAINER, y
 // confirma que todo desaparece — incluido lo que dependía del CLIENTE en la
 // relación (para probar el lado $or), y que borrar al cliente después limpia
@@ -34,10 +34,8 @@ async function main() {
   const clientIntakeSchema = require("../components/clientIntake/client-intake-schema");
   const trainerIntakeConfigSchema = require("../components/trainerIntakeConfig/trainer-intake-config-schema");
   const checkinResponseSchema = require("../components/trainerCheckins/checkin-response-schema");
-  const trainerCheckinTemplateSchema = require("../components/trainerCheckins/trainer-checkin-template-schema");
   const checkinTemplateDefinitionSchema = require("../components/trainerCheckins/checkin-template-definition-schema");
   const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
-  const dietExceptionSchema = require("../components/dietExceptions/diet-exception-schema");
   const notificationSchema = require("../components/notifications/notification-schema");
   const recipeSchema = require("../components/recipes/recipe-schema");
   const billingCustomerSchema = require("../components/billing/billing-customer-schema");
@@ -67,15 +65,9 @@ async function main() {
       trainerId: trainer._id, clientId: client._id, values: { weight: 80 },
     });
     docs.checkinTemplateDef = await checkinTemplateDefinitionSchema.create({ trainerId: trainer._id, name: `Plantilla ${runId}` });
-    docs.checkinTemplateApplied = await trainerCheckinTemplateSchema.create({
-      trainerId: trainer._id, clientId: client._id, enabledFields: [],
-    });
     docs.dietTemplateCopy = await dietTemplateSchema.create({
       trainerId: trainer._id, clientId: client._id, name: "Copia verificación",
       startDate: "2026-01-01", endMode: "indefinite", status: "active",
-    });
-    docs.dietException = await dietExceptionSchema.create({
-      assignmentId: docs.dietTemplateCopy._id, clientId: client._id, date: "2026-01-05", action: "skip",
     });
     docs.notification = await notificationSchema.create({
       trainerId: trainer._id, clientId: client._id, type: "payment_created",
@@ -87,7 +79,7 @@ async function main() {
     docs.billingEvent = await billingEventSchema.create({
       eventId: `verify-cascade-event-${runId}`, type: "TEST", userId: trainer._id, payload: {},
     });
-    ok("contenido creado en las 15 colecciones (13 huecos + 2 hijos en cascada)");
+    ok("contenido creado en las 13 colecciones (12 huecos + 1 hijo en cascada)");
 
     // Borra al TRAINER — todo lo anterior está trainerId=trainer o
     // userId=trainer, así que debe desaparecer entero.
@@ -104,9 +96,7 @@ async function main() {
       ["TrainerIntakeConfig", trainerIntakeConfigSchema, docs.intakeConfig._id],
       ["CheckinResponse", checkinResponseSchema, docs.checkinResponse._id],
       ["CheckinTemplateDefinition", checkinTemplateDefinitionSchema, docs.checkinTemplateDef._id],
-      ["TrainerCheckinTemplate", trainerCheckinTemplateSchema, docs.checkinTemplateApplied._id],
       ["DietTemplate (copia)", dietTemplateSchema, docs.dietTemplateCopy._id],
-      ["DietException", dietExceptionSchema, docs.dietException._id],
       ["Notification", notificationSchema, docs.notification._id],
       ["Recipe", recipeSchema, docs.recipe._id],
       ["BillingCustomer", billingCustomerSchema, docs.billingCustomer._id],
@@ -117,7 +107,7 @@ async function main() {
       const found = await model.findById(id);
       assert.equal(found, null, `${label} debía borrarse en cascada al borrar el trainer, sigue existiendo`);
     }
-    ok("las 16 colecciones quedaron limpias tras borrar al trainer (incluida la cascada de 2do nivel: TaskCompletion, DietException)");
+    ok("las 13 colecciones quedaron limpias tras borrar al trainer (incluida la cascada de 2do nivel: TaskCompletion)");
 
     console.log(`${LOG_PREFIX} PASS`);
   } finally {

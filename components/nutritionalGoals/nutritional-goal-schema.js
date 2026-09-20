@@ -24,14 +24,14 @@ const NutritionalGoalSchema = new Schema({
   // la pauta. Todo lo que ya existía sigue funcionando igual — el campo es
   // opcional y nada lo exige.
   fiberGTotal: { type: Number, default: null },
-  // Auditoría de arquitectura (nutrición) — mismo concepto de periodo que
-  // PlanAssignment, opcional y retrocompatible: un objetivo sin estos campos
-  // se sigue comportando exactamente como hoy (el "actual" es el que apunta
-  // User.goalInUse, sin vigencia temporal). Con ellos, un objetivo puede
-  // programarse para una fase futura conocida.
-  startDate: { type: String, default: null },
-  endMode: { type: String, enum: ["fixedDate", "duration", "indefinite", null], default: null },
-  endDate: { type: String, default: null },
+  // De dónde salen estos números: "calculated" = recalculados del perfil del
+  // cliente (Mifflin + gasto + reparto), "manual" = tecleados encima. Un
+  // objetivo manual NO se pisa al recalcular: si alguien decidió esas kcal,
+  // cambiar de peso no debe borrarlas sin avisar.
+  source: { type: String, enum: ["calculated", "manual"], default: "calculated" },
+  // Quién los tecleó, cuando no fue el propio cliente. El profesional puede
+  // editar el objetivo de su cliente desde Plan > Nutrición.
+  updatedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

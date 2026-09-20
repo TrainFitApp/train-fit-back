@@ -1,22 +1,41 @@
 const dietTemplateDao = require("./diet-template-dao");
-const { cycleMacroProfile } = require("./diet-macro-profile");
+const { contentMacroProfile } = require("./diet-macro-profile");
 const { rankTemplates } = require("./diet-suggestion");
 const { effectiveSuitability } = require("./diet-suitability");
 const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
+const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
+const { stepsFromHabit } = require("../planAssignments/revision-need");
+const { addDaysToIsoDate, isoDate } = require("../util/date-util");
 
 const VALID_FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
 
+// kcal/macros tecleados por el entrenador. Sin kcal válidas no hay override:
+// vale el calculado.
+function sanitizeTarget(target) {
+  const kcal = Number(target?.kcal);
+  if (!Number.isFinite(kcal) || kcal <= 0) return null;
+  return {
+    kcal: Math.round(kcal),
+    protein: Math.round(Number(target?.protein) || 0),
+    carbs: Math.round(Number(target?.carbs) || 0),
+    fat: Math.round(Number(target?.fat) || 0),
+  };
+}
+
 module.exports = {
   // POST /trainer/clients/:clientId/diet-suggestions
-  // body: { objetiveKcalDelta, dietaryFlags?: string[], proteinPerKg?, fatPerKg? }
+  // body: { target?: { kcal, protein, carbs, fat }, dietaryFlags?, proteinPerKg?, fatPerKg? }
   //
-  // Devuelve el objetivo calculado del cliente + la lista de plantillas
-  // rankeadas por cercanía + las ocultas por el filtro dietético.
+  // Devuelve el objetivo de REFERENCIA calculado con los últimos datos del
+  // cliente (último peso, último rango de pasos declarado en un check-in) y
+  // la lista de plantillas rankeadas por cercanía. Si el entrenador teclea
+  // encima sus propias kcal/macros (`target`), el ranking se hace contra
+  // ESOS números y la respuesta lo marca como manual: ya no hay "tipo de
+  // fase" ni "ajuste de kcal" que traducir a un objetivo.
   async suggest(req, res) {
     const trainerId = req.auth.userId;
     const { clientId } = req.params;
-    const objetiveKcalDelta = Number(req.body?.objetiveKcalDelta) || 0;
     // Override manual de g/kg del cajón de sugerencias — 0/negativo/no-numérico
     // se descarta y cae a la fórmula por defecto (ver computeNutritionTarget).
     const proteinPerKg = Number(req.body?.proteinPerKg);
@@ -26,15 +45,30 @@ module.exports = {
       fatPerKg: fatPerKg > 0 ? fatPerKg : undefined,
     };
 
+    // Pasos: los de su hábito en las dos últimas semanas (§12). Sin hábito
+    // o sin marcarlo, manda el rango de su perfil.
+    const today = isoDate(new Date());
+    const stepsWindow = { start: addDaysToIsoDate(today, -14), end: today };
+    const stepsTask = await trainerTaskDao.findActiveStepsTask(clientId);
+    const stepsCompletions = stepsTask
+      ? await trainerTaskDao.listCompletionsForTasksInRange([stepsTask._id], stepsWindow.start, stepsWindow.end)
+      : [];
+    const latestSteps = stepsFromHabit(stepsTask, stepsCompletions.length, stepsWindow, today);
     const [resolved, prefs] = await Promise.all([
-      resolveClientNutritionTarget(clientId, objetiveKcalDelta, macroOverride),
+      resolveClientNutritionTarget(clientId, 0, macroOverride, {
+        stepsRangeKey: latestSteps?.key || null,
+        useClientObjetive: true,
+      }),
       nutritionPreferencesDao.getByClientId(clientId),
     ]);
 
     if (!resolved.ok) {
       return res.status(422).send({ code: "MISSING_BIOMETRICS", missing: resolved.missing });
     }
-    const { target, weightSource, clientObjetive } = resolved;
+    const { weightSource, clientObjetive } = resolved;
+    const calculated = resolved.target;
+    const manual = sanitizeTarget(req.body?.target);
+    const target = manual || calculated;
 
     const requiredFlags = Array.isArray(req.body?.dietaryFlags)
       ? req.body.dietaryFlags.filter((f) => VALID_FLAGS.includes(f))
@@ -47,13 +81,12 @@ module.exports = {
     const templates = await dietTemplateDao.listRankableForClient(trainerId, clientId, sources);
     const candidates = templates.map((t) => {
       const doc = t.toObject ? t.toObject() : t;
-      const profile = cycleMacroProfile(doc);
+      const profile = contentMacroProfile(doc);
       return {
         _id: doc._id,
         name: doc.name,
         verified: !!doc.verified,
         ownerClientId: doc.ownerClientId || null,
-        mode: doc.mode,
         suitableFor: doc.suitableFor || [],
         suitableForOverride: doc.suitableForOverride || [],
         effectiveSuitableFor: effectiveSuitability(doc.suitableFor, doc.suitableForOverride),
@@ -70,8 +103,15 @@ module.exports = {
         protein: target.protein,
         carbs: target.carbs,
         fat: target.fat,
-        objetiveKcalDelta,
+        source: manual ? "manual" : "calculated",
       },
+      // El calculado siempre viaja, aunque el entrenador haya tecleado
+      // encima: es lo que permite volver atrás de un vistazo.
+      calculated,
+      // Qué pasos entraron en el cálculo y de dónde (null = del rango del
+      // perfil del cliente).
+      stepsFromHabit: latestSteps,
+      needBreakdown: { inputs: resolved.inputs, breakdown: resolved.breakdown },
       weightSource,
       // Peso sobre el que se aplican los g/kg: el ajustado si IMC ≥ 30
       // (nutrition-target.js#getFinalWeight), si no el real. El panel lo usa

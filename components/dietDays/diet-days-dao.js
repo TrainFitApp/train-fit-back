@@ -100,7 +100,6 @@ module.exports = {
             _id: 1,
             name: 1,
             notes: 1,
-            wasOverridden: 1,
             customProducts: {
               quantity: 1,
               energyKcal100g: 1,
@@ -377,20 +376,19 @@ module.exports = {
   // arriba, que confía en req.params.id sin comprobar propiedad): el llamador
   // SIEMPRE debe haber resuelto el dietDayId vía resolveOwnedDietDay(userId,
   // date) antes de llamar a esto, nunca aceptar un id suelto del cliente.
-  async setDayTypeName(dietDayId, dayTypeName) {
-    return dietDaySchema.findByIdAndUpdate(dietDayId, { $set: { dayTypeName } }, { new: true });
+  async setMenuName(dietDayId, menuName) {
+    return dietDaySchema.findByIdAndUpdate(dietDayId, { $set: { menuName } }, { new: true });
   },
 
-  // TASK-044 (MASTER_BACKLOG.md) — cuenta días de un plan "mode: choice" en
-  // los que el cliente nunca eligió menú (DietDay.dayTypeName sigue null)
-  // dentro de [startDate, endDate]. Antes cargaba el wrapper Diet entero
-  // (autopoblado) para filtrar en memoria; ahora lo cuenta la propia base
-  // sobre el índice (userId, date).
+  // TASK-044 (MASTER_BACKLOG.md) — cuenta días en los que el cliente nunca
+  // eligió menú (DietDay.menuName sigue null) dentro de [startDate, endDate].
+  // Antes cargaba el wrapper Diet entero (autopoblado) para filtrar en
+  // memoria; ahora lo cuenta la propia base sobre el índice (userId, date).
   async countDaysWithoutChoice(userId, startDate, endDate) {
     return dietDaySchema.countDocuments({
       userId,
       date: { $gte: startDate, $lte: endDate },
-      $or: [{ dayTypeName: null }, { dayTypeName: { $exists: false } }],
+      $or: [{ menuName: null }, { menuName: { $exists: false } }],
     });
   },
 

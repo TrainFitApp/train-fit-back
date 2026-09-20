@@ -17,7 +17,7 @@ const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 // - NO toca relaciones en otros estados (cuestionario_pendiente/en_revision/active/etc),
 //   aunque sean igual de antiguas — el recordatorio es solo para "pending" real.
 // Deliberadamente NO llama a sendReminder/runReminderJob (evita un envío SES real),
-// mismo criterio que verify-checkin-reminders.js.
+// mismo criterio que el resto de scripts verify-*.
 async function main() {
   const mongoUri = buildMongoUri();
   log(`connecting ${redactMongoUri(mongoUri)}`);

@@ -25,9 +25,10 @@ const CheckinTemplateDefinitionSchema = new Schema({
       message: "Campo obligatorio no reconocido en el catálogo",
     },
   },
-  // coach-tab FASE2 — "once" es una plantilla de una sola vez (nunca vuelve
-  // a estar pendiente tras la primera respuesta), "biweekly" cada 14 días.
-  cadence: { type: String, enum: ["weekly", "biweekly", "once"], default: "weekly" },
+  // Sin cadencia: cada cuánto se pide un check-in lo dice la PROGRAMACIÓN de
+  // cada cliente (CheckinSchedule), no la plantilla. La plantilla es solo el
+  // formulario — las mismas preguntas pueden pedirse semanalmente a uno y
+  // cada tres semanas a otro.
   // Fase 5 Coach Pro — preguntas propias del coach (§7), con tipo. Conviven
   // con enabledFields, que sigue siendo el catálogo cerrado — ver
   // checkin-custom-question.js para por qué son dos cosas distintas.

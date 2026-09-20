@@ -4,10 +4,9 @@
 // Reglas (acordadas con el usuario):
 //   - Por comida: MEDIA de sus alternativas. El cliente se come una, la
 //     media es el valor esperado.
-//   - Por plantilla: MEDIA de los N días del ciclo (mode sequential). En
-//     recurring/choice, media de los dayPatterns PONDERADA por cuántos días
-//     de la semana cubre cada uno (appliesTo.length); si no hay appliesTo
-//     (choice), media simple.
+//   - Por plantilla: MEDIA simple de sus menús. El cliente come uno cada
+//     día y ninguno tiene más peso que otro (ninguno está atado a un día de
+//     la semana concreto).
 //
 // PURO. Requiere el contenido poblado (customProducts con snapshot de macros
 // o `.product` poblado — ingredientMacros ya cubre los dos casos).
@@ -59,32 +58,17 @@ function round1(m) {
 }
 
 /**
- * El perfil de un día tipo del ciclo.
+ * El perfil de un día tipo.
  *
- * @param {{ mode, days, dayPatterns }} doc  plantilla o copia congelada, poblada
+ * @param {{ menus }} doc  plantilla o copia congelada, poblada
  * @returns {{ kcal, protein, carbs, fat, basedOnDays }}  basedOnDays = cuántos
- *   días entraron en la media (para el texto "media de los 4 días del ciclo")
+ *   menús entraron en la media (para el texto "media de los 4 menús")
  */
-function cycleMacroProfile(doc) {
-  const mode = doc?.mode || "sequential";
-
-  if (mode === "recurring" || mode === "choice") {
-    const patterns = doc?.dayPatterns || [];
-    if (!patterns.length) return { ...ZERO, basedOnDays: 0 };
-    let weightedSum = { ...ZERO };
-    let totalWeight = 0;
-    for (const pattern of patterns) {
-      const weight = mode === "recurring" ? (pattern.appliesTo || []).length || 1 : 1;
-      weightedSum = sumMacroList([weightedSum, scale(dayMacros(pattern), weight)]);
-      totalWeight += weight;
-    }
-    return { ...round1(scale(weightedSum, 1 / totalWeight)), basedOnDays: patterns.length };
-  }
-
-  const days = doc?.days || [];
-  if (!days.length) return { ...ZERO, basedOnDays: 0 };
-  const total = sumMacroList(days.map(dayMacros));
-  return { ...round1(scale(total, 1 / days.length)), basedOnDays: days.length };
+function contentMacroProfile(doc) {
+  const menus = doc?.menus || [];
+  if (!menus.length) return { ...ZERO, basedOnDays: 0 };
+  const total = sumMacroList(menus.map(dayMacros));
+  return { ...round1(scale(total, 1 / menus.length)), basedOnDays: menus.length };
 }
 
-module.exports = { alternativeMacros, mealMacros, dayMacros, cycleMacroProfile };
+module.exports = { alternativeMacros, mealMacros, dayMacros, contentMacroProfile };

@@ -1,12 +1,11 @@
 const trainerClientService = require("../trainerClients/trainer-client-service");
-const checkinDao = require("../trainerCheckins/checkin-dao");
-const { cycleForClientAt } = require("../planAssignments/client-cycle");
+const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
+const { revisionForClientAt } = require("../planAssignments/revision-service");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
-const { isCheckinDue } = require("../trainerCheckins/checkin-due");
 
 module.exports = {
   // GET /coach/dashboard — cliente autenticado. Agrega, de TODOS sus
@@ -40,33 +39,25 @@ module.exports = {
     const trainerName = (trainerId) => nameByTrainerId.get(String(trainerId)) || "Tu profesional";
 
     // --- Check-ins pendientes ---
-    const appliedConfigs = await checkinDao.getAppliedConfigsForClient(clientId);
-    const visibleConfigs = appliedConfigs.filter((c) => activeTrainerIdSet.has(String(c.trainerId)));
-    // Ciclos por contenido — con fase de dieta, "pendiente" = el ciclo de hoy
-    // aún no tiene respuesta; sin fase, la cadencia de siempre.
-    const cycle = await cycleForClientAt(clientId, new Date().toISOString().slice(0, 10));
+    // Pendiente = hay una solicitud ABIERTA hoy (su ventana de fechas incluye
+    // hoy) todavía sin responder, o respondida y aún editable. No hay push ni
+    // recordatorio: el aviso se calcula al abrir la app.
+    const today = checkinAgenda.todayIso();
+    const revision = await revisionForClientAt(clientId, today);
+    const open = await checkinAgenda.openForClient(clientId, today, activeTrainerIds.map(String));
     const pendingCheckins = [];
-    for (const config of visibleConfigs) {
-      const responses = await checkinDao.listResponses(config.trainerId, clientId);
-      touchActivity(config.trainerId, config.updatedAt);
-      const due = cycle
-        ? !config.calendarManaged && !(await checkinDao.findResponseForCycle(config.trainerId, clientId, cycle))
-        : isCheckinDue(config, responses);
-      if (due) {
-        pendingCheckins.push({
-          trainerId: config.trainerId,
-          trainerName: trainerName(config.trainerId),
-          ...(cycle ? { cycleNumber: cycle.number } : {}),
-        });
-      }
-    }
-
-    // --- Propuestas de comida pendientes de elegir ---
-    const now = new Date();
-    const calendarRequests = await require("../trainerCheckins/checkin-request-schema").find({ clientId, trainerId: { $in: activeTrainerIds }, status: "pending", scheduledAt: { $lte: now }, $or: [{ closesAt: null }, { closesAt: { $gt: now } }] }).lean();
-    for (const request of calendarRequests) {
-      pendingCheckins.push({ trainerId: request.trainerId, trainerName: trainerName(request.trainerId), requestId: request._id, name: request.name });
-      touchActivity(request.trainerId, request.scheduledAt);
+    for (const { schedule, entry, response } of open) {
+      touchActivity(schedule.trainerId, response?.updatedAt || schedule.updatedAt);
+      if (response) continue;
+      pendingCheckins.push({
+        trainerId: schedule.trainerId,
+        trainerName: trainerName(schedule.trainerId),
+        scheduleId: String(schedule._id),
+        name: schedule.name,
+        date: entry.date,
+        closesDate: entry.closesDate,
+        ...(revision ? { revisionNumber: revision.number, revisionStart: revision.start, revisionEnd: revision.end } : {}),
+      });
     }
 
     // --- Propuestas de comida pendientes de elegir ---
@@ -153,8 +144,4 @@ module.exports = {
     });
   },
 
-  // Re-export de trainerCheckins/checkin-due.js — mantiene el punto de
-  // entrada que ya usaba su test sin duplicar la lógica. Los consumidores
-  // NUEVOS deben importar de checkin-due.js directamente, no de aquí.
-  isCheckinDue,
 };

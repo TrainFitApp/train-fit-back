@@ -72,11 +72,6 @@ const MealSchema = Schema({
   // propuesto tu entrenador" y porque pasteMeal necesita el trainerId para
   // marcar assignedByTrainerId al materializar la elegida.
   alternativesTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
-  // Sustituye a DietException con mealSlot puesto y action:"override" —
-  // "esta comida concreta se cambió respecto a lo pautado". El contenido del
-  // cambio NO se guarda aparte: ya ES el customProducts/customRecipes real
-  // de esta misma comida.
-  wasOverridden: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 });
 
