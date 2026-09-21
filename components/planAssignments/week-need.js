@@ -1,6 +1,6 @@
-// Necesidad del cliente por revisión (docs/plan-revisiones.md) — la parte
-// PURA: de dónde salen los pasos que entran en la fórmula y qué forma tiene
-// el snapshot del cálculo. Lo que toca BD vive en plan-assignment-service.js.
+// Necesidad del cliente por semana (docs/plan-semanas.md) — la parte PURA:
+// de dónde salen los pasos que entran en la fórmula y qué forma tiene el
+// snapshot del cálculo. Lo que toca BD vive en plan-assignment-service.js.
 
 const { stepsRangeFromAverage } = require("../nutritionalGoals/training-factor");
 const { daysInRange } = require("../util/date-util");
@@ -12,7 +12,7 @@ const MIN_COMPLETION_RATIO = 0.5;
 
 /**
  * Pasos del cliente a partir de su HÁBITO de pasos y de los días que lo marcó
- * dentro de una revisión (docs/plan-revisiones.md §12). Los pasos no se
+ * dentro de una semana (docs/plan-semanas.md). Los pasos no se
  * declaran en el check-in ni se teclean a diario: el profesional los pauta
  * como hábito ("10.000 a 15.000 pasos") y el cliente marca cada día si lo
  * cumplió, bajo sus comidas.
@@ -22,7 +22,7 @@ const MIN_COMPLETION_RATIO = 0.5;
  *
  * @param {{ target:number, targetMax:number|null }|null} task hábito de pasos
  * @param {number} completedDays días marcados dentro de la ventana
- * @param {{ start:string, end:string|null }|null} window revisión mirada
+ * @param {{ start:string, end:string|null }|null} window semana mirada
  * @param {string} until último día con datos (hoy o el fin de la ventana)
  * @returns {{ key, label, target, targetMax, completedDays, windowDays }|null}
  */

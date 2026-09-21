@@ -29,11 +29,11 @@ const CheckinResponseSchema = new Schema({
   reviewedAt: { type: Date, default: null },
   reviewComment: { type: String, default: "", maxlength: 2000 },
   seenByTrainer: { type: Boolean, default: false },
-  // A qué REVISIÓN de qué fase de dieta pertenece (docs/plan-revisiones.md).
-  // Las revisiones son las ventanas que marcan los propios check-ins: la
-  // respuesta es el dato con el que se ajusta la siguiente. Ausente si el
-  // cliente no tenía fase de dieta ese día.
-  revision: {
+  // A qué SEMANA de qué fase de dieta pertenece (docs/plan-semanas.md). Las
+  // semanas son naturales, de lunes a domingo: el check-in cae dentro de una
+  // y su dato es con el que se ajusta la siguiente. Ausente si el cliente no
+  // tenía fase de dieta ese día.
+  week: {
     phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
     number: { type: Number },
     start: { type: String },
@@ -44,6 +44,6 @@ const CheckinResponseSchema = new Schema({
 // Una respuesta por ocurrencia: el segundo envío la reescribe, no crea otra.
 CheckinResponseSchema.index({ scheduleId: 1, occurrenceDate: 1 }, { unique: true });
 CheckinResponseSchema.index({ trainerId: 1, clientId: 1, respondedAt: -1 });
-CheckinResponseSchema.index({ clientId: 1, "revision.phaseId": 1, "revision.number": 1 });
+CheckinResponseSchema.index({ clientId: 1, "week.phaseId": 1, "week.number": 1 });
 
 module.exports = mongoose.model("CheckinResponse", CheckinResponseSchema);

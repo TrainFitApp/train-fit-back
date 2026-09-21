@@ -1,6 +1,6 @@
 const trainerClientService = require("../trainerClients/trainer-client-service");
 const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
-const { revisionForClientAt } = require("../planAssignments/revision-service");
+const { weekForClientAt } = require("../planAssignments/week-service");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
@@ -43,7 +43,7 @@ module.exports = {
     // hoy) todavía sin responder, o respondida y aún editable. No hay push ni
     // recordatorio: el aviso se calcula al abrir la app.
     const today = checkinAgenda.todayIso();
-    const revision = await revisionForClientAt(clientId, today);
+    const week = await weekForClientAt(clientId, today);
     const open = await checkinAgenda.openForClient(clientId, today, activeTrainerIds.map(String));
     const pendingCheckins = [];
     for (const { schedule, entry, response } of open) {
@@ -56,7 +56,7 @@ module.exports = {
         name: schedule.name,
         date: entry.date,
         closesDate: entry.closesDate,
-        ...(revision ? { revisionNumber: revision.number, revisionStart: revision.start, revisionEnd: revision.end } : {}),
+        ...(week ? { weekNumber: week.number, weekStart: week.start, weekEnd: week.end } : {}),
       });
     }
 

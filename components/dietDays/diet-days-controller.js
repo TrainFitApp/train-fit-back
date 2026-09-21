@@ -9,7 +9,7 @@ const { buildShoppingList } = require("./shopping-list-service");
 const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
 const { computeDayTracking } = require("./diet-days-nutrition-util");
 const { clearPlannedDay, isDaySkipped } = require("./diet-skips");
-const { revisionForClientAt } = require("../planAssignments/revision-service");
+const { weekForClientAt } = require("../planAssignments/week-service");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -36,13 +36,13 @@ const controller = {
   },
 
   // GET /dietdays/timeline?from&to — fases (color estable por orden de
-  // inicio) y ventanas de revisión del propio cliente.
+  // inicio) y ventanas de semana del propio cliente.
   async getMyDietTimeline(req, res) {
     const { from, to } = req.query || {};
     if (!ISO_DATE.test(from || "") || !ISO_DATE.test(to || "")) {
       return res.status(400).send({ message: "from y to (YYYY-MM-DD) son obligatorios" });
     }
-    return res.send(await planAssignmentService.getRevisionTimeline(req.user.id, from, to));
+    return res.send(await planAssignmentService.getDietTimeline(req.user.id, from, to));
   },
 
   async getDietDays(req, res) {
@@ -97,14 +97,14 @@ const controller = {
           fat: Math.round(tracking.planned.fat * 10) / 10,
         }
       : null;
-    const revision = await revisionForClientAt(req.user.id, req.body.date);
+    const week = await weekForClientAt(req.user.id, req.body.date);
 
     return res.send({
       dietDay,
       anthropometry: anthropometry || null,
       plannedTarget,
-      revision: revision
-        ? { phaseId: revision.phaseId, number: revision.number, start: revision.start, end: revision.end }
+      week: week
+        ? { phaseId: week.phaseId, number: week.number, start: week.start, end: week.end }
         : null,
     });
   },

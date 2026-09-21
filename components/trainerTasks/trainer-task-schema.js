@@ -22,7 +22,7 @@ const TrainerTaskSchema = new Schema(
     label: { type: String, trim: true, maxlength: 100, default: null },
     target: { type: Number, required: true, min: 0 },
     // Tope del rango, opcional: un hábito de pasos se pauta como "10.000 a
-    // 15.000", no como un número exacto (docs/plan-revisiones.md §12). Sin
+    // 15.000", no como un número exacto (docs/plan-semanas.md §12). Sin
     // él, `target` es el objetivo a secas ("2 L de agua").
     targetMax: { type: Number, default: null, min: 0 },
     unit: { type: String, required: true, trim: true, maxlength: 20 },

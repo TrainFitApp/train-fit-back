@@ -22,7 +22,7 @@ function validateScheduleFields({ startDate }) {
 
 // El bloque `phase` con el que nace toda fase: su nombre y el objetivo con
 // el que se pauta (kcal y macros, calculados del cliente o tecleados a mano
-// en el cajón). Sin él la copia es un plan suelto, sin revisiones.
+// en el cajón). Sin él la copia es un plan suelto, sin semanas.
 function sanitizePhase(body) {
   const p = body?.phase;
   if (!p) return { phase: null };
@@ -205,7 +205,7 @@ module.exports = {
   },
 
   // GET /trainer/clients/:clientId/nutrition-plans/:planId
-  // Editor de fase/revisión ya asignada — contenido completo (menus)
+  // Editor de fase/semana ya asignada — contenido completo (menus)
   // de ESTA copia, para precargar el builder. Distinto de getActive/getHistory
   // (toAssignmentResponse), que solo devuelven el resumen para listas.
   async getPlanContent(req, res) {
@@ -219,7 +219,7 @@ module.exports = {
   // body: { name?, menus? } — mismo shape "clipboard" que
   // PUT /trainer/diet-templates/:id, pero editando la copia de ESTE cliente,
   // nunca una plantilla de biblioteca. Funciona igual para el contenido
-  // inicial que para cualquier revisión posterior (sin sourceTemplateId).
+  // inicial que para cualquier semana posterior (sin sourceTemplateId).
   async updateContent(req, res) {
     const { clientId, planId } = req.params;
     const patch = {};
@@ -237,14 +237,14 @@ module.exports = {
       ...patch,
     });
     if (!plan) return res.status(404).send({ message: "Plan no encontrado" });
-    // Los días que el cliente ya tenía abiertos dentro de esta revisión recogen
+    // Los días que el cliente ya tenía abiertos dentro de esta semana recogen
     // la edición (ver diet-day-resolver.js#resyncPlannedDays).
     await resyncPlannedDays(clientId, plan.startDate, plan.endDate);
     return res.send(plan);
   },
 
   // GET /trainer/clients/:clientId/nutrition-history
-  // Feed de eventos (fases, revisiones, check-ins, excepciones) para el bloque
+  // Feed de eventos (fases, semanas, check-ins, excepciones) para el bloque
   // "Historial de nutrición" de la ficha. Ver nutrition-history.js.
   async getNutritionHistory(req, res) {
     return res.send(await planAssignmentService.getNutritionHistory(req.params.clientId));
@@ -314,13 +314,13 @@ module.exports = {
     return res.status(201).send(skipped);
   },
 
-  // --- Revisiones (docs/plan-revisiones.md) ---
+  // --- Semanas (docs/plan-semanas.md) ---
 
-  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/revisions
-  async getPhaseRevisions(req, res) {
+  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks
+  async getPhaseWeeks(req, res) {
     const { clientId, phaseId } = req.params;
     try {
-      return res.send(await planAssignmentService.getPhaseRevisions(clientId, phaseId));
+      return res.send(await planAssignmentService.getPhaseWeeks(clientId, phaseId));
     } catch (error) {
       if (error.code === "DIET_PHASE_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
@@ -329,64 +329,64 @@ module.exports = {
     }
   },
 
-  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/:number/need
-  // Cómo se calculó la necesidad del cliente en esa revisión.
-  async getRevisionNeed(req, res) {
+  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/:number/need
+  // Cómo se calculó la necesidad del cliente en esa semana.
+  async getWeekNeed(req, res) {
     const { clientId, phaseId, number } = req.params;
     const n = Number(number);
     if (!Number.isInteger(n) || n < 1) {
-      return res.status(400).send({ message: "Número de revisión inválido" });
+      return res.status(400).send({ message: "Número de semana inválido" });
     }
     try {
-      return res.send(await planAssignmentService.getRevisionNeed(clientId, phaseId, n));
+      return res.send(await planAssignmentService.getWeekNeed(clientId, phaseId, n));
     } catch (error) {
-      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_REVISION_NOT_FOUND") {
+      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_WEEK_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
       }
       throw error;
     }
   },
 
-  // POST /trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next/scale
+  // POST /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next/scale
   // body: { kcal } → contenido vigente escalado a esas kcal, para abrir el
   // builder precargado. No escribe nada.
-  async scaleNextRevision(req, res) {
+  async scaleNextWeek(req, res) {
     const { clientId, phaseId } = req.params;
     const kcal = Number(req.body?.kcal);
     if (!Number.isFinite(kcal) || kcal <= 0) return res.status(400).send({ message: "kcal debe ser mayor que 0" });
     try {
-      return res.send(await planAssignmentService.scaleNextRevision(clientId, phaseId, kcal));
+      return res.send(await planAssignmentService.scaleNextWeek(clientId, phaseId, kcal));
     } catch (error) {
-      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_NO_NEXT_REVISION") {
+      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_NO_NEXT_WEEK") {
         return res.status(404).send({ message: error.message, code: error.code });
       }
       throw error;
     }
   },
 
-  // PUT /trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next
+  // PUT /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next
   // body: { menus }
-  // Sin startDate a propósito: la fecha la decide el check-in que abre la
-  // revisión. 204 = el contenido no cambia nada, no se persiste.
-  async prepareNextRevision(req, res) {
+  // Sin startDate a propósito: la fecha es el lunes en que empieza la
+  // semana. 204 = el contenido no cambia nada, no se persiste.
+  async prepareNextWeek(req, res) {
     const trainerId = req.auth.userId;
     const { clientId, phaseId } = req.params;
     const b = req.body || {};
 
     if (!Array.isArray(b.menus) || !b.menus.length) {
-      return res.status(400).send({ message: "La revisión necesita al menos un menú" });
+      return res.status(400).send({ message: "La semana necesita al menos un menú" });
     }
 
     let result;
     try {
-      result = await planAssignmentService.prepareNextRevision({
+      result = await planAssignmentService.prepareNextWeek({
         trainerId,
         clientId,
         phaseId,
         menus: sanitizeMenus(b.menus),
       });
     } catch (error) {
-      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_NO_NEXT_REVISION") {
+      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_NO_NEXT_WEEK") {
         return res.status(404).send({ message: error.message, code: error.code });
       }
       if (error.code === "PLAN_OVERLAP") {
@@ -396,15 +396,15 @@ module.exports = {
     }
 
     if (result.unchanged) return res.status(204).send();
-    await resyncPlannedDays(clientId, result.revision.startDate, result.revision.endDate);
-    return res.send(toAssignmentResponse(result.revision));
+    await resyncPlannedDays(clientId, result.week.startDate, result.week.endDate);
+    return res.send(toAssignmentResponse(result.week));
   },
 
-  // DELETE /trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next
-  async discardNextRevision(req, res) {
+  // DELETE /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next
+  async discardNextWeek(req, res) {
     const { clientId, phaseId } = req.params;
     try {
-      await planAssignmentService.discardNextRevision(clientId, phaseId);
+      await planAssignmentService.discardNextWeek(clientId, phaseId);
     } catch (error) {
       if (error.code === "DIET_PHASE_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
@@ -444,12 +444,12 @@ module.exports = {
   },
 
   // GET /trainer/clients/:clientId/diet-timeline?from&to
-  async getRevisionTimeline(req, res) {
+  async getDietTimeline(req, res) {
     const { clientId } = req.params;
     const { from, to } = req.query || {};
     if (!ISO_DATE.test(from || "") || !ISO_DATE.test(to || "")) {
       return res.status(400).send({ message: "from y to (YYYY-MM-DD) son obligatorios" });
     }
-    return res.send(await planAssignmentService.getRevisionTimeline(clientId, from, to));
+    return res.send(await planAssignmentService.getDietTimeline(clientId, from, to));
   },
 };

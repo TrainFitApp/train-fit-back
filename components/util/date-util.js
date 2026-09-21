@@ -53,6 +53,15 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * El LUNES de la semana de `isoDay`. Domingo pertenece a la semana que
+ * empezó el lunes anterior, no a la que empieza al día siguiente.
+ */
+function startOfIsoWeek(isoDay) {
+  const weekday = toUtcDate(isoDay).getUTCDay(); // 0 = domingo … 6 = sábado
+  return addDaysToIsoDate(isoDay, -((weekday + 6) % 7));
+}
+
 module.exports = {
   MS_PER_DAY,
   isoDate,
@@ -60,4 +69,5 @@ module.exports = {
   daysInRange,
   addDaysToIsoDate,
   todayIsoDate,
+  startOfIsoWeek,
 };

@@ -1,10 +1,10 @@
 // Qué CONTENIDO rige en una fecha dentro de una fase, y cuándo dos contenidos
-// son el mismo (docs/plan-revisiones.md).
+// son el mismo (docs/plan-semanas.md).
 //
-// No hay un documento por revisión: solo se persiste el contenido que CAMBIA
+// No hay un documento por semana: solo se persiste el contenido que CAMBIA
 // algo. El head de la fase es el primero, y cada vez que el entrenador
-// prepara la siguiente revisión con comida o cantidades distintas se guarda
-// otro con su fecha de inicio. Las revisiones intermedias heredan del último
+// prepara la semana siguiente con comida o cantidades distintas se guarda
+// otro con su fecha de inicio. Las semanas intermedias heredan del último
 // persistido que ya había empezado.
 //
 // PURO: ni reloj ni BD.
@@ -20,7 +20,7 @@ function overrideAt(members, date) {
 
 /**
  * Firma normalizada del contenido: qué alimentos y en qué cantidad, sin ids
- * ni orden. Si dos firmas coinciden, preparar la siguiente revisión no
+ * ni orden. Si dos firmas coinciden, preparar la semana siguiente no
  * cambiaría nada y no se persiste.
  */
 function contentSignature({ menus }) {

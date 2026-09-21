@@ -7,11 +7,11 @@ const { summarizeDailyDeviations } = require("../dietDays/food-compliance");
 const { contentMacroProfile } = require("../dietTemplates/diet-macro-profile");
 const { expectedWeeklyRateKg } = require("../nutritionalGoals/nutrition-target");
 const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
-const { stepsFromHabit, needSnapshot } = require("./revision-need");
-const { suggestNextRevision, scaleFactor } = require("./revision-progression");
-const { overrideAt, contentSignature } = require("./revision-content");
-const { revisionsOfPhase } = require("./revision-service");
-const { revisionAt, currentRevision, nextRevision } = require("./revision-window");
+const { stepsFromHabit, needSnapshot } = require("./week-need");
+const { suggestNextWeek, scaleFactor } = require("./week-progression");
+const { overrideAt, contentSignature } = require("./week-content");
+const { weeksOfPhase } = require("./week-service");
+const { currentWeek, nextWeek } = require("./week-window");
 const { buildPhaseEvents, sortEvents } = require("./nutrition-history");
 const checkinDao = require("../trainerCheckins/checkin-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
@@ -29,11 +29,11 @@ const { daysElapsed, isoDate } = require("../util/date-util");
  * `today` se inyecta para poder testear sin depender del reloj.
  */
 function blocksNewPhase(existing, startDate, today = isoDate(new Date()), rulingPhaseId = null) {
-  // Revisiones: la fase que RIGE en `startDate` se corta entera si
-  // se empieza hoy (o con fecha pasada) — incluidos su revisión en curso, que ya
-  // lleva endDate si tenía el siguiente preparado, y las revisiones preparadas
-  // por delante (reserveActivePhaseSlot los borra). Sin esto, preparar el
-  // siguiente revisión bloqueaba cambiar de fase "a partir de ya".
+  // La fase que RIGE en `startDate` se corta entera si se empieza hoy (o con
+  // fecha pasada) — incluida su semana en curso, que ya lleva endDate si
+  // tenía la siguiente preparada, y las semanas preparadas por delante
+  // (reserveActivePhaseSlot las borra). Sin esto, preparar la semana
+  // siguiente bloqueaba cambiar de fase "a partir de ya".
   if (rulingPhaseId && existing.phaseId && String(existing.phaseId) === String(rulingPhaseId) && startDate <= today) {
     return false;
   }
@@ -51,23 +51,23 @@ function blocksNewPhase(existing, startDate, today = isoDate(new Date()), ruling
 }
 
 // Compartido por applyPlan (clona una plantilla), createDirectPlan (crea
-// contenido nuevo) y prepareNextRevision (dentro de la MISMA fase) — la
+// contenido nuevo) y prepareNextWeek (dentro de la MISMA fase) — la
 // validación de solape y "quién regía antes" no depende de dónde salió el
 // contenido, solo de las fechas. Se lee la fase activa ANTES de crear la
 // nueva: en cuanto exista, ambas tendrían status "active" a la vez y un
 // findOne sin ordenar ya no podría distinguir con garantías cuál es "la
 // anterior".
 //
-// excludePhaseId: solo lo usa prepareNextRevision. El contenido ABIERTO de esa fase
+// excludePhaseId: solo lo usa prepareNextWeek. El contenido ABIERTO de esa fase
 // (endDate null mientras sigue corriendo) se colaba como "otra fase" y
 // bloqueaba cualquier fecha futura aunque no hubiera conflicto real — el
-// nuevo empieza justo donde lo deja. Sus revisiones ya cerradas sí siguen
+// nuevo empieza justo donde lo deja. Sus semanas ya cerradas sí siguen
 // bloqueando (ver findOverlapping).
 async function reserveActivePhaseSlot(clientId, startDate, excludePhaseId = null) {
   const today = isoDate(new Date());
   const solapadas = await dietTemplateDao.findOverlapping(clientId, startDate, null, { excludePhaseId });
   // La fase que rige en `startDate` (solo si es hoy o pasado): se corta, no
-  // bloquea. `covering` es su revisión en curso — el que se encadena.
+  // bloquea. `covering` es su contenido en curso — el que se encadena.
   const covering = startDate <= today ? await dietTemplateDao.findCoveringDate(clientId, startDate) : null;
   const rulingPhaseId = covering?.phaseId ? String(covering.phaseId) : null;
   const bloqueantes = solapadas.filter((fase) => blocksNewPhase(fase, startDate, today, rulingPhaseId));
@@ -89,12 +89,12 @@ async function reserveActivePhaseSlot(clientId, startDate, excludePhaseId = null
     throw error;
   }
 
-  // Cortar la fase que rige se lleva sus revisiones preparadas que aún no habían
+  // Cortar la fase que rige se lleva sus semanas preparadas que aún no habían
   // empezado: con otra fase encima nunca van a correr, y findCoveringDate los
   // seguiría encontrando (startDate <= fecha, endDate null). Mismo criterio
-  // que cancelPhase con el head. La revisión en curso se queda y se encadena
+  // que cancelPhase con el head. La semana en curso se queda y se encadena
   // (chainIfNeeded le pone su fin real). No aplica cuando es la propia fase
-  // preparando su siguiente revisión (excludePhaseId).
+  // preparando su semana siguiente (excludePhaseId).
   if (rulingPhaseId && String(excludePhaseId || "") !== rulingPhaseId) {
     const members = await dietTemplateDao.findPhaseMembers(rulingPhaseId);
     for (const c of members) {
@@ -127,7 +127,7 @@ async function chainIfNeeded(previousActive, created) {
   }
 }
 
-// --- Revisiones: helpers ---
+// --- Semanas: helpers ---
 
 function round1(value) {
   const n = Number(value);
@@ -135,7 +135,7 @@ function round1(value) {
 }
 
 // Media diaria de kcal/macros de un contenido — es lo que "vale" una
-// revisión: no hay un objetivo guardado aparte, sale de los alimentos.
+// semana: no hay un objetivo guardado aparte, sale de los alimentos.
 function kcalProfileOf(doc) {
   const p = contentMacroProfile(doc);
   return { kcal: p.kcal, protein: p.protein, carbs: p.carbs, fat: p.fat };
@@ -150,12 +150,12 @@ function overrideSummary(doc) {
   };
 }
 
-// --- Necesidad por revisión (docs/plan-revisiones.md) ---
+// --- Necesidad por semana (docs/plan-semanas.md) ---
 
 // Pasos del cliente: los que pauta su HÁBITO de pasos y los días que lo
-// marcó dentro de la revisión que se mira (§12). Si no hay hábito, o lo
-// marcó menos de la mitad de los días, manda el rango de su perfil — no se
-// inventa un dato que el cliente no ha dado.
+// marcó dentro de la semana que se mira. Si no hay hábito, o lo marcó menos
+// de la mitad de los días, manda el rango de su perfil — no se inventa un
+// dato que el cliente no ha dado.
 async function stepsForWindow(clientId, window, until) {
   const task = await trainerTaskDao.findActiveStepsTask(clientId);
   if (!task || !window) return null;
@@ -165,7 +165,7 @@ async function stepsForWindow(clientId, window, until) {
   return stepsFromHabit(task, completions.length, window, until);
 }
 
-// g/kg con los que se calcula la necesidad de CUALQUIER revisión de la fase:
+// g/kg con los que se calcula la necesidad de CUALQUIER semana de la fase:
 // los que el entrenador fijó al empezarla (head).
 function phaseMacroParams(head) {
   return {
@@ -175,7 +175,7 @@ function phaseMacroParams(head) {
 }
 
 // Necesidad calculada al vuelo "a fecha de `asOf`" con el último peso hasta
-// esa fecha y los pasos de la revisión `window` (la que acaba de cerrarse, o
+// esa fecha y los pasos de la semana `window` (la que acaba de cerrarse, o
 // la que corre).
 async function computeNeedAt(clientId, head, asOf, window = null) {
   const steps = await stepsForWindow(clientId, window, asOf);
@@ -195,8 +195,8 @@ async function buildPhaseNeed(clientId, phase, startDate) {
   if (!phase) return null;
   const today = isoDate(new Date());
   const asOf = startDate && startDate <= today ? startDate : undefined;
-  // Al empezar la fase todavía no hay revisiones: los pasos se miran en los
-  // 14 días anteriores, que es lo último que se sabe de cómo se mueve.
+  // Al empezar la fase todavía no hay semanas corridas: los pasos se miran
+  // en los 14 días anteriores, que es lo último que se sabe de cómo se mueve.
   const steps = await stepsForWindow(
     clientId,
     { start: addDaysToIsoDate(asOf || today, -14), end: asOf || today },
@@ -222,10 +222,10 @@ async function loadPhase(clientId, phaseId) {
   // Incluye al head (phaseId = self), ordenados por inicio.
   const members = await dietTemplateDao.findPhaseMembers(phaseId);
   const today = isoDate(new Date());
-  const { revisions, schedules, phaseEnd } = await revisionsOfPhase(clientId, head, members, today);
-  const current = currentRevision(revisions, today);
-  const next = current ? nextRevision(revisions, current) : null;
-  return { head, members, today, revisions, current, next, schedules, phaseEnd };
+  const { weeks, phaseEnd } = await weeksOfPhase(head, members, today);
+  const current = currentWeek(weeks, today);
+  const next = current ? nextWeek(weeks, current) : null;
+  return { head, members, today, weeks, current, next, phaseEnd };
 }
 
 // Último peso registrado (antropometría, donde también se vuelca el peso del
@@ -240,29 +240,27 @@ async function lastWeightIn(clientId, window, until) {
   return last ? { weightKg: last.weight, date: last.date } : null;
 }
 
-// Sugerencia para la revisión siguiente: el peso de la revisión en curso
-// frente al de la última anterior que tenga peso, y la adherencia de la
-// revisión ACTUAL. Nunca bloquea: con adherencia baja avisa, pero calcula
-// igual.
-async function buildSuggestion(clientId, head, revisions, current, today, need) {
+// Sugerencia para la semana siguiente: el peso de la semana en curso frente
+// al de la última anterior que tenga peso, y la adherencia de la semana
+// ACTUAL. Nunca bloquea: con adherencia baja avisa, pero calcula igual.
+async function buildSuggestion(clientId, weeks, members, current, today, need) {
   const weightNow = await lastWeightIn(clientId, current, today);
   let weightBefore = null;
   let comparedTo = null;
-  const index = revisions.findIndex((r) => r.number === current.number);
+  const index = weeks.findIndex((w) => w.number === current.number);
   for (let i = index - 1; i >= 0 && !weightBefore; i--) {
-    weightBefore = await lastWeightIn(clientId, revisions[i], today);
-    if (weightBefore) comparedTo = revisions[i].number;
+    weightBefore = await lastWeightIn(clientId, weeks[i], today);
+    if (weightBefore) comparedTo = weeks[i].number;
   }
 
-  const end = current.end || today;
-  const until = today < end ? today : end;
+  const until = today < current.end ? today : current.end;
   const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(clientId, current.start, until);
   const elapsed = Math.max(1, daysElapsed(current.start, until) + 1);
   const adherence = computeRangeAdherence(days, elapsed);
   const deviations = summarizeDailyDeviations(days);
 
-  const currentContent = overrideAt(revisions.members || [], current.start);
-  const suggestion = suggestNextRevision({
+  const currentContent = overrideAt(members, current.start);
+  const suggestion = suggestNextWeek({
     currentKcal: currentContent ? kcalProfileOf(currentContent).kcal : null,
     // El gasto (no el objetivo): lo que separa a las kcal pautadas del gasto
     // ES el déficit o superávit con el que se pautó.
@@ -277,7 +275,7 @@ async function buildSuggestion(clientId, head, revisions, current, today, need) 
     ...suggestion,
     weightStartKg: weightBefore?.weightKg ?? null,
     weightEndKg: weightNow?.weightKg ?? null,
-    comparedToRevision: comparedTo,
+    comparedToWeek: comparedTo,
     adherencePct: adherence.percentage,
     adherenceDays: adherence.daysWithData,
     deviations,
@@ -312,9 +310,9 @@ module.exports = {
     return created;
   },
 
-  // Editor de fase/revisión ya asignado — lee/escribe el contenido de la copia
+  // Editor de fase/semana ya asignada — lee/escribe el contenido de la copia
   // congelada de ESTE cliente por su propio _id, nunca por sourceTemplateId
-  // (que las revisiones 2+ ni siquiera tienen). getPlanContent/updateAssignmentContent
+  // (que las semanas 2+ ni siquiera tienen). getPlanContent/updateAssignmentContent
   // NUNCA tocan una plantilla de biblioteca: dietTemplateDao.updateAssignedContent
   // exige clientId en el filtro, no solo trainerId.
   async getPlanContent(trainerId, clientId, planId) {
@@ -354,35 +352,31 @@ module.exports = {
     return created;
   },
 
-  // --- Revisiones (docs/plan-revisiones.md) ---
+  // --- Semanas (docs/plan-semanas.md) ---
   //
-  // Una fase se parte en revisiones por los CHECK-INS programados del
-  // cliente: cada check-in abre la siguiente. No hay un documento por
-  // revisión — solo se persiste el contenido que cambia, y el resto hereda
-  // del último persistido que ya había empezado.
+  // Una fase se parte en SEMANAS naturales de lunes a domingo. No hay un
+  // documento por semana — solo se persiste el contenido que cambia, y el
+  // resto hereda del último persistido que ya había empezado.
 
-  // Todo lo que la ficha necesita: revisión en curso, siguiente (con
+  // Todo lo que la ficha necesita: semana en curso, siguiente (con
   // sugerencia) y pasadas. Una sola llamada.
-  async getPhaseRevisions(clientId, phaseId) {
-    const { head, members, today, revisions, current, next, schedules, phaseEnd } = await loadPhase(
-      clientId,
-      phaseId
-    );
+  async getPhaseWeeks(clientId, phaseId) {
+    const { head, members, today, weeks, current, next, phaseEnd } = await loadPhase(clientId, phaseId);
 
-    // La necesidad se calcula con los pasos de la revisión EN CURSO: es lo
+    // La necesidad se calcula con los pasos de la semana EN CURSO: es lo
     // último que se sabe de cómo se está moviendo el cliente.
     const need = await computeNeedAt(clientId, head, today, current);
-    const suggestion = current ? await buildSuggestion(clientId, head, revisions, current, today, need, members) : null;
+    const suggestion = current ? await buildSuggestion(clientId, weeks, members, current, today, need) : null;
     const nextPersisted = next ? members.find((m) => m.startDate === next.start) || null : null;
 
-    const past = revisions
-      .filter((r) => !current || r.number < current.number)
-      .map((r) => ({
-        number: r.number,
-        start: r.start,
-        end: r.end,
-        profile: kcalProfileOf(overrideAt(members, r.start) || head),
-        overrideId: String((overrideAt(members, r.start) || head)._id),
+    const past = weeks
+      .filter((w) => !current || w.number < current.number)
+      .map((w) => ({
+        number: w.number,
+        start: w.start,
+        end: w.end,
+        profile: kcalProfileOf(overrideAt(members, w.start) || head),
+        overrideId: String((overrideAt(members, w.start) || head)._id),
       }));
 
     const currentOverride = current ? overrideAt(members, current.start) || head : head;
@@ -393,11 +387,7 @@ module.exports = {
       phaseStart: head.startDate,
       phaseEnd,
       phaseTarget: head.phaseTarget || null,
-      // Sin ninguna programación de check-in la fase no tiene revisiones que
-      // enseñar: es UNA sola ventana abierta. La ficha ofrece crear el
-      // check-in desde ahí.
-      hasSchedules: schedules.some((schedule) => schedule.active),
-      revisions: revisions.map((r) => ({ number: r.number, start: r.start, end: r.end })),
+      weeks: weeks.map((w) => ({ number: w.number, start: w.start, end: w.end })),
       current: current
         ? {
             number: current.number,
@@ -421,18 +411,18 @@ module.exports = {
     };
   },
 
-  // Cómo se calculó la necesidad de UNA revisión: la primera usa el snapshot
+  // Cómo se calculó la necesidad de UNA semana: la primera usa el snapshot
   // guardado al empezar la fase; el resto se calculan al vuelo a su fecha de
   // inicio, con el último peso hasta ese día y el último rango de pasos
   // declarado en un check-in. Devuelve además las kcal pautadas, para
   // compararlas con las calculadas.
-  async getRevisionNeed(clientId, phaseId, number) {
-    const { head, members, today, revisions, current } = await loadPhase(clientId, phaseId);
+  async getWeekNeed(clientId, phaseId, number) {
+    const { head, members, today, weeks, current } = await loadPhase(clientId, phaseId);
     const n = Number(number);
-    const window = revisions.find((r) => r.number === n);
+    const window = weeks.find((w) => w.number === n);
     if (!window) {
-      const e = new Error("Revisión no encontrada");
-      e.code = "DIET_REVISION_NOT_FOUND";
+      const e = new Error("Semana no encontrada");
+      e.code = "DIET_WEEK_NOT_FOUND";
       throw e;
     }
 
@@ -442,59 +432,61 @@ module.exports = {
       need = head.phaseNeed.toObject?.() ?? head.phaseNeed;
       source = "snapshot";
     } else {
-      // Con los pasos de la revisión ANTERIOR: es la que ya cerró cuando
+      // Con los pasos de la semana ANTERIOR: es la que ya cerró cuando
       // empieza esta.
-      const previous = revisions.find((r) => r.number === n - 1) || null;
+      const previous = weeks.find((w) => w.number === n - 1) || null;
       need = await computeNeedAt(clientId, head, window.start > today ? today : window.start, previous);
       source = "computed";
     }
 
     const override = overrideAt(members, window.start) || head;
     return {
-      revisionNumber: n,
+      weekNumber: n,
       start: window.start,
       end: window.end,
       isCurrent: current ? n === current.number : false,
       source,
       need,
-      checkin: await checkinDao.findRevisionResponse(clientId, head._id, n),
+      // Una semana puede contener varios check-ins (un diario, siete): van
+      // todos, del más reciente al más antiguo.
+      checkins: await checkinDao.listWeekResponses(clientId, head._id, n),
       plannedKcal: kcalProfileOf(override).kcal || null,
       phaseTarget: head.phaseTarget || null,
     };
   },
 
   // Contenido vigente escalado a `kcal` — para abrir el builder precargado
-  // al preparar la revisión siguiente. No escribe nada.
-  async scaleNextRevision(clientId, phaseId, kcal) {
+  // al preparar la semana siguiente. No escribe nada.
+  async scaleNextWeek(clientId, phaseId, kcal) {
     const { head, members, current, next } = await loadPhase(clientId, phaseId);
     if (!next) {
-      const e = new Error("Todavía no hay una revisión siguiente: programa un check-in");
-      e.code = "DIET_NO_NEXT_REVISION";
+      const e = new Error("La fase termina esta semana: no hay una semana siguiente que preparar.");
+      e.code = "DIET_NO_NEXT_WEEK";
       throw e;
     }
     const base = overrideAt(members, next.start) || overrideAt(members, current.start) || head;
     const baseKcal = kcalProfileOf(base).kcal;
     const factor = scaleFactor(baseKcal, Number(kcal));
     return {
-      revisionNumber: next.number,
+      weekNumber: next.number,
       start: next.start,
       end: next.end,
       baseKcal,
       targetKcal: Number(kcal) || baseKcal,
       factor: round1(factor),
-      currentRevisionNumber: current?.number ?? null,
-      content: dietTemplateDao.scaledRevisionContentPopulated(base, factor),
+      currentWeekNumber: current?.number ?? null,
+      content: dietTemplateDao.scaledWeekContentPopulated(base, factor),
     };
   },
 
-  // Preparar la revisión siguiente. La fecha la pone el servidor (el día en
-  // que la abre su check-in). Si el contenido es idéntico al que heredaría,
-  // no se escribe nada y se devuelve { unchanged: true }.
-  async prepareNextRevision({ trainerId, clientId, phaseId, menus }) {
+  // Preparar la semana siguiente. La fecha la pone el servidor (el lunes en
+  // que empieza). Si el contenido es idéntico al que heredaría, no se
+  // escribe nada y se devuelve { unchanged: true }.
+  async prepareNextWeek({ trainerId, clientId, phaseId, menus }) {
     const { head, members, current, next } = await loadPhase(clientId, phaseId);
     if (!next) {
-      const e = new Error("Todavía no hay una revisión siguiente: programa un check-in");
-      e.code = "DIET_NO_NEXT_REVISION";
+      const e = new Error("La fase termina esta semana: no hay una semana siguiente que preparar.");
+      e.code = "DIET_NO_NEXT_WEEK";
       throw e;
     }
     const existing = members.find((m) => m.startDate === next.start) || null;
@@ -504,17 +496,17 @@ module.exports = {
 
     const incoming = contentSignature({ menus });
     const actual = contentSignature({ menus: reference.menus });
-    if (incoming === actual) return { unchanged: true, revision: existing };
+    if (incoming === actual) return { unchanged: true, week: existing };
 
     if (existing) {
-      const updated = await dietTemplateDao.updateRevisionOverride(existing._id, { menus });
-      return { unchanged: false, revision: updated };
+      const updated = await dietTemplateDao.updateWeekOverride(existing._id, { menus });
+      return { unchanged: false, week: updated };
     }
 
     // El contenido abierto de la misma fase se exime del chequeo de solape
     // (el nuevo empieza justo donde lo deja); otras fases sí bloquean.
     const previousActive = await reserveActivePhaseSlot(clientId, next.start, phaseId);
-    const created = await dietTemplateDao.createRevisionOverride({
+    const created = await dietTemplateDao.createWeekOverride({
       trainerId,
       clientId,
       phaseId,
@@ -522,12 +514,12 @@ module.exports = {
       schedule: { startDate: next.start, endDate: null, status: "active" },
     });
     await chainIfNeeded(previousActive, created);
-    return { unchanged: false, revision: created };
+    return { unchanged: false, week: created };
   },
 
-  // Descartar la revisión siguiente ya preparada: se borra y la anterior
+  // Descartar la semana siguiente ya preparada: se borra y la anterior
   // vuelve a ser el tip abierto (hereda hacia delante otra vez).
-  async discardNextRevision(clientId, phaseId) {
+  async discardNextWeek(clientId, phaseId) {
     const { members, next } = await loadPhase(clientId, phaseId);
     if (!next) return { discarded: false };
     const existing = members.find((m) => m.startDate === next.start) || null;
@@ -574,8 +566,8 @@ module.exports = {
       throw error;
     }
 
-    // Las revisiones siguen a las fechas: el contenido preparado que caía
-    // dentro de la fase se mueve con ella el mismo número de días.
+    // El contenido preparado que caía dentro de la fase se mueve con ella el
+    // mismo número de días.
     const shift = daysElapsed(head.startDate, nextStart);
     for (const member of members) {
       const updates = {};
@@ -601,7 +593,7 @@ module.exports = {
 
   // Historial de nutrición (feed de eventos, ver nutrition-history.js). Una
   // sola llamada para toda la vida del cliente: por fase, sus DietDays de
-  // una vez (no una consulta por revisión); check-ins y excepciones del
+  // una vez (no una consulta por semana); check-ins y excepciones del
   // cliente enteras, una consulta cada una.
   async getNutritionHistory(clientId) {
     const today = isoDate(new Date());
@@ -612,12 +604,12 @@ module.exports = {
     if (!heads.length) return { events: [] };
 
     const [checkins, skippedDates] = await Promise.all([
-      checkinDao.listRevisionResponses(clientId),
+      checkinDao.listStampedResponses(clientId),
       listSkippedDates(clientId, 1000),
     ]);
     const checkinsByPhase = new Map();
     for (const c of checkins) {
-      const key = String(c.revision.phaseId);
+      const key = String(c.week.phaseId);
       if (!checkinsByPhase.has(key)) checkinsByPhase.set(key, []);
       checkinsByPhase.get(key).push(c);
     }
@@ -631,15 +623,15 @@ module.exports = {
       // Fin de la fase = endDate del último contenido persistido.
       const tipEnd = members[members.length - 1]?.endDate || null;
       const until = tipEnd && tipEnd < today ? tipEnd : today;
-      const [days, { revisions }] = await Promise.all([
+      const [days, { weeks }] = await Promise.all([
         dietDaysDao.getFullyPopulatedDietDaysForUser(clientId, head.startDate, until),
-        revisionsOfPhase(clientId, head, members, today),
+        weeksOfPhase(head, members, today),
       ]);
       events.push(
         ...buildPhaseEvents({
           head,
           members,
-          revisions,
+          weeks,
           days,
           checkins: checkinsByPhase.get(phaseId) || [],
           skippedDates,
@@ -650,16 +642,16 @@ module.exports = {
     return { events: sortEvents(events) };
   },
 
-  // Ventanas de revisión de todas las fases de un cliente en un rango de
+  // Ventanas de semana de todas las fases de un cliente en un rango de
   // fechas — para el slider del cliente y el calendario del entrenador. Cada
-  // fase con su índice de color estable (orden de inicio) y sus revisiones.
-  async getRevisionTimeline(clientId, from, to) {
+  // fase con su índice de color estable (orden de inicio) y sus semanas.
+  async getDietTimeline(clientId, from, to) {
     const all = await dietTemplateDao.listByClient(clientId);
     const heads = all
       .filter((d) => d.phaseId && String(d.phaseId) === String(d._id))
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
     const phases = [];
-    const revisionsOut = [];
+    const weeksOut = [];
     const today = isoDate(new Date());
 
     for (const [index, head] of heads.entries()) {
@@ -672,21 +664,20 @@ module.exports = {
       if (phaseStart > to) continue;
       phases.push({ id: String(head._id), name: head.phaseName || head.name, start: phaseStart, end: phaseEnd, colorIndex: index });
 
-      const { revisions } = await revisionsOfPhase(clientId, head, members, to > today ? to : today);
-      for (const r of revisions) {
-        const end = r.end || (phaseEnd && phaseEnd < to ? phaseEnd : to);
-        if (end < from) continue;
-        if (r.start > to) break;
-        revisionsOut.push({
+      const { weeks } = await weeksOfPhase(head, members, to > today ? to : today);
+      for (const w of weeks) {
+        if (w.end < from) continue;
+        if (w.start > to) break;
+        weeksOut.push({
           phaseId: String(head._id),
-          number: r.number,
-          start: r.start,
-          end: phaseEnd && end > phaseEnd ? phaseEnd : end,
+          number: w.number,
+          start: w.start,
+          end: phaseEnd && w.end > phaseEnd ? phaseEnd : w.end,
           colorIndex: index,
         });
       }
     }
-    return { phases, revisions: revisionsOut };
+    return { phases, weeks: weeksOut };
   },
 
   // Borrado coherente de fases (nutrición) — "me he equivocado" / el cliente
@@ -708,7 +699,7 @@ module.exports = {
       throw error;
     }
 
-    // Borrar el head de una fase se lleva sus revisiones preparadas: sin head no
+    // Borrar el head de una fase se lleva sus semanas preparadas: sin head no
     // hay ventanas que calcular.
     if (phase.phaseId && String(phase.phaseId) === String(phase._id)) {
       const members = await dietTemplateDao.findPhaseMembers(phase._id);

@@ -141,7 +141,7 @@ function habitsDimension({ habits }) {
  * Check-ins: SOLICITUDES RESPONDIDAS frente a las que se pidieron.
  *
  * Ya no hay cadencias que estimar: las solicitudes son fechas concretas de
- * la programación del cliente (docs/plan-revisiones.md), así que el
+ * la programación del cliente (docs/plan-semanas.md), así que el
  * denominador son las que ya han llegado en el periodo — ni una más.
  *
  * Contar respuestas sueltas daba dos resultados malos a la vez: un "7 de 4"

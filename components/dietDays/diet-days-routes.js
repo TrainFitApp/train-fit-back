@@ -13,7 +13,7 @@ const router = express.Router();
 // lados. La lógica está en un servicio puro compartido
 // (shopping-list-service.js), no duplicada en cada controller.
 router.getAsync("/shopping-list", auth(["admin", "user"]), controller.getMyShoppingList);
-// Fases y revisiones del cliente en un rango, para el
+// Fases y semanas del cliente en un rango, para el
 // slider de días de su pantalla de dieta.
 router.getAsync("/timeline", auth(["admin", "user"]), controller.getMyDietTimeline);
 

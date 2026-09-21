@@ -299,7 +299,7 @@ function detectInactivity({ lastActivityAt, now, clientName }) {
 
 // Vencido = una solicitud concreta se cerró sin respuesta, no "han pasado N
 // días desde la última". Las fechas las pone la programación del cliente
-// (docs/plan-revisiones.md), así que contar ventanas vacías es exacto: ya no
+// (docs/plan-semanas.md), así que contar ventanas vacías es exacto: ya no
 // hay que estimar cuántos ciclos de cadencia caben en el silencio.
 function detectCheckinOverdue({ checkin, now, clientName }) {
   if (!checkin?.missed) return null;

@@ -29,7 +29,7 @@ router.getAsync(
   requireActiveClient("nutrition"),
   controller.getHistory
 );
-// Editor de una fase/revisión ya asignada — contenido completo, nunca la plantilla
+// Editor de una fase/semana ya asignada — contenido completo, nunca la plantilla
 // de biblioteca de origen. Registradas DESPUÉS de /active y /history para que
 // esas rutas literales no las intercepte el :planId genérico.
 router.getAsync(
@@ -59,36 +59,36 @@ router.postAsync(
   requireActiveClient("nutrition"),
   controller.markSkippedDay
 );
-// --- Revisiones (docs/plan-revisiones.md) ---
+// --- Semanas (docs/plan-semanas.md) ---
 router.getAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/weeks",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.getPhaseRevisions
+  controller.getPhaseWeeks
 );
 router.getAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/:number/need",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/:number/need",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.getRevisionNeed
+  controller.getWeekNeed
 );
 router.postAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next/scale",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next/scale",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.scaleNextRevision
+  controller.scaleNextWeek
 );
 router.putAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.prepareNextRevision
+  controller.prepareNextWeek
 );
 router.deleteAsync(
-  "/trainer/clients/:clientId/nutrition-phases/:phaseId/revisions/next",
+  "/trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.discardNextRevision
+  controller.discardNextWeek
 );
 router.patchAsync(
   "/trainer/clients/:clientId/nutrition-phases/:phaseId/dates",
@@ -100,7 +100,7 @@ router.getAsync(
   "/trainer/clients/:clientId/diet-timeline",
   auth(["trainer"]),
   requireActiveClient("nutrition"),
-  controller.getRevisionTimeline
+  controller.getDietTimeline
 );
 router.getAsync(
   "/trainer/clients/:clientId/nutrition-history",

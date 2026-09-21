@@ -1,15 +1,15 @@
-// Sugerencias de dieta — la progresión de una REVISIÓN a la siguiente
-// (docs/plan-revisiones.md).
+// Sugerencias de dieta — la progresión de una SEMANA a la siguiente
+// (docs/plan-semanas.md).
 //
 // Cuando el cliente manda su check-in, esto mira cómo respondió el peso y
-// sugiere hacia dónde mover las kcal de la revisión siguiente. SIEMPRE es un
+// sugiere hacia dónde mover las kcal de la semana siguiente. SIEMPRE es un
 // borrador: el entrenador confirma o cambia.
 //
 // Qué se espera que pase lo dice la propia pauta: la diferencia entre las
 // kcal pautadas y la necesidad calculada del cliente con sus últimos datos
 // ES el déficit o superávit, y de ahí sale el ritmo semanal esperado. Antes
 // eso se tecleaba aparte al crear la fase (enfoque + ajuste de kcal + ritmo
-// por revisión) y podía contradecir a lo que la dieta pautaba de verdad.
+// por ciclo) y podía contradecir a lo que la dieta pautaba de verdad.
 //
 // PURO. El servicio le pasa números ya calculados y aplica el resultado.
 
@@ -18,7 +18,7 @@ const { expectedWeeklyRateKg } = require("../nutritionalGoals/nutrition-target")
 const ON_TRACK_BAND_KG = 0.1; // dentro de esto se considera "va según plan"
 const LOW_ADHERENCE_PCT = 75;
 const KCAL_PER_KG = 7700;
-const MAX_STEP_KCAL = 400; // tope de un ajuste de una sola revisión
+const MAX_STEP_KCAL = 400; // tope de un ajuste de una sola semana
 const KCAL_FLOOR = 1000; // seguridad dura
 
 function round50(value) {
@@ -31,16 +31,16 @@ function clamp(value, min, max) {
 
 /**
  * @param {object} input
- * @param {number} input.currentKcal      kcal pautadas en la revisión que acaba
+ * @param {number} input.currentKcal      kcal pautadas en la semana que acaba
  * @param {number|null} input.needKcal    necesidad calculada con los últimos datos
  * @param {number|null} input.weightStartKg peso de referencia anterior
  * @param {number|null} input.weightEndKg   peso del último check-in
  * @param {number} input.daysElapsed        días reales entre las dos medidas
- * @param {number|null} input.adherencePct  adherencia de la revisión (0-100)
+ * @param {number|null} input.adherencePct  adherencia de la semana (0-100)
  * @returns {{ hasData, deltaKcal, nextKcal, actualWeeklyRateKg,
  *             expectedWeeklyRateKg, flag, reason }}
  */
-function suggestNextRevision(input) {
+function suggestNextWeek(input) {
   const {
     currentKcal,
     needKcal = null,
@@ -57,7 +57,7 @@ function suggestNextRevision(input) {
   const hasWeight = Number.isFinite(weightStartKg) && Number.isFinite(weightEndKg) && daysElapsed > 0;
 
   // Un ritmo necesita DOS pesos. Con uno solo (o con ninguno) no se inventa
-  // nada: la revisión siguiente repite, y se dice qué falta exactamente.
+  // nada: la semana siguiente repite, y se dice qué falta exactamente.
   if (!hasWeight) {
     const soloUno = Number.isFinite(weightEndKg) && !Number.isFinite(weightStartKg);
     return {
@@ -68,8 +68,8 @@ function suggestNextRevision(input) {
       expectedWeeklyRateKg: expectedRate,
       flag: null,
       reason: soloUno
-        ? "Solo hay un peso: hasta el próximo check-in no se puede medir el ritmo, así que la siguiente revisión repite lo pautado."
-        : "Sin peso en los check-ins: la siguiente revisión repite lo pautado.",
+        ? "Solo hay un peso: hasta el próximo check-in no se puede medir el ritmo, así que la semana siguiente repite lo pautado."
+        : "Sin peso en los check-ins: la semana siguiente repite lo pautado.",
     };
   }
 
@@ -98,7 +98,7 @@ function suggestNextRevision(input) {
   const effectiveDelta = nextKcal - base;
 
   if (lowAdherence) {
-    reason = `Adherencia de la revisión ${Math.round(adherencePct)} % (por debajo del ${LOW_ADHERENCE_PCT} %): el cálculo puede no ser fiable. ${reason}`;
+    reason = `Adherencia de la semana ${Math.round(adherencePct)} % (por debajo del ${LOW_ADHERENCE_PCT} %): el cálculo puede no ser fiable. ${reason}`;
   }
 
   return {
@@ -157,7 +157,7 @@ function roundQty(value) {
 
 module.exports = {
   LOW_ADHERENCE_PCT,
-  suggestNextRevision,
+  suggestNextWeek,
   scaleFactor,
   scaleMealsContent,
 };

@@ -95,7 +95,7 @@ const DietTemplateSchema = new Schema(
     // Fin REAL. null mientras la fase sigue corriendo; se estampa el día en
     // que otra fase la corta (markSuperseded). No hay fin estimado ni
     // duración: una fase acaba cuando empieza la siguiente
-    // (docs/plan-revisiones.md).
+    // (docs/plan-semanas.md).
     endDate: { type: String }, // "YYYY-MM-DD" o null si sigue vigente
     status: { type: String, enum: ["active", "superseded", "ended", null] },
     // Encadena con la copia que la sustituyó — permite reconstruir el
@@ -110,13 +110,13 @@ const DietTemplateSchema = new Schema(
     // sale de ninguna plantilla.
     sourceTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
 
-    // --- Fase / revisiones (sugerencias de dieta + progresión) ---
+    // --- Fase / semanas (sugerencias de dieta + progresión) ---
     //
     // Vocabulario: una **fase** (Hipertrofia, Minicut, Definición...) es un
-    // periodo del plan del cliente, partido en **revisiones** por sus
-    // check-ins (docs/plan-revisiones.md). Solo se persiste el CONTENIDO que
+    // periodo del plan del cliente, partido en **semanas** por sus
+    // check-ins (docs/plan-semanas.md). Solo se persiste el CONTENIDO que
     // cambia: el primer documento de la fase y cada vez que el entrenador
-    // prepara la revisión siguiente con comida o cantidades distintas.
+    // prepara la semana siguiente con comida o cantidades distintas.
     // Todos estos campos SOLO existen en copias (clientId puesto) — en una
     // plantilla de biblioteca no significan nada, igual que startDate/status.
     //
@@ -129,7 +129,7 @@ const DietTemplateSchema = new Schema(
     phaseName: { type: String, trim: true, maxlength: 100 },
     // Objetivo con el que se pauta la fase: el valor calculado del cliente,
     // o el que el entrenador tecleó encima (`source: "manual"`). Sustituye
-    // al trío enfoque + ajuste de kcal + ritmo por revisión: lo que importa es
+    // al trío enfoque + ajuste de kcal + ritmo por semana: lo que importa es
     // con qué números se pauta, no de qué preset salieron.
     phaseTarget: {
       type: new Schema(
@@ -146,13 +146,13 @@ const DietTemplateSchema = new Schema(
     },
     // g/kg de proteína y grasa que el entrenador fijó en el cajón al empezar
     // la fase (null = fórmula por defecto de nutrition-target.js). Solo el
-    // primer documento; las revisiones recalculan con estos mismos.
+    // primer documento; las semanas recalculan con estos mismos.
     phaseProteinPerKg: { type: Number, default: null },
     phaseFatPerKg: { type: Number, default: null },
     // Cómo se calculó la necesidad del cliente al empezar la fase: snapshot
     // de los datos que entraron (peso y de dónde, altura, edad, sexo, rango
     // de pasos del hábito cumplido, entrenamiento, g/kg) y del desglose (BMR, factor,
-    // gasto, kcal y macros). Solo en el head; las revisiones siguientes se
+    // gasto, kcal y macros). Solo en el head; las semanas siguientes se
     // calculan al vuelo a su fecha de inicio.
     // `missing` con contenido = no se pudo calcular (faltaban biométricos).
     phaseNeed: {
@@ -169,9 +169,9 @@ const DietTemplateSchema = new Schema(
       ),
       default: undefined,
     },
-    // Las kcal de una revisión no se guardan: se derivan de los alimentos
+    // Las kcal de una semana no se guardan: se derivan de los alimentos
     // (diet-macro-profile.js). Sus FECHAS tampoco: las marcan los check-ins
-    // programados del cliente (revision-window.js).
+    // programados del cliente (week-window.js).
 
     // --- Aptitud dietética ---
     //

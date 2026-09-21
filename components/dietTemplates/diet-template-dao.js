@@ -3,7 +3,7 @@ const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const { deriveSuitability } = require("./diet-suitability");
-const { scaleMealsContent } = require("../planAssignments/revision-progression");
+const { scaleMealsContent } = require("../planAssignments/week-progression");
 
 // Sugerencias de dieta — `suitableFor` (vegana / sin gluten / ...) es DERIVADO
 // del contenido, nunca tecleado: se recalcula tras cada create/update.
@@ -17,14 +17,14 @@ async function recomputeSuitability(id) {
   return DietTemplate.findById(id);
 }
 
-// Campos de FASE que se escriben en el primera revisión (el "head"). Ausentes si
+// Campos de FASE que se escriben en la primera semana (el "head"). Ausentes si
 // no se está empezando una fase (aplicar un plan al estilo de siempre).
 function phaseFields(phase) {
   if (!phase) return {};
   return {
     phaseName: phase.name || null,
     // Objetivo con el que se pauta la fase: calculado del cliente o tecleado
-    // a mano por el entrenador (docs/plan-revisiones.md §11).
+    // a mano por el entrenador (docs/plan-semanas.md).
     ...(phase.target
       ? {
           phaseTarget: {
@@ -194,18 +194,18 @@ module.exports = {
     return finalizePhaseHead(created, schedule.phase);
   },
 
-  // Un revisión preparada dentro de una fase existente. El contenido llega en
+  // Una semana preparada dentro de una fase existente. El contenido llega en
   // crudo (shape "clipboard", ya escalado por el cliente del builder); el
-  // nombre es el de la fase (las revisiones no se nombran, ver plan). El status
-  // lo pone el servicio: la revisión preparada no es "active" hasta que
-  // arranque — mientras, rige el head/revisión anterior.
-  async createRevisionOverride({ trainerId, clientId, phaseId, menus, schedule = {} }) {
+  // nombre es el de la fase (las semanas no se nombran, ver plan). El status
+  // lo pone el servicio: la semana preparada no es "active" hasta que
+  // arranque — mientras, rige el head/la semana anterior.
+  async createWeekOverride({ trainerId, clientId, phaseId, menus, schedule = {} }) {
     const head = await DietTemplate.findById(phaseId).lean();
     const created = await DietTemplate.create({
       trainerId,
       clientId,
       phaseId,
-      name: head?.name || "Revisión",
+      name: head?.name || "Semana",
       menus: await materializeMenus(menus || []),
       startDate: schedule.startDate ?? null,
       endDate: schedule.endDate ?? null,
@@ -214,10 +214,10 @@ module.exports = {
     return recomputeSuitability(created._id);
   },
 
-  // Preparar por segunda vez la misma revisión (mismo startDate dentro de la
+  // Preparar por segunda vez la misma semana (mismo startDate dentro de la
   // fase) reescribe su doc en vez de encadenar otro. Contenido en crudo,
-  // igual que en createRevisionOverride.
-  async updateRevisionOverride(id, { menus }) {
+  // igual que en createWeekOverride.
+  async updateWeekOverride(id, { menus }) {
     const existing = await DietTemplate.findById(id);
     if (!existing) return null;
     // Mismo cuidado que updateAssignedContent: el contenido viejo son docs
@@ -227,27 +227,12 @@ module.exports = {
     return recomputeSuitability(id);
   },
 
-  async findRevisionByStart(phaseId, startDate) {
-    return DietTemplate.findOne({ phaseId, startDate });
-  },
-
-  // Contenido de una copia (revisión) aplanado a "clipboard" y escalado por
-  // `factor` — listo para createRevisionOverride. `factor` 1 = copia idéntica.
-  scaledRevisionContent(prevRevision, factor = 1) {
-    const src = prevRevision.toObject ? prevRevision.toObject() : prevRevision;
-    return {
-      menus: flattenMenusRef(src.menus || []).map((m) => ({
-        ...m,
-        meals: scaleMealsContent(m.meals, factor),
-      })),
-    };
-  },
-
-  // Igual que scaledRevisionContent pero SIN aplanar: los CustomProduct/
-  // CustomRecipe siguen poblados (nombre, macros) — es lo que necesita el
-  // builder para pintar el contenido, no para crear nada.
-  scaledRevisionContentPopulated(prevRevision, factor = 1) {
-    const src = prevRevision.toObject ? prevRevision.toObject() : prevRevision;
+  // Contenido de una copia (semana) escalado por `factor`, SIN aplanar: los
+  // CustomProduct/CustomRecipe siguen poblados (nombre, macros) — es lo que
+  // necesita el builder para pintar el contenido, no para crear nada.
+  // `factor` 1 = copia idéntica.
+  scaledWeekContentPopulated(prevWeek, factor = 1) {
+    const src = prevWeek.toObject ? prevWeek.toObject() : prevWeek;
     return {
       menus: (src.menus || []).map((m) => ({ name: m.name, meals: scaleMealsContent(m.meals, factor) })),
     };
@@ -261,7 +246,7 @@ module.exports = {
     return DietTemplate.findById(phaseId);
   },
 
-  // La fase "vigente" para un cliente = la de la revisión activa (tip de la cadena).
+  // La fase "vigente" para un cliente = la del contenido activo (tip de la cadena).
   async findActivePhaseId(clientId) {
     const active = await DietTemplate.findOne({ clientId, status: "active" }).select("phaseId").lean();
     return active?.phaseId || null;
@@ -386,12 +371,12 @@ module.exports = {
     return recomputeSuitability(id);
   },
 
-  // Edición de fases/revisiones — mismo mecanismo que `update` (arriba) pero con
+  // Edición de fases/semanas — mismo mecanismo que `update` (arriba) pero con
   // el filtro que ahí falta: exige que la copia sea de ESTE cliente
   // concreto, no solo del trainer. Nunca toca una plantilla de biblioteca
   // (`clientId: null` no puede matchear aquí) ni la copia de otro cliente.
-  // Funciona igual para la revisión 1 que para cualquier revisión posterior
-  // (creado por "Siguiente revisión") porque opera sobre el `_id` de la propia
+  // Funciona igual para la semana 1 que para cualquier semana posterior
+  // (creado por "Siguiente semana") porque opera sobre el `_id` de la propia
   // copia, sin pasar por `sourceTemplateId`.
   async updateAssignedContent(trainerId, clientId, id, { name, menus }) {
     const existing = await DietTemplate.findOne({ _id: id, trainerId, clientId });
@@ -452,10 +437,10 @@ module.exports = {
       $or: [{ endDate: { $gte: startDate } }, { endDate: null }],
     };
     if (excludeId) query._id = { $ne: excludeId };
-    // La revisión ABIERTA de esa fase (endDate null) no cuenta: la revisión nueva
+    // El contenido ABIERTO de esa fase (endDate null) no cuenta: el nuevo
     // empieza justo donde lo deja, así que avanzar con una fecha futura
-    // chocaba siempre contra él. Las revisiones ya cerradas de la misma fase sí
-    // siguen reservando su tramo — programar una revisión encima de una pasada
+    // chocaba siempre contra él. Las semanas ya cerradas de la misma fase sí
+    // siguen reservando su tramo — programar una semana encima de una pasada
     // es un solape de verdad.
     if (excludePhaseId) query.$nor = [{ phaseId: excludePhaseId, endDate: null }];
     return DietTemplate.find(query).sort({ startDate: 1 });

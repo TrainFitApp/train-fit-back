@@ -1,5 +1,5 @@
 // Fechas de las solicitudes de check-in. TODO en "YYYY-MM-DD" + "HH:mm", sin
-// zona horaria (docs/plan-revisiones.md §10): la hora que fija el entrenador
+// zona horaria (docs/plan-semanas.md §10): la hora que fija el entrenador
 // es hora de reloj, la misma para cualquier cliente esté donde esté — las
 // 08:00 llegan en algún momento en todo el mundo. Antes cada programación
 // guardaba un IANA time zone y las ocurrencias se materializaban como
@@ -93,6 +93,40 @@ function occurrenceCovering(schedule, date) {
   return found;
 }
 
+/**
+ * Una página del histórico de una programación, de la ocurrencia más
+ * reciente a la más antigua. Pensada para un panel que baja hacia atrás sin
+ * fin: se recorre por ÍNDICE hacia abajo, así que el coste es el de la
+ * página y no el de la vida de la programación — occurrenceDatesBetween no
+ * sirve aquí porque exige rango y corta a las 400 (una programación diaria
+ * de dos años lo pasa).
+ *
+ * @param {string|null} before cursor EXCLUSIVO: solo ocurrencias anteriores
+ * @returns {{occurrences:{index,date,next}[], nextBefore:string|null, total:number}}
+ */
+function historyOccurrences(schedule, { before = null, limit = 50, today } = {}) {
+  const vacio = { occurrences: [], nextBefore: null, total: 0 };
+  if (!validDate(schedule?.startDate) || !validDate(today)) return vacio;
+  if (before && !validDate(before)) return vacio;
+
+  // Nunca se enseña el futuro: el histórico es lo que ya se pidió.
+  const anchor = before ? addDaysToIsoDate(before, -1) : today;
+  const covering = occurrenceCovering(schedule, anchor > today ? today : anchor);
+  if (!covering) return vacio;
+
+  const occurrences = [];
+  for (let index = covering.index; index >= 0 && occurrences.length < limit; index--) {
+    occurrences.push({ index, date: occurrenceDate(schedule, index), next: occurrenceDate(schedule, index + 1) });
+  }
+  const oldest = occurrences[occurrences.length - 1];
+  const last = before ? occurrenceCovering(schedule, today) : covering;
+  return {
+    occurrences,
+    nextBefore: oldest.index > 0 ? oldest.date : null,
+    total: last ? last.index + 1 : 0,
+  };
+}
+
 /** Primera ocurrencia posterior a `date`. */
 function nextOccurrenceDate(schedule, date) {
   const covering = occurrenceCovering(schedule, date);
@@ -108,5 +142,6 @@ module.exports = {
   occurrenceDate,
   occurrenceDatesBetween,
   occurrenceCovering,
+  historyOccurrences,
   nextOccurrenceDate,
 };

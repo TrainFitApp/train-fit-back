@@ -147,7 +147,7 @@ async function resolveOwnedMealById(userId, mealId) {
   throw err;
 }
 
-// Opciones de comida (2026-09) — el profesional edita una fase/revisión ya
+// Opciones de comida (2026-09) — el profesional edita una fase/semana ya
 // asignado (añade una opción, cambia cantidades…) y los días que el cliente
 // YA había abierto no se enteraban: solo se resolvía el plan al crear el día
 // o si seguía vacío. Vuelve a aplicar el plan sobre los DietDay existentes

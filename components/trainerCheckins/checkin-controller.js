@@ -7,7 +7,7 @@ const { CHECKIN_FIELD_KEYS } = require("./checkin-field-catalog");
 const { validateQuestionDefinition } = require("./checkin-custom-question");
 const { validateTiming } = require("./checkin-schedule-dates");
 const { scheduleContent, hasQuestions, defaultTiming } = require("./checkin-agenda-controller");
-const { revisionForClientAt } = require("../planAssignments/revision-service");
+const { weekForClientAt } = require("../planAssignments/week-service");
 
 // Fase 5 Coach Pro — comprueba la forma de TODAS las preguntas propias antes
 // de guardar la plantilla. Devuelve el primer error o null.
@@ -181,7 +181,7 @@ module.exports = {
 
   // --- Lado cliente ---
   // GET /trainer/checkins/mine — los check-ins ABIERTOS hoy, de cada
-  // profesional con relación activa, con la revisión de dieta a la que
+  // profesional con relación activa, con la semana de dieta a la que
   // pertenecen. Sin push ni recordatorios: la app pregunta al abrirse.
   async listMine(req, res) {
     const clientId = req.auth.userId;
@@ -191,7 +191,7 @@ module.exports = {
 
     const today = agenda.todayIso();
     const open = await agenda.openForClient(clientId, today, trainerIds);
-    const revision = await revisionForClientAt(clientId, today);
+    const week = await weekForClientAt(clientId, today);
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
 
@@ -200,7 +200,7 @@ module.exports = {
         ...entry,
         trainerId: String(schedule.trainerId),
         trainer: trainersById.get(String(schedule.trainerId)) || null,
-        revision,
+        week,
       }))
     );
   },
@@ -225,7 +225,7 @@ module.exports = {
 
   // POST /trainer/checkins/:scheduleId/respond — el cliente responde (o
   // reescribe) el check-in ABIERTO de esa programación. Fuera de su ventana
-  // de fechas no se puede ni escribir ni corregir: esa revisión ya pasó.
+  // de fechas no se puede ni escribir ni corregir: esa semana ya pasó.
   async respond(req, res) {
     const clientId = req.auth.userId;
     const schedule = await Schedule.findOne({ _id: req.params.scheduleId, clientId }).lean();

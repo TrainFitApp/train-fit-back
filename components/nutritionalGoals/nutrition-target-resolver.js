@@ -1,7 +1,7 @@
 // Gathering de biométricos + guard + cálculo del target de un cliente,
 // compartido entre el cajón de sugerencias de dieta
 // (dietTemplates/diet-suggestion-controller.js#suggest) y la necesidad por
-// revisión de una fase (planAssignments/revision-need.js).
+// semana de una fase (planAssignments/week-need.js).
 // Extraído para no mantener la misma lógica de guard/fallback de peso en
 // dos sitios (antes solo vivía en diet-suggestion-controller.js).
 
@@ -29,7 +29,7 @@ function ageFromBirth(birth, at = new Date()) {
 // pasos desconocido) se cae al perfil y se dice por qué.
 //
 // Los pasos salen del HÁBITO de pasos que le pauta su profesional y de los
-// días que el cliente lo marcó (docs/plan-revisiones.md §12): la fórmula
+// días que el cliente lo marcó (docs/plan-semanas.md §12): la fórmula
 // solo usa el rango para elegir un factor, así que pedir un número exacto a
 // diario era pedir una precisión que nadie tiene.
 function resolveSteps(user, stepsRangeKey) {
@@ -95,7 +95,7 @@ async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0, mac
   // `useClientObjetive`: el delta lo pone el propio cliente (el objetivo que
   // eligió al registrarse). Es el valor de REFERENCIA que ve el entrenador
   // antes de tocar nada — ya no hay un "ajuste de kcal" que teclear aparte
-  // (docs/plan-revisiones.md §11).
+  // (docs/plan-semanas.md §11).
   const delta = options.useClientObjetive
     ? Number.isFinite(user?.objetive)
       ? user.objetive

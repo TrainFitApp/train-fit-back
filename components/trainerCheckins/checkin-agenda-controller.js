@@ -53,6 +53,36 @@ module.exports = {
     return res.send({ schedules, entries, responses, reviewCount });
   },
 
+  // GET /trainer/clients/:clientId/checkin-schedules
+  // Las programaciones a secas, sin agenda: lo que necesita la ficha para
+  // decir "2 check-ins" y abrir el panel. Pedir la agenda entera para esto
+  // traería un año de ocurrencias calculadas que nadie va a pintar.
+  async listSchedules(req, res) {
+    return res.send(await Schedule.find(scope(req)).sort({ createdAt: 1 }).lean());
+  },
+
+  // GET /trainer/clients/:clientId/checkin-schedules/:scheduleId/history?before&limit
+  // Todas las ocurrencias de UNA programación, de la más nueva a la más
+  // vieja, respondidas o no. Sin tope de rango: pagina hacia atrás con
+  // `before` (la fecha que devuelve `nextBefore`).
+  async scheduleHistory(req, res) {
+    const { before, limit } = req.query || {};
+    if (!validId(req.params.scheduleId)) return notFound(res);
+    if (before !== undefined && !validDate(before)) {
+      return res.status(400).send({ message: "before inválida (YYYY-MM-DD)" });
+    }
+    const size = limit === undefined ? 50 : Number(limit);
+    if (!Number.isInteger(size) || size < 1 || size > 200) {
+      return res.status(400).send({ message: "limit debe estar entre 1 y 200" });
+    }
+
+    const schedule = await Schedule.findOne({ ...scope(req), _id: req.params.scheduleId }).lean();
+    if (!schedule) return notFound(res);
+
+    const history = await agenda.scheduleHistory(schedule, { before: before || null, limit: size });
+    return res.send({ schedule, ...history });
+  },
+
   // POST/PUT /trainer/clients/:clientId/checkin-schedules[/:scheduleId]
   async saveSchedule(req, res) {
     const data = req.body || {};

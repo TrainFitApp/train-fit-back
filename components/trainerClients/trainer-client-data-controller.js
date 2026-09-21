@@ -388,9 +388,9 @@ module.exports = {
   // GET /trainer/clients/:clientId/adherence?from=&to= — F20, requireActiveClient("nutrition")
   //
   // Adherencia calórica contra lo PAUTADO de cada día, no contra un objetivo
-  // guardado aparte: con fases y revisiones la meta del día es lo que suma
+  // guardado aparte: con fases y semanas la meta del día es lo que suma
   // la pauta (plannedTarget), y un objetivo fijo daba "fuera de margen" en
-  // cuanto una revisión subía o bajaba kcal aunque el cliente cumpliera. Un día cuadra si
+  // cuanto una semana subía o bajaba kcal aunque el cliente cumpliera. Un día cuadra si
   // lo consumido (marcado + lo que añadió él) queda a ±15 % de lo pautado.
   async getClientAdherence(req, res) {
     const clientId = req.params.clientId;
@@ -519,7 +519,7 @@ module.exports = {
 
   // GET /trainer/clients/:clientId/nutrition-foods?from=&to=
   // Cumplimiento ALIMENTO A ALIMENTO del rango, para el panel de resumen de
-  // una revisión. Hermano de getClientNutritionTracking (que da lo mismo en macros,
+  // una semana. Hermano de getClientNutritionTracking (que da lo mismo en macros,
   // sin desglose) y de getClientShoppingList (que agrupa por producto pero
   // ignora si se consumió).
   async getClientNutritionFoods(req, res) {
@@ -534,7 +534,7 @@ module.exports = {
     const to = pedido > hoy ? hoy : pedido;
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
-    // Una revisión que empieza mañana no tiene nada que resumir todavía.
+    // Una semana que empieza mañana no tiene nada que resumir todavía.
     if (from > to) return res.send({ status: "ok", items: [], from, to });
 
     const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);

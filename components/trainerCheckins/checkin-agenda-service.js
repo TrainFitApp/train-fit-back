@@ -1,5 +1,5 @@
 // La agenda de check-ins: qué solicitudes existen, cuál está abierta y qué
-// se puede responder (docs/plan-revisiones.md).
+// se puede responder (docs/plan-semanas.md).
 //
 // No hay colección de solicitudes ni cron que las materialice: una ocurrencia
 // es una fecha calculada a partir de la programación (checkin-schedule-dates.js)
@@ -13,7 +13,7 @@ const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const notificationDao = require("../notifications/notification-dao");
 const { CHECKIN_FIELDS_BY_KEY, isPlausibleValue, scaleLevelsFor } = require("./checkin-field-catalog");
 const { validateCustomAnswer, normalizeCustomAnswer } = require("./checkin-custom-question");
-const { occurrenceDatesBetween, occurrenceCovering } = require("./checkin-schedule-dates");
+const { occurrenceDatesBetween, occurrenceCovering, historyOccurrences } = require("./checkin-schedule-dates");
 const { isoDate, addDaysToIsoDate } = require("../util/date-util");
 
 function todayIso() {
@@ -41,8 +41,11 @@ function entryOf(schedule, occurrence, response, today) {
     time: schedule.time,
     closesDate: occurrence.next || null,
     status: occurrenceStatus(occurrence, response, today),
-    enabledFields: schedule.enabledFields || [],
-    requiredFields: schedule.requiredFields || [],
+    // Lo YA respondido se lee con las preguntas que tenía entonces, no con
+    // las de hoy: la programación puede haber cambiado desde entonces y el
+    // histórico quedaría contado contra un formulario que nunca se usó.
+    enabledFields: response?.enabledFields?.length ? response.enabledFields : schedule.enabledFields || [],
+    requiredFields: response?.requiredFields?.length ? response.requiredFields : schedule.requiredFields || [],
     customQuestions: response?.customQuestions?.length ? response.customQuestions : schedule.customQuestions || [],
     values: response?.values || null,
     respondedAt: response?.respondedAt || null,
@@ -50,7 +53,7 @@ function entryOf(schedule, occurrence, response, today) {
     reviewedAt: response?.reviewedAt || null,
     reviewComment: response?.reviewComment || "",
     responseId: response ? String(response._id) : null,
-    revision: response?.revision || null,
+    week: response?.week || null,
   };
 }
 
@@ -77,7 +80,7 @@ function entryOfResponse(response) {
     reviewedAt: response.reviewedAt || null,
     reviewComment: response.reviewComment || "",
     responseId: String(response._id),
-    revision: response.revision || null,
+    week: response.week || null,
   };
 }
 
@@ -99,6 +102,28 @@ async function agendaFor(trainerId, clientId, from, to, today = todayIso()) {
     }
   }
   return { schedules, entries: entries.sort((a, b) => a.date.localeCompare(b.date)) };
+}
+
+/**
+ * Histórico completo de UNA programación, de la ocurrencia más reciente a la
+ * más antigua, respondidas o no. Pagina hacia atrás con `before` (la fecha
+ * que devuelve `nextBefore`).
+ */
+async function scheduleHistory(schedule, { before = null, limit = 50, today = todayIso() } = {}) {
+  const { occurrences, nextBefore, total } = historyOccurrences(schedule, { before, limit, today });
+  if (!occurrences.length) return { entries: [], nextBefore: null, total };
+
+  const responses = await Response.find({
+    scheduleId: schedule._id,
+    occurrenceDate: { $gte: occurrences[occurrences.length - 1].date, $lte: occurrences[0].date },
+  }).lean();
+  const byDate = new Map(responses.map((r) => [r.occurrenceDate, r]));
+
+  return {
+    entries: occurrences.map((o) => entryOf(schedule, o, byDate.get(o.date) || null, today)),
+    nextBefore,
+    total,
+  };
 }
 
 /**
@@ -212,12 +237,12 @@ function validateAnswers(schedule, input) {
 
 /**
  * Guarda (o reescribe) la respuesta de una ocurrencia abierta. Sella la
- * revisión de dieta a la que pertenece y vuelca a Anthropometry lo que sea
+ * semana de dieta a la que pertenece y vuelca a Anthropometry lo que sea
  * composición corporal.
  */
 async function saveResponse({ schedule, occurrence, values, today = todayIso() }) {
-  const { revisionForClientAt } = require("../planAssignments/revision-service");
-  const revision = await revisionForClientAt(schedule.clientId, occurrence.date);
+  const { weekForClientAt } = require("../planAssignments/week-service");
+  const week = await weekForClientAt(schedule.clientId, occurrence.date);
   const now = new Date();
 
   const previous = await Response.findOne({ scheduleId: schedule._id, occurrenceDate: occurrence.date }).lean();
@@ -234,9 +259,9 @@ async function saveResponse({ schedule, occurrence, values, today = todayIso() }
         enabledFields: schedule.enabledFields || [],
         requiredFields: schedule.requiredFields || [],
         customQuestions: schedule.customQuestions || [],
-        ...(revision
-          ? { revision: { phaseId: revision.phaseId, number: revision.number, start: revision.start, end: revision.end } }
-          : { revision: undefined }),
+        ...(week
+          ? { week: { phaseId: week.phaseId, number: week.number, start: week.start, end: week.end } }
+          : { week: undefined }),
       },
       $setOnInsert: {
         trainerId: schedule.trainerId,
@@ -276,6 +301,7 @@ module.exports = {
   entryOf,
   entryOfResponse,
   agendaFor,
+  scheduleHistory,
   openForClient,
   validateAnswers,
   saveResponse,

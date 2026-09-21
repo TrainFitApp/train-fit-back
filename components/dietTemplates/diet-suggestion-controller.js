@@ -5,7 +5,7 @@ const { effectiveSuitability } = require("./diet-suitability");
 const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
-const { stepsFromHabit } = require("../planAssignments/revision-need");
+const { stepsFromHabit } = require("../planAssignments/week-need");
 const { addDaysToIsoDate, isoDate } = require("../util/date-util");
 
 const VALID_FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];

@@ -1,5 +1,5 @@
 // El objetivo nutricional del cliente, visto y editado por su profesional
-// (docs/plan-revisiones.md §2). Antes el profesional ni lo veía: su meta
+// (docs/plan-semanas.md). Antes el profesional ni lo veía: su meta
 // salía de lo pautado día a día y el objetivo del cliente solo cubría los
 // días sin nada pautado. Eso dejaba al profesional trabajando a ciegas sobre
 // el número que el cliente SÍ ve en su app.
@@ -12,7 +12,7 @@ const nutritionalGoalDao = require("./nutritional-goal-dao");
 const userSchema = require("../users/schema");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { resolveClientNutritionTarget } = require("./nutrition-target-resolver");
-const { stepsFromHabit } = require("../planAssignments/revision-need");
+const { stepsFromHabit } = require("../planAssignments/week-need");
 const { addDaysToIsoDate, isoDate } = require("../util/date-util");
 
 function round1(value) {

@@ -59,20 +59,22 @@ module.exports = {
     ).lean();
   },
 
-  // Todas las respuestas ligadas a una revisión de dieta — historial de
+  // Todas las respuestas selladas con una semana de dieta — historial de
   // nutrición del trainer.
-  async listRevisionResponses(clientId) {
-    return CheckinResponse.find({ clientId, "revision.phaseId": { $ne: null } })
-      .select("respondedAt updatedAt values revision name")
+  async listStampedResponses(clientId) {
+    return CheckinResponse.find({ clientId, "week.phaseId": { $ne: null } })
+      .select("respondedAt updatedAt values week name")
       .lean();
   },
 
-  // La respuesta de la revisión N de una fase, venga del profesional que
-  // venga (la necesidad por revisión no sabe de trainerId).
-  async findRevisionResponse(clientId, phaseId, number) {
-    return CheckinResponse.findOne({ clientId, "revision.phaseId": phaseId, "revision.number": number })
+  // Las respuestas de la semana N de una fase, vengan del profesional que
+  // vengan (la necesidad por semana no sabe de trainerId). Son varias cuando
+  // la programación es más frecuente que semanal; van de la más reciente a
+  // la más antigua.
+  async listWeekResponses(clientId, phaseId, number) {
+    return CheckinResponse.find({ clientId, "week.phaseId": phaseId, "week.number": number })
       .sort({ respondedAt: -1 })
-      .select("values respondedAt updatedAt revision")
+      .select("values respondedAt updatedAt week")
       .lean();
   },
 
