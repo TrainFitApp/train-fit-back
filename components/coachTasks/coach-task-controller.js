@@ -1,5 +1,6 @@
 const coachTaskDao = require("./coach-task-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { isReadOnly } = require("../trainerClients/trainer-seat-service");
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_NOTES_LENGTH = 1000;
@@ -15,6 +16,11 @@ async function resolveClientId(trainerId, rawClientId) {
   if (!relation) {
     const error = new Error("No tienes una relación activa con este cliente");
     error.code = "NO_RELATION";
+    throw error;
+  }
+  if (await isReadOnly(trainerId, rawClientId)) {
+    const error = new Error("Este cliente está en solo lectura por el cupo de tu plan");
+    error.code = "CLIENT_READ_ONLY";
     throw error;
   }
   return rawClientId;
@@ -62,7 +68,7 @@ module.exports = {
       });
       return res.status(201).send(task);
     } catch (e) {
-      if (e.code === "NO_RELATION") return res.status(403).send({ message: e.message });
+      if (e.code === "NO_RELATION" || e.code === "CLIENT_READ_ONLY") return res.status(403).send({ message: e.message, code: e.code });
       throw e;
     }
   },

@@ -57,6 +57,13 @@ function connectWithRetry() {
       });
       serv.timeout = 300000;
       billingReconciliationJob.start();
+      // PM2 arranca bin/www directamente (sin el prestart que compila el
+      // módulo TypeScript de pagos). Sin .build fallan el borrado de cuentas y
+      // las rutas de clientes de entrenador: se avisa alto y claro al arrancar.
+      if (!require("fs").existsSync(require("path").join(__dirname, "../.build/trainer-billing/runtime.js"))) {
+        console.error("❌ Falta .build/trainer-billing: ejecuta `npm run build:trainer-billing` antes de arrancar (ver docs/TRAINERS_PAGOS_PRODUCCION.md).");
+      }
+      require("../components/trainerBilling/adapter").start();
       // TASK-025 existía desde antes pero nunca se llamaba desde el
       // arranque real (confirmado por grep: cero require() del módulo
       // fuera de sí mismo) — el cron de recordatorios de check-in llevaba

@@ -280,8 +280,19 @@ function parseRCSubscriberPayload(subscriber) {
 // si ninguno lo está, cae al de PRO para reportar "no activo" de forma estable.
 function parseTrainerRCSubscriberPayload(subscriber) {
   const active = subscriber?.entitlements || {};
-  const matchedId = resolveTrainerEntitlementId(active) || TRAINER_PRO_ENTITLEMENT_ID;
-  return parseRCSubscriberPayloadForId(subscriber, matchedId);
+  // No usar otra suscripción del mismo usuario como prueba del entitlement profesional.
+  const matchedId = [...TRAINER_ENTITLEMENT_IDS].reverse().find((id) => {
+    const expiresAt = toDateOrNull(active[id]?.expires_date);
+    return expiresAt && expiresAt.getTime() > Date.now();
+  });
+  const entitlement = matchedId ? active[matchedId] : null;
+  const productId = entitlement?.product_identifier || null;
+  const subscription = getSubscriberSubscription(subscriber, productId);
+  const store = entitlement?.store || subscription?.store || null;
+  return { entitled: Boolean(matchedId), plan: derivePlan(productId),
+    expiresAt: toDateOrNull(entitlement?.expires_date), source: resolvePremiumSource(store, productId),
+    productId, store, willRenew: Boolean(matchedId && !subscription?.unsubscribe_detected_at),
+    activeEntitlement: matchedId || null };
 }
 async function updateUserPremium(userId, premiumState, field = "premium") {
   if (!userId) return null;
@@ -314,8 +325,10 @@ async function updateUserPremium(userId, premiumState, field = "premium") {
   const update = { [field]: fieldUpdate };
   const unset = field === "premium" ? { isPremium: 1 } : {};
 
-  return userSchema.findByIdAndUpdate(
-    userId,
+  return userSchema.findOneAndUpdate(
+    field === "professionalPremium"
+      ? { _id: userId, "professionalPremium.source": { $ne: "stripe" } }
+      : { _id: userId },
     { $set: update, $unset: unset },
     { new: true },
   );
@@ -946,7 +959,7 @@ module.exports = {
   },
 
   async restoreTrainerFromRevenueCat(user, appUserId) {
-    const resolvedAppUserId = appUserId || user?._id?.toString();
+    const resolvedAppUserId = user?._id?.toString();
     const subscriber = await getRevenueCatSubscriber(resolvedAppUserId);
     if (!subscriber) {
       return null;

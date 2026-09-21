@@ -118,6 +118,16 @@ const UserSchema = new Schema({
     expiresAt: Date,
     source: String,
     lastSyncAt: Date,
+    stripeRevision: Number,
+    stripeMode: String,
+  },
+  // Clientes que el entrenador mantiene activos cuando supera el cupo de su
+  // plan; el resto queda en solo lectura (ver trainer-seat-service.js). Fuera
+  // de professionalPremium a propósito: la proyección de Stripe lo sobrescribe entero.
+  trainerSeats: {
+    clientIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    updatedAt: Date,
+    lockedUntil: Date,
   },
   passwordVersion: { type: Number, default: 0 },
   lastPasswordChangeAt: Date,
@@ -174,6 +184,7 @@ UserSchema.pre("deleteOne", async function (next) {
     const user = await this.model.findOne(query);
 
     if (user) {
+      await require("../trainerBilling/adapter").assertDeletionAllowed([user._id]);
       // Antes: deleteOne sobre el wrapper Diet, que arrastraba sus DietDay en
       // cascada. Sin wrapper, se borran directos por dueño — y el hook
       // deleteMany de DietDay sigue arrastrando Meals y su contenido.
@@ -262,6 +273,12 @@ UserSchema.pre("deleteOne", async function (next) {
   } catch (e) {
     next(e);
   }
+});
+
+// Los scripts de limpieza no pueden saltarse la preparación explícita de facturación.
+UserSchema.pre(["deleteMany", "findOneAndDelete"], async function () {
+  const users = await this.model.find(this.getQuery()).select("_id").lean();
+  await require("../trainerBilling/adapter").assertDeletionAllowed(users.map((user) => user._id));
 });
 
 module.exports = mongoose.model("User", UserSchema);

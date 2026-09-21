@@ -1,4 +1,5 @@
 const trainerClientDao = require("./trainer-client-dao");
+const { rejectIfReadOnly } = require("./trainer-seat-service");
 
 /**
  * Middleware de autorización — la ÚNICA comprobación de "¿tiene este profesional
@@ -42,6 +43,10 @@ function requireActiveClient(requiredScope) {
         return res.status(403).send({ message: "No tienes una relación activa con este cliente" });
       }
 
+      // Por encima del cupo del plan, los clientes fuera de las plazas activas
+      // se pueden consultar pero no modificar (trainer-seat-service.js).
+      if (await rejectIfReadOnly(req, res, clientId)) return;
+
       req.trainerClientRelation = relation;
       next();
     } catch (e) {
@@ -51,4 +56,18 @@ function requireActiveClient(requiredScope) {
   };
 }
 
-module.exports = { requireActiveClient };
+// Para rutas de alta (cuestionario/confirmación) que actúan antes de que la
+// relación sea "active" y por eso no llevan requireActiveClient.
+function requireWritableSeat() {
+  return async (req, res, next) => {
+    try {
+      if (await rejectIfReadOnly(req, res, req.params.clientId)) return;
+      next();
+    } catch (e) {
+      console.error("Error en requireWritableSeat:", e.message);
+      res.status(500).send({ message: "Internal Server Error" });
+    }
+  };
+}
+
+module.exports = { requireActiveClient, requireWritableSeat };

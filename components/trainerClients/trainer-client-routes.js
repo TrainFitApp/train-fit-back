@@ -2,7 +2,7 @@ const express = require("@awaitjs/express");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./trainer-client-controller");
 const dataController = require("./trainer-client-data-controller");
-const { requireActiveClient } = require("./require-active-client");
+const { requireActiveClient, requireWritableSeat } = require("./require-active-client");
 const workoutTemplateController = require("../workoutTemplates/workout-template-controller");
 
 const router = express.Router();
@@ -22,8 +22,12 @@ router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByT
 // --- TAREA 3: cuestionario inicial — el profesional revisa/confirma ANTES
 // de que la relación esté "active", por eso NO llevan requireActiveClient.
 router.getAsync("/clients/:clientId/intake", auth(["trainer"]), controller.getClientIntake);
-router.putAsync("/clients/:clientId/intake", auth(["trainer"]), controller.updateClientIntake);
-router.postAsync("/clients/:clientId/confirm", auth(["trainer"]), controller.confirmClient);
+router.putAsync("/clients/:clientId/intake", auth(["trainer"]), requireWritableSeat(), controller.updateClientIntake);
+router.postAsync("/clients/:clientId/confirm", auth(["trainer"]), requireWritableSeat(), controller.confirmClient);
+
+// Plazas activas cuando la cartera supera el cupo del plan (trainer-seat-service.js).
+router.getAsync("/seats", auth(["trainer"]), controller.getSeats);
+router.putAsync("/seats", auth(["trainer"]), controller.updateSeats);
 
 // --- Datos del cliente (F09/F10/F11/F13) ---
 router.getAsync(

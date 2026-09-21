@@ -1,0 +1,121 @@
+# Facturación Trainers
+
+> **21/09/2026 — modo real implementado (desactivado por defecto).**
+> - `TRAINER_BILLING_MODE=live` exige `rk_live_`, `TRAINER_BILLING_TAX_POLICY=stripe_tax` y `TRAINER_BILLING_FRONTEND_URL` en `https://` fuera de localhost. El modo `test` sigue exigiendo clave de prueba, frontend local y la BD `trainfit_stripe_local`, y no funciona con `NODE_ENV=production`.
+> - `assertMode` rechaza objetos de Stripe del otro entorno; cuentas y eventos se separan por `mode`.
+> - Stripe Tax: precios `exclusive` validados, Checkout con `automatic_tax` + dirección + NIF, e IVA desglosado en `quote.taxAmount`.
+> - Eventos nuevos:
+>   - `charge.refunded`: un reembolso total del cobro vigente cancela en el acto; cualquier otro caso marca `review`.
+>   - `charge.dispute.created`: marca `review`; el cliente se resuelve por el PaymentIntent.
+> - La reconciliación omite cuentas terminadas.
+> - `npm run billing:preflight` valida en el servidor configuración, precios, portal y Stripe Tax sin imprimir secretos.
+> - Guía de salida: `docs/TRAINERS_PAGOS_PRODUCCION.md`. Lo que sigue documenta el sandbox local.
+
+## Sandbox local
+
+Estado: implementación local desactivada por defecto, revisada el 18/09/2026. SDK `stripe@22.6.2`, API `2026-08-26.dahlia`. LIVE está bloqueado. La configuración del plugin Stripe/CLI no proporciona credenciales al proceso Express.
+
+## Preparar el entorno
+
+1. `npm ci` y `npm run build:trainer-billing`. Node >=18 (recomendado Node 22). El código nuevo TypeScript estricto se compila en `.build/trainer-billing`; los adaptadores mantienen el backend CommonJS.
+2. Copiar `components/trainerBilling/local.env.example` a `.env.stripe.local`. No sobrescribir ni reutilizar `.env`.
+3. Iniciar una instancia MongoDB local dedicada. Se admite exclusivamente `mongodb://127.0.0.1:27017/trainfit_stripe_local` (también localhost y otro puerto local). No importar usuarios/datos de producción.
+4. Provisionar una clave **restringida de prueba** en `STRIPE_KEY`, fuera del chat. Permisos runtime necesarios: Customers lectura/escritura, Checkout Sessions lectura/escritura, Prices lectura, Subscriptions lectura/escritura (incluidos sus calendarios), Invoices lectura/escritura, Customer Portal Sessions escritura y Configurations lectura. La escritura de facturas permite anular la factura de un cambio pendiente que el entrenador decide descartar. Validar permisos concretos con una compra de prueba; no conceder acceso a todo para solucionar un 403.
+5. `stripe listen --all-snapshot --events-from "@self" --forward-to "http://localhost:3000/api/billing/webhooks/stripe"`. Stripe CLI 1.51 requiere seleccionar los eventos explícitamente; esta integración procesa eventos snapshot de la propia cuenta. Guardar el secreto que muestra la CLI en `STRIPE_WEBHOOK_SECRET` local, sin compartirlo. Si cambia al reiniciar, actualizarlo y reiniciar API.
+6. Configurar un Portal **test** y guardar su `bpc_...` en `STRIPE_TRAINER_PORTAL_CONFIGURATION_ID`: facturas y métodos de pago habilitados, cancelación al fin del periodo, cambios de suscripción deshabilitados. El backend comprueba estas restricciones antes de abrirlo. No es necesario Portal para probar Checkout.
+7. Revisar las seis referencias de precio y elegir explícitamente `TRAINER_BILLING_TAX_POLICY=test_no_tax`. Esta política solo sirve para pruebas sin impuestos; los precios `tax_behavior=unspecified` no se convierten automáticamente en una política fiscal válida para producción.
+8. Para una cuenta local, usar `TRAINER_BILLING_SEED_USER=1` y una contraseña de prueba de al menos 12 caracteres en `TRAINER_TEST_PASSWORD`. Crea `trainer@example.test` con roles trainer y user, solo si no existe; no cambia contraseñas de cuentas existentes. Su autenticación usa los flujos normales, con claves RSA efímeras del lanzador.
+9. Establecer `TRAINER_BILLING_ENABLED=1` y ejecutar `npm run stripe:local`. El lanzador escucha solo en loopback, carga únicamente el archivo local, desactiva el correo y no arranca ningún cron legacy. Arranca únicamente la reconciliación Stripe. Las sesiones locales se invalidan al reiniciar porque cambian las claves RSA.
+10. Desde `train-fit-front`, iniciar explícitamente el workspace Trainers en el puerto 8100: `npm run start --workspace @trainfit/train-fit-trainers -- --port 8100`. El proyecto usa `ionic serve` sin un puerto fijado; 8100 es la elección explícita de este entorno. Abrir `http://localhost:8100`.
+
+El repositorio Stripe comprueba además la conexión Mongo real: host loopback y nombre `trainfit_stripe_local` antes de mutar o crear índices. Activar accidentalmente el flag en el arranque habitual no autoriza escribir acceso de sandbox en otra base.
+
+### Si falla `npm run stripe:local`
+
+- Si está activado `TRAINER_BILLING_SEED_USER=1`, `TRAINER_TEST_PASSWORD` debe tener al menos 12 caracteres. Elegir una contraseña local propia en `.env.stripe.local`, guardarla y repetir el arranque. No compartirla en el chat. `npm ci` no corrige esta configuración.
+- El backend habitual y el lanzador aislado no pueden escuchar a la vez en el puerto 3000. Detener el backend habitual con `Ctrl+C` en su terminal antes de iniciar `npm run stripe:local`. Mantener abierta la terminal de `stripe listen`, que reenvía eventos y no ocupa ese puerto. Cambiar el puerto de la API exigiría actualizar también el frontend y el destino del listener.
+- Si el diagnóstico indica conexión Mongo, comprobar que la instancia local está iniciada y que la URI apunta exclusivamente a `trainfit_stripe_local`. El lanzador no admite credenciales, parámetros ni conexiones remotas; no reutilizar la URI de producción.
+- Los avisos de vulnerabilidades de `npm ci` requieren una revisión de dependencias aparte. No ejecutar `npm audit fix --force` como solución a un error de configuración o a un puerto ocupado.
+
+El lanzador muestra diagnósticos controlados sin imprimir contraseñas, claves, URI ni mensajes arbitrarios de los SDK.
+
+## API autenticada
+
+Todas las rutas salvo webhook requieren el middleware existente `auth(["trainer"])`. No se acepta customerId, importe ni Price ID del navegador.
+
+| Método y ruta bajo `/api/billing` | Entrada | Resultado |
+|---|---|---|
+| GET `/trainer/plans` | — | enabled, mode, currency EUR, taxPolicy, plans, capabilities |
+| POST `/trainer/checkout` | `{tier,interval}` | `{url,sessionId,reused}` |
+| POST `/trainer/portal` | `{}` | `{url}` |
+| GET `/trainer/billing-details` | — | `{invoices, paymentMethod}` leídos de Stripe |
+| POST `/trainer/change-preview` | `{tier,interval}` | Propuesta con `quoteId`, importe de hoy, fecha efectiva y renovación estimada |
+| POST `/trainer/change-plan` | `{quoteId}` | `status`, posible `paymentActionUrl` y `entitlements` |
+| POST `/trainer/cancel` | `{}` | Cancelación al vencimiento y entitlements |
+| POST `/trainer/resume` | `{}` | Reactivación de la renovación y entitlements |
+| POST `/trainer/discard-change` | `{}` | Retira el cambio programado o pendiente y devuelve entitlements |
+| POST `/trainer/sync` | `{sessionId?}` | Entitlements actualizados desde Stripe |
+| GET `/trainer/entitlements/me` | — | Contrato previo + provider,status,cancelAtPeriodEnd,currentPeriodEnd,billing |
+| POST `/webhooks/stripe` | Bytes originales + Stripe-Signature | `{received:true}` |
+
+Tiers: `trainer_pro`, `trainer_growth`, `trainer_scale`; intervalos: `monthly`, `annual`. Importes en céntimos: 2900/29700, 4900/50900, 11900/120900. Cupos Stripe 20/50/150; Free 3. RC Pro conserva 15 y legacy Unlimited se conserva. Los IDs están en configuración, nunca en el módulo de negocio. En Checkout se comprueban importe, moneda, modo test y recurrencia contra Stripe.
+
+Errores públicos `{code,message}`:400 entrada/firma inválida,403 sesión ajena,409 operación concurrente/suscripción existente,503 deshabilitado o configuración pendiente. Retorno en `/tabs/subscription?session_id=...`; cancelar vuelve con `checkout=cancelled`. La URL de retorno no prueba que haya pago.
+
+## Política de cambios y cancelación
+
+| Operación | Cuándo se aplica | Facturación |
+| --- | --- | --- |
+| Subir de plan, misma periodicidad | Inmediata, tras confirmar el pago | Diferencia prorrateada del periodo |
+| Bajar de plan, misma periodicidad | Próxima renovación | Se conserva el periodo ya pagado |
+| Mensual → anual | Inmediata, tras confirmar el pago | Nuevo año menos el crédito del mes no consumido |
+| Anual → mensual | Al vencer el año pagado | Primer mes al comenzar la nueva periodicidad |
+| Cancelar | Al vencer el periodo pagado | Se desactiva la renovación; no hay devolución implícita |
+| Reactivar | Antes del vencimiento | Se recupera la renovación |
+
+Los cambios conjuntos de plan y periodicidad siguen la regla de periodicidad: anual → mensual siempre se programa (también si sube de plan; la UI ofrece entonces la misma subida en anual, que es inmediata).
+
+Ampliación 18/09/2026 (Claude, tras la fase de Codex):
+
+- **Sustituir un cambio programado**: elegir otro plan con un cambio programado propio ya no exige descartarlo antes. La propuesta nueva guarda el calendario como `previousScheduleId` y `recoverChange` lo libera antes de cobrar o programar la sustitución. Elegir el mismo destino devuelve `SAME_SCHEDULED_CHANGE`; elegir la modalidad actual equivale a descartar (lo hace la UI).
+- **Renovación con calendario adjunto**: con un schedule adjunto Stripe previsualiza su fase siguiente e ignora `subscription_details.items` (comprobado en sandbox: devolvía el precio programado antiguo). En ese caso la renovación estimada es la tarifa del destino.
+- **Próxima renovación real** (`billing.renewal`): `invoices.createPreview({subscription})` en cada `refresh`, cacheado por huella de la suscripción; incluye descuentos, saldo a favor y la fase programada. Un fallo de esta consulta nunca bloquea el webhook.
+- **Renovación impagada** (`billing.renewalPayment`): con `past_due`/`unpaid` y factura de renovación abierta se expone su enlace alojado de Stripe e importe. **Margen de 7 días** (decisión de negocio): el acceso pagado se mantiene hasta `paidUntil + 7 días` mientras Stripe reintenta.
+- **Facturas y método de pago** (21/09/2026): `GET /api/billing/trainer/billing-details` devuelve las 12 últimas facturas no borrador del propio customer (enlaces solo a `invoice.stripe.com` / `pay.stripe.com`) y la tarjeta por defecto (marca, últimos 4, caducidad). Solo lectura; si la clave no puede leer el método se omite.
+- **Desglose de la propuesta** (`quote.lines`): líneas de prorrateo de la preview de Stripe (crédito del plan actual, cargo del nuevo) con plan, importe y periodo; las etiquetas son nuestras porque las descripciones de Stripe vienen en inglés. Suman exactamente `amountDueNow` (comprobado en sandbox).
+- **Mensual → anual**: el año queda alineado al día de cobro original (Stripe no reinicia el ancla con `proration_date`), así que el primer cargo anual es un año prorrateado; la propuesta y la factura coinciden.
+- **Exceso de clientes al volver a Free** (decisión de negocio): el entrenador elige qué clientes siguen activos (`GET/PUT /api/trainer/seats`, `components/trainerClients/trainer-seat-service.js`); el resto queda en solo lectura (GET permitido, escrituras 403 `CLIENT_READ_ONLY` en `requireActiveClient`, `canAccessUserTable` y las altas por lote). La elección se puede cambiar una vez cada 30 días; la primera es libre; mientras no elige, siguen activos los más antiguos. Nada se borra. Se comprueba el cupo del destino antes de aceptarlo. Si hay más clientes que los admitidos, el entrenador debe reducirlos antes; nunca se archivan automáticamente.
+
+Angular muestra una propuesta calculada por el backend y Stripe, con importe, fecha, posible crédito y renovación estimada. La propuesta dura cinco minutos. Al confirmar, el navegador solo envía su identificador opaco. El backend comprueba propietario, estado, cupo y vigencia; conserva una operación persistente y utiliza claves de idempotencia para que un reintento no duplique el cobro.
+
+Las subidas utilizan `pending_if_incomplete` y `always_invoice`. Si hay un pago pendiente o autenticación adicional, se conserva el acceso ya pagado y se ofrece completar el pago. Las bajadas utilizan un calendario de Stripe con dos fases. El portal mantiene deshabilitados sus cambios de plan; facturas y métodos de pago siguen disponibles allí. Cancelar o reactivar desde Trainers no depende de abrir el portal.
+
+Una bajada programada limita también nuevas invitaciones al cupo futuro. La comprobación y las altas se ejecutan bajo el mismo bloqueo persistente por entrenador que los cambios de suscripción. Las relaciones existentes y el acceso pagado se conservan.
+
+## Consistencia y acceso
+
+- Colecciones propias `trainerbillingaccounts` y `trainerbillingevents`. Un customer por usuario/modo; índice único y lease persistente por usuario; claves de idempotencia guardadas antes de las llamadas externas.
+- Un evento queda procesado solo después de guardar estado y proyección. Fallos conservan trabajo reintentable. Un cron cada minuto reintenta eventos y reconcilia hasta 100 cuentas por ronda, empezando por las más antiguas.
+- Se consulta el estado actual de Stripe dentro del lease; no se aplican ciegamente payloads antiguos. Revisión incremental en User impide que una proyección anterior sobrescriba otra nueva.
+- Solo una factura pagada correspondiente al precio y periodo concede/amplía acceso. Pago inicial incompleto no lo concede. Una actualización pendiente no concede el tier nuevo; conserva el periodo/tier ya pagado. Caducidad local limita el acceso aunque se pierda un webhook.
+- `professionalPremium.source` permanece stripe tras expirar/cancelar. RC no puede sobrescribirlo; `premium` consumidor es independiente. Restaurar RC profesional usa únicamente identidad autenticada y consulta del servidor.
+- Borrado explícito marca una tumba persistente, caduca checkouts abiertos y cancela suscripciones antes de eliminar al usuario. Si falla, la cuenta se conserva para reintentar. Los hooks impiden saltarse ese flujo mediante borrados Mongoose directos. No hay reembolso implícito.
+
+Registrar los eventos: `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed`, `customer.subscription.pending_update_applied`, `customer.subscription.pending_update_expired`, `subscription_schedule.updated`, `subscription_schedule.released`, `subscription_schedule.completed`, `subscription_schedule.canceled`, `invoice.paid`, `invoice.payment_failed`, `invoice.payment_action_required`, `invoice.finalization_failed`. El webhook queda antes del parser JSON y del bloqueo de mantenimiento.
+
+## Límites explícitos de esta fase
+
+- LIVE, Stripe Tax y registros fiscales no están configurados. No basta cambiar una variable para vender en producción: requiere una siguiente fase con decisión fiscal, dominio HTTPS, credenciales live y verificación real.
+- Los cambios en autoservicio se implementan para una suscripción con un artículo y el catálogo permitido. Estados o configuraciones avanzadas no admitidos requieren revisión; no se modifican de forma aproximada. Sin pruebas gratuitas configuradas; cupones pueden introducirse si se crean en Stripe.
+- Reembolso y cancelación son operaciones distintas. Un reembolso aislado no retira automáticamente acceso ni cancela renovaciones. No se procesan eventos refund/dispute todavía.
+- El cupo deduplica scopes y contempla los cuatro estados de onboarding. Las invitaciones de cuentas Stripe se serializan por entrenador para evitar excederlo con altas simultáneas. No archiva clientes existentes al cancelar; queda por definir el tratamiento de las relaciones que excedan Free antes de producción.
+- Una respuesta de creación de customer incierta durante más de 23 h, o Checkout incierto durante más de 25 min, se bloquea para revisión. No se crea otro cobro por adivinar que el anterior falló. Cuentas con más de 100 sesiones históricas también requieren revisión antes de más altas (límite conservador de esta versión).
+- Las pruebas unitarias del core/gateway usan dobles en memoria, sin Stripe ni correo. Las pruebas reales de sandbox y su alcance se registran en `docs/TRAINERS_STRIPE_SANDBOX.md` del workspace. No constituyen un despliegue de producción.
+
+## Pruebas y entrega del artefacto
+
+`npm run test:trainer-billing` compila y prueba core, adaptadores y regresión de acceso. `npm test` incluye los tests nuevos junto a los existentes.
+
+Para cualquier futura distribución: ejecutar el build con devDependencies disponibles, distribuir `.build/trainer-billing` junto al JS y después reducir dependencias de runtime si procede. `.build` está ignorado en Git. `prestart`/`preserve` recompilan en desarrollo; un entorno sin TypeScript instalado debe construir antes y arrancar el artefacto mediante `node bin/www`. No se han modificado pipelines de despliegue.
+
+Documentación oficial consultada 18/09/2026: [SDK y API fijada](https://github.com/stripe/stripe-node/blob/v22.6.2/src/apiVersion.ts), [Checkout Sessions](https://docs.stripe.com/api/checkout/sessions/create), [webhooks de suscripciones](https://docs.stripe.com/billing/subscriptions/webhooks), [firma de webhooks](https://docs.stripe.com/webhooks#verify-events), [claves restringidas](https://docs.stripe.com/keys/restricted-api-keys).

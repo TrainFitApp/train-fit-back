@@ -1,6 +1,7 @@
 const express = require("@awaitjs/express");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./billing-controller");
+const trainerStripe = require("../trainerBilling/adapter").controller;
 
 const router = express.Router();
 
@@ -15,7 +16,17 @@ router.getAsync(
   auth(["admin"]),
   controller.getSubscriptionStatus,
 );
-router.getAsync("/trainer/entitlements/me", auth(["trainer"]), controller.getTrainerEntitlements);
+router.getAsync("/trainer/entitlements/me", auth(["trainer"]), trainerStripe.entitlements);
+router.getAsync("/trainer/plans", auth(["trainer"]), trainerStripe.plans);
+router.postAsync("/trainer/checkout", auth(["trainer"]), trainerStripe.checkout);
+router.postAsync("/trainer/portal", auth(["trainer"]), trainerStripe.portal);
+router.getAsync("/trainer/billing-details", auth(["trainer"]), trainerStripe.billingDetails);
+router.postAsync("/trainer/change-preview", auth(["trainer"]), trainerStripe.changePreview);
+router.postAsync("/trainer/change-plan", auth(["trainer"]), trainerStripe.changePlan);
+router.postAsync("/trainer/cancel", auth(["trainer"]), trainerStripe.cancel);
+router.postAsync("/trainer/resume", auth(["trainer"]), trainerStripe.resume);
+router.postAsync("/trainer/discard-change", auth(["trainer"]), trainerStripe.discardChange);
+router.postAsync("/trainer/sync", auth(["trainer"]), trainerStripe.sync);
 router.postAsync("/trainer/restore", auth(["trainer"]), controller.restoreTrainer);
 router.postAsync("/webhooks/revenuecat", controller.revenueCatWebhook);
 

@@ -21,6 +21,9 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
+// Stripe firma los bytes originales. Este destino también funciona durante mantenimiento.
+app.post("/api/billing/webhooks/stripe", express.raw({ type: "application/json", limit: "1mb" }),
+  require("./components/trainerBilling/adapter").controller.webhook);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: false, limit: "50mb" }));
 app.use(cookieParser()); // Parse cookies for refresh token
@@ -33,6 +36,10 @@ const allowedOrigins = [
   "http://localhost",
   "http://localhost:8100",
   "http://localhost:8101",
+  // Orígenes web de producción (p. ej. la web de TrainFit Trainers), separados
+  // por comas. Solo se aceptan orígenes https exactos, sin rutas.
+  ...String(process.env.CORS_EXTRA_ORIGINS || "").split(",").map((origin) => origin.trim())
+    .filter((origin) => /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(origin)),
 ];
 const useCredentials = true;
 
