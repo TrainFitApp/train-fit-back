@@ -1,5 +1,6 @@
 const customExerciseModel = require("./custom-exercise-model");
 const tableAccess = require("../tables/table-access");
+const { withPinnedNotesSync } = require("../pinnedExerciseNotes/pinned-exercise-note-anchor-sync");
 // const customExerciseDTO = require("./dto");
 
 // Replanteamiento MVP (rutinas) — este módulo no comprobaba propiedad en
@@ -105,18 +106,22 @@ module.exports = {
     const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    await customExerciseModel.deleteCustomExercise(req.params.id);
+    await withPinnedNotesSync(table._id, () =>
+      customExerciseModel.deleteCustomExercise(req.params.id),
+    );
     res.sendStatus(204);
   },
 
   async deleteCustomExercises(req, res) {
     const ids = Array.isArray(req.body) ? req.body : [];
+    const tableIds = [];
     for (const idCustomExercise of ids) {
       const table = await assertCanAccessCustomExerciseId(req, res, idCustomExercise);
       if (!table) return;
       if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+      tableIds.push(table._id);
     }
-    await customExerciseModel.deleteCustomExercises(req.body);
+    await withPinnedNotesSync(tableIds, () => customExerciseModel.deleteCustomExercises(req.body));
     res.sendStatus(204);
   },
 };

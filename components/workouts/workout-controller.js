@@ -2,6 +2,7 @@ const workoutModel = require("./workout-service");
 const tableSchema = require("../tables/table-schema");
 const tableAccess = require("../tables/table-access");
 const { sanitizeSoreness } = require("./soreness-catalog");
+const { withPinnedNotesSync } = require("../pinnedExerciseNotes/pinned-exercise-note-anchor-sync");
 
 const BLOCK_TYPES = new Set(["straight", "superset", "circuit", "warmup", "finisher"]);
 
@@ -87,9 +88,8 @@ module.exports = {
     const table = await assertCanAccessWorkoutId(req, res, req.body?.workoutToPaste?._id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const workout = await workoutModel.pasteWorkout(
-      req.body.workoutClipboard,
-      req.body.workoutToPaste,
+    const workout = await withPinnedNotesSync(table._id, () =>
+      workoutModel.pasteWorkout(req.body.workoutClipboard, req.body.workoutToPaste),
     );
     return res.send(workout);
   },
@@ -98,10 +98,12 @@ module.exports = {
     const table = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const splits = await workoutModel.duplicateWorkoutRow(
-      req.params.idTable,
-      req.params.idWorkout,
-      req.body?.nameSuffix,
+    const splits = await withPinnedNotesSync(table._id, () =>
+      workoutModel.duplicateWorkoutRow(
+        req.params.idTable,
+        req.params.idWorkout,
+        req.body?.nameSuffix,
+      ),
     );
     return res.send(splits);
   },
@@ -110,9 +112,8 @@ module.exports = {
     const table = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const splits = await workoutModel.reorderWorkoutRows(
-      req.params.idTable,
-      req.body?.workoutIdsOrder,
+    const splits = await withPinnedNotesSync(table._id, () =>
+      workoutModel.reorderWorkoutRows(req.params.idTable, req.body?.workoutIdsOrder),
     );
     return res.send(splits);
   },
@@ -262,9 +263,8 @@ module.exports = {
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     try {
-      const splits = await workoutModel.reorderWorkoutsInSplit(
-        req.params.idSplit,
-        req.body?.workoutIdsOrder,
+      const splits = await withPinnedNotesSync(table._id, () =>
+        workoutModel.reorderWorkoutsInSplit(req.params.idSplit, req.body?.workoutIdsOrder),
       );
       return res.send(splits);
     } catch (e) {
@@ -334,10 +334,8 @@ module.exports = {
     const table = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const workout = await workoutModel.updateWorkoutsOrder(
-      req.params.idWorkout,
-      req.params.idTable,
-      req.body,
+    const workout = await withPinnedNotesSync(table._id, () =>
+      workoutModel.updateWorkoutsOrder(req.params.idWorkout, req.params.idTable, req.body),
     );
     return res.send(workout);
   },
@@ -369,12 +367,14 @@ module.exports = {
 
   async deleteWorkouts(req, res) {
     const workouts = Array.isArray(req.body) ? req.body : [];
+    const tableIds = [];
     for (const workoutTemp of workouts) {
       const table = await assertCanAccessWorkoutId(req, res, workoutTemp?._id);
       if (!table) return;
       if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+      tableIds.push(table._id);
     }
-    await workoutModel.deleteWorkouts(req.body);
+    await withPinnedNotesSync(tableIds, () => workoutModel.deleteWorkouts(req.body));
     res.sendStatus(204);
   },
 
@@ -385,7 +385,7 @@ module.exports = {
     const table = await assertCanAccessWorkoutId(req, res, req.params.id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    await workoutModel.deleteWorkout(req.params.id);
+    await withPinnedNotesSync(table._id, () => workoutModel.deleteWorkout(req.params.id));
     res.sendStatus(204);
   },
 
@@ -417,7 +417,9 @@ module.exports = {
     const table = await assertCanAccessWorkoutId(req, res, req.params.id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    await workoutModel.deleteWorkoutCustomExercises(req.params.id);
+    await withPinnedNotesSync(table._id, () =>
+      workoutModel.deleteWorkoutCustomExercises(req.params.id),
+    );
     res.sendStatus(204);
   },
 };
