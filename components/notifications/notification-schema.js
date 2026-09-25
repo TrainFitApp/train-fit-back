@@ -29,13 +29,16 @@ const NotificationSchema = new Schema(
         "meal_proposal",
         "payment_created",
         "nutrition_preferences_requested",
-        "checkin_requested",
         "checkin_reviewed",
         "routine_assigned",
         "task_assigned",
         "intake_submitted",
         "client_confirmed",
         "meal_prescribed",
+        // Histórico: ya no se crea ninguna. Las medidas se piden dentro de
+        // un check-in, que es donde se configuran sus campos. Se queda en el
+        // enum porque hay notificaciones de este tipo guardadas y marcarlas
+        // como leídas revalida el documento.
         "anthropometry_requested",
         // --- Cliente → trainer (destinatario: trainer) ---
         "invite_accepted",

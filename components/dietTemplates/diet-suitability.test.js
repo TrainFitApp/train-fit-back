@@ -8,7 +8,7 @@ const {
 
 function tmpl(customProducts) {
   return {
-    days: [{ dayLabel: "Día 1", meals: [{ slot: "Comida", alternatives: [{ customProducts }] }] }],
+    menus: [{ name: "Menú 1", meals: [{ slot: "Comida", alternatives: [{ customProducts }] }] }],
   };
 }
 
@@ -49,9 +49,9 @@ test("deriveSuitability", async (t) => {
     assert.equal(r.productCount, 0);
   });
 
-  await t.test("recorre dayPatterns y recetas", () => {
+  await t.test("recorre los menús y las recetas", () => {
     const doc = {
-      dayPatterns: [
+      menus: [
         {
           name: "Entreno",
           meals: [

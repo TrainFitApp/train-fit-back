@@ -2,7 +2,7 @@ const dietTemplateDao = require("./diet-template-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { rejectIfReadOnly } = require("../trainerClients/trainer-seat-service");
 const { MEALS } = require("../dietDays/diet-days-util");
-const { cycleMacroProfile } = require("./diet-macro-profile");
+const { contentMacroProfile } = require("./diet-macro-profile");
 
 const VALID_SLOTS = new Set(Object.values(MEALS));
 const MAX_ALTERNATIVES = 4;
@@ -34,39 +34,21 @@ function sanitizeMeals(meals) {
     }));
 }
 
-function sanitizeDays(days) {
-  if (!Array.isArray(days)) return [];
-  return days.map((day) => ({
-    dayLabel: (day?.dayLabel || "").toString().trim().slice(0, 50) || "Día",
-    meals: sanitizeMeals(day?.meals),
-  }));
-}
-
-// Auditoría de arquitectura (Fase 8) — "recurring" son patrones por día de
-// la semana (appliesTo, 0=domingo..6=sábado, igual que Date#getDay()) en vez
-// de una secuencia Día 1..N. Un valor fuera de 0-6 o repetido se descarta:
-// nunca debe llegar al resolver un patrón ambiguo o inválido.
-function sanitizeDayPatterns(dayPatterns) {
-  if (!Array.isArray(dayPatterns)) return [];
-  return dayPatterns.map((pattern) => ({
-    name: (pattern?.name || "").toString().trim().slice(0, 50) || "Patrón",
-    appliesTo: Array.from(
-      new Set((Array.isArray(pattern?.appliesTo) ? pattern.appliesTo : []).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))
-    ),
-    meals: sanitizeMeals(pattern?.meals),
-  }));
-}
-
-function sanitizeMode(mode) {
-  return mode === "recurring" || mode === "choice" ? mode : "sequential";
-}
-
-// Días por ciclo en mode "choice" (ver diet-template-schema.js). undefined
-// si no viene: el dao no toca el campo.
-function sanitizeChoiceCycleDays(value) {
-  if (value === undefined) return undefined;
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 7;
+// El nombre de un menú es la CLAVE con la que el cliente lo elige (se guarda
+// en DietDay.menuName), así que dos menús de la misma plantilla no pueden
+// llamarse igual: al repetido se le añade un sufijo en vez de rechazar el
+// guardado entero por un detalle que el editor puede arreglar solo.
+function sanitizeMenus(menus) {
+  if (!Array.isArray(menus)) return [];
+  const used = new Set();
+  return menus.map((menu, index) => {
+    const base = (menu?.name || "").toString().trim().slice(0, 50) || `Menú ${index + 1}`;
+    let name = base;
+    let suffix = 2;
+    while (used.has(name)) name = `${base.slice(0, 46)} (${suffix++})`;
+    used.add(name);
+    return { name, meals: sanitizeMeals(menu?.meals) };
+  });
 }
 
 module.exports = {
@@ -74,9 +56,7 @@ module.exports = {
   // — mismo criterio que assertMealEditable en meal-service.js.
   sanitizeAlternatives,
   sanitizeMeals,
-  sanitizeDays,
-  sanitizeDayPatterns,
-  sanitizeMode,
+  sanitizeMenus,
 
   // --- Lado profesional: biblioteca de plantillas propias ---
   async createTemplate(req, res) {
@@ -104,12 +84,9 @@ module.exports = {
     const template = await dietTemplateDao.create(
       req.auth.userId,
       name,
-      sanitizeDays(req.body?.days),
-      sanitizeMode(req.body?.mode),
-      sanitizeDayPatterns(req.body?.dayPatterns),
+      sanitizeMenus(req.body?.menus),
       ownerClientId,
-      verified,
-      sanitizeChoiceCycleDays(req.body?.choiceCycleDays)
+      verified
     );
     return res.send(template);
   },
@@ -141,13 +118,13 @@ module.exports = {
     return res.send(
       templates.map((t) => {
         const doc = t.toObject ? t.toObject() : t;
-        return { ...doc, macroProfile: cycleMacroProfile(doc) };
+        return { ...doc, macroProfile: contentMacroProfile(doc) };
       })
     );
   },
 
   // GET /trainer/diet-templates/:id — una sola plantilla con su contenido
-  // completo (days/dayPatterns). listTemplates ya devuelve esto para TODA la
+  // completo (menus). listTemplates ya devuelve esto para TODA la
   // lista; este endpoint es para cuando el consumidor solo conoce el id de
   // UNA (p. ej. precargar el builder con la plantilla elegida en el cajón de
   // sugerencias antes de aplicarla — ver diet-suggestion-drawer).
@@ -155,7 +132,7 @@ module.exports = {
     const template = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
     if (!template) return res.status(404).send({ message: "Plantilla no encontrada" });
     const doc = template.toObject ? template.toObject() : template;
-    return res.send({ ...doc, macroProfile: cycleMacroProfile(doc) });
+    return res.send({ ...doc, macroProfile: contentMacroProfile(doc) });
   },
 
   async updateTemplate(req, res) {
@@ -175,10 +152,7 @@ module.exports = {
       if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
       patch.name = name;
     }
-    if (req.body?.days !== undefined) patch.days = sanitizeDays(req.body.days);
-    if (req.body?.mode !== undefined) patch.mode = sanitizeMode(req.body.mode);
-    if (req.body?.dayPatterns !== undefined) patch.dayPatterns = sanitizeDayPatterns(req.body.dayPatterns);
-    if (req.body?.choiceCycleDays !== undefined) patch.choiceCycleDays = sanitizeChoiceCycleDays(req.body.choiceCycleDays);
+    if (req.body?.menus !== undefined) patch.menus = sanitizeMenus(req.body.menus);
     // Sugerencias de dieta — aptitudes que el entrenador fuerza a mano
     // (cuando la deriva no basta por productos sin flag). El array derivado
     // (suitableFor) NUNCA se acepta del body: lo recalcula el dao.

@@ -13,18 +13,17 @@ const DietDaySchema = Schema({
   userId: { type: Schema.Types.ObjectId, ref: "User", index: true },
   date: String,
   notes: { type: String, trim: true, maxlength: 500 },
-  steps: Number,
-  // Sustituye a DietException con mealSlot:null y action:"skip" — mismo
-  // criterio que Workout.rest en entrenamiento: "el cliente se saltó este
-  // día" es un booleano del registro real, no un documento en una colección
-  // aparte. El historial de nutrición del entrenador (TASK-045) se resuelve
-  // con find({userId, skipped:true}) sobre el índice de abajo.
+  // "El cliente se saltó este día": un booleano del registro real, no un
+  // documento en una colección aparte (mismo criterio que Workout.rest en
+  // entrenamiento). Lo escribe dietDays/diet-skips.js, que además vacía el
+  // día de lo pautado. El historial de nutrición del entrenador (TASK-045)
+  // se resuelve con find({userId, skipped:true}) sobre el índice de abajo.
   skipped: { type: Boolean, default: false },
-  // Fase 9 — qué patrón/menú de un plan "mode: choice" eligió el cliente
-  // para ESTE día concreto (p. ej. "Entrenamiento"/"Descanso"). null en el
-  // 100% de los días sin un plan de este tipo — ver diet-days-controller.js
-  // getDayType/chooseDayType y planAssignments/plan-resolver.js.
-  dayTypeName: { type: String, default: null },
+  // Qué menú del plan eligió el cliente para ESTE día concreto (p. ej.
+  // "Entrenamiento"/"Descanso"). null mientras no elija, y en el 100% de los
+  // días de quien no tiene plan — ver diet-days-controller.js getMenu/
+  // chooseMenu y planAssignments/plan-resolver.js.
+  menuName: { type: String, default: null },
   meals: [
     {
       type: Schema.Types.ObjectId,

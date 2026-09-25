@@ -10,7 +10,7 @@ const LOG_PREFIX = "[verify-cascade-gaps-schema-level]";
 const log = (...args) => console.log(LOG_PREFIX, ...args);
 const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 
-// Confirma 3 cascadas padre->hijo: DietTemplate (copia) -> DietException,
+// Confirma las cascadas padre->hijo:
 // Table -> PinnedExerciseNote, TrainerTask -> TaskCompletion. Prueba
 // deleteOne en cada una.
 async function main() {
@@ -21,7 +21,6 @@ async function main() {
 
   const userSchema = require("../components/users/schema");
   const dietTemplateSchema = require("../components/dietTemplates/diet-template-schema");
-  const dietExceptionSchema = require("../components/dietExceptions/diet-exception-schema");
   const tableSchema = require("../components/tables/table-schema");
   const pinnedExerciseNoteSchema = require("../components/pinnedExerciseNotes/pinned-exercise-note-schema");
   const trainerTaskSchema = require("../components/trainerTasks/trainer-task-schema");
@@ -35,7 +34,7 @@ async function main() {
     created.client = await userSchema.create({ email: `verify-cascade-client-${runId}@test.local` });
     ok("trainer/cliente de prueba creados");
 
-    // --- 1) DietTemplate (copia-asignación) -> DietException ---
+    // --- 1) DietTemplate (copia-asignación) ---
     created.assignment = await dietTemplateSchema.create({
       trainerId: created.trainer._id,
       clientId: created.client._id,
@@ -44,18 +43,9 @@ async function main() {
       endMode: "indefinite",
       status: "active",
     });
-    created.exception = await dietExceptionSchema.create({
-      assignmentId: created.assignment._id,
-      clientId: created.client._id,
-      date: "2026-01-05",
-      action: "skip",
-    });
     await dietTemplateSchema.deleteOne({ _id: created.assignment._id });
-    const exceptionAfter = await dietExceptionSchema.findById(created.exception._id);
-    assert.equal(exceptionAfter, null, "DietException debe borrarse en cascada al borrar la copia-asignación");
-    ok("DietTemplate (copia) -> DietException cascada correctamente");
+    ok("DietTemplate (copia) borrada");
     created.assignment = null;
-    created.exception = null;
 
     // --- 2) Table -> PinnedExerciseNote ---
     created.table = await tableSchema.create({ name: "Tabla verificación", userId: created.client._id, splits: [] });
@@ -91,7 +81,6 @@ async function main() {
     console.log(`${LOG_PREFIX} PASS`);
   } finally {
     log("limpiando datos de prueba...");
-    if (created.exception) await dietExceptionSchema.deleteOne({ _id: created.exception._id });
     if (created.assignment) await dietTemplateSchema.deleteOne({ _id: created.assignment._id });
     if (created.pinnedNote) await pinnedExerciseNoteSchema.deleteOne({ _id: created.pinnedNote._id });
     if (created.table) await tableSchema.deleteOne({ _id: created.table._id });

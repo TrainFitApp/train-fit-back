@@ -184,10 +184,9 @@ async function main() {
     const fakeRecipeId = new mongoose.Types.ObjectId().toString();
     const createDietTplRes = await req("POST", "/trainer/diet-templates", trainerHeaders, {
       name: `Dieta HTTP ${runId}`,
-      mode: "sequential",
-      days: [
+      menus: [
         {
-          dayLabel: "Día 1",
+          name: "Menú 1",
           meals: [
             {
               slot: "Desayuno",
@@ -205,7 +204,7 @@ async function main() {
     });
     assert.equal(createDietTplRes.status, 200, `crear diet-template debía ser 200, fue ${createDietTplRes.status}: ${JSON.stringify(createDietTplRes.body)}`);
     const dietTemplateId = createDietTplRes.body._id;
-    const createdAlt = createDietTplRes.body.days[0].meals[0].alternatives[0];
+    const createdAlt = createDietTplRes.body.menus[0].meals[0].alternatives[0];
     assert.equal(createdAlt.customProducts.length, 1, "customProducts debe venir materializado y poblado");
     assert.ok(typeof createdAlt.customProducts[0].product === "object" || createdAlt.customProducts[0].product === null,
       "product debe venir poblado (objeto) por HTTP, no un ObjectId crudo");

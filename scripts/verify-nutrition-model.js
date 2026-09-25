@@ -24,7 +24,7 @@ async function main() {
   const dietDaysDao = require("../components/dietDays/diet-days-dao");
   const dietDaysService = require("../components/dietDays/diet-days-service");
   const mealProposalDao = require("../components/mealProposals/meal-proposal-dao");
-  const dietExceptionDao = require("../components/dietExceptions/diet-exception-dao");
+  const { isDaySkipped, listSkippedDates } = require("../components/dietDays/diet-skips");
   const dietModel = require("../components/diets/diet-model");
   const dietDaySchema = require("../components/dietDays/diet-days-schema");
 
@@ -81,16 +81,15 @@ async function main() {
     check("hay comidas con alternativas migradas", false, "ninguna encontrada");
   }
 
-  // 6. Excepciones (antes colección dietexceptions) sobre el registro real.
+  // 6. Días saltados (antes colección dietexceptions) sobre el registro real.
   const skippedDay = await mongoose.connection
     .collection("dietdays")
     .findOne({ skipped: true });
   if (skippedDay) {
-    const forDate = await dietExceptionDao.findForDate(skippedDay.userId, skippedDay.date);
-    check("findForDate ve el día saltado", forDate.some((e) => e.action === "skip"));
-    const history = await dietExceptionDao.findAllForClient(skippedDay.userId);
-    check("findAllForClient (historial TASK-045) sigue devolviendo datos", history.length > 0,
-      `${history.length} entradas`);
+    check("isDaySkipped ve el día saltado", await isDaySkipped(skippedDay.userId, skippedDay.date));
+    const history = await listSkippedDates(skippedDay.userId);
+    check("listSkippedDates (historial TASK-045) sigue devolviendo datos", history.length > 0,
+      `${history.length} fechas`);
   } else {
     check("hay días marcados como saltados", false, "ninguno encontrado");
   }

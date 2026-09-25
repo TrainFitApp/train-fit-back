@@ -13,7 +13,7 @@ const router = express.Router();
 // lados. La lógica está en un servicio puro compartido
 // (shopping-list-service.js), no duplicada en cada controller.
 router.getAsync("/shopping-list", auth(["admin", "user"]), controller.getMyShoppingList);
-// Ciclos por contenido — fases y ciclos del cliente en un rango, para el
+// Fases y semanas del cliente en un rango, para el
 // slider de días de su pantalla de dieta.
 router.getAsync("/timeline", auth(["admin", "user"]), controller.getMyDietTimeline);
 
@@ -74,11 +74,11 @@ router.deleteAsync(
   controller.deleteDietDayMeal,
 );
 
-// Fase 9 — el cliente elige, para una fecha concreta, cuál de los menús de
-// un plan "mode: choice" le toca (p. ej. Entrenamiento/Descanso). Ownership
-// resuelta contra req.user.id, nunca contra un DietDay._id suelto.
-router.getAsync("/date/:date/day-type", auth(["admin", "user"]), controller.getDayType);
-router.putAsync("/date/:date/day-type", auth(["admin", "user"]), controller.chooseDayType);
-router.deleteAsync("/date/:date/day-type", auth(["admin", "user"]), controller.leaveDayType);
+// El cliente elige, para una fecha concreta, cuál de los menús del plan le
+// toca (p. ej. Entrenamiento/Descanso). Ownership resuelta contra
+// req.user.id, nunca contra un DietDay._id suelto.
+router.getAsync("/date/:date/menu", auth(["admin", "user"]), controller.getMenu);
+router.putAsync("/date/:date/menu", auth(["admin", "user"]), controller.chooseMenu);
+router.deleteAsync("/date/:date/menu", auth(["admin", "user"]), controller.leaveMenu);
 
 module.exports = router;

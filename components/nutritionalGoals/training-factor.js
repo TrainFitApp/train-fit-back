@@ -58,6 +58,12 @@ function stepsRangeFromValue(value) {
   return STEPS_RANGES.find((r) => Math.abs(r.value - n) < EPSILON) || null;
 }
 
+/** Rango por su clave ("between7000And9000"), como lo declara un check-in. */
+function stepsRangeFromKey(key) {
+  if (!key) return null;
+  return STEPS_RANGES.find((r) => r.key === key) || null;
+}
+
 /** Rango de pasos en el que cae una media diaria real. null si no es un número ≥ 0. */
 function stepsRangeFromAverage(avg) {
   const n = toNumber(avg);
@@ -95,6 +101,7 @@ module.exports = {
   TRAINING_DAYS,
   TRAINING_FACTORS,
   stepsRangeFromValue,
+  stepsRangeFromKey,
   stepsRangeFromAverage,
   trainingDaysFromFactors,
   trainingFactor,

@@ -7,8 +7,8 @@
 // "vegana" y equivocarse. El entrenador puede forzar la aptitud a mano
 // (suitableForOverride) cuando sabe que es apta pese a productos sin marcar.
 //
-// PURO. Entra el contenido de la plantilla (days/dayPatterns con
-// customProducts poblados), salen strings.
+// PURO. Entra el contenido de la plantilla (menús con customProducts
+// poblados), salen strings.
 
 const FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
 
@@ -17,7 +17,7 @@ const FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
 // receta base si viene poblada).
 function collectProducts(doc) {
   const out = [];
-  const containers = [...(doc?.days || []), ...(doc?.dayPatterns || [])];
+  const containers = doc?.menus || [];
   for (const container of containers) {
     for (const meal of container.meals || []) {
       for (const alt of meal.alternatives || []) {

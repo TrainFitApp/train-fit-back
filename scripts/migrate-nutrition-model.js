@@ -13,7 +13,7 @@ const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
 //   2. users.dietPinnedNote  <- diets.pinnedNote (único campo con contenido
 //                               real del wrapper; `name` valía siempre "Diet")
 //   3. meals.pendingAlternatives <- colección mealproposals (las no elegidas)
-//   4. dietdays.skipped / meals.wasOverridden <- colección dietexceptions
+//   4. dietdays.skipped <- colección dietexceptions
 //   5. Borra diets, mealproposals y dietexceptions, y quita users.dietInUse
 //
 // Se ejecuta con el driver crudo (no con los modelos de Mongoose) a
@@ -45,7 +45,7 @@ const stats = {
   proposalsMoved: 0,
   proposalsDropped: 0,
   exceptionsSkipDays: 0,
-  exceptionsOverrideMeals: 0,
+  exceptionsMealDiscarded: 0,
   exceptionsUnmatched: 0,
 };
 
@@ -226,16 +226,14 @@ async function migrateMealProposals(db) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. dietexceptions -> dietdays.skipped / meals.wasOverridden
+// 4. dietexceptions -> dietdays.skipped
 // ---------------------------------------------------------------------------
 async function migrateDietExceptions(db) {
   const exceptions = db.collection("dietexceptions");
   const dietdays = db.collection("dietdays");
-  const meals = db.collection("meals");
 
   const cursor = exceptions.find({});
   const dayOps = [];
-  const mealOps = [];
 
   while (await cursor.hasNext()) {
     const exception = await cursor.next();
@@ -249,36 +247,25 @@ async function migrateDietExceptions(db) {
       continue;
     }
 
-    // mealSlot null = afectaba al día entero -> skipped. Da igual si la
-    // acción era "skip" u "override": un override de día completo ya se
-    // aplicó en su momento sobre las comidas reales, lo único que queda por
-    // conservar es la marca de que ese día se desvió del plan.
-    if (!exception.mealSlot) {
-      dayOps.push({
-        updateOne: { filter: { _id: day._id }, update: { $set: { skipped: true } } },
-      });
-      stats.exceptionsSkipDays += 1;
+    // Una excepción de día entero (mealSlot null) se conserva como
+    // `skipped`. Las de UNA comida no tienen dónde ir: el modelo ya no
+    // distingue "esta comida se cambió" (ese concepto se retiró en 2026-09
+    // — nadie lo escribía y su contenido nunca se guardaba aparte), y el
+    // cambio en sí ya está aplicado sobre la comida real. Se cuentan como
+    // descartadas para que la migración lo diga en voz alta.
+    if (exception.mealSlot) {
+      stats.exceptionsMealDiscarded += 1;
       continue;
     }
 
-    const dayMeals = await meals
-      .find({ _id: { $in: day.meals || [] } }, { projection: { _id: 1, name: 1 } })
-      .toArray();
-    const target = dayMeals.find((meal) => meal.name === exception.mealSlot);
-    if (!target) {
-      stats.exceptionsUnmatched += 1;
-      continue;
-    }
-
-    mealOps.push({
-      updateOne: { filter: { _id: target._id }, update: { $set: { wasOverridden: true } } },
+    dayOps.push({
+      updateOne: { filter: { _id: day._id }, update: { $set: { skipped: true } } },
     });
-    stats.exceptionsOverrideMeals += 1;
+    stats.exceptionsSkipDays += 1;
   }
 
-  if (!DRY_RUN) {
-    if (dayOps.length) await dietdays.bulkWrite(dayOps, { ordered: false });
-    if (mealOps.length) await meals.bulkWrite(mealOps, { ordered: false });
+  if (!DRY_RUN && dayOps.length) {
+    await dietdays.bulkWrite(dayOps, { ordered: false });
   }
 }
 

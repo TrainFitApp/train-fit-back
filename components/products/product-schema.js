@@ -143,6 +143,20 @@ async function cascadeDeleteProducts(productIds) {
       } catch (e) {
         console.warn("[ProductSchema] Error updating meals", e);
       }
+      // Las plantillas de dieta guardan los CustomProduct en arrays
+      // ANIDADOS (menus[].meals[].alternatives[].customProducts). Sin esto
+      // quedaba una ref a un CustomProduct ya borrado: autopopulate la
+      // devuelve como null, el constructor no puede pintarla y al guardar la
+      // plantilla ese alimento desaparecía sin avisar.
+      try {
+        const DietTemplateModel = mongoose.model("DietTemplate");
+        await DietTemplateModel.updateMany(
+          { "menus.meals.alternatives.customProducts": { $in: cpIds } },
+          { $pull: { "menus.$[].meals.$[].alternatives.$[].customProducts": { $in: cpIds } } },
+        );
+      } catch (e) {
+        console.warn("[ProductSchema] Error updating diet templates", e);
+      }
       try {
         const RecipeModel = mongoose.model("Recipe");
         await RecipeModel.updateMany(

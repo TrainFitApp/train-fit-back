@@ -3,15 +3,13 @@ const assert = require("node:assert/strict");
 const {
   sanitizeAlternatives,
   sanitizeMeals,
-  sanitizeDays,
-  sanitizeDayPatterns,
-  sanitizeMode,
+  sanitizeMenus,
 } = require("./diet-template-controller");
 
-// Fase 8/9 — estas funciones son la única barrera entre lo que manda el
-// cliente (trainer app) y lo que se guarda en DietTemplate. Una regresión
-// aquí deja pasar un slot inválido hasta el resolver (plan-resolver.js),
-// o un mode que rompe el tercer selector de diet-template-builder.
+// Estas funciones son la única barrera entre lo que manda el cliente
+// (trainer app) y lo que se guarda en DietTemplate. Una regresión aquí deja
+// pasar un slot inválido hasta el resolver (plan-resolver.js), o dos menús
+// con el mismo nombre — y el nombre es la clave con la que el cliente elige.
 test("sanitizeAlternatives", async (t) => {
   await t.test("recorta a MAX_ALTERNATIVES (4)", () => {
     const input = Array.from({ length: 6 }, (_, i) => ({ label: `alt${i}` }));
@@ -55,43 +53,19 @@ test("sanitizeMeals", async (t) => {
   });
 });
 
-test("sanitizeDays", async (t) => {
-  await t.test("dayLabel ausente/vacío cae a 'Día'", () => {
-    assert.equal(sanitizeDays([{ meals: [] }])[0].dayLabel, "Día");
-    assert.equal(sanitizeDays([{ dayLabel: "   ", meals: [] }])[0].dayLabel, "Día");
+test("sanitizeMenus", async (t) => {
+  await t.test("nombre ausente/vacío cae a 'Menú N'", () => {
+    assert.equal(sanitizeMenus([{ meals: [] }])[0].name, "Menú 1");
+    assert.equal(sanitizeMenus([{ name: "   ", meals: [] }])[0].name, "Menú 1");
   });
 
-  await t.test("dayLabel se recorta a 50 caracteres", () => {
-    const result = sanitizeDays([{ dayLabel: "x".repeat(80), meals: [] }]);
-    assert.equal(result[0].dayLabel.length, 50);
-  });
-});
-
-test("sanitizeDayPatterns", async (t) => {
-  await t.test("appliesTo descarta valores fuera de 0-6", () => {
-    const result = sanitizeDayPatterns([{ name: "Entreno", appliesTo: [1, 2, 7, -1, 3.5, 6] }]);
-    assert.deepEqual(result[0].appliesTo, [1, 2, 6]);
+  await t.test("el nombre se recorta a 50 caracteres", () => {
+    const result = sanitizeMenus([{ name: "x".repeat(80), meals: [] }]);
+    assert.equal(result[0].name.length, 50);
   });
 
-  await t.test("appliesTo deduplica", () => {
-    const result = sanitizeDayPatterns([{ name: "Entreno", appliesTo: [1, 1, 2, 2] }]);
-    assert.deepEqual(result[0].appliesTo, [1, 2]);
-  });
-
-  await t.test("name ausente cae a 'Patrón'", () => {
-    assert.equal(sanitizeDayPatterns([{ appliesTo: [] }])[0].name, "Patrón");
-  });
-});
-
-test("sanitizeMode", async (t) => {
-  await t.test("recurring y choice pasan tal cual", () => {
-    assert.equal(sanitizeMode("recurring"), "recurring");
-    assert.equal(sanitizeMode("choice"), "choice");
-  });
-
-  await t.test("cualquier otro valor (incluido undefined) cae a sequential", () => {
-    assert.equal(sanitizeMode("sequential"), "sequential");
-    assert.equal(sanitizeMode(undefined), "sequential");
-    assert.equal(sanitizeMode("cualquier-cosa-inventada"), "sequential");
+  await t.test("dos menús no pueden llamarse igual", () => {
+    const result = sanitizeMenus([{ name: "Entreno" }, { name: "Entreno" }, { name: "Entreno" }]);
+    assert.deepEqual(result.map((m) => m.name), ["Entreno", "Entreno (2)", "Entreno (3)"]);
   });
 });

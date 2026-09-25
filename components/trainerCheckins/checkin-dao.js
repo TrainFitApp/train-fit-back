@@ -1,17 +1,15 @@
 const mongoose = require("mongoose");
 const CheckinTemplateDefinition = require("./checkin-template-definition-schema");
-const TrainerCheckinTemplate = require("./trainer-checkin-template-schema");
 const CheckinResponse = require("./checkin-response-schema");
 
 module.exports = {
-  // --- CheckinTemplateDefinition (plantillas maestras) ---
-  async createDefinition(trainerId, name, enabledFields, cadence, customQuestions = [], requiredFields = []) {
+  // --- CheckinTemplateDefinition (plantillas maestras del profesional) ---
+  async createDefinition(trainerId, name, enabledFields, customQuestions = [], requiredFields = []) {
     return CheckinTemplateDefinition.create({
       trainerId,
       name,
       enabledFields,
       requiredFields,
-      cadence,
       customQuestions,
     });
   },
@@ -36,121 +34,59 @@ module.exports = {
     return CheckinTemplateDefinition.findOneAndDelete({ _id: id, trainerId });
   },
 
-  // --- TrainerCheckinTemplate (configuración ya aplicada a un cliente) ---
-  // Copia enabledFields/cadence de la definición al momento de aplicar — nunca
-  // una referencia viva (ver modelos-de-datos/03-trainercheckintemplate.md).
-  async applyToClient(trainerId, clientId, definition) {
-    return TrainerCheckinTemplate.findOneAndUpdate(
-      { trainerId, clientId },
-      {
-        $set: {
-          enabledFields: definition.enabledFields,
-          requiredFields: definition.requiredFields || [],
-          cadence: definition.cadence,
-          calendarManaged: false,
-          // Fase 5 — las preguntas propias se copian igual que el resto,
-          // CONSERVANDO su _id: la respuesta viaja con la clave
-          // "custom:<id>" (ver checkin-custom-question.js), así que
-          // regenerar los ids al reaplicar dejaría huérfanas todas las
-          // respuestas anteriores, que aparecerían sin enunciado.
-          customQuestions: (definition.customQuestions || []).map((q) =>
-            typeof q.toObject === "function" ? q.toObject() : q
-          ),
-          sourceTemplateId: definition._id,
-          updatedAt: new Date(),
-        },
-      },
-      { new: true, upsert: true }
-    );
-  },
-
-  async getAppliedConfig(trainerId, clientId) {
-    return TrainerCheckinTemplate.findOne({ trainerId, clientId }).lean();
-  },
-
-  async getAppliedConfigsForClient(clientId) {
-    return TrainerCheckinTemplate.find({ clientId }).lean();
-  },
-
-  // --- CheckinResponse (histórico, solo campos wellbeing-backed) ---
-  async createResponse(trainerId, clientId, values, cycle = null) {
-    return CheckinResponse.create({ trainerId, clientId, values, ...(cycle ? { cycle } : {}) });
-  },
-
-  // La respuesta de ESTE ciclo de dieta, si ya existe (una por ciclo).
-  // Historial de nutrición del trainer — todas las respuestas ligadas a un
-  // ciclo de dieta (las de cadencia, sin `cycle`, no entran).
-  async listCycleResponses(clientId) {
-    return CheckinResponse.find({ clientId, "cycle.phaseId": { $ne: null } })
-      .select("respondedAt values cycle")
-      .lean();
-  },
-
-  // La respuesta del ciclo N de una fase, venga del profesional que venga
-  // (la necesidad por ciclo no sabe de trainerId). Solo `values` y fecha.
-  async findCycleResponse(clientId, phaseId, number) {
-    return CheckinResponse.findOne({ clientId, "cycle.phaseId": phaseId, "cycle.number": number })
-      .sort({ respondedAt: -1 })
-      .select("values respondedAt")
-      .lean();
-  },
-
-  async findResponseForCycle(trainerId, clientId, cycle) {
-    return CheckinResponse.findOne({
-      trainerId,
-      clientId,
-      "cycle.phaseId": cycle.phaseId,
-      "cycle.number": cycle.number,
-    }).sort({ respondedAt: -1 });
-  },
-
-  // Sobreescribir la respuesta del ciclo: valores nuevos y fecha nueva — la
-  // pertenencia al ciclo la fija `cycle`, no respondedAt.
-  async overwriteCycleResponse(responseId, values, now = new Date()) {
-    return CheckinResponse.findByIdAndUpdate(
-      responseId,
-      { $set: { values, respondedAt: now, seenByTrainer: false } },
-      { new: true }
-    );
-  },
-
-  // La respuesta de ESTE ciclo, si ya existe. Un ciclo es la ventana de
-  // `cadenceDays` días que acaba ahora: con cadencia semanal, los últimos 7.
-  async findResponseInCurrentCycle(trainerId, clientId, cadenceDays, now = new Date()) {
-    const desde = new Date(now.getTime() - cadenceDays * 86400000);
-    return CheckinResponse.findOne({
-      trainerId,
-      clientId,
-      scheduleId: { $exists: false },
-      respondedAt: { $gte: desde, $lte: now },
-    }).sort({ respondedAt: -1 });
-  },
-
-  // Reescribe los valores de una respuesta ya enviada. `respondedAt` NO se
-  // toca: mueve la respuesta de ciclo y falsearía la adherencia.
-  async updateResponseValues(responseId, values) {
-    return CheckinResponse.findByIdAndUpdate(
-      responseId,
-      { $set: { values, seenByTrainer: false } },
-      { new: true }
-    );
-  },
-
+  // --- CheckinResponse ---
   async listResponses(trainerId, clientId) {
-    const [legacy, scheduled] = await Promise.all([
-      CheckinResponse.find({ trainerId, clientId }).sort({ respondedAt: -1 }).lean(),
-      require("./checkin-request-schema").find({ trainerId, clientId, status: { $in: ["responded", "reviewed"] } }).sort({ respondedAt: -1 }).lean(),
-    ]);
-    return [...new Map([...legacy, ...scheduled].map(r => [String(r._id), r])).values()].sort((a, b) => new Date(b.respondedAt) - new Date(a.respondedAt));
+    return CheckinResponse.find({ trainerId, clientId }).sort({ respondedAt: -1 }).lean();
   },
 
-  // TASK-002 (MASTER_BACKLOG.md) — "Reportes": a diferencia de listResponses,
-  // trainerId por sí solo ya escopea a TODOS los clientes de este
-  // entrenador (no hace falta iterar cliente a cliente, a diferencia de
-  // listMyHistory en checkin-controller.js que itera por trainerId variable
-  // desde el lado del cliente). populate('clientId') trae nombre/apellido
-  // reales sin una query aparte. Limit acotado (mismo espíritu que TASK-015:
-  // nunca traer histórico completo sin límite).
+  async listResponsesForClient(clientId, { limit = 200 } = {}) {
+    return CheckinResponse.find({ clientId }).sort({ respondedAt: -1 }).limit(limit).lean();
+  },
+
+  async findById(id) {
+    return CheckinResponse.findById(id).lean();
+  },
+
+  async findByIdForTrainer(trainerId, clientId, id) {
+    return CheckinResponse.findOne({ _id: id, trainerId, clientId }).lean();
+  },
+
+  async review(trainerId, clientId, id, comment) {
+    return CheckinResponse.findOneAndUpdate(
+      { _id: id, trainerId, clientId },
+      { $set: { status: "reviewed", reviewedAt: new Date(), reviewComment: comment, seenByTrainer: true } },
+      { new: true }
+    ).lean();
+  },
+
+  // Todas las respuestas selladas con una semana de dieta — historial de
+  // nutrición del trainer.
+  async listStampedResponses(clientId) {
+    return CheckinResponse.find({ clientId, "week.phaseId": { $ne: null } })
+      .select("respondedAt updatedAt values week name")
+      .lean();
+  },
+
+  // Las respuestas de la semana N de una fase, vengan del profesional que
+  // vengan (la necesidad por semana no sabe de trainerId). Son varias cuando
+  // la programación es más frecuente que semanal; van de la más reciente a
+  // la más antigua.
+  async listWeekResponses(clientId, phaseId, number) {
+    return CheckinResponse.find({ clientId, "week.phaseId": phaseId, "week.number": number })
+      .sort({ respondedAt: -1 })
+      .select("values respondedAt updatedAt week")
+      .lean();
+  },
+
+  // Qué solicitudes tiene YA respondidas cada cliente de este profesional
+  // (clave "scheduleId:fecha"), para saber cuáles se cerraron vacías sin
+  // recorrer cliente a cliente.
+  async listAnsweredOccurrences(trainerId, sinceDate) {
+    return CheckinResponse.find({ trainerId, occurrenceDate: { $gte: sinceDate } })
+      .select("clientId scheduleId occurrenceDate")
+      .lean();
+  },
+
   async listResponsesForTrainer(trainerId, { limit = 200 } = {}) {
     return CheckinResponse.find({ trainerId })
       .sort({ respondedAt: -1 })
@@ -159,20 +95,10 @@ module.exports = {
       .lean();
   },
 
-  // Dashboard trainer, "Requiere tu atención" — configuraciones de check-in
-  // aplicadas por este trainer a CUALQUIERA de sus clientes (a diferencia de
-  // getAppliedConfigsForClient, que es de un cliente concreto). Junto con
-  // getLatestResponseByClient sirve para calcular isCheckinDue por cliente
-  // sin recorrer clientes uno a uno.
-  async getAppliedConfigsForTrainer(trainerId) {
-    return TrainerCheckinTemplate.find({ trainerId }).populate("clientId", "name lastname").lean();
-  },
-
   // Última respuesta (fecha) de CADA cliente de este trainer, en una sola
-  // agregación — a diferencia de listResponsesForTrainer (limit() global
-  // ordenado por fecha, que con muchos clientes activos podría dejar fuera
-  // la respuesta más reciente de un cliente poco activo y hacerlo parecer
-  // "sin responder nunca" por error).
+  // agregación: con muchos clientes, un limit() global ordenado por fecha
+  // dejaría fuera la última respuesta de un cliente poco activo y lo haría
+  // parecer "sin responder nunca".
   async getLatestResponseByClient(trainerId) {
     return CheckinResponse.aggregate([
       { $match: { trainerId: new mongoose.Types.ObjectId(trainerId) } },
@@ -181,14 +107,9 @@ module.exports = {
     ]);
   },
 
-  // Fase 3 Coach Pro — respuestas de TODOS los clientes de un profesional
-  // desde una fecha, con sus valores. Una sola consulta para toda la
-  // cartera, a diferencia de listResponses (un cliente) y de
-  // getLatestResponseByClient (solo la fecha de la última).
-  //
-  // El motor de reglas necesita los VALORES (estrés, sueño, pasos…), no solo
-  // saber cuándo respondió: sin esto, una regla sobre bienestar exigiría una
-  // consulta por cliente cada noche.
+  // Respuestas de TODOS los clientes de un profesional desde una fecha, con
+  // sus valores: el motor de reglas necesita los valores (estrés, sueño,
+  // pasos…), no solo cuándo respondieron.
   async listResponsesForTrainerSince(trainerId, since) {
     return CheckinResponse.find({ trainerId, respondedAt: { $gte: since } })
       .select("clientId respondedAt values")
@@ -196,7 +117,6 @@ module.exports = {
       .lean();
   },
 
-  // TASK-024 (MASTER_BACKLOG.md)
   async countUnseenForTrainer(trainerId) {
     return CheckinResponse.countDocuments({ trainerId, seenByTrainer: false });
   },

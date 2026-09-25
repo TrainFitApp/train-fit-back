@@ -1,5 +1,7 @@
 const CoachProtocol = require("./coach-protocol-schema");
 const checkinDao = require("../trainerCheckins/checkin-dao");
+const CheckinSchedule = require("../trainerCheckins/checkin-schedule-schema");
+const { scheduleContent, hasQuestions, defaultTiming } = require("../trainerCheckins/checkin-agenda-controller");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const tableService = require("../tables/table-service");
@@ -33,14 +35,19 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
     }
   };
 
-  await step("checkin", "Plantilla de check-in", async () => {
+  await step("checkin", "Programación de check-in", async () => {
     if (!protocol.checkinTemplateId) return "skipped";
     const definition = await checkinDao.getDefinitionById(trainerId, protocol.checkinTemplateId);
     if (!definition) return "skipped";
-    await checkinDao.applyToClient(trainerId, clientId, definition);
-    await notificationDao.create(clientId, trainerId, "checkin_requested", {
-      templateName: definition.name,
-    });
+    // Aplicar un protocolo programa el check-in (fechas por defecto: desde
+    // hoy, semanal); el entrenador las afina luego en la ficha del cliente.
+    const content = scheduleContent(definition);
+    if (!hasQuestions(content)) return "skipped";
+    await CheckinSchedule.findOneAndUpdate(
+      { trainerId, clientId, sourceTemplateId: definition._id },
+      { $set: { ...content, ...defaultTiming(), active: true }, $inc: { revision: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
     return true;
   });
 

@@ -1,11 +1,10 @@
 const cron = require("node-cron");
 const { runAlertEvaluationJob } = require("./coach-alert-service");
 
-// Fase 1 Coach Pro — mismo molde que checkin-reminder-cron.js y
-// anthropometry-request-reminder-cron.js: una tarea diaria, apagable por
-// variable de entorno sin necesidad de deploy.
+// Fase 1 Coach Pro — una tarea diaria, apagable por variable de entorno sin
+// necesidad de deploy.
 //
-// 05:00 y no 09:00 (la hora de los crons de recordatorio): este job lee la
+// 05:00 y no 09:00 (la hora de los crons de email): este job lee la
 // ventana completa de antropometría y los días de dieta de todos los
 // clientes de la plataforma. Corriendo de madrugada no compite con el
 // tráfico real, y el panel del profesional ya está calculado cuando abre la

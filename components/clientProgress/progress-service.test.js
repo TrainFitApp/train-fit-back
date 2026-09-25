@@ -38,7 +38,10 @@ test("catálogos derivados", async (t) => {
   await t.test("los campos de bienestar salen del catálogo y excluyen el texto libre", () => {
     assert.ok(WELLBEING_NUMERIC_KEYS.includes("sleep_hours"));
     assert.ok(WELLBEING_NUMERIC_KEYS.includes("stress_level"));
-    assert.ok(WELLBEING_NUMERIC_KEYS.includes("daily_steps"));
+    assert.ok(
+      !WELLBEING_NUMERIC_KEYS.includes("daily_steps"),
+      "los pasos ya no son campo de check-in: se pautan como hábito"
+    );
     assert.ok(!WELLBEING_NUMERIC_KEYS.includes("comment"), "comment es texto, no se promedia");
     assert.ok(!WELLBEING_NUMERIC_KEYS.includes("weight"), "el peso viene de Anthropometry");
   });

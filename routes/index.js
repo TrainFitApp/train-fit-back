@@ -26,7 +26,6 @@ const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goa
 const remoteConfig = require("../components/remoteConfig/remote-config-routes");
 const trainerClients = require("../components/trainerClients/trainer-client-routes");
 const trainerCheckins = require("../components/trainerCheckins/checkin-routes");
-const anthropometryRequests = require("../components/anthropometryRequests/anthropometry-request-routes");
 const mealProposalClientRoutes = require("../components/mealProposals/meal-proposal-client-routes");
 const nutritionPreferencesClientRoutes = require("../components/nutritionPreferences/nutrition-preferences-client-routes");
 const clientCoachViewRoutes = require("../components/clientCoachView/client-coach-view-routes");
@@ -45,6 +44,7 @@ const coachRuleRoutes = require("../components/coachRules/coach-rule-routes");
 const coachProtocolRoutes = require("../components/coachProtocols/coach-protocol-routes");
 const painRoutes = require("../components/painLog/pain-routes");
 const supplementRoutes = require("../components/supplements/supplement-routes");
+const trainerNutritionalGoalRoutes = require("../components/nutritionalGoals/trainer-nutritional-goal-routes");
 const exerciseScoreRoutes = require("../components/exerciseScores/exercise-score-routes");
 
 const router = express.Router();
@@ -67,6 +67,7 @@ router.use(painRoutes);
 // Movimiento 5 Coach Pro — misma razón que painRoutes: sirve a los dos lados
 // y sus rutas ya llevan escrito el prefijo que le toca a cada una.
 router.use(supplementRoutes);
+router.use(trainerNutritionalGoalRoutes);
 router.use(dietTemplateRoutes);
 router.use(mealSnippetRoutes);
 router.use(planAssignmentRoutes);
@@ -94,7 +95,6 @@ router.use("/nutritionalgoals", nutritionalGoals);
 router.use("/config", remoteConfig);
 router.use("/trainer", trainerClients);
 router.use("/trainer", trainerCheckins);
-router.use("/trainer", anthropometryRequests);
 router.use("/trainer", trainerIntakeConfigRoutes);
 router.use("/trainer", coachAlertRoutes);
 router.use("/trainer", coachTaskRoutes);

@@ -11,7 +11,7 @@ const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("./trainer-client-dao");
-const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
+const { listSkippedDates } = require("../dietDays/diet-skips");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const { buildShoppingList } = require("../dietDays/shopping-list-service");
@@ -388,9 +388,9 @@ module.exports = {
   // GET /trainer/clients/:clientId/adherence?from=&to= — F20, requireActiveClient("nutrition")
   //
   // Adherencia calórica contra lo PAUTADO de cada día, no contra un objetivo
-  // guardado aparte: con fases y ciclos la meta del día es lo que suma la
-  // pauta (plannedTarget), y un objetivo fijo daba "fuera de margen" en cuanto
-  // un ciclo subía o bajaba kcal aunque el cliente cumpliera. Un día cuadra si
+  // guardado aparte: con fases y semanas la meta del día es lo que suma
+  // la pauta (plannedTarget), y un objetivo fijo daba "fuera de margen" en
+  // cuanto una semana subía o bajaba kcal aunque el cliente cumpliera. Un día cuadra si
   // lo consumido (marcado + lo que añadió él) queda a ±15 % de lo pautado.
   async getClientAdherence(req, res) {
     const clientId = req.params.clientId;
@@ -452,27 +452,17 @@ module.exports = {
 
     const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
 
-    const exceptions = await dietExceptionDao.findAllForClient(clientId, 200);
-    const exceptionByDate = new Map();
-    exceptions.forEach((exception) => {
-      if (exception.date < from || exception.date > to) return;
-      // Si un día tiene varias excepciones (una por mealSlot), basta con
-      // saber que hubo alguna para pintar el marcador del calendario — el
-      // detalle por comida ya se ve al entrar en ese día.
-      if (!exceptionByDate.has(exception.date)) {
-        exceptionByDate.set(exception.date, exception.action);
-      }
-    });
+    const skipped = new Set(
+      (await listSkippedDates(clientId, 200)).filter((date) => date >= from && date <= to)
+    );
 
     const dailyBreakdown = dietDays.map((d) => {
       const { hasPlan, completionPercentage } = dietDaysNutritionUtil.computeDayCompletion(d.meals);
-      const exceptionType = exceptionByDate.get(d.date) || null;
       return {
         date: d.date,
         hasPlan,
         completionPercentage,
-        hasException: !!exceptionType,
-        exceptionType,
+        skipped: skipped.has(d.date),
       };
     });
 
@@ -528,8 +518,8 @@ module.exports = {
   },
 
   // GET /trainer/clients/:clientId/nutrition-foods?from=&to=
-  // Cumplimiento ALIMENTO A ALIMENTO del rango, para el panel de resumen de un
-  // ciclo. Hermano de getClientNutritionTracking (que da lo mismo en macros,
+  // Cumplimiento ALIMENTO A ALIMENTO del rango, para el panel de resumen de
+  // una semana. Hermano de getClientNutritionTracking (que da lo mismo en macros,
   // sin desglose) y de getClientShoppingList (que agrupa por producto pero
   // ignora si se consumió).
   async getClientNutritionFoods(req, res) {
@@ -544,7 +534,7 @@ module.exports = {
     const to = pedido > hoy ? hoy : pedido;
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
-    // Un ciclo que empieza mañana no tiene nada que resumir todavía.
+    // Una semana que empieza mañana no tiene nada que resumir todavía.
     if (from > to) return res.send({ status: "ok", items: [], from, to });
 
     const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);

@@ -1,4 +1,3 @@
-const { CHECKIN_CADENCE_DAYS } = require("../trainerCheckins/checkin-due");
 
 // Fase 2 Coach Pro — adherencia MULTIDIMENSIONAL.
 //
@@ -139,47 +138,25 @@ function habitsDimension({ habits }) {
 }
 
 /**
- * Check-ins: CICLOS CUBIERTOS frente a los que tocaban.
+ * Check-ins: SOLICITUDES RESPONDIDAS frente a las que se pidieron.
  *
- * Contaba respuestas sueltas, y eso daba dos resultados malos a la vez: un
- * "7 de 4" que se lee como un error de cuentas, y un 100% para alguien que
- * mandó siete respuestas la misma semana y dejó las otras tres en blanco.
- * Lo que mide adherencia es la regularidad, no el volumen.
+ * Ya no hay cadencias que estimar: las solicitudes son fechas concretas de
+ * la programación del cliente (docs/plan-semanas.md), así que el
+ * denominador son las que ya han llegado en el periodo — ni una más.
  *
- * Un ciclo cuenta como cubierto si tiene AL MENOS una respuesta. Con el
- * envío ya limitado a uno por ciclo (checkin-controller#respond), ambos
- * números coinciden salvo en respuestas antiguas anteriores al límite.
- *
- * Cadencia "once" queda fuera: un check-in de una sola vez no genera una
- * serie que medir.
- *
- * @param respondedAt fechas de respuesta (Date o ISO) dentro del periodo
+ * Contar respuestas sueltas daba dos resultados malos a la vez: un "7 de 4"
+ * que se lee como un error de cuentas, y un 100% para quien mandó siete
+ * respuestas la misma semana y dejó tres solicitudes en blanco. Con una
+ * respuesta por solicitud, eso ya no puede pasar.
  */
-function checkinsDimension({ respondedAt, cadence, periodDays, now = new Date() }) {
-  const cadenceDays = CHECKIN_CADENCE_DAYS[cadence];
-  if (!cadenceDays || !periodDays) {
-    return { applicable: false, reason: "sin_cadencia" };
+function checkinsDimension({ expected = 0, answered = 0 } = {}) {
+  if (!expected) {
+    return { applicable: false, reason: "sin_checkins" };
   }
-  const expected = Math.floor(periodDays / cadenceDays);
-  if (expected < 1) {
-    return { applicable: false, reason: "periodo_corto" };
-  }
-
-  // Ciclo 0 = el más reciente (los `cadenceDays` días que acaban hoy).
-  const ciclosCubiertos = new Set();
-  for (const fecha of respondedAt || []) {
-    const dias = (now.getTime() - new Date(fecha).getTime()) / 86400000;
-    if (dias < 0 || dias >= periodDays) continue;
-    ciclosCubiertos.add(Math.floor(dias / cadenceDays));
-  }
-
-  const cubiertos = ciclosCubiertos.size;
   return {
     applicable: true,
-    percentage: Math.min(100, pct(cubiertos, expected) ?? 0),
-    detail: `${cubiertos} de ${expected} ${cadence === "biweekly" ? "quincenas" : "semanas"} con check-in`,
-    coveredCycles: cubiertos,
-    expectedCycles: expected,
+    percentage: Math.min(100, pct(answered, expected) ?? 0),
+    detail: `${answered} de ${expected} check-ins respondidos`,
   };
 }
 

@@ -31,6 +31,11 @@
 //            nadie, están para cazar el dedo que resbala: un ombligo de 44,
 //            una cintura de 800, un peso de 7. Entre esas cotas cabe
 //            cualquier persona real.
+//
+// Los PASOS no son un campo de check-in: se pautan como HÁBITO diario
+// (TrainerTask type "steps") y el cliente los marca cada día bajo sus
+// comidas. Ver docs/plan-semanas.md §12.
+
 const CHECKIN_FIELDS = [
   // --- Composición corporal (storage: anthropometry) ---
   { key: "weight", label: "Peso", type: "number", unit: "kg", group: "composicion_corporal", storage: "anthropometry", anthropometryField: "weight", hint: "Al levantarte, después de ir al baño y antes de desayunar. Siempre el mismo día de la semana.", min: 25, max: 350 },
@@ -182,7 +187,6 @@ const CHECKIN_FIELDS = [
       "Agotado: me cuesta hacer vida normal",
     ],
   },
-  { key: "daily_steps", label: "Pasos diarios (media semanal)", type: "number", unit: "pasos", group: "bienestar", storage: "wellbeing", hint: "La media diaria que te dé el móvil o el reloj desde el último check-in. Tu entrenador la usa para calcular el siguiente ciclo.", min: 0, max: 100000 },
   {
     key: "nutrition_plan_adherence",
     label: "Seguimiento del plan nutricional",
@@ -228,7 +232,7 @@ const CHECKIN_FIELDS = [
   },
 
   // coach-tab FASE2 — campo de texto libre, reutilizable tanto en
-  // "formularios" (comentario semanal) como en "revisiones" (comentario
+  // "formularios" (comentario semanal) como en "semanas" (comentario
   // junto a las medidas de composición corporal/perímetros de esa misma
   // respuesta). Un único campo genérico, no un mecanismo aparte.
   { key: "comment", label: "Comentario", type: "text", group: "bienestar", storage: "wellbeing" },

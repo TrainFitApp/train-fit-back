@@ -4,15 +4,18 @@ const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const { computeRangeAdherence } = require("../dietDays/diet-days-nutrition-util");
 const { summarizeDailyDeviations } = require("../dietDays/food-compliance");
-const { cycleMacroProfile } = require("../dietTemplates/diet-macro-profile");
+const { contentMacroProfile } = require("../dietTemplates/diet-macro-profile");
 const { expectedWeeklyRateKg } = require("../nutritionalGoals/nutrition-target");
 const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
-const { stepsFromCheckin, needSnapshot } = require("./cycle-need");
-const { suggestNextCycle, scaleFactor } = require("./cycle-progression");
-const { windowsUntil, nextWindow, contentCycleDays } = require("./cycle-window");
+const { stepsFromHabit, needSnapshot } = require("./week-need");
+const { suggestNextWeek, scaleFactor } = require("./week-progression");
+const { overrideAt, contentSignature } = require("./week-content");
+const { weeksOfPhase } = require("./week-service");
+const { currentWeek, nextWeek } = require("./week-window");
 const { buildPhaseEvents, sortEvents } = require("./nutrition-history");
 const checkinDao = require("../trainerCheckins/checkin-dao");
-const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
+const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
+const { listSkippedDates } = require("../dietDays/diet-skips");
 const { daysElapsed, isoDate } = require("../util/date-util");
 
 /**
@@ -26,11 +29,11 @@ const { daysElapsed, isoDate } = require("../util/date-util");
  * `today` se inyecta para poder testear sin depender del reloj.
  */
 function blocksNewPhase(existing, startDate, today = isoDate(new Date()), rulingPhaseId = null) {
-  // Ciclos por contenido: la fase que RIGE en `startDate` se corta entera si
-  // se empieza hoy (o con fecha pasada) — incluidos su ciclo en curso, que ya
-  // lleva endDate si tenía el siguiente preparado, y los ciclos preparados
-  // por delante (reserveActivePhaseSlot los borra). Sin esto, preparar el
-  // siguiente ciclo bloqueaba cambiar de fase "a partir de ya".
+  // La fase que RIGE en `startDate` se corta entera si se empieza hoy (o con
+  // fecha pasada) — incluida su semana en curso, que ya lleva endDate si
+  // tenía la siguiente preparada, y las semanas preparadas por delante
+  // (reserveActivePhaseSlot las borra). Sin esto, preparar la semana
+  // siguiente bloqueaba cambiar de fase "a partir de ya".
   if (rulingPhaseId && existing.phaseId && String(existing.phaseId) === String(rulingPhaseId) && startDate <= today) {
     return false;
   }
@@ -48,23 +51,23 @@ function blocksNewPhase(existing, startDate, today = isoDate(new Date()), ruling
 }
 
 // Compartido por applyPlan (clona una plantilla), createDirectPlan (crea
-// contenido nuevo) y prepareNextCycle (ciclo dentro de la MISMA fase) — la
+// contenido nuevo) y prepareNextWeek (dentro de la MISMA fase) — la
 // validación de solape y "quién regía antes" no depende de dónde salió el
 // contenido, solo de las fechas. Se lee la fase activa ANTES de crear la
 // nueva: en cuanto exista, ambas tendrían status "active" a la vez y un
 // findOne sin ordenar ya no podría distinguir con garantías cuál es "la
 // anterior".
 //
-// excludePhaseId: solo lo usa prepareNextCycle. El ciclo ABIERTO de esa fase
+// excludePhaseId: solo lo usa prepareNextWeek. El contenido ABIERTO de esa fase
 // (endDate null mientras sigue corriendo) se colaba como "otra fase" y
 // bloqueaba cualquier fecha futura aunque no hubiera conflicto real — el
-// nuevo empieza justo donde lo deja. Sus ciclos ya cerrados sí siguen
+// nuevo empieza justo donde lo deja. Sus semanas ya cerradas sí siguen
 // bloqueando (ver findOverlapping).
 async function reserveActivePhaseSlot(clientId, startDate, excludePhaseId = null) {
   const today = isoDate(new Date());
   const solapadas = await dietTemplateDao.findOverlapping(clientId, startDate, null, { excludePhaseId });
   // La fase que rige en `startDate` (solo si es hoy o pasado): se corta, no
-  // bloquea. `covering` es su ciclo en curso — el que se encadena.
+  // bloquea. `covering` es su contenido en curso — el que se encadena.
   const covering = startDate <= today ? await dietTemplateDao.findCoveringDate(clientId, startDate) : null;
   const rulingPhaseId = covering?.phaseId ? String(covering.phaseId) : null;
   const bloqueantes = solapadas.filter((fase) => blocksNewPhase(fase, startDate, today, rulingPhaseId));
@@ -86,15 +89,15 @@ async function reserveActivePhaseSlot(clientId, startDate, excludePhaseId = null
     throw error;
   }
 
-  // Cortar la fase que rige se lleva sus ciclos preparados que aún no habían
+  // Cortar la fase que rige se lleva sus semanas preparadas que aún no habían
   // empezado: con otra fase encima nunca van a correr, y findCoveringDate los
   // seguiría encontrando (startDate <= fecha, endDate null). Mismo criterio
-  // que cancelPhase con el head. El ciclo en curso se queda y se encadena
+  // que cancelPhase con el head. La semana en curso se queda y se encadena
   // (chainIfNeeded le pone su fin real). No aplica cuando es la propia fase
-  // preparando su siguiente ciclo (excludePhaseId).
+  // preparando su semana siguiente (excludePhaseId).
   if (rulingPhaseId && String(excludePhaseId || "") !== rulingPhaseId) {
-    const cycles = await dietTemplateDao.findCyclesOfPhase(rulingPhaseId);
-    for (const c of cycles) {
+    const members = await dietTemplateDao.findPhaseMembers(rulingPhaseId);
+    for (const c of members) {
       const esElEnCurso = String(c._id) === String(covering._id);
       if (!esElEnCurso && c.startDate > covering.startDate && c.startDate >= startDate) {
         await dietTemplateDao.deleteById(c._id);
@@ -124,17 +127,17 @@ async function chainIfNeeded(previousActive, created) {
   }
 }
 
-// --- Ciclos por contenido: helpers ---
+// --- Semanas: helpers ---
 
 function round1(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n * 10) / 10 : 0;
 }
 
-// Media diaria de kcal/macros del contenido de un ciclo — es lo único que
-// "vale" un ciclo: no hay objetivo guardado aparte (plan §9).
+// Media diaria de kcal/macros de un contenido — es lo que "vale" una
+// semana: no hay un objetivo guardado aparte, sale de los alimentos.
 function kcalProfileOf(doc) {
-  const p = cycleMacroProfile(doc);
+  const p = contentMacroProfile(doc);
   return { kcal: p.kcal, protein: p.protein, carbs: p.carbs, fat: p.fat };
 }
 
@@ -142,65 +145,74 @@ function overrideSummary(doc) {
   return {
     id: String(doc._id),
     startDate: doc.startDate,
-    mode: doc.mode,
-    cycleDays: contentCycleDays(doc),
-    daysCount: (doc.days || []).length,
-    choiceCycleDays: doc.choiceCycleDays ?? null,
+    menusCount: (doc.menus || []).length,
     profile: kcalProfileOf(doc),
   };
 }
 
-// --- Necesidad por ciclo (docs/plan-info-calculo-fase.md) ---
+// --- Necesidad por semana (docs/plan-semanas.md) ---
 
-// Pasos hechos en un ciclo: la media diaria que el cliente declaró en el
-// check-in de ese ciclo (campo `daily_steps` del catálogo; una respuesta por
-// ciclo). Sin check-in o sin ese campo, null.
-async function stepsIn(clientId, phaseId, window) {
-  const response = await checkinDao.findCycleResponse(clientId, phaseId, window.number);
-  return stepsFromCheckin(response);
+// Pasos del cliente: los que pauta su HÁBITO de pasos y los días que lo
+// marcó dentro de la semana que se mira. Si no hay hábito, o lo marcó menos
+// de la mitad de los días, manda el rango de su perfil — no se inventa un
+// dato que el cliente no ha dado.
+async function stepsForWindow(clientId, window, until) {
+  const task = await trainerTaskDao.findActiveStepsTask(clientId);
+  if (!task || !window) return null;
+  const end = window.end && (!until || window.end < until) ? window.end : until;
+  if (!end || end < window.start) return null;
+  const completions = await trainerTaskDao.listCompletionsForTasksInRange([task._id], window.start, end);
+  return stepsFromHabit(task, completions.length, window, until);
 }
 
-// Delta y g/kg con los que se calcula la necesidad de CUALQUIER ciclo de la
-// fase: los que el entrenador eligió al empezarla (head).
-function phaseTargetParams(head) {
+// g/kg con los que se calcula la necesidad de CUALQUIER semana de la fase:
+// los que el entrenador fijó al empezarla (head).
+function phaseMacroParams(head) {
   return {
-    delta: head.phaseTargetKcalDelta || 0,
-    macroOverride: {
-      proteinPerKg: head.phaseProteinPerKg ?? undefined,
-      fatPerKg: head.phaseFatPerKg ?? undefined,
-    },
+    proteinPerKg: head.phaseProteinPerKg ?? undefined,
+    fatPerKg: head.phaseFatPerKg ?? undefined,
   };
 }
 
-// Necesidad calculada al vuelo "a fecha de `asOf`" con los pasos del
-// check-in de la ventana anterior (`previousWindow`) — para los ciclos 2+ y
-// para la referencia "con datos actuales" del modal de siguiente ciclo.
-async function computeNeedAt(clientId, head, asOf, previousWindow) {
-  const steps = previousWindow ? await stepsIn(clientId, head._id, previousWindow) : { avg: null, respondedAt: null };
-  const { delta, macroOverride } = phaseTargetParams(head);
-  const resolved = await resolveClientNutritionTarget(clientId, delta, macroOverride, {
+// Necesidad calculada al vuelo "a fecha de `asOf`" con el último peso hasta
+// esa fecha y los pasos de la semana `window` (la que acaba de cerrarse, o
+// la que corre).
+async function computeNeedAt(clientId, head, asOf, window = null) {
+  const steps = await stepsForWindow(clientId, window, asOf);
+  const resolved = await resolveClientNutritionTarget(clientId, 0, phaseMacroParams(head), {
     asOf,
-    stepsAvg: steps.avg,
+    stepsRangeKey: steps?.key || null,
+    useClientObjetive: true,
   });
-  return needSnapshot(resolved);
+  const snapshot = needSnapshot(resolved);
+  return snapshot ? { ...snapshot, stepsFromHabit: steps } : null;
 }
 
-// Snapshot que se guarda en el head al EMPEZAR la fase: con los datos que
-// el cliente tiene en ese momento (peso hasta la fecha de inicio si ya
-// estaba registrado, si no el último). Sin pasos registrados: todavía no
-// hay ciclo anterior — rango del perfil.
+// Snapshot que se guarda en el head al EMPEZAR la fase: con los datos que el
+// cliente tiene en ese momento (peso hasta la fecha de inicio si ya estaba
+// registrado, si no el último; último rango de pasos declarado).
 async function buildPhaseNeed(clientId, phase, startDate) {
   if (!phase) return null;
+  const today = isoDate(new Date());
+  const asOf = startDate && startDate <= today ? startDate : undefined;
+  // Al empezar la fase todavía no hay semanas corridas: los pasos se miran
+  // en los 14 días anteriores, que es lo último que se sabe de cómo se mueve.
+  const steps = await stepsForWindow(
+    clientId,
+    { start: addDaysToIsoDate(asOf || today, -14), end: asOf || today },
+    asOf || today
+  );
   const resolved = await resolveClientNutritionTarget(
     clientId,
-    phase.targetKcalDelta || 0,
+    0,
     { proteinPerKg: phase.proteinPerKg ?? undefined, fatPerKg: phase.fatPerKg ?? undefined },
-    { asOf: startDate && startDate <= isoDate(new Date()) ? startDate : undefined }
+    { asOf, stepsRangeKey: steps?.key || null, useClientObjetive: true }
   );
-  return needSnapshot(resolved);
+  const snapshot = needSnapshot(resolved);
+  return snapshot ? { ...snapshot, stepsFromHabit: steps } : null;
 }
 
-async function loadPhase(phaseId) {
+async function loadPhase(clientId, phaseId) {
   const head = await dietTemplateDao.findPhaseHead(phaseId);
   if (!head || !head.startDate) {
     const e = new Error("Fase no encontrada");
@@ -208,18 +220,19 @@ async function loadPhase(phaseId) {
     throw e;
   }
   // Incluye al head (phaseId = self), ordenados por inicio.
-  const cycles = await dietTemplateDao.findCyclesOfPhase(phaseId);
+  const members = await dietTemplateDao.findPhaseMembers(phaseId);
   const today = isoDate(new Date());
-  const windows = windowsUntil(cycles, today);
-  const current = windows[windows.length - 1];
-  const next = nextWindow(cycles, current);
-  return { head, cycles, today, windows, current, next };
+  const { weeks, phaseEnd } = await weeksOfPhase(head, members, today);
+  const current = currentWeek(weeks, today);
+  const next = current ? nextWeek(weeks, current) : null;
+  return { head, members, today, weeks, current, next, phaseEnd };
 }
 
 // Último peso registrado (antropometría, donde también se vuelca el peso del
 // check-in) dentro de una ventana. null si no hay ninguno.
-async function lastWeightIn(clientId, window) {
-  const rows = await anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, window.start, window.end);
+async function lastWeightIn(clientId, window, until) {
+  const end = window.end || until;
+  const rows = await anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, window.start, end);
   const withWeight = (rows || [])
     .filter((w) => Number.isFinite(w.weight))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -227,16 +240,17 @@ async function lastWeightIn(clientId, window) {
   return last ? { weightKg: last.weight, date: last.date } : null;
 }
 
-// Sugerencia para el ciclo siguiente (plan §7): peso del ciclo actual vs el
-// último ciclo anterior que tenga peso; adherencia y desvíos del ciclo
+// Sugerencia para la semana siguiente: el peso de la semana en curso frente
+// al de la última anterior que tenga peso, y la adherencia de la semana
 // ACTUAL. Nunca bloquea: con adherencia baja avisa, pero calcula igual.
-async function buildSuggestion(clientId, head, windows, current, today) {
-  const weightNow = await lastWeightIn(clientId, current);
+async function buildSuggestion(clientId, weeks, members, current, today, need) {
+  const weightNow = await lastWeightIn(clientId, current, today);
   let weightBefore = null;
   let comparedTo = null;
-  for (let i = windows.length - 2; i >= 0 && !weightBefore; i--) {
-    weightBefore = await lastWeightIn(clientId, windows[i]);
-    if (weightBefore) comparedTo = windows[i].number;
+  const index = weeks.findIndex((w) => w.number === current.number);
+  for (let i = index - 1; i >= 0 && !weightBefore; i--) {
+    weightBefore = await lastWeightIn(clientId, weeks[i], today);
+    if (weightBefore) comparedTo = weeks[i].number;
   }
 
   const until = today < current.end ? today : current.end;
@@ -245,60 +259,32 @@ async function buildSuggestion(clientId, head, windows, current, today) {
   const adherence = computeRangeAdherence(days, elapsed);
   const deviations = summarizeDailyDeviations(days);
 
-  const previousKcal = kcalProfileOf(current.override).kcal;
-  const suggestion = suggestNextCycle({
-    previousCycleKcal: previousKcal,
+  const currentContent = overrideAt(members, current.start);
+  const suggestion = suggestNextWeek({
+    currentKcal: currentContent ? kcalProfileOf(currentContent).kcal : null,
+    // El gasto (no el objetivo): lo que separa a las kcal pautadas del gasto
+    // ES el déficit o superávit con el que se pautó.
+    needKcal: need?.breakdown?.expenditure ?? null,
     weightStartKg: weightBefore?.weightKg ?? null,
     weightEndKg: weightNow?.weightKg ?? null,
     daysElapsed: weightBefore && weightNow ? daysElapsed(weightBefore.date, weightNow.date) : 0,
-    expectedWeeklyRateKg: expectedWeeklyRateKg(head.phaseTargetKcalDelta || 0),
     adherencePct: adherence.percentage,
-    targetRatePerCycle: head.targetRatePerCycle || 0,
   });
 
   return {
     ...suggestion,
     weightStartKg: weightBefore?.weightKg ?? null,
     weightEndKg: weightNow?.weightKg ?? null,
-    comparedToCycle: comparedTo,
+    comparedToWeek: comparedTo,
     adherencePct: adherence.percentage,
     adherenceDays: adherence.daysWithData,
     deviations,
   };
 }
 
-// Contenido "clipboard" normalizado para comparar dos ciclos: qué alimentos
-// y en qué cantidad, sin ids ni orden. Si esto coincide, preparar el
-// siguiente no cambia nada y no se persiste (plan §4).
-function contentSignature({ mode, days, dayPatterns, choiceCycleDays }) {
-  const item = (x) => ({
-    ref: String(x?.product?._id || x?.product || x?.recipe?._id || x?.recipe || x?.name || ""),
-    q: Math.round(Number(x?.quantity) || 0),
-  });
-  const meal = (m) => ({
-    name: m?.name || "",
-    alts: (m?.alternatives || []).map((a) => ({
-      p: (a?.customProducts || []).map(item).sort((x, y) => x.ref.localeCompare(y.ref)),
-      r: (a?.customRecipes || []).map(item).sort((x, y) => x.ref.localeCompare(y.ref)),
-    })),
-  });
-  const container = (c) => ({
-    label: c?.dayLabel || c?.name || "",
-    appliesTo: [...(c?.appliesTo || [])].sort(),
-    meals: (c?.meals || []).map(meal),
-  });
-  return JSON.stringify({
-    mode: mode || "sequential",
-    choiceCycleDays: mode === "choice" ? Number(choiceCycleDays) || 7 : null,
-    days: (days || []).map(container),
-    dayPatterns: (dayPatterns || []).map(container),
-  });
-}
-
 module.exports = {
-  // Exportadas para test unitario: son las reglas con criterio propio.
+  // Exportada para test unitario: es la regla con criterio propio.
   blocksNewPhase,
-  contentSignature,
 
   // Crea la copia congelada (que ES la asignación, ver diet-template-schema.js)
   // y, si el cliente ya tenía una activa, la encadena (supersededBy) — así
@@ -324,9 +310,9 @@ module.exports = {
     return created;
   },
 
-  // Editor de fase/ciclo ya asignado — lee/escribe el contenido de la copia
+  // Editor de fase/semana ya asignada — lee/escribe el contenido de la copia
   // congelada de ESTE cliente por su propio _id, nunca por sourceTemplateId
-  // (que los ciclos 2+ ni siquiera tienen). getPlanContent/updateAssignmentContent
+  // (que las semanas 2+ ni siquiera tienen). getPlanContent/updateAssignmentContent
   // NUNCA tocan una plantilla de biblioteca: dietTemplateDao.updateAssignedContent
   // exige clientId en el filtro, no solo trainerId.
   async getPlanContent(trainerId, clientId, planId) {
@@ -338,21 +324,12 @@ module.exports = {
       phaseId: plan.phaseId ?? null,
       startDate: plan.startDate ?? null,
       endDate: plan.endDate ?? null,
-      mode: plan.mode,
-      choiceCycleDays: plan.choiceCycleDays ?? null,
-      days: plan.days,
-      dayPatterns: plan.dayPatterns,
+      menus: plan.menus,
     };
   },
 
-  async updateAssignmentContent({ trainerId, clientId, planId, name, mode, days, dayPatterns, choiceCycleDays }) {
-    return dietTemplateDao.updateAssignedContent(trainerId, clientId, planId, {
-      name,
-      mode,
-      days,
-      dayPatterns,
-      choiceCycleDays,
-    });
+  async updateAssignmentContent({ trainerId, clientId, planId, name, menus }) {
+    return dietTemplateDao.updateAssignedContent(trainerId, clientId, planId, { name, menus });
   },
 
   // "Crear dieta" — mismo flujo que applyPlan (valida solape, encadena la
@@ -360,194 +337,246 @@ module.exports = {
   // construye el trainer directo para este cliente. Sin plantilla de
   // origen, así que la copia nace con sourceTemplateId: null — estado
   // válido, no una plantilla borrada (ver diet-template-schema.js).
-  async createDirectPlan({ trainerId, clientId, name, days, mode, dayPatterns, choiceCycleDays, startDate, phase = null }) {
+  async createDirectPlan({ trainerId, clientId, name, menus, startDate, phase = null }) {
     const previousActive = await reserveActivePhaseSlot(clientId, startDate);
     const need = await buildPhaseNeed(clientId, phase, startDate);
 
-    const created = await dietTemplateDao.createDirectAssignment(trainerId, clientId, name, days, mode, dayPatterns, {
+    const created = await dietTemplateDao.createDirectAssignment(trainerId, clientId, name, menus, {
       startDate,
       endDate: null,
       status: "active",
       phase: phase ? { ...phase, need } : null,
-      choiceCycleDays,
     });
 
     await chainIfNeeded(previousActive, created);
     return created;
   },
 
-  // --- Ciclos por contenido (docs/plan-ciclos-por-contenido.md) ---
+  // --- Semanas (docs/plan-semanas.md) ---
   //
-  // No hay un documento por ciclo: solo se persisten los que cambian algo
-  // (el head = C1, y los que el entrenador prepara). El ciclo N es una
-  // ventana encadenada (cycle-window.js) y su contenido es el del último
-  // persistido que ya había empezado. El actual no se toca; solo se prepara
-  // el siguiente.
+  // Una fase se parte en SEMANAS naturales de lunes a domingo. No hay un
+  // documento por semana — solo se persiste el contenido que cambia, y el
+  // resto hereda del último persistido que ya había empezado.
 
-  // Todo lo que la ficha necesita: actual, siguiente (con sugerencia) y
-  // pasados. Una sola llamada.
-  async getPhaseCycles(clientId, phaseId) {
-    const { head, cycles, today, windows, current, next } = await loadPhase(phaseId);
+  // Todo lo que la ficha necesita: semana en curso, siguiente (con
+  // sugerencia) y pasadas. Una sola llamada.
+  async getPhaseWeeks(clientId, phaseId) {
+    const { head, members, today, weeks, current, next, phaseEnd } = await loadPhase(clientId, phaseId);
 
-    const nextPersisted = cycles.find((c) => c.startDate === next.start) || null;
-    const [suggestion, needNow] = await Promise.all([
-      buildSuggestion(clientId, head, windows, current, today),
-      // Referencia para el modal de siguiente ciclo: la necesidad con los
-      // datos de HOY (último peso, pasos del ciclo en curso). No cambia la
-      // sugerencia de kcal.
-      computeNeedAt(clientId, head, today, current),
-    ]);
+    // La necesidad se calcula con los pasos de la semana EN CURSO: es lo
+    // último que se sabe de cómo se está moviendo el cliente.
+    const need = await computeNeedAt(clientId, head, today, current);
+    const suggestion = current ? await buildSuggestion(clientId, weeks, members, current, today, need) : null;
+    const nextPersisted = next ? members.find((m) => m.startDate === next.start) || null : null;
 
-    const past = windows.slice(0, -1).map((w) => ({
-      number: w.number,
-      start: w.start,
-      end: w.end,
-      profile: kcalProfileOf(w.override),
-      overrideId: String(w.override._id),
-    }));
+    const past = weeks
+      .filter((w) => !current || w.number < current.number)
+      .map((w) => ({
+        number: w.number,
+        start: w.start,
+        end: w.end,
+        profile: kcalProfileOf(overrideAt(members, w.start) || head),
+        overrideId: String((overrideAt(members, w.start) || head)._id),
+      }));
+
+    const currentOverride = current ? overrideAt(members, current.start) || head : head;
 
     return {
       phaseId: String(phaseId),
       phaseName: head.phaseName || head.name || null,
-      phaseFocus: head.phaseFocus || null,
       phaseStart: head.startDate,
-      windows: windows.map((w) => ({ number: w.number, start: w.start, end: w.end })).concat([
-        { number: next.number, start: next.start, end: next.end },
-      ]),
-      current: {
-        number: current.number,
-        start: current.start,
-        end: current.end,
-        override: overrideSummary(current.override),
-      },
-      next: {
-        number: next.number,
-        start: next.start,
-        end: next.end,
-        len: next.len,
-        override: nextPersisted ? overrideSummary(nextPersisted) : null,
-        inherits: nextPersisted ? null : overrideSummary(next.override),
-        suggestion,
-        needNow,
-      },
+      phaseEnd,
+      phaseTarget: head.phaseTarget || null,
+      weeks: weeks.map((w) => ({ number: w.number, start: w.start, end: w.end })),
+      current: current
+        ? {
+            number: current.number,
+            start: current.start,
+            end: current.end,
+            override: overrideSummary(currentOverride),
+          }
+        : null,
+      next: next
+        ? {
+            number: next.number,
+            start: next.start,
+            end: next.end,
+            override: nextPersisted ? overrideSummary(nextPersisted) : null,
+            inherits: nextPersisted ? null : overrideSummary(currentOverride),
+            suggestion,
+            needNow: need,
+          }
+        : null,
       past,
     };
   },
 
-  // Cómo se calculó la necesidad de UN ciclo (resumen de ciclo). C1 = el
-  // snapshot guardado al empezar la fase (null si la fase es anterior a
-  // guardarlo); C2+ = al vuelo, a fecha de inicio del ciclo, con el último
-  // peso hasta ese día y los pasos del check-in del ciclo anterior.
-  // Devuelve además los pasos hechos en el ciclo (check-in) y las kcal
-  // pautadas, para compararlas con las calculadas.
-  async getCycleNeed(clientId, phaseId, number) {
-    const { head, today, windows, current, next } = await loadPhase(phaseId);
+  // Cómo se calculó la necesidad de UNA semana: la primera usa el snapshot
+  // guardado al empezar la fase; el resto se calculan al vuelo a su fecha de
+  // inicio, con el último peso hasta ese día y el último rango de pasos
+  // declarado en un check-in. Devuelve además las kcal pautadas, para
+  // compararlas con las calculadas.
+  async getWeekNeed(clientId, phaseId, number) {
+    const { head, members, today, weeks, current } = await loadPhase(clientId, phaseId);
     const n = Number(number);
-    const all = windows.concat([next]);
-    const window = all.find((w) => w.number === n);
+    const window = weeks.find((w) => w.number === n);
     if (!window) {
-      const e = new Error("Ciclo no encontrado");
-      e.code = "DIET_CYCLE_NOT_FOUND";
+      const e = new Error("Semana no encontrada");
+      e.code = "DIET_WEEK_NOT_FOUND";
       throw e;
     }
-    const previous = all.find((w) => w.number === n - 1) || null;
 
     let need;
     let source;
-    if (n === 1) {
-      need = head.phaseNeed ? head.phaseNeed.toObject?.() ?? head.phaseNeed : null;
-      source = need ? "snapshot" : null;
+    if (n === 1 && head.phaseNeed) {
+      need = head.phaseNeed.toObject?.() ?? head.phaseNeed;
+      source = "snapshot";
     } else {
-      need = await computeNeedAt(clientId, head, window.start, previous);
+      // Con los pasos de la semana ANTERIOR: es la que ya cerró cuando
+      // empieza esta.
+      const previous = weeks.find((w) => w.number === n - 1) || null;
+      need = await computeNeedAt(clientId, head, window.start > today ? today : window.start, previous);
       source = "computed";
     }
 
-    const stepsDone = await stepsIn(clientId, head._id, window);
+    const override = overrideAt(members, window.start) || head;
     return {
-      cycleNumber: n,
+      weekNumber: n,
       start: window.start,
       end: window.end,
-      isCurrent: n === current.number,
+      isCurrent: current ? n === current.number : false,
       source,
       need,
-      stepsDone,
-      plannedKcal: kcalProfileOf(window.override).kcal || null,
+      // Una semana puede contener varios check-ins (un diario, siete): van
+      // todos, del más reciente al más antiguo.
+      checkins: await checkinDao.listWeekResponses(clientId, head._id, n),
+      plannedKcal: kcalProfileOf(override).kcal || null,
+      phaseTarget: head.phaseTarget || null,
     };
   },
 
-  // Contenido del ciclo vigente escalado a `kcal` — para abrir el builder
-  // precargado al preparar el siguiente. No escribe nada.
-  async scaleNextCycle(clientId, phaseId, kcal) {
-    const { current, next } = await loadPhase(phaseId);
-    const base = next.override;
+  // Contenido vigente escalado a `kcal` — para abrir el builder precargado
+  // al preparar la semana siguiente. No escribe nada.
+  async scaleNextWeek(clientId, phaseId, kcal) {
+    const { head, members, current, next } = await loadPhase(clientId, phaseId);
+    if (!next) {
+      const e = new Error("La fase termina esta semana: no hay una semana siguiente que preparar.");
+      e.code = "DIET_NO_NEXT_WEEK";
+      throw e;
+    }
+    const base = overrideAt(members, next.start) || overrideAt(members, current.start) || head;
     const baseKcal = kcalProfileOf(base).kcal;
     const factor = scaleFactor(baseKcal, Number(kcal));
     return {
-      cycleNumber: next.number,
+      weekNumber: next.number,
       start: next.start,
       end: next.end,
       baseKcal,
       targetKcal: Number(kcal) || baseKcal,
       factor: round1(factor),
-      currentCycleNumber: current.number,
-      content: {
-        ...dietTemplateDao.scaledCycleContentPopulated(base, factor),
-        choiceCycleDays: base.choiceCycleDays ?? null,
-      },
+      currentWeekNumber: current?.number ?? null,
+      content: dietTemplateDao.scaledWeekContentPopulated(base, factor),
     };
   },
 
-  // Preparar el siguiente ciclo. La fecha la pone el servidor (inicio de
-  // N+1). Si el contenido es idéntico al que heredaría, no se escribe nada
-  // (plan §4) y se devuelve { unchanged: true }.
-  async prepareNextCycle({ trainerId, clientId, phaseId, mode, days, dayPatterns, choiceCycleDays }) {
-    const { cycles, next } = await loadPhase(phaseId);
-    const existing = cycles.find((c) => c.startDate === next.start) || null;
-    // Contra qué se compara: si ya había uno preparado, contra él (repetir
-    // el guardado sin tocar nada no escribe); si no, contra lo que heredaría.
-    const reference = existing || next.override;
+  // Preparar la semana siguiente. La fecha la pone el servidor (el lunes en
+  // que empieza). Si el contenido es idéntico al que heredaría, no se
+  // escribe nada y se devuelve { unchanged: true }.
+  async prepareNextWeek({ trainerId, clientId, phaseId, menus }) {
+    const { head, members, current, next } = await loadPhase(clientId, phaseId);
+    if (!next) {
+      const e = new Error("La fase termina esta semana: no hay una semana siguiente que preparar.");
+      e.code = "DIET_NO_NEXT_WEEK";
+      throw e;
+    }
+    const existing = members.find((m) => m.startDate === next.start) || null;
+    // Contra qué se compara: si ya había una preparada, contra ella; si no,
+    // contra lo que heredaría.
+    const reference = existing || overrideAt(members, current.start) || head;
 
-    const incoming = contentSignature({ mode, days, dayPatterns, choiceCycleDays });
-    const current = contentSignature({
-      mode: reference.mode,
-      days: reference.days,
-      dayPatterns: reference.dayPatterns,
-      choiceCycleDays: reference.choiceCycleDays,
-    });
-    if (incoming === current) return { unchanged: true, cycle: existing };
+    const incoming = contentSignature({ menus });
+    const actual = contentSignature({ menus: reference.menus });
+    if (incoming === actual) return { unchanged: true, week: existing };
 
     if (existing) {
-      const updated = await dietTemplateDao.updateCycleOverride(existing._id, { mode, days, dayPatterns, choiceCycleDays });
-      return { unchanged: false, cycle: updated };
+      const updated = await dietTemplateDao.updateWeekOverride(existing._id, { menus });
+      return { unchanged: false, week: updated };
     }
 
-    // El ciclo abierto de la misma fase se exime del chequeo de solape (el
-    // nuevo empieza justo donde lo deja); otras fases sí bloquean.
+    // El contenido abierto de la misma fase se exime del chequeo de solape
+    // (el nuevo empieza justo donde lo deja); otras fases sí bloquean.
     const previousActive = await reserveActivePhaseSlot(clientId, next.start, phaseId);
-    const created = await dietTemplateDao.createCycle({
+    const created = await dietTemplateDao.createWeekOverride({
       trainerId,
       clientId,
       phaseId,
-      mode,
-      days,
-      dayPatterns,
-      choiceCycleDays,
+      menus,
       schedule: { startDate: next.start, endDate: null, status: "active" },
     });
     await chainIfNeeded(previousActive, created);
-    return { unchanged: false, cycle: created };
+    return { unchanged: false, week: created };
   },
 
-  // Descartar el siguiente ciclo preparado: se borra y el anterior vuelve a
-  // ser el tip abierto (hereda hacia delante otra vez).
-  async discardNextCycle(clientId, phaseId) {
-    const { cycles, next } = await loadPhase(phaseId);
-    const existing = cycles.find((c) => c.startDate === next.start) || null;
+  // Descartar la semana siguiente ya preparada: se borra y la anterior
+  // vuelve a ser el tip abierto (hereda hacia delante otra vez).
+  async discardNextWeek(clientId, phaseId) {
+    const { members, next } = await loadPhase(clientId, phaseId);
+    if (!next) return { discarded: false };
+    const existing = members.find((m) => m.startDate === next.start) || null;
     if (!existing) return { discarded: false };
     await dietTemplateDao.deleteById(existing._id);
-    const previous = cycles.filter((c) => c.startDate < next.start).pop();
+    const previous = members.filter((m) => m.startDate < next.start).pop();
     if (previous) await dietTemplateDao.reactivate(previous._id);
     return { discarded: true };
+  },
+
+  // Mover las fechas de una fase ya aplicada. El inicio y el fin se editan
+  // desde la ficha (Plan > Nutrición) y no pueden pisar otra fase: es la
+  // única forma de corregir una fase que se creó con la fecha de hoy y
+  // tenía que empezar otro día.
+  async updatePhaseDates({ clientId, phaseId, startDate, endDate }) {
+    const head = await dietTemplateDao.findPhaseHead(phaseId);
+    if (!head || String(head.clientId || "") !== String(clientId)) {
+      const e = new Error("Fase no encontrada");
+      e.code = "DIET_PHASE_NOT_FOUND";
+      throw e;
+    }
+    const members = await dietTemplateDao.findPhaseMembers(phaseId);
+    const nextStart = startDate || head.startDate;
+    const nextEnd = endDate === undefined ? members[members.length - 1]?.endDate ?? null : endDate;
+
+    if (nextEnd && nextEnd < nextStart) {
+      const e = new Error("El fin de la fase no puede ser anterior a su inicio");
+      e.code = "PLAN_INVALID_RANGE";
+      throw e;
+    }
+
+    // Cualquier otra fase que se solape con el rango nuevo bloquea: mover
+    // fechas no corta a nadie, a diferencia de empezar una fase hoy.
+    const overlapping = await dietTemplateDao.findOverlapping(clientId, nextStart, nextEnd, {
+      excludePhaseId: phaseId,
+    });
+    const blocking = overlapping.filter((other) => String(other.phaseId || other._id) !== String(phaseId));
+    if (blocking.length) {
+      const clash = blocking[0];
+      const error = new Error(
+        `Esas fechas se solapan con «${clash.name || "otra fase"}» (desde el ${clash.startDate}${clash.endDate ? `, hasta el ${clash.endDate}` : ""}).`
+      );
+      error.code = "PLAN_OVERLAP";
+      throw error;
+    }
+
+    // El contenido preparado que caía dentro de la fase se mueve con ella el
+    // mismo número de días.
+    const shift = daysElapsed(head.startDate, nextStart);
+    for (const member of members) {
+      const updates = {};
+      if (shift !== 0 && member.startDate) updates.startDate = addDaysToIsoDate(member.startDate, shift);
+      if (String(member._id) === String(members[members.length - 1]._id)) updates.endDate = nextEnd;
+      else if (shift !== 0 && member.endDate) updates.endDate = addDaysToIsoDate(member.endDate, shift);
+      if (Object.keys(updates).length) await dietTemplateDao.updateSchedule(member._id, updates);
+    }
+    return dietTemplateDao.findPhaseHead(phaseId);
   },
 
   async getActivePhaseId(clientId) {
@@ -564,8 +593,8 @@ module.exports = {
 
   // Historial de nutrición (feed de eventos, ver nutrition-history.js). Una
   // sola llamada para toda la vida del cliente: por fase, sus DietDays de
-  // una vez (no una consulta por ciclo); check-ins y excepciones del cliente
-  // enteras, una consulta cada una.
+  // una vez (no una consulta por semana); check-ins y excepciones del
+  // cliente enteras, una consulta cada una.
   async getNutritionHistory(clientId) {
     const today = isoDate(new Date());
     const all = await dietTemplateDao.listByClient(clientId);
@@ -574,13 +603,13 @@ module.exports = {
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
     if (!heads.length) return { events: [] };
 
-    const [checkins, exceptions] = await Promise.all([
-      checkinDao.listCycleResponses(clientId),
-      dietExceptionDao.findAllForClient(clientId, 1000),
+    const [checkins, skippedDates] = await Promise.all([
+      checkinDao.listStampedResponses(clientId),
+      listSkippedDates(clientId, 1000),
     ]);
     const checkinsByPhase = new Map();
     for (const c of checkins) {
-      const key = String(c.cycle.phaseId);
+      const key = String(c.week.phaseId);
       if (!checkinsByPhase.has(key)) checkinsByPhase.set(key, []);
       checkinsByPhase.get(key).push(c);
     }
@@ -588,20 +617,24 @@ module.exports = {
     const events = [];
     for (const head of heads) {
       const phaseId = String(head._id);
-      const cycles = all
+      const members = all
         .filter((d) => String(d.phaseId) === phaseId)
         .sort((a, b) => a.startDate.localeCompare(b.startDate) || String(a.createdAt).localeCompare(String(b.createdAt)));
-      // Fin de la fase = endDate del último ciclo persistido (ver nutrition-history.js).
-      const tipEnd = cycles[cycles.length - 1]?.endDate || null;
+      // Fin de la fase = endDate del último contenido persistido.
+      const tipEnd = members[members.length - 1]?.endDate || null;
       const until = tipEnd && tipEnd < today ? tipEnd : today;
-      const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(clientId, head.startDate, until);
+      const [days, { weeks }] = await Promise.all([
+        dietDaysDao.getFullyPopulatedDietDaysForUser(clientId, head.startDate, until),
+        weeksOfPhase(head, members, today),
+      ]);
       events.push(
         ...buildPhaseEvents({
           head,
-          cycles,
+          members,
+          weeks,
           days,
           checkins: checkinsByPhase.get(phaseId) || [],
-          exceptions,
+          skippedDates,
           today,
         })
       );
@@ -609,34 +642,42 @@ module.exports = {
     return { events: sortEvents(events) };
   },
 
-  // Ventanas de ciclo de todas las fases de un cliente en un rango de fechas
-  // — para el slider del cliente y el calendario del entrenador. Cada fase
-  // con su índice de color estable (orden de inicio) y sus ciclos.
-  async getCycleTimeline(clientId, from, to) {
+  // Ventanas de semana de todas las fases de un cliente en un rango de
+  // fechas — para el slider del cliente y el calendario del entrenador. Cada
+  // fase con su índice de color estable (orden de inicio) y sus semanas.
+  async getDietTimeline(clientId, from, to) {
     const all = await dietTemplateDao.listByClient(clientId);
-    const heads = all.filter((d) => d.phaseId && String(d.phaseId) === String(d._id)).sort((a, b) => a.startDate.localeCompare(b.startDate));
+    const heads = all
+      .filter((d) => d.phaseId && String(d.phaseId) === String(d._id))
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
     const phases = [];
-    const cyclesOut = [];
-    heads.forEach((head, index) => {
+    const weeksOut = [];
+    const today = isoDate(new Date());
+
+    for (const [index, head] of heads.entries()) {
       const members = all
         .filter((d) => String(d.phaseId) === String(head._id))
         .sort((a, b) => a.startDate.localeCompare(b.startDate));
-      // Fin real de la fase: el endDate del último ciclo persistido si está
-      // cerrado; si no, abierta.
-      const last = members[members.length - 1];
-      const phaseEnd = last?.endDate || null;
+      const phaseEnd = members[members.length - 1]?.endDate || null;
       const phaseStart = head.startDate;
-      if (phaseEnd && phaseEnd < from) return;
-      if (phaseStart > to) return;
+      if (phaseEnd && phaseEnd < from) continue;
+      if (phaseStart > to) continue;
       phases.push({ id: String(head._id), name: head.phaseName || head.name, start: phaseStart, end: phaseEnd, colorIndex: index });
-      const until = phaseEnd && phaseEnd < to ? phaseEnd : to;
-      for (const w of windowsUntil(members, until)) {
+
+      const { weeks } = await weeksOfPhase(head, members, to > today ? to : today);
+      for (const w of weeks) {
         if (w.end < from) continue;
-        if (phaseEnd && w.start > phaseEnd) break;
-        cyclesOut.push({ phaseId: String(head._id), number: w.number, start: w.start, end: phaseEnd && w.end > phaseEnd ? phaseEnd : w.end, colorIndex: index });
+        if (w.start > to) break;
+        weeksOut.push({
+          phaseId: String(head._id),
+          number: w.number,
+          start: w.start,
+          end: phaseEnd && w.end > phaseEnd ? phaseEnd : w.end,
+          colorIndex: index,
+        });
       }
-    });
-    return { phases, cycles: cyclesOut };
+    }
+    return { phases, weeks: weeksOut };
   },
 
   // Borrado coherente de fases (nutrición) — "me he equivocado" / el cliente
@@ -658,10 +699,10 @@ module.exports = {
       throw error;
     }
 
-    // Borrar el head de una fase se lleva sus ciclos preparados: sin head no
+    // Borrar el head de una fase se lleva sus semanas preparadas: sin head no
     // hay ventanas que calcular.
     if (phase.phaseId && String(phase.phaseId) === String(phase._id)) {
-      const members = await dietTemplateDao.findCyclesOfPhase(phase._id);
+      const members = await dietTemplateDao.findPhaseMembers(phase._id);
       for (const m of members) if (String(m._id) !== String(phase._id)) await dietTemplateDao.deleteById(m._id);
     }
     await dietTemplateDao.deleteById(phase._id);

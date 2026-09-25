@@ -20,7 +20,7 @@ module.exports = {
   // `resolved` con resolvedBy. Los cierres AUTOMÁTICOS (autoResolveMissing,
   // resolvedBy null) quedan fuera a propósito — si contaran, un cliente que
   // responde su check-in cerraría la alerta automáticamente y eso silenciaría
-  // la del ciclo siguiente durante dos semanas, justo el caso que la alerta
+  // la de la siguiente durante dos semanas, justo el caso que la alerta
   // existe para detectar.
   async findLastManuallyClosedByDedupeKey(dedupeKey) {
     return CoachAlert.findOne({

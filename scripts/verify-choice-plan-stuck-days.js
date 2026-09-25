@@ -12,9 +12,9 @@ const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 
 // TASK-044 (MASTER_BACKLOG.md) — confirma que dietDaysService.
 // countDaysWithoutChoice() cuenta correctamente los DietDay con
-// dayTypeName=null dentro de un rango de fechas, y que
+// menuName=null dentro de un rango de fechas, y que
 // plan-assignment-controller.js#getActive expone mode/stuckDaysCount
-// correctamente para un plan "choice" con días atascados reales.
+// correctamente para un plan con días atascados reales.
 async function main() {
   const mongoUri = buildMongoUri();
   log(`connecting ${redactMongoUri(mongoUri)}`);
@@ -44,13 +44,13 @@ async function main() {
       email: `verify-stuck-days-client-${runId}@test.local`,
     });
 
-    // 5 días: 2026-08-01..03 sin elegir (dayTypeName null), 08-04..05 sí eligió.
+    // 5 días: 2026-08-01..03 sin elegir (menuName null), 08-04..05 sí eligió.
     created.dietDays = await dietDaySchema.insertMany([
-      { date: "2026-08-01", dayTypeName: null, meals: [] },
-      { date: "2026-08-02", dayTypeName: null, meals: [] },
-      { date: "2026-08-03", dayTypeName: null, meals: [] },
-      { date: "2026-08-04", dayTypeName: "Entrenamiento", meals: [] },
-      { date: "2026-08-05", dayTypeName: "Descanso", meals: [] },
+      { date: "2026-08-01", menuName: null, meals: [] },
+      { date: "2026-08-02", menuName: null, meals: [] },
+      { date: "2026-08-03", menuName: null, meals: [] },
+      { date: "2026-08-04", menuName: "Entrenamiento", meals: [] },
+      { date: "2026-08-05", menuName: "Descanso", meals: [] },
     ]);
 
     created.diet = await dietSchema.create({
@@ -66,11 +66,10 @@ async function main() {
     created.assignment = await dietTemplateSchema.create({
       trainerId: created.trainer._id,
       clientId: created.client._id,
-      name: `Plantilla choice de prueba ${runId}`,
-      mode: "choice",
-      dayPatterns: [
-        { name: "Entrenamiento", appliesTo: [], meals: [] },
-        { name: "Descanso", appliesTo: [], meals: [] },
+      name: `Plantilla de prueba ${runId}`,
+      menus: [
+        { name: "Entrenamiento", meals: [] },
+        { name: "Descanso", meals: [] },
       ],
       startDate: "2026-08-01",
       endMode: "indefinite",
@@ -84,7 +83,7 @@ async function main() {
       created.assignment.startDate,
       "2026-08-05"
     );
-    assert.equal(count, 3, "debe contar exactamente los 3 días sin dayTypeName");
+    assert.equal(count, 3, "debe contar exactamente los 3 días sin menuName");
     ok("countDaysWithoutChoice() cuenta 3 días atascados correctamente");
 
     // 2. Rango que excluye los días atascados debe dar 0.
@@ -106,7 +105,7 @@ async function main() {
       "2026-08-05"
     );
     assert.equal(stuckDaysCount, 3, "el cálculo replicado del controller debe coincidir");
-    ok("Lógica de getActive (mode=choice) calcula stuckDaysCount=3 como se espera");
+    ok("Lógica de getActive calcula stuckDaysCount=3 como se espera");
 
     console.log(`${LOG_PREFIX} PASS`);
   } finally {

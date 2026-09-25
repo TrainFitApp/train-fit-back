@@ -143,8 +143,8 @@ module.exports = {
     return dietDayDao.updateDietDay(id, { name, date, meals, notes });
   },
 
-  async setDayTypeName(dietDayId, dayTypeName) {
-    return dietDayDao.setDayTypeName(dietDayId, dayTypeName);
+  async setMenuName(dietDayId, menuName) {
+    return dietDayDao.setMenuName(dietDayId, menuName);
   },
 
   async pasteDietDayByUser(userId, dietDayClipboard, dietDayToPaste) {

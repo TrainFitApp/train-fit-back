@@ -1,15 +1,10 @@
 const planAssignmentService = require("./plan-assignment-service");
 const dietTemplateDao = require("../dietTemplates/diet-template-dao");
-const {
-  sanitizeDays,
-  sanitizeMode,
-  sanitizeDayPatterns,
-} = require("../dietTemplates/diet-template-controller");
-const dietExceptionDao = require("../dietExceptions/diet-exception-dao");
+const { sanitizeMenus } = require("../dietTemplates/diet-template-controller");
+const { markDaySkipped } = require("../dietDays/diet-skips");
 const dietDaysService = require("../dietDays/diet-days-service");
 const userSchema = require("../users/schema");
 const planChangeService = require("../planChanges/plan-change-service");
-const { contentCycleDays } = require("./cycle-window");
 const { resyncPlannedDays } = require("../dietDays/diet-day-resolver");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -25,25 +20,33 @@ function validateScheduleFields({ startDate }) {
   return null;
 }
 
-const PHASE_FOCUS = ["cut", "maintain", "bulk"];
-
-// El bloque `phase` con el que nace toda fase (objetivo elegido en el
-// builder al crear el C1, o en el cajón de sugerencias). Sin él la copia es
-// un plan "de siempre", sin ciclos.
+// El bloque `phase` con el que nace toda fase: su nombre y el objetivo con
+// el que se pauta (kcal y macros, calculados del cliente o tecleados a mano
+// en el cajón). Sin él la copia es un plan suelto, sin semanas.
 function sanitizePhase(body) {
   const p = body?.phase;
   if (!p) return { phase: null };
+  const target = sanitizePhaseTarget(p.target);
   return {
     phase: {
       name: String(p.name || "").trim().slice(0, 100) || null,
-      focus: PHASE_FOCUS.includes(p.focus) ? p.focus : null,
-      targetKcalDelta: Number.isFinite(Number(p.targetKcalDelta)) ? Number(p.targetKcalDelta) : 0,
-      ratePerCycle: Number.isFinite(Number(p.ratePerCycle)) ? Number(p.ratePerCycle) : 0,
-      // g/kg tocados en el cajón (null = fórmula por defecto), ver
-      // docs/plan-info-calculo-fase.md.
+      target,
+      // g/kg tocados en el cajón (null = fórmula por defecto).
       proteinPerKg: positiveOrNull(p.proteinPerKg),
       fatPerKg: positiveOrNull(p.fatPerKg),
     },
+  };
+}
+
+function sanitizePhaseTarget(target) {
+  const kcal = Number(target?.kcal);
+  if (!Number.isFinite(kcal) || kcal <= 0) return null;
+  return {
+    kcal: Math.round(kcal),
+    protein: Math.round(Number(target?.protein) || 0),
+    carbs: Math.round(Number(target?.carbs) || 0),
+    fat: Math.round(Number(target?.fat) || 0),
+    source: target?.source === "manual" ? "manual" : "calculated",
   };
 }
 
@@ -52,14 +55,8 @@ function positiveOrNull(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function sanitizeChoiceCycleDays(value) {
-  if (value === undefined || value === null) return undefined;
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 7;
-}
-
 // La copia congelada de DietTemplate ES la asignación (ver
-// diet-template-schema.js), así que trae days/dayPatterns con todo su
+// diet-template-schema.js), así que trae los menús con todo su
 // contenido de comidas — nadie en el frontend necesita eso para pintar "qué
 // plan tiene este cliente y desde cuándo", solo lo engordaría. Esta
 // proyección es la única que sale por la red, usada por los 3 endpoints que
@@ -72,19 +69,15 @@ function toAssignmentResponse(doc, extra = {}) {
     startDate: doc.startDate,
     endDate: doc.endDate,
     status: doc.status,
-    daysCount: (doc.days || []).length,
-    // Días que dura un ciclo de ESTE doc (contenido, ver cycle-window.js).
-    cycleDays: contentCycleDays(doc),
-    choiceCycleDays: doc.choiceCycleDays ?? null,
+    menusCount: (doc.menus || []).length,
     supersededBy: doc.supersededBy,
     sourceTemplateId: doc.sourceTemplateId,
     createdAt: doc.createdAt,
     planName: doc.name,
-    mode: doc.mode,
-    // La fase a la que pertenece este ciclo (phaseId = self en el head).
+    // La fase a la que pertenece este contenido (phaseId = self en el head).
     phaseId: doc.phaseId || null,
     phaseName: doc.phaseName || null,
-    phaseFocus: doc.phaseFocus || null,
+    phaseTarget: doc.phaseTarget || null,
     ...extra,
   };
 }
@@ -145,13 +138,13 @@ module.exports = {
   },
 
   // POST /trainer/clients/:clientId/nutrition-plans
-  // body: { name, days, mode, dayPatterns, choiceCycleDays?, startDate, phase? }
+  // body: { name, menus, startDate, phase? }
   // "Crear dieta" — igual que applyPlan pero sin plantilla de origen: el
   // contenido lo construye el trainer aquí mismo, directo para este cliente.
   async createDirect(req, res) {
     const trainerId = req.auth.userId;
     const { clientId } = req.params;
-    const { name, days, mode, dayPatterns, choiceCycleDays, startDate } = req.body || {};
+    const { name, menus, startDate } = req.body || {};
 
     const trimmedName = (name || "").trim();
     if (!trimmedName) return res.status(400).send({ message: "El nombre es obligatorio" });
@@ -167,10 +160,7 @@ module.exports = {
         trainerId,
         clientId,
         name: trimmedName,
-        days: sanitizeDays(days),
-        mode: sanitizeMode(mode),
-        dayPatterns: sanitizeDayPatterns(dayPatterns),
-        choiceCycleDays: sanitizeChoiceCycleDays(choiceCycleDays),
+        menus: sanitizeMenus(menus),
         startDate,
         ...sanitizePhase(req.body),
       });
@@ -197,45 +187,25 @@ module.exports = {
   },
 
   // GET /trainer/clients/:clientId/nutrition-plans/active
-  // TASK-044 (MASTER_BACKLOG.md) — expone `mode` y, solo para planes
-  // "choice", `stuckDaysCount`: cuántos días desde que empezó a regir esta
-  // asignación el cliente nunca eligió menú (DietDay.dayTypeName sigue
-  // null). Antes de esto no había ninguna forma de que el trainer se
-  // enterase de un plan "choice" atascado.
+  // TASK-044 (MASTER_BACKLOG.md) — `stuckDaysCount`: cuántos días desde que
+  // empezó a regir esta asignación el cliente nunca eligió menú
+  // (DietDay.menuName sigue null). Sin esto el trainer no tiene forma de
+  // enterarse de un plan atascado porque el cliente no elige.
   async getActive(req, res) {
     const assignment = await planAssignmentService.getActiveForClient(req.params.clientId);
     if (!assignment) return res.send(null);
 
-    let stuckDaysCount = null;
-    if (assignment.mode === "choice") {
-      {
-        stuckDaysCount = await dietDaysService.countDaysWithoutChoice(
-          assignment.clientId,
-          assignment.startDate,
-          todayIsoDate()
-        );
-      }
-    }
+    const stuckDaysCount = await dietDaysService.countDaysWithoutChoice(
+      assignment.clientId,
+      assignment.startDate,
+      todayIsoDate()
+    );
 
-    // F20-quinquies — qué días de la semana cubre este plan "recurring",
-    // para pintar las píldoras L/M/X/J/V/S/D en la ficha del cliente. Unión
-    // de CADA dayPattern por separado (no solo la unión): un plan puede
-    // tener un patrón para Lun/Mié/Sáb y otro distinto para Mar/Dom, y en
-    // la ficha del cliente interesa distinguir cuál cubre cuáles días, no
-    // solo "qué días tienen algo pautado" (ver TASK del 2026-08-24,
-    // "si tiene varios patrones habría que indicarlos").
-    const recurringPatterns =
-      assignment.mode === "recurring"
-        ? (assignment.dayPatterns || [])
-            .filter((p) => (p.appliesTo || []).length)
-            .map((p) => ({ name: p.name, appliesTo: [...(p.appliesTo || [])].sort() }))
-        : null;
-
-    return res.send(toAssignmentResponse(assignment, { stuckDaysCount, recurringPatterns }));
+    return res.send(toAssignmentResponse(assignment, { stuckDaysCount }));
   },
 
   // GET /trainer/clients/:clientId/nutrition-plans/:planId
-  // Editor de fase/ciclo ya asignado — contenido completo (days/dayPatterns)
+  // Editor de fase/semana ya asignada — contenido completo (menus)
   // de ESTA copia, para precargar el builder. Distinto de getActive/getHistory
   // (toAssignmentResponse), que solo devuelven el resumen para listas.
   async getPlanContent(req, res) {
@@ -246,10 +216,10 @@ module.exports = {
   },
 
   // PUT /trainer/clients/:clientId/nutrition-plans/:planId
-  // body: { name?, mode?, days?, dayPatterns? } — mismo shape "clipboard" que
+  // body: { name?, menus? } — mismo shape "clipboard" que
   // PUT /trainer/diet-templates/:id, pero editando la copia de ESTE cliente,
-  // nunca una plantilla de biblioteca. Funciona igual para el ciclo 1 que
-  // para cualquier ciclo posterior (sin sourceTemplateId).
+  // nunca una plantilla de biblioteca. Funciona igual para el contenido
+  // inicial que para cualquier semana posterior (sin sourceTemplateId).
   async updateContent(req, res) {
     const { clientId, planId } = req.params;
     const patch = {};
@@ -258,10 +228,7 @@ module.exports = {
       if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
       patch.name = name;
     }
-    if (req.body?.mode !== undefined) patch.mode = sanitizeMode(req.body.mode);
-    if (req.body?.days !== undefined) patch.days = sanitizeDays(req.body.days);
-    if (req.body?.dayPatterns !== undefined) patch.dayPatterns = sanitizeDayPatterns(req.body.dayPatterns);
-    if (req.body?.choiceCycleDays !== undefined) patch.choiceCycleDays = sanitizeChoiceCycleDays(req.body.choiceCycleDays);
+    if (req.body?.menus !== undefined) patch.menus = sanitizeMenus(req.body.menus);
 
     const plan = await planAssignmentService.updateAssignmentContent({
       trainerId: req.auth.userId,
@@ -270,14 +237,14 @@ module.exports = {
       ...patch,
     });
     if (!plan) return res.status(404).send({ message: "Plan no encontrado" });
-    // Los días que el cliente ya tenía abiertos dentro de este ciclo recogen
+    // Los días que el cliente ya tenía abiertos dentro de esta semana recogen
     // la edición (ver diet-day-resolver.js#resyncPlannedDays).
     await resyncPlannedDays(clientId, plan.startDate, plan.endDate);
     return res.send(plan);
   },
 
   // GET /trainer/clients/:clientId/nutrition-history
-  // Feed de eventos (fases, ciclos, check-ins, excepciones) para el bloque
+  // Feed de eventos (fases, semanas, check-ins, excepciones) para el bloque
   // "Historial de nutrición" de la ficha. Ver nutrition-history.js.
   async getNutritionHistory(req, res) {
     return res.send(await planAssignmentService.getNutritionHistory(req.params.clientId));
@@ -325,17 +292,16 @@ module.exports = {
     return res.status(204).send();
   },
 
-  // POST /trainer/clients/:clientId/diet-exceptions
-  // body: { date, mealSlot?, action: "override"|"skip", override? }
-  async createException(req, res) {
+  // POST /trainer/clients/:clientId/skipped-days
+  // body: { date } — ese día el cliente no sigue el plan: se vacía de lo
+  // pautado y deja de contar. Lo que el cliente anotó por su cuenta se
+  // queda (es su registro, no del plan).
+  async markSkippedDay(req, res) {
     const { clientId } = req.params;
-    const { date, mealSlot, action, override } = req.body || {};
+    const { date } = req.body || {};
 
     if (!ISO_DATE.test(date || "")) {
       return res.status(400).send({ message: "date inválida (YYYY-MM-DD)" });
-    }
-    if (!["override", "skip"].includes(action)) {
-      return res.status(400).send({ message: "action debe ser override o skip" });
     }
 
     const assignment = await planAssignmentService.findCoveringDate(clientId, date);
@@ -343,25 +309,18 @@ module.exports = {
       return res.status(400).send({ message: "Este cliente no tiene un plan activo en esa fecha" });
     }
 
-    const exception = await dietExceptionDao.create({
-      assignmentId: assignment._id,
-      clientId,
-      date,
-      mealSlot: mealSlot || null,
-      action,
-      override: action === "override" ? override : undefined,
-    });
-
-    return res.status(201).send(exception);
+    const skipped = await markDaySkipped(clientId, date);
+    if (!skipped) return res.status(404).send({ message: "No hay día registrado en esa fecha" });
+    return res.status(201).send(skipped);
   },
 
-  // --- Ciclos por contenido (docs/plan-ciclos-por-contenido.md) ---
+  // --- Semanas (docs/plan-semanas.md) ---
 
-  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles
-  async getPhaseCycles(req, res) {
+  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks
+  async getPhaseWeeks(req, res) {
     const { clientId, phaseId } = req.params;
     try {
-      return res.send(await planAssignmentService.getPhaseCycles(clientId, phaseId));
+      return res.send(await planAssignmentService.getPhaseWeeks(clientId, phaseId));
     } catch (error) {
       if (error.code === "DIET_PHASE_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
@@ -370,70 +329,64 @@ module.exports = {
     }
   },
 
-  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/:number/need
-  // Cómo se calculó la necesidad de ese ciclo (docs/plan-info-calculo-fase.md).
-  async getCycleNeed(req, res) {
+  // GET /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/:number/need
+  // Cómo se calculó la necesidad del cliente en esa semana.
+  async getWeekNeed(req, res) {
     const { clientId, phaseId, number } = req.params;
     const n = Number(number);
     if (!Number.isInteger(n) || n < 1) {
-      return res.status(400).send({ message: "Número de ciclo inválido" });
+      return res.status(400).send({ message: "Número de semana inválido" });
     }
     try {
-      return res.send(await planAssignmentService.getCycleNeed(clientId, phaseId, n));
+      return res.send(await planAssignmentService.getWeekNeed(clientId, phaseId, n));
     } catch (error) {
-      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_CYCLE_NOT_FOUND") {
+      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_WEEK_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
       }
       throw error;
     }
   },
 
-  // POST /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next/scale
-  // body: { kcal } → contenido del ciclo vigente escalado a esas kcal, para
-  // abrir el builder precargado. No escribe nada.
-  async scaleNextCycle(req, res) {
+  // POST /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next/scale
+  // body: { kcal } → contenido vigente escalado a esas kcal, para abrir el
+  // builder precargado. No escribe nada.
+  async scaleNextWeek(req, res) {
     const { clientId, phaseId } = req.params;
     const kcal = Number(req.body?.kcal);
     if (!Number.isFinite(kcal) || kcal <= 0) return res.status(400).send({ message: "kcal debe ser mayor que 0" });
     try {
-      return res.send(await planAssignmentService.scaleNextCycle(clientId, phaseId, kcal));
+      return res.send(await planAssignmentService.scaleNextWeek(clientId, phaseId, kcal));
     } catch (error) {
-      if (error.code === "DIET_PHASE_NOT_FOUND") {
+      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_NO_NEXT_WEEK") {
         return res.status(404).send({ message: error.message, code: error.code });
       }
       throw error;
     }
   },
 
-  // PUT /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next
-  // body: { mode?, days?, dayPatterns?, choiceCycleDays? }
-  // Sin startDate a propósito: la fecha la decide el servidor (inicio del
-  // ciclo siguiente). 204 = el contenido no cambia nada, no se persiste.
-  async prepareNextCycle(req, res) {
+  // PUT /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next
+  // body: { menus }
+  // Sin startDate a propósito: la fecha es el lunes en que empieza la
+  // semana. 204 = el contenido no cambia nada, no se persiste.
+  async prepareNextWeek(req, res) {
     const trainerId = req.auth.userId;
     const { clientId, phaseId } = req.params;
     const b = req.body || {};
 
-    const hasContent =
-      (Array.isArray(b.days) && b.days.length) ||
-      (Array.isArray(b.dayPatterns) && b.dayPatterns.length);
-    if (!hasContent) {
-      return res.status(400).send({ message: "El ciclo necesita contenido (days o dayPatterns)" });
+    if (!Array.isArray(b.menus) || !b.menus.length) {
+      return res.status(400).send({ message: "La semana necesita al menos un menú" });
     }
 
     let result;
     try {
-      result = await planAssignmentService.prepareNextCycle({
+      result = await planAssignmentService.prepareNextWeek({
         trainerId,
         clientId,
         phaseId,
-        mode: sanitizeMode(b.mode),
-        days: sanitizeDays(b.days),
-        dayPatterns: sanitizeDayPatterns(b.dayPatterns),
-        choiceCycleDays: sanitizeChoiceCycleDays(b.choiceCycleDays),
+        menus: sanitizeMenus(b.menus),
       });
     } catch (error) {
-      if (error.code === "DIET_PHASE_NOT_FOUND") {
+      if (error.code === "DIET_PHASE_NOT_FOUND" || error.code === "DIET_NO_NEXT_WEEK") {
         return res.status(404).send({ message: error.message, code: error.code });
       }
       if (error.code === "PLAN_OVERLAP") {
@@ -443,15 +396,15 @@ module.exports = {
     }
 
     if (result.unchanged) return res.status(204).send();
-    await resyncPlannedDays(clientId, result.cycle.startDate, result.cycle.endDate);
-    return res.send(toAssignmentResponse(result.cycle));
+    await resyncPlannedDays(clientId, result.week.startDate, result.week.endDate);
+    return res.send(toAssignmentResponse(result.week));
   },
 
-  // DELETE /trainer/clients/:clientId/nutrition-phases/:phaseId/cycles/next
-  async discardNextCycle(req, res) {
+  // DELETE /trainer/clients/:clientId/nutrition-phases/:phaseId/weeks/next
+  async discardNextWeek(req, res) {
     const { clientId, phaseId } = req.params;
     try {
-      await planAssignmentService.discardNextCycle(clientId, phaseId);
+      await planAssignmentService.discardNextWeek(clientId, phaseId);
     } catch (error) {
       if (error.code === "DIET_PHASE_NOT_FOUND") {
         return res.status(404).send({ message: error.message, code: error.code });
@@ -461,13 +414,42 @@ module.exports = {
     return res.status(204).send();
   },
 
+  // PATCH /trainer/clients/:clientId/nutrition-phases/:phaseId/dates
+  // body: { startDate?, endDate? } — corregir cuándo empieza y acaba una
+  // fase ya aplicada, sin pisar otra.
+  async updatePhaseDates(req, res) {
+    const { clientId, phaseId } = req.params;
+    const { startDate, endDate } = req.body || {};
+    if (startDate !== undefined && !ISO_DATE.test(startDate || "")) {
+      return res.status(400).send({ message: "startDate inválida (YYYY-MM-DD)" });
+    }
+    if (endDate !== undefined && endDate !== null && !ISO_DATE.test(endDate || "")) {
+      return res.status(400).send({ message: "endDate inválida (YYYY-MM-DD)" });
+    }
+
+    let phase;
+    try {
+      phase = await planAssignmentService.updatePhaseDates({ clientId, phaseId, startDate, endDate });
+    } catch (error) {
+      if (error.code === "DIET_PHASE_NOT_FOUND") {
+        return res.status(404).send({ message: error.message, code: error.code });
+      }
+      if (error.code === "PLAN_OVERLAP" || error.code === "PLAN_INVALID_RANGE") {
+        return res.status(409).send({ message: error.message, code: error.code });
+      }
+      throw error;
+    }
+    await resyncPlannedDays(clientId, phase.startDate, phase.endDate);
+    return res.send(toAssignmentResponse(phase));
+  },
+
   // GET /trainer/clients/:clientId/diet-timeline?from&to
-  async getCycleTimeline(req, res) {
+  async getDietTimeline(req, res) {
     const { clientId } = req.params;
     const { from, to } = req.query || {};
     if (!ISO_DATE.test(from || "") || !ISO_DATE.test(to || "")) {
       return res.status(400).send({ message: "from y to (YYYY-MM-DD) son obligatorios" });
     }
-    return res.send(await planAssignmentService.getCycleTimeline(clientId, from, to));
+    return res.send(await planAssignmentService.getDietTimeline(clientId, from, to));
   },
 };

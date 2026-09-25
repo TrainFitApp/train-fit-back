@@ -368,65 +368,45 @@ test("detectNoTrainingActivity", async (t) => {
 });
 
 test("detectCheckinOverdue", async (t) => {
+  // Una solicitud está vencida cuando su VENTANA se cerró vacía (la cuenta
+  // checkin-agenda-service.js#missedOccurrences), no por días transcurridos
+  // desde la última respuesta.
   await t.test("nunca respondido -> alerta con frase de primer check-in", () => {
     const signal = detectCheckinOverdue({
       clientName: "Sara",
       now: NOW,
-      checkin: { config: { cadence: "weekly" }, lastResponseAt: null },
+      checkin: { missed: 1, lastResponseAt: null },
     });
     assert.ok(signal);
-    assert.match(signal.reason, /todavía no ha respondido a su primer check-in/);
+    assert.match(signal.reason, /todavía no ha respondido a ningún check-in/);
   });
 
-  await t.test("un ciclo vencido -> prioridad media", () => {
+  await t.test("una solicitud vencida -> prioridad media", () => {
     const signal = detectCheckinOverdue({
       clientName: "Sara",
       now: NOW,
-      checkin: {
-        config: { cadence: "weekly" },
-        lastResponseAt: new Date(NOW.getTime() - 8 * 86400000),
-      },
+      checkin: { missed: 1, lastResponseAt: new Date(NOW.getTime() - 8 * 86400000) },
     });
     assert.equal(signal.priority, "medium");
-    assert.equal(signal.context.overdueCycles, 1);
+    assert.equal(signal.context.missed, 1);
   });
 
-  await t.test("dos ciclos o más vencidos -> prioridad alta", () => {
+  await t.test("dos solicitudes o más vencidas -> prioridad alta", () => {
     const signal = detectCheckinOverdue({
       clientName: "Sara",
       now: NOW,
-      checkin: {
-        config: { cadence: "weekly" },
-        lastResponseAt: new Date(NOW.getTime() - 20 * 86400000),
-      },
+      checkin: { missed: 2, lastResponseAt: new Date(NOW.getTime() - 20 * 86400000) },
     });
     assert.equal(signal.priority, "high");
-    assert.equal(signal.context.overdueCycles, 2);
+    assert.equal(signal.context.missed, 2);
   });
 
-  await t.test("respondido dentro de plazo -> sin alerta", () => {
+  await t.test("ninguna ventana cerrada vacía -> sin alerta", () => {
     assert.equal(
       detectCheckinOverdue({
         clientName: "Sara",
         now: NOW,
-        checkin: {
-          config: { cadence: "weekly" },
-          lastResponseAt: new Date(NOW.getTime() - 3 * 86400000),
-        },
-      }),
-      null
-    );
-  });
-
-  await t.test("cadencia 'once' ya respondida -> nunca vuelve a alertar", () => {
-    assert.equal(
-      detectCheckinOverdue({
-        clientName: "Sara",
-        now: NOW,
-        checkin: {
-          config: { cadence: "once" },
-          lastResponseAt: new Date(NOW.getTime() - 200 * 86400000),
-        },
+        checkin: { missed: 0, lastResponseAt: new Date(NOW.getTime() - 3 * 86400000) },
       }),
       null
     );
@@ -457,7 +437,7 @@ test("buildSignalsForClient", async (t) => {
       now: NOW,
       entries: weightEntries([[21, 80], [0, 78.5]]),
       adherence: goodAdherence(95),
-      checkin: { config: { cadence: "weekly" }, lastResponseAt: new Date(NOW.getTime() - 86400000) },
+      checkin: { missed: 0, lastResponseAt: new Date(NOW.getTime() - 86400000) },
       lastActivityAt: NOW,
     });
     assert.deepEqual(signals, []);
@@ -470,10 +450,7 @@ test("buildSignalsForClient", async (t) => {
       now: NOW,
       entries: weightEntries([[21, 80], [0, 80.1]]),
       adherence: goodAdherence(85),
-      checkin: {
-        config: { cadence: "weekly" },
-        lastResponseAt: new Date(NOW.getTime() - 30 * 86400000),
-      },
+      checkin: { missed: 3, lastResponseAt: new Date(NOW.getTime() - 30 * 86400000) },
       lastActivityAt: new Date(NOW.getTime() - 30 * 86400000),
     });
 
@@ -502,7 +479,7 @@ test("buildSignalsForClient", async (t) => {
       now: NOW,
       entries: weightEntries([[21, 80], [7, 80], [0, 76]]),
       adherence: goodAdherence(30),
-      checkin: { config: { cadence: "weekly" }, lastResponseAt: null },
+      checkin: { missed: 2, lastResponseAt: null },
       lastActivityAt: new Date(NOW.getTime() - 20 * 86400000),
     });
 

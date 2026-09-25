@@ -228,12 +228,9 @@ async function buildRoster(trainerId, now = new Date()) {
           activeDays: diasActivosDeTarea(task, ROSTER_WINDOW_DAYS, now),
         })),
       },
-      checkins: {
-        respondedAt: (snapshot.checkinResponses || []).map((r) => r.respondedAt),
-        cadence: snapshot.checkinConfig?.cadence,
-        periodDays: ROSTER_WINDOW_DAYS,
-        now,
-      },
+      checkins: snapshot.checkin
+        ? { expected: snapshot.checkin.expected || 0, answered: snapshot.checkin.answered || 0 }
+        : { expected: 0, answered: 0 },
     });
 
     const alerts = alertsByClient.get(clientKey) || { total: 0, high: 0 };
@@ -253,7 +250,7 @@ async function buildRoster(trainerId, now = new Date()) {
       weightChange: weightChangeFor(snapshot.entries),
       lastCheckinAt: snapshot.lastResponseAt || null,
       daysSinceCheckin: daysSince(snapshot.lastResponseAt, now),
-      checkinCadence: snapshot.checkinConfig?.cadence || null,
+      nextCheckinDate: snapshot.checkin?.nextDate || null,
       lastActivityAt: snapshot.lastActivityAt || null,
       daysSinceActivity: daysSince(snapshot.lastActivityAt, now),
       sessions: (snapshot.workoutDates || []).length,

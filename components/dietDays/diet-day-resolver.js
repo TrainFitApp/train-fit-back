@@ -104,9 +104,9 @@ async function resolveOwnedDietDay(userId, date) {
     // consumidores sin entrenador, o cualquier fecha fuera de cualquier
     // plan) resolvePlanForDate devuelve null y este bloque no hace nada:
     // comportamiento IDÉNTICO al de antes de esta pieza. Un fallo aquí
-    // nunca debe tirar abajo la creación del día ya hecha. En modo "choice"
-    // sin elección todavía (ver plan-resolver.js) esto también devuelve
-    // null — el día se crea vacío hasta que el cliente elija explícitamente.
+    // nunca debe tirar abajo la creación del día ya hecha. Sin menú elegido
+    // todavía (ver plan-resolver.js) esto también devuelve null — el día se
+    // crea vacío hasta que el cliente elija explícitamente.
     const appliedAny = await trySyncEmptyDietDayWithActivePlan(dietDayDoc, date, userId);
     if (appliedAny) {
       dietDay = await dietDaysService.findByUserAndDate(userId, date);
@@ -147,7 +147,7 @@ async function resolveOwnedMealById(userId, mealId) {
   throw err;
 }
 
-// Opciones de comida (2026-09) — el profesional edita una fase/ciclo ya
+// Opciones de comida (2026-09) — el profesional edita una fase/semana ya
 // asignado (añade una opción, cambia cantidades…) y los días que el cliente
 // YA había abierto no se enteraban: solo se resolvía el plan al crear el día
 // o si seguía vacío. Vuelve a aplicar el plan sobre los DietDay existentes
@@ -156,8 +156,8 @@ async function resolveOwnedMealById(userId, mealId) {
 // seguido. Se salta:
 //   · días con algún alimento pautado ya marcado como consumido (el cliente
 //     ya está siguiendo ese día tal como estaba),
-//   · días para los que el plan no resuelve nada (fuera de plan, o modo
-//     "choice" sin menú elegido).
+//   · días para los que el plan no resuelve nada (fuera de plan, o sin menú
+//     elegido).
 // Lo que el cliente añadió por su cuenta se conserva (applyAlternative).
 // Nunca lanza: un fallo aquí no debe tumbar la edición del plan.
 async function resyncPlannedDays(clientId, from, to = null) {
@@ -169,7 +169,7 @@ async function resyncPlannedDays(clientId, from, to = null) {
   try {
     const days = await dietDaySchema
       .find({ userId: clientId, date: dateFilter })
-      .select("_id date meals dayTypeName")
+      .select("_id date meals menuName")
       .sort({ date: 1 });
 
     for (const day of days) {
@@ -182,7 +182,7 @@ async function resyncPlannedDays(clientId, from, to = null) {
       if (hasConsumedPlanned) continue;
 
       const result = await planResolver.resolvePlanForDate(clientId, day.date, {
-        chosenPatternName: day.dayTypeName || undefined,
+        chosenMenuName: day.menuName || undefined,
       });
       if (!result) continue;
 

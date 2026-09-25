@@ -108,7 +108,8 @@ test("señales integradas a partir de snapshots", async (t) => {
     return {
       activeClients: [],
       pendingReviewRelations: [],
-      checkinByClient: new Map(),
+      schedulesByClient: new Map(),
+      answeredByClient: new Map(),
       lastResponseByClient: new Map(),
       endingSoonByClient: new Map(),
       anthropometryByClient: new Map(),

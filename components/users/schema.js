@@ -27,7 +27,6 @@ const trainerTaskSchema = require("../trainerTasks/trainer-task-schema");
 const clientIntakeSchema = require("../clientIntake/client-intake-schema");
 const trainerIntakeConfigSchema = require("../trainerIntakeConfig/trainer-intake-config-schema");
 const checkinResponseSchema = require("../trainerCheckins/checkin-response-schema");
-const trainerCheckinTemplateSchema = require("../trainerCheckins/trainer-checkin-template-schema");
 const checkinTemplateDefinitionSchema = require("../trainerCheckins/checkin-template-definition-schema");
 const notificationSchema = require("../notifications/notification-schema");
 const recipeSchema = require("../recipes/recipe-schema");
@@ -61,7 +60,6 @@ const UserSchema = new Schema({
   activity: Number,
   objetive: Number,
   steps: Number,
-  stepGoal: Number,
   training: Number,
   birth: Date,
   goalInUse: {
@@ -214,7 +212,7 @@ UserSchema.pre("deleteOne", async function (next) {
       // Plantillas de dieta del trainer, y copias congeladas de asignaciones
       // que él creó (mismo documento — ver diet-template-schema.js). El hook
       // pre('deleteMany') de ese schema ya cascada CustomProduct/CustomRecipe
-      // y, para las copias, sus DietException.
+      // de cada plantilla.
       await dietTemplateSchema.deleteMany({ trainerId: user._id });
 
       // El usuario puede ser el trainer O el cliente de cada una de estas
@@ -239,11 +237,7 @@ UserSchema.pre("deleteOne", async function (next) {
       await checkinResponseSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
-      await trainerCheckinTemplateSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
       await require("../trainerCheckins/checkin-schedule-schema").deleteMany({ $or: [{ trainerId: user._id }, { clientId: user._id }] });
-      await require("../trainerCheckins/checkin-request-schema").deleteMany({ $or: [{ trainerId: user._id }, { clientId: user._id }] });
       await notificationSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });

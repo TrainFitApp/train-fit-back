@@ -70,6 +70,7 @@ module.exports = {
     if (!target) return null; // faltan biométricos, nada que recalcular
 
     const macros = {
+      source: "calculated",
       kcalTotal: target.kcal,
       proteinsGTotal: round1(target.protein),
       carbohydratesGTotal: round1(target.carbs),
@@ -78,6 +79,10 @@ module.exports = {
     };
 
     const current = user.goalInUse ? await nutritionalGoalDao.findById(user.goalInUse) : null;
+    // Un objetivo MANUAL no se pisa al recalcular: alguien (el cliente o su
+    // profesional) decidió esas kcal a propósito, y cambiar de peso no puede
+    // borrárselas por detrás. Para volver al calculado hay que pedirlo.
+    if (current?.source === "manual") return current._id;
     if (current) {
       await nutritionalGoalDao.update(current._id, macros);
       return current._id;

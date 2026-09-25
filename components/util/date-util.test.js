@@ -6,6 +6,7 @@ const {
   daysInRange,
   addDaysToIsoDate,
   todayIsoDate,
+  startOfIsoWeek,
 } = require("./date-util");
 
 // Estas dos funciones se llamaban IGUAL en dos archivos distintos y
@@ -85,5 +86,44 @@ test("isoDate / todayIsoDate", async (t) => {
 
   await t.test("todayIsoDate tiene el formato esperado", () => {
     assert.match(todayIsoDate(), /^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+// Las semanas de una fase de dieta se anclan aquí (week-window.js). Un lunes
+// mal calculado corre TODAS las ventanas de la fase, así que el caso que más
+// importa es el domingo: pertenece a la semana que ya iba, no a la siguiente.
+test("startOfIsoWeek", async (t) => {
+  await t.test("el lunes es su propio lunes", () => {
+    assert.equal(startOfIsoWeek("2026-09-21"), "2026-09-21");
+  });
+
+  await t.test("cualquier día de la semana devuelve el mismo lunes", () => {
+    for (const day of [
+      "2026-09-21", // lunes
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25",
+      "2026-09-26", // sábado
+      "2026-09-27", // domingo
+    ]) {
+      assert.equal(startOfIsoWeek(day), "2026-09-21", day);
+    }
+  });
+
+  await t.test("el domingo cierra la semana, no abre la siguiente", () => {
+    assert.equal(startOfIsoWeek("2026-09-27"), "2026-09-21");
+    assert.equal(startOfIsoWeek("2026-09-28"), "2026-09-28");
+  });
+
+  await t.test("cruza meses y años", () => {
+    assert.equal(startOfIsoWeek("2026-10-01"), "2026-09-28");
+    assert.equal(startOfIsoWeek("2026-01-01"), "2025-12-29");
+  });
+
+  await t.test("es idempotente", () => {
+    for (const day of ["2026-09-23", "2026-01-01", "2028-02-29"]) {
+      assert.equal(startOfIsoWeek(startOfIsoWeek(day)), startOfIsoWeek(day), day);
+    }
   });
 });

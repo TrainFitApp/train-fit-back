@@ -1,7 +1,7 @@
 // Gathering de biométricos + guard + cálculo del target de un cliente,
 // compartido entre el cajón de sugerencias de dieta
 // (dietTemplates/diet-suggestion-controller.js#suggest) y la necesidad por
-// ciclo del resumen de fase (planAssignments/cycle-need.js).
+// semana de una fase (planAssignments/week-need.js).
 // Extraído para no mantener la misma lógica de guard/fallback de peso en
 // dos sitios (antes solo vivía en diet-suggestion-controller.js).
 
@@ -10,7 +10,7 @@ const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { explainNutritionTarget } = require("./nutrition-target");
 const {
   stepsRangeFromValue,
-  stepsRangeFromAverage,
+  stepsRangeFromKey,
   trainingDaysFromFactors,
   trainingFactor,
 } = require("./training-factor");
@@ -22,36 +22,39 @@ function ageFromBirth(birth, at = new Date()) {
   return Math.floor(ms / (1000 * 3600 * 24) / 365.25);
 }
 
-// Pasos y factor de entrenamiento que entran en la fórmula. Sin media
-// declarada (check-in del ciclo anterior), los del perfil tal cual. Con
-// media, se mapea al rango y se recalcula el factor combinado con los días
-// de entrenamiento del perfil (ver training-factor.js); si el perfil no
-// permite recuperar esos días (rango de pasos desconocido) se cae al perfil
-// y se dice por qué.
-function resolveSteps(user, stepsAvg) {
+// Pasos y factor de entrenamiento que entran en la fórmula. Sin rango
+// declarado en un check-in, los del perfil tal cual. Con rango declarado, se
+// recalcula el factor combinado con los días de entrenamiento del perfil (ver
+// training-factor.js); si el perfil no permite recuperar esos días (rango de
+// pasos desconocido) se cae al perfil y se dice por qué.
+//
+// Los pasos salen del HÁBITO de pasos que le pauta su profesional y de los
+// días que el cliente lo marcó (docs/plan-semanas.md §12): la fórmula
+// solo usa el rango para elegir un factor, así que pedir un número exacto a
+// diario era pedir una precisión que nadie tiene.
+function resolveSteps(user, stepsRangeKey) {
   const profileRange = stepsRangeFromValue(user?.steps);
   const profile = {
     stepsValue: user?.steps ?? null,
     stepsLabel: profileRange?.label || null,
+    stepsRangeKey: profileRange?.key || null,
     stepsFrom: "profile",
-    stepsAvg: null,
     trainingValue: user?.training ?? null,
     trainingDays: profileRange ? trainingDaysFromFactors(profileRange.value, user?.training) : null,
   };
 
-  const avg = Number(stepsAvg);
-  if (!Number.isFinite(avg) || stepsAvg === null) return profile;
+  if (!stepsRangeKey) return profile;
 
-  const loggedRange = stepsRangeFromAverage(avg);
-  if (!loggedRange || !profile.trainingDays) {
-    return { ...profile, stepsAvg: Math.round(avg), stepsFallbackReason: "profile_unresolved" };
+  const declared = stepsRangeFromKey(stepsRangeKey);
+  if (!declared || !profile.trainingDays) {
+    return { ...profile, stepsFallbackReason: "profile_unresolved" };
   }
   return {
-    stepsValue: loggedRange.value,
-    stepsLabel: loggedRange.label,
-    stepsFrom: "logged",
-    stepsAvg: Math.round(avg),
-    trainingValue: trainingFactor(loggedRange.value, profile.trainingDays.id),
+    stepsValue: declared.value,
+    stepsLabel: declared.label,
+    stepsRangeKey: declared.key,
+    stepsFrom: "habit",
+    trainingValue: trainingFactor(declared.value, profile.trainingDays.id),
     trainingDays: profile.trainingDays,
   };
 }
@@ -60,11 +63,11 @@ function resolveSteps(user, stepsAvg) {
  * @param {{ proteinPerKg?: number, fatPerKg?: number }} [macroOverride]
  *   Override manual del cajón de sugerencias (g/kg) — ver
  *   nutrition-target.js#computeNutritionTarget.
- * @param {{ asOf?: string, stepsAvg?: number|null }} [options]
+ * @param {{ asOf?: string, stepsRangeKey?: string|null, useClientObjetive?: boolean }} [options]
  *   asOf: fecha ISO — el peso es el último registrado hasta ese día (y la
  *   edad, la de ese día). Sin él, el último que haya.
- *   stepsAvg: media diaria de pasos que el cliente declaró en el check-in
- *   del ciclo anterior; con ella entra en la fórmula en vez del perfil.
+ *   stepsRangeKey: rango de pasos que sale del hábito cumplido; con él
+ *   entra en la fórmula en vez del rango del perfil.
  * @returns {{ ok: true, target, weightSource, clientObjetive, inputs, breakdown }
  *          | { ok: false, missing: string[], inputs }}
  */
@@ -87,9 +90,19 @@ async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0, mac
     ? { weightKg, from: "signup" }
     : null;
   const age = ageFromBirth(user?.birth, options.asOf ? new Date(`${options.asOf}T12:00:00`) : new Date());
-  const steps = resolveSteps(user, options.stepsAvg);
+  const steps = resolveSteps(user, options.stepsRangeKey);
 
-  const delta = Number.isFinite(objetiveKcalDelta) ? objetiveKcalDelta : 0;
+  // `useClientObjetive`: el delta lo pone el propio cliente (el objetivo que
+  // eligió al registrarse). Es el valor de REFERENCIA que ve el entrenador
+  // antes de tocar nada — ya no hay un "ajuste de kcal" que teclear aparte
+  // (docs/plan-semanas.md §11).
+  const delta = options.useClientObjetive
+    ? Number.isFinite(user?.objetive)
+      ? user.objetive
+      : 0
+    : Number.isFinite(objetiveKcalDelta)
+    ? objetiveKcalDelta
+    : 0;
   const inputs = {
     weightKg,
     weightFrom: weightSource?.from || null,

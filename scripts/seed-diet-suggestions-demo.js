@@ -4,7 +4,9 @@ require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 const fs = require("fs");
 const os = require("os");
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
+const { buildSearchFields } = require("../components/util/search-index");
 
 /**
  * DATOS DE DEMO para "sugerencias de dieta" (rama feat/diet-suggestions).
@@ -42,36 +44,60 @@ const MANIFEST = path.join(os.tmpdir(), "trainfit-seed-diet-suggestions.json");
 
 const clean = process.argv.includes("--clean");
 
-// quantity:100 => el aporte del producto == sus *_100g
-const P = (kcal, protein, carbs, fat, flags) => ({
-  quantity: 100,
-  energyKcal100g: kcal,
-  protein100g: protein,
-  carbohydrates100g: carbs,
-  fat100g: fat,
-  vegan: !!flags.vegan,
-  vegetarian: !!flags.vegetarian,
-  lactoseFree: !!flags.lactoseFree,
-  glutenFree: !!flags.glutenFree,
-});
+function oid(semilla) {
+  const hex = crypto.createHash("md5").update("tf-seed-ds:" + semilla).digest("hex").slice(0, 24);
+  return new mongoose.Types.ObjectId(hex);
+}
 
-const day = (products) => [
-  { dayLabel: "Día 1", meals: [{ slot: "Comida", alternatives: [{ label: "", customProducts: products, customRecipes: [] }] }] },
+// Los alimentos son Product REALES, no macros sueltas: una plantilla de
+// biblioteca guarda {product, quantity} y todo lo que la lee (constructor
+// del entrenador, perfil de macros, aptitud vegana/sin gluten) saca los
+// datos del Product poblado. Sembrar CustomProducts sin `product` colaba en
+// base de datos pero el constructor no podía pintarlos: la dieta se abría
+// vacía y al guardarla esos alimentos se perdían.
+//
+// quantity:100 => el aporte del producto == sus *_100g
+const FOODS = new Map();
+const P = (name, kcal, protein, carbs, fat, flags) => {
+  const _id = oid("product:" + name);
+  if (!FOODS.has(name)) {
+    const fullName = name + MARK;
+    FOODS.set(name, {
+      _id,
+      name: fullName,
+      userId: new mongoose.Types.ObjectId(SANTIAGO),
+      energyKcal100g: kcal,
+      protein100g: protein,
+      carbohydrates100g: carbs,
+      fat100g: fat,
+      vegan: !!flags.vegan,
+      vegetarian: !!flags.vegetarian,
+      lactoseFree: !!flags.lactoseFree,
+      glutenFree: !!flags.glutenFree,
+      ...buildSearchFields({ name: fullName }),
+    });
+  }
+  return { quantity: 100, product: _id };
+};
+
+const menu = (products) => [
+  { name: "Menú 1", meals: [{ slot: "Comida", alternatives: [{ label: "", customProducts: products, customRecipes: [] }] }] },
 ];
 
 const OMNI = { lactoseFree: true, glutenFree: true };
 const VEGAN = { vegan: true, vegetarian: true, lactoseFree: true, glutenFree: true };
 const VEG = { vegetarian: true, glutenFree: true };
+const GF = { glutenFree: true };
 
 // trainerId, nombre, days, ownerClientId, verified   (target Lucía ≈ 1743/103/202/58)
 const TEMPLATES = [
-  [SANTIAGO, "Definición equilibrada" + MARK, day([P(1000, 70, 120, 25, OMNI), P(750, 35, 80, 33, OMNI)]), null, false],
-  [SANTIAGO, "Alto en proteína" + MARK, day([P(950, 105, 60, 28, OMNI), P(750, 45, 60, 27, OMNI)]), null, false],
-  [SANTIAGO, "Volumen limpio" + MARK, day([P(1400, 95, 160, 42, { glutenFree: true }), P(1200, 70, 140, 38, { glutenFree: true })]), null, false],
-  [SANTIAGO, "Vegana flexible" + MARK, day([P(1000, 52, 128, 28, VEGAN), P(760, 40, 86, 27, VEGAN)]), null, false],
-  [SANTIAGO, "Vegetariana mediterránea" + MARK, day([P(1100, 65, 110, 40, VEG), P(790, 43, 78, 26, VEG)]), null, false],
-  [OTHER_TRAINER, "Plan definición estándar TF" + MARK, day([P(1785, 110, 190, 60, { glutenFree: true })]), null, true],
-  [SANTIAGO, "Pescado y verdura (Lucía)" + MARK, day([P(1720, 132, 150, 54, OMNI)]), LUCIA, false],
+  [SANTIAGO, "Definición equilibrada" + MARK, menu([P("Equilibrada comida", 1000, 70, 120, 25, OMNI), P("Equilibrada cena", 750, 35, 80, 33, OMNI)]), null, false],
+  [SANTIAGO, "Alto en proteína" + MARK, menu([P("Proteica comida", 950, 105, 60, 28, OMNI), P("Proteica cena", 750, 45, 60, 27, OMNI)]), null, false],
+  [SANTIAGO, "Volumen limpio" + MARK, menu([P("Volumen comida", 1400, 95, 160, 42, GF), P("Volumen cena", 1200, 70, 140, 38, GF)]), null, false],
+  [SANTIAGO, "Vegana flexible" + MARK, menu([P("Vegana comida", 1000, 52, 128, 28, VEGAN), P("Vegana cena", 760, 40, 86, 27, VEGAN)]), null, false],
+  [SANTIAGO, "Vegetariana mediterránea" + MARK, menu([P("Vegetariana comida", 1100, 65, 110, 40, VEG), P("Vegetariana cena", 790, 43, 78, 26, VEG)]), null, false],
+  [OTHER_TRAINER, "Plan definición estándar TF" + MARK, menu([P("Plato estándar TF", 1785, 110, 190, 60, GF)]), null, true],
+  [SANTIAGO, "Pescado y verdura (Lucía)" + MARK, menu([P("Pescado y verdura", 1720, 132, 150, 54, OMNI)]), LUCIA, false],
 ];
 
 async function main() {
@@ -82,9 +108,9 @@ async function main() {
   const dietTemplateDao = require("../components/dietTemplates/diet-template-dao");
   const DietTemplate = require("../components/dietTemplates/diet-template-schema");
   const NP = require("../components/nutritionPreferences/nutrition-preferences-schema");
-  const { cycleMacroProfile } = require("../components/dietTemplates/diet-macro-profile");
+  const { contentMacroProfile } = require("../components/dietTemplates/diet-macro-profile");
   require("../components/users/schema");
-  require("../components/products/product-schema");
+  const Product = require("../components/products/product-schema");
   require("../components/customProducts/custom-product-schema");
   require("../components/customRecipes/custom-recipe-schema");
   require("../components/recipes/recipe-schema");
@@ -100,6 +126,11 @@ async function main() {
     }
     const leftover = await DietTemplate.deleteMany({ name: { $regex: NAME_RX } });
     if (leftover.deletedCount) console.log("[seed-ds] borrados", leftover.deletedCount, "restos por nombre");
+
+    // Después de las plantillas: su cascada ya borró los CustomProduct que
+    // apuntaban a estos alimentos.
+    const foods = await Product.deleteMany({ _id: { $in: [...FOODS.values()].map((f) => f._id) } });
+    if (foods.deletedCount) console.log("[seed-ds] borrados", foods.deletedCount, "alimentos");
 
     if (manifest.luciaPrefs === "created") {
       await NP.deleteOne({ clientId: LUCIA });
@@ -125,11 +156,16 @@ async function main() {
   // idempotencia: restos de una corrida anterior fuera antes de re-sembrar.
   await DietTemplate.deleteMany({ name: { $regex: NAME_RX } });
 
+  for (const food of FOODS.values()) {
+    await Product.updateOne({ _id: food._id }, { $set: food }, { upsert: true });
+  }
+  console.log("[seed-ds]", FOODS.size, "alimentos en el catálogo de Santiago");
+
   const templateIds = [];
-  for (const [trainerId, name, days, ownerClientId, verified] of TEMPLATES) {
-    const created = await dietTemplateDao.create(trainerId, name, days, "sequential", [], ownerClientId, verified);
+  for (const [trainerId, name, menus, ownerClientId, verified] of TEMPLATES) {
+    const created = await dietTemplateDao.create(trainerId, name, menus, ownerClientId, verified);
     templateIds.push(created._id.toString());
-    const prof = cycleMacroProfile(created.toObject());
+    const prof = contentMacroProfile(created.toObject());
     console.log(
       `  + ${name}  ->  ${prof.kcal} kcal P${prof.protein} C${prof.carbs} G${prof.fat}` +
       `  | suitableFor ${JSON.stringify(created.suitableFor)}` +

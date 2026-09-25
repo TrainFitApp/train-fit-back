@@ -3,6 +3,8 @@ const { SIGNAL_THRESHOLDS, buildSignalsForClient } = require("./coach-signals-se
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const trainerClientService = require("../trainerClients/trainer-client-service");
 const checkinDao = require("../trainerCheckins/checkin-dao");
+const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
+const CheckinSchedule = require("../trainerCheckins/checkin-schedule-schema");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
@@ -10,6 +12,7 @@ const userSchema = require("../users/schema");
 const { runRulesForTrainer } = require("../coachRules/coach-rule-service");
 const tableDao = require("../tables/table-dao");
 const painDao = require("../painLog/pain-dao");
+const { isoDate } = require("../util/date-util");
 
 // Días de silencio tras un cierre MANUAL de una alerta antes de que el
 // evaluador pueda volver a abrirla. Si el coach mira un estancamiento y
@@ -69,13 +72,15 @@ async function loadTrainerContext(trainerId, now) {
   const [
     activeClients,
     pendingReviewRelations,
-    checkinConfigs,
+    checkinSchedules,
+    answeredOccurrences,
     latestResponses,
     checkinResponses,
   ] = await Promise.all([
     trainerClientService.listActiveClientsForTrainer(trainerId),
     trainerClientDao.findByTrainerAndStatusWithClient(trainerId, "en_revision"),
-    checkinDao.getAppliedConfigsForTrainer(trainerId),
+    CheckinSchedule.find({ trainerId }).lean(),
+    checkinDao.listAnsweredOccurrences(trainerId, windowStart),
     checkinDao.getLatestResponseByClient(trainerId),
     // Fase 3 — los VALORES de las respuestas, no solo sus fechas: las reglas
     // del coach pueden condicionar sobre bienestar (estrés, sueño, pasos).
@@ -142,8 +147,15 @@ async function loadTrainerContext(trainerId, now) {
   return {
     activeClients,
     pendingReviewRelations,
-    checkinByClient: new Map(
-      checkinConfigs.filter((c) => c.clientId).map((c) => [String(c.clientId._id), c])
+    // Programaciones y solicitudes ya respondidas por cliente: con eso se
+    // sabe qué ventanas se cerraron vacías (checkin_overdue) sin una
+    // consulta por cliente.
+    schedulesByClient: groupBy(checkinSchedules, (s) => String(s.clientId)),
+    answeredByClient: new Map(
+      [...groupBy(answeredOccurrences, (r) => String(r.clientId))].map(([key, rows]) => [
+        key,
+        new Set(rows.map((r) => `${r.scheduleId}:${r.occurrenceDate}`)),
+      ])
     ),
     lastResponseByClient: new Map(latestResponses.map((r) => [String(r._id), r.respondedAt])),
     anthropometryByClient,
@@ -207,7 +219,20 @@ function buildClientSnapshots(context, now) {
     const entries = context.anthropometryByClient.get(clientKey) || [];
     const adherence = context.adherenceByClient.get(clientKey) || null;
     const lastResponseAt = context.lastResponseByClient.get(clientKey) || null;
-    const config = context.checkinByClient.get(clientKey) || null;
+    const schedules = context.schedulesByClient.get(clientKey) || [];
+    const today = isoDate(now);
+    const missed = checkinAgenda.missedOccurrences(
+      schedules,
+      context.answeredByClient.get(clientKey) || new Set(),
+      today
+    );
+    const checkin = schedules.length
+      ? {
+          ...missed,
+          nextDate: checkinAgenda.nextOccurrenceForClient(schedules, today),
+          lastResponseAt,
+        }
+      : null;
 
     snapshots.push({
       clientId: entry.user._id,
@@ -221,7 +246,7 @@ function buildClientSnapshots(context, now) {
       entries,
       adherence,
       lastResponseAt,
-      checkinConfig: config,
+      checkin,
       checkinResponses: context.checkinResponsesByClient.get(clientKey) || [],
       // Fase 6 — solo las FECHAS de las sesiones: es lo que necesita la
       // métrica de regla "sesiones entrenadas" y ahora también
@@ -260,9 +285,7 @@ function buildSignalsFromSnapshots(snapshots) {
       now: snapshot.now,
       entries: snapshot.entries,
       adherence: snapshot.adherence,
-      checkin: snapshot.checkinConfig
-        ? { config: snapshot.checkinConfig, lastResponseAt: snapshot.lastResponseAt }
-        : null,
+      checkin: snapshot.checkin,
       lastActivityAt: snapshot.lastActivityAt,
       hasRoutine: snapshot.hasRoutine,
       workoutDates: snapshot.workoutDates,
@@ -360,7 +383,7 @@ async function evaluateTrainer(trainerId, now = new Date()) {
 
 /**
  * Job nocturno. Un profesional que falla NUNCA aborta el resto — mismo
- * criterio que runReminderJob en checkin-reminder-service.js.
+ * criterio que el resto de jobs diarios.
  */
 async function runAlertEvaluationJob(now = new Date()) {
   const trainerIds = await trainerClientDao.listTrainerIdsWithLiveClients();

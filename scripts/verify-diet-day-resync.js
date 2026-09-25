@@ -75,7 +75,7 @@ async function main() {
       `Plantilla de prueba ${runId}`,
       [
         {
-          dayLabel: "Día 1",
+          name: "Menú 1",
           meals: [
             {
               slot: "Desayuno",
@@ -90,8 +90,6 @@ async function main() {
           ],
         },
       ],
-      "sequential",
-      []
     );
     // La copia ES la asignación (ver diet-template-schema.js) — se congela
     // igual que hace plan-assignment-service.js#applyPlan.
