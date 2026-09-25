@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node ./bin/www",
-    "serve": "NODE_ENV=development node --watch bin/www",
-    "serve:open": "NODE_ENV=development CORS_OPEN=1 node --watch bin/www",
+    "serve": "cross-env NODE_ENV=development node --watch bin/www",
+    "serve:open": "cross-env NODE_ENV=development CORS_OPEN=1 node --watch bin/www",
     "rebuild:search-indexes": "node scripts/rebuild-search-indexes.js",
     "migrate:dietday-dates": "node scripts/migrate-dietday-dates.js",
     "migrate:dietday-dates:dry-run": "node scripts/migrate-dietday-dates.js --dry-run",
@@ -57,6 +57,7 @@
     "semver": "^7.8.5"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "debug": "~2.6.9"
   }
 }
