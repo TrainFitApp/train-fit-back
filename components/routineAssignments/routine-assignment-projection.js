@@ -11,13 +11,20 @@ const { addDaysToIsoDate } = require("../util/period-util");
 // array, workouts[] de cada split en su orden de array. No hace falta
 // ningún campo de orden nuevo — aplanar en ESE orden y numerar desde 0 es
 // la única fuente de verdad de "qué día de la rutina es esto".
+//
+// microcycleNumber (2026-09): posición 1-based del split en la tabla, para
+// el badge "M1, M2…" del calendario de entrenamiento — reinicia en cada
+// fase porque cada fase proyecta su propia tabla desde el split 0.
 function projectSchedule(startDate, splits) {
-  const flattened = (splits || []).flatMap((split) => split.workouts || []);
-  return flattened.map((workout, index) => ({
+  const flattened = (splits || []).flatMap((split, splitIndex) =>
+    (split.workouts || []).map((workout) => ({ workout, microcycleNumber: splitIndex + 1 }))
+  );
+  return flattened.map(({ workout, microcycleNumber }, index) => ({
     date: addDaysToIsoDate(startDate, index),
     workoutId: String(workout._id),
     name: workout.name,
     isPlannedRestDay: !!workout.isPlannedRestDay,
+    microcycleNumber,
   }));
 }
 

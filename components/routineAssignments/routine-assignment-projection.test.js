@@ -39,6 +39,15 @@ test("projectSchedule", async (t) => {
     assert.equal(schedule[2].date, "2026-09-03");
   });
 
+  await t.test("cada día lleva el número (1-based) de su microciclo", () => {
+    const splits = [split("S1", ["A", "B"]), split("S2", []), split("S3", ["C"])];
+    const schedule = projectSchedule("2026-09-01", splits);
+    assert.deepEqual(
+      schedule.map((row) => row.microcycleNumber),
+      [1, 1, 3]
+    );
+  });
+
   await t.test("un día de descanso pautado cuenta como un día más de la secuencia", () => {
     const splits = [
       {
