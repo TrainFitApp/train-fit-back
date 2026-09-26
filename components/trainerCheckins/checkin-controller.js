@@ -1,5 +1,8 @@
 const checkinDao = require("./checkin-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { isReadOnly } = require("../trainerClients/trainer-seat-service");
+const anthropometryDao = require("../anthropometry/anthropometry-dao");
+const notificationDao = require("../notifications/notification-dao");
 const agenda = require("./checkin-agenda-service");
 const Schedule = require("./checkin-schedule-schema");
 const userSchema = require("../users/schema");
@@ -127,7 +130,7 @@ module.exports = {
     for (const clientId of clientIds) {
       // Cualquier scope de relación activa con ESTE profesional basta.
       const relation = await trainerClientDao.findActiveByTrainerAndClient(req.auth.userId, clientId);
-      if (!relation) {
+      if (!relation || await isReadOnly(req.auth.userId, clientId)) {
         skipped.push(clientId);
         continue;
       }

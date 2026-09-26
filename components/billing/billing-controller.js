@@ -117,22 +117,13 @@ module.exports = {
 
   async restoreTrainer(req, res) {
     const user = req.user;
-    const customerInfo = req.body?.customerInfo || null;
-    const rawPlan = req.body?.plan || null;
-    const explicitPlan = rawPlan === "monthly" || rawPlan === "annual" ? rawPlan : null;
-
-    if (customerInfo) {
-      await billingService.syncTrainerFromCustomerInfo(user, customerInfo, explicitPlan);
-    } else {
-      await billingService.restoreTrainerFromRevenueCat(user, req.body?.appUserId);
+    if (user.professionalPremium?.source === "stripe") {
+      return res.status(409).send({ code: "STRIPE_MANAGED", message: "Actualiza esta suscripción desde la facturación de Trainers." });
     }
+    // Solo el proveedor y la identidad autenticada pueden restaurar acceso profesional.
+    await billingService.restoreTrainerFromRevenueCat(user, String(user._id));
 
-    const refreshedUser = await userSchema.findById(user._id);
-    const activeClients = await trainerClientDao.findAllByTrainer(user._id, { status: "active" });
-    const distinctClientIds = new Set(activeClients.map((r) => String(r.clientId)));
-    return res.send(
-      featureAccessService.buildTrainerEntitlements(refreshedUser, distinctClientIds.size)
-    );
+    return res.send(await require("../trainerBilling/adapter").getEntitlements(String(user._id)));
   },
 
   async revenueCatWebhook(req, res) {

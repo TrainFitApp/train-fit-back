@@ -1,5 +1,6 @@
 const coachRuleDao = require("./coach-rule-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { isReadOnly } = require("../trainerClients/trainer-seat-service");
 const { toCatalogDto, RULE_METRICS_BY_KEY, OPERATORS_BY_KIND } = require("./rule-metric-catalog");
 
 const LEVELS = ["informative", "suggestion", "automatic"];
@@ -54,6 +55,7 @@ async function validateClientIds(trainerId, clientIds) {
   for (const clientId of clientIds || []) {
     const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId);
     if (!relation) return "Alguno de los clientes seleccionados no tiene una relación activa contigo";
+    if (await isReadOnly(trainerId, clientId)) return "Alguno de los clientes seleccionados está en solo lectura por el cupo de tu plan";
   }
   return null;
 }

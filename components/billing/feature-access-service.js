@@ -141,12 +141,19 @@ const TRAINER_CLIENT_LIMITS = {
 };
 
 function isPremiumTrainer(user) {
-  return Boolean(user?.professionalPremium?.entitled);
+  const premium = user?.professionalPremium;
+  // Stripe nunca concede acceso indefinido si falta la fecha de pago confirmado.
+  if (premium?.source === "stripe" && !premium.expiresAt) return false;
+  return isEffectivelyEntitled(premium);
 }
 
 function getTrainerLimits(user) {
   if (!isPremiumTrainer(user)) return { clients: TRAINER_CLIENT_LIMITS.free, tier: "free" };
   const tier = user?.professionalPremium?.tier;
+  if (user?.professionalPremium?.source === "stripe") {
+    const stripeLimits = { trainer_pro: 20, trainer_growth: 50, trainer_scale: 150 };
+    return stripeLimits[tier] ? { clients: stripeLimits[tier], tier } : { clients: 3, tier: "free" };
+  }
   if (tier === "trainer_unlimited") {
     return { clients: TRAINER_CLIENT_LIMITS.trainer_unlimited, tier };
   }

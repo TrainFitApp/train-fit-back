@@ -977,6 +977,9 @@ module.exports = {
   },
 
   async deleteUser(req, res) {
+    if (!req.user?.roles?.includes("admin") && String(req.user?._id) !== String(req.params.id)) {
+      return res.status(403).send({ code: "FORBIDDEN", message: "No puedes eliminar otra cuenta." });
+    }
     await userModel.deleteUser(req.params.id);
     res.sendStatus(204);
   },

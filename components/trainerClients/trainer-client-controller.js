@@ -1,6 +1,15 @@
 const trainerClientService = require("./trainer-client-service");
 const trainerClientDto = require("./trainer-client-dto");
 const trainerClientDao = require("./trainer-client-dao");
+const trainerSeatService = require("./trainer-seat-service");
+
+// Marca los clientes fuera de las plazas activas (cartera por encima del cupo).
+async function withSeatFlags(trainerId, clients) {
+  const state = await trainerSeatService.seatState(trainerId);
+  if (!state.overLimit) return clients;
+  return clients.map((client) => ({ ...client,
+    readOnly: Boolean(client.user?._id) && !state.active.has(String(client.user._id)) }));
+}
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const coachAlertDao = require("../coachAlerts/coach-alert-dao");
@@ -127,7 +136,7 @@ const controller = {
   // GET /trainer/clients — clientes activos del profesional, agregados por cliente
   async listMyClients(req, res) {
     const aggregated = await trainerClientService.listActiveClientsForTrainer(req.auth.userId);
-    return res.send(trainerClientDto.multipleAggregated(aggregated));
+    return res.send(await withSeatFlags(req.auth.userId, trainerClientDto.multipleAggregated(aggregated)));
   },
 
   // GET /trainer/clients/lifetime-count — "Mi cuenta" > tarjeta "Número de
@@ -201,7 +210,7 @@ const controller = {
     });
 
     return res.send({
-      clients: trainerClientDto.multipleAggregated(result.clients),
+      clients: await withSeatFlags(req.auth.userId, trainerClientDto.multipleAggregated(result.clients)),
       total: result.total,
     });
   },
@@ -325,6 +334,23 @@ const controller = {
         return res.status(400).send({ message: e.message, code: e.code });
       }
       console.error("Error en confirmClient:", e.message);
+      return res.status(500).send({ message: "Internal Server Error" });
+    }
+  },
+
+  // GET /trainer/seats — plazas activas cuando la cartera supera el cupo del plan.
+  async getSeats(req, res) {
+    res.set("Cache-Control", "no-store");
+    return res.send(await trainerSeatService.listSeats(req.auth.userId));
+  },
+
+  // PUT /trainer/seats { clientIds } — el entrenador elige qué clientes siguen activos.
+  async updateSeats(req, res) {
+    try {
+      return res.send(await trainerSeatService.setSeats(req.auth.userId, req.body?.clientIds));
+    } catch (e) {
+      if (e.status) return res.status(e.status).send({ message: e.message, code: e.code });
+      console.error("Error en updateSeats:", e.message);
       return res.status(500).send({ message: "Internal Server Error" });
     }
   },

@@ -2,6 +2,12 @@ const mongoose = require("mongoose");
 const TrainerClient = require("./trainer-client-schema");
 
 module.exports = {
+  async getBillableClientKeys(trainerId) {
+    const relations = await TrainerClient.find({ trainerId,
+      status: { $in: ["pending", "cuestionario_pendiente", "en_revision", "active"] },
+    }).select("clientId clientEmail").lean();
+    return require("../../.build/trainer-billing/usage").billableClientKeys(relations);
+  },
   async create({ trainerId, clientEmail, scope }) {
     return TrainerClient.create({ trainerId, clientEmail, scope });
   },

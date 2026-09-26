@@ -3,6 +3,7 @@ const Split = require("../splits/split-schema");
 const Workout = require("../workouts/workout-schema");
 const CustomExercise = require("../customExercises/custom-exercise-schema");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { isReadOnly, READ_METHODS } = require("../trainerClients/trainer-seat-service");
 
 // Replanteamiento MVP (rutinas) — hasta ahora split-controller.js era el
 // ÚNICO de los 4 controllers de la cadena Table>Split>Workout>CustomExercise>Set
@@ -34,7 +35,10 @@ async function canAccessUserTable(req, ownerUserId) {
       ownerUserId,
       "training",
     );
-    return Boolean(relation);
+    if (!relation) return false;
+    // Cliente fuera de las plazas activas del plan: solo lectura en el Planner.
+    if (!READ_METHODS.has(req.method) && await isReadOnly(req.user.id, ownerUserId)) return false;
+    return true;
   }
   return false;
 }

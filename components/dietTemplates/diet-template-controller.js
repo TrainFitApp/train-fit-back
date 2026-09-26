@@ -1,5 +1,6 @@
 const dietTemplateDao = require("./diet-template-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { rejectIfReadOnly } = require("../trainerClients/trainer-seat-service");
 const { MEALS } = require("../dietDays/diet-days-util");
 const { contentMacroProfile } = require("./diet-macro-profile");
 
@@ -77,6 +78,7 @@ module.exports = {
         ownerClientId
       );
       if (!relation) return res.status(403).send({ message: "Ese cliente no es tuyo" });
+      if (await rejectIfReadOnly(req, res, ownerClientId)) return;
     }
 
     const template = await dietTemplateDao.create(

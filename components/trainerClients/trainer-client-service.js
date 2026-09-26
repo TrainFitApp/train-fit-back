@@ -126,57 +126,60 @@ module.exports = {
       throw new Error("No puedes invitarte a ti mismo");
     }
 
-    // MVP-trainers F21 — "un único contador total de clientes, independientemente
-    // del scope" (no por documento de relación): un cliente con training+nutrition
-    // del mismo trainer cuenta como 1, no 2. Cuenta pending+active (no solo active)
-    // para que no se pueda evadir el límite acumulando invitaciones sin responder.
-    const relations = await trainerClientDao.findAllByTrainer(trainerId, {
-      status: ["pending", "active"],
-    });
-    const distinctClients = new Set(
-      relations.map((r) => String(r.clientId || r.clientEmail))
-    );
-    const { clients: clientLimit } = featureAccessService.getTrainerLimits(trainerUser);
-    if (!distinctClients.has(clientEmail) && distinctClients.size >= clientLimit) {
-      throw new TrainerLimitReachedError();
-    }
+    const createInvites = async (clientLimit) => {
+      // Contar e insertar dentro del mismo lease que protege los cambios Stripe.
+      // El cupo incluye onboarding y deduplica los dos scopes de un cliente.
+      const existingUser = await userSchema.findOne({ email: clientEmail }).lean();
+      const distinctClients = await trainerClientDao.getBillableClientKeys(trainerId);
+      const alreadyCounted = distinctClients.has(`email:${clientEmail}`) ||
+        (existingUser && distinctClients.has(`id:${existingUser._id}`));
+      if (!alreadyCounted && distinctClients.size >= clientLimit) {
+        throw new TrainerLimitReachedError();
+      }
 
-    const uniqueScopes = [...new Set(scopes)].filter((s) => VALID_SCOPES.includes(s));
-    if (!uniqueScopes.length) {
-      throw new Error("Debes indicar al menos un scope válido (training/nutrition)");
-    }
+      const uniqueScopes = [...new Set(scopes)].filter((s) => VALID_SCOPES.includes(s));
+      if (!uniqueScopes.length) {
+        throw new Error("Debes indicar al menos un scope válido (training/nutrition)");
+      }
 
-    // D6: si el email ya pertenece a un User existente, debe tener roles: "user".
-    // Si no existe ninguna cuenta todavía, se permite (queda vinculado solo por email).
-    const existingUser = await userSchema.findOne({ email: clientEmail }).lean();
-    if (existingUser && !(existingUser.roles || []).includes("user")) {
-      throw new NonUserAccountError();
-    }
+      // Los clientes nuevos pueden aceptar la invitación al registrarse.
+      if (existingUser && !(existingUser.roles || []).includes("user")) {
+        throw new NonUserAccountError();
+      }
 
-    const results = [];
-    for (const scope of uniqueScopes) {
-      try {
-        const overlapping = await trainerClientDao.findOverlapping({
-          clientEmail,
-          clientId: existingUser?._id,
-          scope,
-          excludingTrainerId: trainerId,
-        });
-        if (overlapping) throw new OverlapError(scope);
+      const results = [];
+      for (const scope of uniqueScopes) {
+        try {
+          const overlapping = await trainerClientDao.findOverlapping({
+            clientEmail,
+            clientId: existingUser?._id,
+            scope,
+            excludingTrainerId: trainerId,
+          });
+          if (overlapping) throw new OverlapError(scope);
 
-        const created = await trainerClientDao.create({ trainerId, clientEmail, scope });
-        results.push({ scope, success: true, relation: created });
-      } catch (e) {
-        if (e.code === 11000) {
-          results.push({ scope, success: false, error: new DuplicateInviteError(scope).message });
-        } else if (e instanceof OverlapError) {
-          results.push({ scope, success: false, error: e.message });
-        } else {
-          throw e;
+          const created = await trainerClientDao.create({ trainerId, clientEmail, scope });
+          results.push({ scope, success: true, relation: created });
+        } catch (e) {
+          if (e.code === 11000) {
+            results.push({ scope, success: false, error: new DuplicateInviteError(scope).message });
+          } else if (e instanceof OverlapError) {
+            results.push({ scope, success: false, error: e.message });
+          } else {
+            throw e;
+          }
         }
       }
-    }
+      return results;
+    };
 
+    const usesStripe = process.env.TRAINER_BILLING_ENABLED === "1" &&
+      trainerUser.professionalPremium?.source === "stripe";
+    const results = usesStripe
+      ? await require("../trainerBilling/adapter").withClientAdmission(String(trainerId), createInvites)
+      : await createInvites(featureAccessService.getTrainerLimits(trainerUser).clients);
+
+    // El correo se envía después de soltar el lease; no retrasa otras operaciones.
     const created = results.filter((r) => r.success);
     if (created.length) {
       await sendInviteMail(trainerUser, clientEmail, created.map((r) => r.scope));

@@ -1,5 +1,6 @@
 const coachProtocolService = require("./coach-protocol-service");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { isReadOnly } = require("../trainerClients/trainer-seat-service");
 
 const TASK_TYPES = ["steps", "water", "sleep", "cardio", "custom"];
 
@@ -100,6 +101,10 @@ module.exports = {
       const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId);
       if (!relation) {
         results.push({ clientId, success: false, error: "Sin relación activa con este cliente" });
+        continue;
+      }
+      if (await isReadOnly(trainerId, clientId)) {
+        results.push({ clientId, success: false, error: "Cliente en solo lectura por el cupo de tu plan" });
         continue;
       }
       try {

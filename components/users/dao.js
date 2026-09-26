@@ -318,6 +318,7 @@ module.exports = {
         "_id",
         "isPremium",
         "premium",
+        "professionalPremium",
         "roles",
         "provider",
         "auth",
@@ -326,6 +327,9 @@ module.exports = {
         "tokenRotationTimestamp",
         "hash",
       ].forEach((field) => delete safeUpdate[field]);
+      Object.keys(safeUpdate).forEach((key) => {
+        if (key.startsWith("$") || key.includes(".")) delete safeUpdate[key];
+      });
 
       const user = await userSchema.findByIdAndUpdate(idUser, safeUpdate, {
         new: true,
@@ -347,6 +351,7 @@ module.exports = {
         "_id",
         "isPremium",
         "premium",
+        "professionalPremium",
         "roles",
         "provider",
         "auth",
@@ -355,6 +360,9 @@ module.exports = {
         "tokenRotationTimestamp",
         "hash",
       ].forEach((field) => delete safeUpdate[field]);
+      Object.keys(safeUpdate).forEach((key) => {
+        if (key.startsWith("$") || key.includes(".")) delete safeUpdate[key];
+      });
 
       const user = await userSchema.findByIdAndUpdate(idUser, safeUpdate, {
         new: true,
@@ -450,6 +458,7 @@ module.exports = {
         "_id",
         "isPremium",
         "premium",
+        "professionalPremium",
         "roles",
         "provider",
         "auth",
@@ -788,6 +797,7 @@ module.exports = {
 
   async deleteUser(id) {
     try {
+      await require("../trainerBilling/adapter").prepareDeletion(id);
       const ownRecipes = await recipeSchema.find({ userId: id }).select("_id").lean();
 
       for (const recipe of ownRecipes) {
