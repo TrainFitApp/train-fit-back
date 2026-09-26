@@ -3,6 +3,8 @@ const workoutSchema = require("../workouts/workout-schema");
 const setSchema = require("../sets/set-schema");
 const { normalizeSetsOrder } = require("../sets/set-order-util");
 const { default: mongoose } = require("mongoose");
+const { findRowSiblingWorkoutIds } = require("../workouts/workout-row-dao");
+const { pickRowExercise } = require("../workouts/workout-row-blocks");
 
 const SET_UPDATE_FIELDS = [
   "reps",
@@ -364,11 +366,43 @@ module.exports = {
       }
     }
 
-    return customExerciseSchema.findByIdAndUpdate(
+    const updated = await customExerciseSchema.findByIdAndUpdate(
       id,
       { $set: { blockId: blockId || null } },
       { new: true },
     );
+    if (!updated) return updated;
+
+    // 2026-09 — el mismo ejercicio de la misma fila en los demás
+    // microciclos entra o sale del mismo bloque. Solo donde ese bloque
+    // existe (un bloque antiguo, local, no está en los demás).
+    const origin = await workoutSchema.findOne({ exercises: id }).select("exercises").lean();
+    const originIndex = (origin?.exercises || []).findIndex((e) => e.toString() === id.toString());
+    const siblingIds = origin ? await findRowSiblingWorkoutIds(origin._id) : [];
+    const siblings = await workoutSchema
+      .find({ _id: { $in: siblingIds } })
+      .select("blocks exercises")
+      .lean();
+    const rowUpdates = [];
+    for (const sibling of siblings) {
+      if (blockId && !(sibling.blocks || []).some((b) => b._id.toString() === blockId.toString())) {
+        continue;
+      }
+      const siblingExercises = await customExerciseSchema
+        .find({ _id: { $in: sibling.exercises } })
+        .select("exercise")
+        .lean();
+      const byId = new Map(siblingExercises.map((e) => [e._id.toString(), e]));
+      const ordered = (sibling.exercises || []).map((e) => byId.get(e.toString())).filter(Boolean);
+      const target = pickRowExercise(originIndex, updated.exercise, ordered);
+      if (!target) continue;
+      await customExerciseSchema.updateOne({ _id: target._id }, { $set: { blockId: blockId || null } });
+      rowUpdates.push({ _id: target._id, blockId: blockId || null });
+    }
+
+    // rowUpdates: qué ejercicios de los demás microciclos cambiaron, para
+    // repintarlos sin recargar (la app de cliente lo ignora).
+    return { ...updated.toObject(), rowUpdates };
   },
 
   // 2026-09 — vía dedicada para la nota del CLIENTE, separada de

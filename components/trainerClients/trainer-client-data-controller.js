@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const userSchema = require("../users/schema");
 const tableModel = require("../tables/table-service");
 const anthropometryService = require("../anthropometry/anthropometry-service");
@@ -780,6 +781,40 @@ module.exports = {
     const name = (req.body?.name || "").trim();
     if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
     const table = await tableModel.createOwnRoutineTemplate(req.auth.userId, name);
+    return res.status(201).send(table);
+  },
+
+  // POST /trainer/routines/from-table/:tableId — "Guardar como plantilla"
+  // desde el Planner: copia la PAUTA de una rutina a la biblioteca propia.
+  // Origen válido: una plantilla propia o la rutina de un cliente con
+  // relación de entrenamiento activa. Un cliente en solo lectura (fuera de
+  // plazas) también vale: solo se LEE su rutina, lo que se escribe es la
+  // biblioteca del profesional.
+  async saveTableAsOwnRoutine(req, res) {
+    const trainerId = String(req.auth.userId);
+    const name = (req.body?.name || "").trim();
+    if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
+    if (name.length > 100) {
+      return res.status(400).send({ message: "El nombre no puede superar 100 caracteres" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(req.params.tableId)) {
+      return res.status(404).send({ message: "Rutina no encontrada" });
+    }
+
+    const source = await tableModel.getTableById(req.params.tableId);
+    if (!source) return res.status(404).send({ message: "Rutina no encontrada" });
+
+    const ownerId = source.userId ? String(source.userId._id || source.userId) : null;
+    if (ownerId !== trainerId) {
+      const relation = ownerId
+        ? await trainerClientDao.findActiveByTrainerAndClient(trainerId, ownerId, "training")
+        : null;
+      if (!relation) {
+        return res.status(403).send({ message: "No tienes permiso para esta rutina" });
+      }
+    }
+
+    const table = await tableModel.saveTableAsTrainerTemplate(trainerId, source._id, name);
     return res.status(201).send(table);
   },
 

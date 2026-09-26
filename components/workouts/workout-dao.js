@@ -9,6 +9,8 @@ const { default: mongoose } = require("mongoose");
 const customExerciseDao = require("../customExercises/custom-exercise-dao");
 const userSchema = require("../users/schema");
 const { isSamePermutation } = require("../util/permutation-util");
+const { diffBlocks, applyBlockDiff } = require("./workout-row-blocks");
+const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -359,17 +361,44 @@ module.exports = {
 
     // Un ejercicio cuyo bloque se borró vuelve a quedar "suelto" — nunca debe
     // apuntar a un blockId que ya no existe en este Workout.
-    if (removedBlockIds.length > 0) {
-      await customExerciseSchema.updateMany(
-        {
-          _id: { $in: workout.exercises },
-          blockId: { $in: removedBlockIds.map((id) => new mongoose.Types.ObjectId(id)) },
-        },
-        { $set: { blockId: null } },
+    const releaseRemoved = (exerciseIds, ids) =>
+      ids.length > 0
+        ? customExerciseSchema.updateMany(
+            {
+              _id: { $in: exerciseIds },
+              blockId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
+            },
+            { $set: { blockId: null } },
+          )
+        : null;
+    await releaseRemoved(workout.exercises, removedBlockIds);
+
+    // 2026-09 — mismo cambio en el entrenamiento de la misma fila de los
+    // demás microciclos (ver workout-row-blocks.js: solo casan los bloques
+    // que comparten _id; los antiguos, locales, no se propagan).
+    const diff = diffBlocks(workout.blocks.map((b) => b.toObject()), normalizedBlocks);
+    const siblingIds = await findRowSiblingWorkoutIds(workoutId);
+    const siblings = await workoutSchema
+      .find({ _id: { $in: siblingIds } })
+      .select("blocks exercises")
+      .lean();
+    for (const sibling of siblings) {
+      const nextBlocks = applyBlockDiff(sibling.blocks, diff);
+      await workoutSchema.updateOne({ _id: sibling._id }, { $set: { blocks: nextBlocks } });
+      const siblingBlockIds = new Set((sibling.blocks || []).map((b) => b._id.toString()));
+      await releaseRemoved(
+        sibling.exercises,
+        diff.removedIds.filter((id) => siblingBlockIds.has(id)),
       );
     }
 
-    return workoutSchema.findById(workoutId);
+    // rowWorkouts: los demás microciclos ya actualizados, para que el
+    // tablero los repinte sin recargar la tabla (la app de cliente lo ignora).
+    const result = (await workoutSchema.findById(workoutId)).toObject();
+    result.rowWorkouts = siblings.length
+      ? await workoutSchema.find({ _id: { $in: siblingIds } })
+      : [];
+    return result;
   },
 
   // Planificador visual (Fase C) — copia un workout suelto a otra semana

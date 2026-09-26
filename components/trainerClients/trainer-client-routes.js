@@ -213,6 +213,11 @@ router.putAsync(
 // usa para las rutinas reales de sus clientes (ver planner.page.ts) ---
 router.getAsync("/routines", auth(["trainer"]), dataController.listOwnRoutines);
 router.postAsync("/routines", auth(["trainer"]), dataController.createOwnRoutine);
+router.postAsync(
+  "/routines/from-table/:tableId",
+  auth(["trainer"]),
+  dataController.saveTableAsOwnRoutine
+);
 router.deleteAsync("/routines/:id", auth(["trainer"]), dataController.deleteOwnRoutine);
 
 // --- F30: aplicar en bloque a varios clientes (cada uno validado individualmente dentro) ---

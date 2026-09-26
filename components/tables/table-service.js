@@ -159,4 +159,10 @@ module.exports = {
     standardTable.name = name;
     return tableDao.createTableForTrainer(trainerId, standardTable);
   },
+
+  // Mismo criterio que createOwnRoutineTemplate: sin gate de
+  // canCreateRoutine (la biblioteca del profesional no tiene límite).
+  async saveTableAsTrainerTemplate(trainerId, sourceTableId, name) {
+    return tableDao.copyTableAsTrainerTemplate(trainerId, sourceTableId, name);
+  },
 };

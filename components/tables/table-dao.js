@@ -6,6 +6,7 @@ const setSchema = require("../sets/set-schema");
 const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const workoutSchema = require("../workouts/workout-schema");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
+const { stripExecutionForTemplate } = require("./table-template-copy");
 const serverDomain = process.env.SERVER_DOMAIN;
 
 // 2026-09, revertido 2026-09 bis — "Mis rutinas" enseñaba TODO lo que un
@@ -396,6 +397,25 @@ module.exports = {
   async createTableForTrainer(trainerId, standardTable) {
     return tableSchema.create({
       ...standardTable,
+      userId: trainerId,
+    });
+  },
+
+  // "Guardar como plantilla" desde el Planner (2026-09): copia una rutina
+  // (de un cliente o propia) a la biblioteca del profesional con SOLO la
+  // pauta (ver table-template-copy.js). Mismo resultado que
+  // createTableForTrainer: userId=trainerId y sin assignedByTrainerId.
+  async copyTableAsTrainerTemplate(trainerId, idTable, name) {
+    const tableD = await tableSchema.findById(idTable);
+    if (!tableD) throw new Error("Table not found");
+    const tableDoc = stripExecutionForTemplate(tableD.toObject());
+
+    await copyHierarchy(tableDoc);
+
+    delete tableDoc._id;
+    return tableSchema.create({
+      ...tableDoc,
+      name,
       userId: trainerId,
     });
   },

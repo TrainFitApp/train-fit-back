@@ -34,9 +34,11 @@ router.putAsync(
   auth(["admin", "user"]),
   controller.archiveExercise
 );
+// "trainer": Configurar ejercicio (planner) marca favoritos del propio
+// entrenador; sin el rol daba 403 y el botón no hacía nada.
 router.putAsync(
   "/favorite",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.addExerciseToFavorites
 );
 
