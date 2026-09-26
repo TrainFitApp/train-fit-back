@@ -3,6 +3,7 @@ const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const customRecipeSchema = require("../customRecipes/custom-recipe-schema");
 const { deriveSuitability } = require("./diet-suitability");
+const { rankableFilter, readableFilter } = require("./diet-source-filter");
 const { scaleMealsContent } = require("../planAssignments/week-progression");
 
 // Sugerencias de dieta — `suitableFor` (vegana / sin gluten / ...) es DERIVADO
@@ -328,21 +329,22 @@ module.exports = {
     return DietTemplate.findOne({ _id: id, trainerId });
   },
 
+  // Solo lectura: las propias y las de fábrica de cualquiera (ver
+  // diet-source-filter.js#readableFilter). Nunca para editar o aplicar.
+  async findReadableByTrainer(trainerId, id) {
+    return DietTemplate.findOne(readableFilter(trainerId, id));
+  },
+
   // Sugerencias de dieta — plantillas de BIBLIOTECA que se pueden rankear
   // para este cliente: las generales del entrenador, las propias de este
   // cliente (ownerClientId), y las de fábrica (verified) de cualquiera.
   // Nunca copias congeladas (clientId: null en todas).
   // `sources` acota el origen (filtro del cajón): 'general' = plantillas
   // generales del entrenador, 'client' = las propias de este cliente,
-  // 'verified' = las de fábrica. Sin `sources` (o vacío) = las tres.
+  // 'verified' = las de fábrica. Sin `sources` (o vacío) = las tres. Los
+  // orígenes no se pisan entre sí (ver diet-source-filter.js).
   async listRankableForClient(trainerId, clientId, sources) {
-    const set = new Set(sources && sources.length ? sources : ["general", "client", "verified"]);
-    const or = [];
-    if (set.has("general")) or.push({ trainerId, ownerClientId: null });
-    if (set.has("client")) or.push({ trainerId, ownerClientId: clientId });
-    if (set.has("verified")) or.push({ verified: true });
-    if (!or.length) return [];
-    return DietTemplate.find({ clientId: null, $or: or }).sort({ createdAt: -1 });
+    return DietTemplate.find(rankableFilter(trainerId, clientId, sources)).sort({ createdAt: -1 });
   },
 
   async update(trainerId, id, { name, menus, suitableForOverride, verified }) {

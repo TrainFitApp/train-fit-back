@@ -59,14 +59,6 @@ module.exports = {
     ).lean();
   },
 
-  // Todas las respuestas selladas con una semana de dieta — historial de
-  // nutrición del trainer.
-  async listStampedResponses(clientId) {
-    return CheckinResponse.find({ clientId, "week.phaseId": { $ne: null } })
-      .select("respondedAt updatedAt values week name")
-      .lean();
-  },
-
   // Las respuestas de la semana N de una fase, vengan del profesional que
   // vengan (la necesidad por semana no sabe de trainerId). Son varias cuando
   // la programación es más frecuente que semanal; van de la más reciente a

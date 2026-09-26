@@ -593,8 +593,8 @@ module.exports = {
 
   // Historial de nutrición (feed de eventos, ver nutrition-history.js). Una
   // sola llamada para toda la vida del cliente: por fase, sus DietDays de
-  // una vez (no una consulta por semana); check-ins y excepciones del
-  // cliente enteras, una consulta cada una.
+  // una vez (no una consulta por semana); los días saltados del cliente
+  // enteros, en una sola consulta.
   async getNutritionHistory(clientId) {
     const today = isoDate(new Date());
     const all = await dietTemplateDao.listByClient(clientId);
@@ -603,16 +603,7 @@ module.exports = {
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
     if (!heads.length) return { events: [] };
 
-    const [checkins, skippedDates] = await Promise.all([
-      checkinDao.listStampedResponses(clientId),
-      listSkippedDates(clientId, 1000),
-    ]);
-    const checkinsByPhase = new Map();
-    for (const c of checkins) {
-      const key = String(c.week.phaseId);
-      if (!checkinsByPhase.has(key)) checkinsByPhase.set(key, []);
-      checkinsByPhase.get(key).push(c);
-    }
+    const skippedDates = await listSkippedDates(clientId, 1000);
 
     const events = [];
     for (const head of heads) {
@@ -633,7 +624,6 @@ module.exports = {
           members,
           weeks,
           days,
-          checkins: checkinsByPhase.get(phaseId) || [],
           skippedDates,
           today,
         })

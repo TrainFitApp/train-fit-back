@@ -127,9 +127,11 @@ module.exports = {
   // completo (menus). listTemplates ya devuelve esto para TODA la
   // lista; este endpoint es para cuando el consumidor solo conoce el id de
   // UNA (p. ej. precargar el builder con la plantilla elegida en el cajón de
-  // sugerencias antes de aplicarla — ver diet-suggestion-drawer).
+  // sugerencias antes de aplicarla — ver diet-suggestion-drawer). Lee también
+  // las de fábrica de cualquiera (las que salen en el ranking), para la vista
+  // previa; editarlas o borrarlas sigue exigiendo ser el dueño.
   async getTemplate(req, res) {
-    const template = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
+    const template = await dietTemplateDao.findReadableByTrainer(req.auth.userId, req.params.id);
     if (!template) return res.status(404).send({ message: "Plantilla no encontrada" });
     const doc = template.toObject ? template.toObject() : template;
     return res.send({ ...doc, macroProfile: contentMacroProfile(doc) });

@@ -4,6 +4,8 @@ const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const notificationDao = require("../notifications/notification-dao");
 
 const COOKS_AT_HOME_VALUES = ["yes", "no", "sometimes"];
+// Mismo catálogo que nutrition-preferences-dao.js#upsertOwnResponse.
+const VALID_DIETARY_FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
 const VALID_MEAL_SLOTS = Object.values(dietDaysUtil.MEALS);
 
 module.exports = {
@@ -20,12 +22,22 @@ module.exports = {
       favoriteFoods,
       dislikedFoods,
       cooksAtHome,
+      dietaryFlags,
       disabledMealSlots,
       mealSlotLabels,
     } = req.body || {};
 
     if (cooksAtHome != null && !COOKS_AT_HOME_VALUES.includes(cooksAtHome)) {
       return res.status(400).send({ message: "cooksAtHome debe ser 'yes', 'no' o 'sometimes'" });
+    }
+    // Si no viene (versiones antiguas de la app), el dao no las toca.
+    if (
+      dietaryFlags != null &&
+      (!Array.isArray(dietaryFlags) || !dietaryFlags.every((flag) => VALID_DIETARY_FLAGS.includes(flag)))
+    ) {
+      return res.status(400).send({
+        message: `dietaryFlags solo admite: ${VALID_DIETARY_FLAGS.join(", ")}`,
+      });
     }
     if ([allergies, favoriteFoods, dislikedFoods].some((v) => v != null && String(v).length > 1000)) {
       return res.status(400).send({ message: "Cada campo de texto no puede superar los 1000 caracteres" });
@@ -56,6 +68,7 @@ module.exports = {
       favoriteFoods,
       dislikedFoods,
       cooksAtHome,
+      dietaryFlags,
       disabledMealSlots,
       mealSlotLabels,
     });
