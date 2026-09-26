@@ -18,10 +18,11 @@ function toDto(alert) {
 
 module.exports = {
   // GET /trainer/alerts?status=open — alertas del profesional autenticado,
-  // las más graves primero. Una sola consulta indexada: todo el cálculo lo
-  // hizo el job nocturno (ver coach-alert-service.js).
+  // las más graves primero. La primera lectura del día evalúa antes; el
+  // resto es una sola consulta indexada (ver ensureEvaluatedToday).
   async listMine(req, res) {
     const status = LISTABLE_STATUSES.includes(req.query.status) ? req.query.status : "open";
+    await coachAlertService.ensureEvaluatedToday(req.auth.userId);
     const alerts = await coachAlertDao.listForTrainer(req.auth.userId, { status });
     return res.send(alerts.map(toDto));
   },
@@ -60,13 +61,12 @@ module.exports = {
   },
 
   // POST /trainer/alerts/evaluate — fuerza la evaluación del profesional
-  // autenticado ahora mismo, sin esperar al cron. Existe porque el ciclo
-  // natural de este sistema es de 24 h: sin esto, un profesional que acaba
-  // de dar de alta a sus clientes vería el panel vacío hasta el día
-  // siguiente y pensaría que no funciona. Solo evalúa SUS clientes —
-  // no hay forma de disparar el job global desde la API.
+  // autenticado ahora mismo. Existe porque el ciclo natural de este sistema
+  // es de un día: sin esto, un profesional que da de alta clientes a media
+  // mañana no los vería en el panel hasta el día siguiente. Solo evalúa SUS
+  // clientes.
   async evaluateMine(req, res) {
-    const result = await coachAlertService.evaluateTrainer(req.auth.userId);
+    const result = await coachAlertService.evaluateNow(req.auth.userId);
     return res.send(result);
   },
 };

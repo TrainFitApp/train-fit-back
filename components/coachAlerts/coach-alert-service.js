@@ -1,4 +1,5 @@
 const coachAlertDao = require("./coach-alert-dao");
+const { planAlertWrites } = require("./alert-write-plan");
 const { SIGNAL_THRESHOLDS, buildSignalsForClient } = require("./coach-signals-service");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const trainerClientService = require("../trainerClients/trainer-client-service");
@@ -45,23 +46,24 @@ function dedupeKeyFor(trainerId, clientId, type) {
 /**
  * Carga en BLOQUE todo lo que necesitan las señales de los clientes de un
  * profesional. El plan de consultas es la parte crítica de este módulo:
- * este job corre de noche sobre todos los profesionales de la plataforma, y
- * la forma ingenua (recalcular cliente a cliente lo que ya calculan los
- * endpoints de la ficha) sería un fan-out de cientos de consultas por
- * profesional.
+ * corre dentro de la petición del entrenador (evaluación diaria bajo
+ * demanda y la Cartera), y la forma ingenua (recalcular cliente a cliente lo
+ * que ya calculan los endpoints de la ficha) sería un fan-out de cientos de
+ * consultas por profesional.
  *
- * Coste real: 7 consultas fijas + 2 por cliente con dieta asignada.
- * (La séptima, el registro de dolor, entró en el Movimiento 3.)
+ * Coste real: 11 consultas fijas en dos tandas paralelas, ninguna por
+ * cliente. La adherencia nutricional era la excepción (una consulta en
+ * cascada por cliente, en serie) hasta dietDaysDao#listTrackingDaysForUsers.
  *
  * Lo que NO se usa aquí, a propósito:
  *   - getTrackingDaysForClient (trainer-client-data-controller.js): resuelve
  *     el plan al vuelo para cada fecha sin DietDay materializado, y cada
  *     resolución son 3 consultas más una DietTemplate con la cascada entera
  *     de autopopulate. Correcto para UN cliente y UN rango en una ficha
- *     abierta; ruinoso para 30 clientes × 28 días cada noche. Aquí se leen
- *     solo los días REALMENTE materializados, que además es el dato correcto
- *     para esta señal: un día que nadie abrió no tiene consumo que medir, y
- *     ese silencio ya lo recoge la señal de inactividad.
+ *     abierta; ruinoso para 30 clientes × 28 días. Aquí se leen solo los
+ *     días REALMENTE materializados, que además es el dato correcto para
+ *     esta señal: un día que nadie abrió no tiene consumo que medir, y ese
+ *     silencio ya lo recoge la señal de inactividad.
  *   - El recorrido Table -> splits -> workouts para saber si el cliente
  *     entrena: ver el comentario de detectInactivity en
  *     coach-signals-service.js.
@@ -93,12 +95,10 @@ async function loadTrainerContext(trainerId, now) {
 
   const clientIds = activeClients.filter((entry) => entry.user).map((entry) => entry.user._id);
 
-  const [anthropometryEntries, clientDiets, workoutDates, painEntries] = await Promise.all([
+  const [anthropometryEntries, clientUsers, workoutDates, painEntries, trackingDays] = await Promise.all([
     anthropometryDao.listForUsersSince(clientIds, windowStart),
-    // tableInUse va en el MISMO select que dietInUse (no en una consulta
-    // aparte): la vista de Cartera lo necesita para las sesiones prescritas
-    // y traerlo aquí no cuesta ni una consulta más. El evaluador nocturno lo
-    // ignora — ver roster-service.js.
+    // Solo para saber SI el cliente tiene rutina (detectNoTrainingActivity)
+    // y para la Cartera — ver roster-service.js.
     userSchema.find({ _id: { $in: clientIds } }).select("tableInUse").lean(),
     // Fase 6 — sesiones entrenadas de TODA la cartera en una agregación,
     // para que el motor de reglas pueda condicionar sobre entrenamiento sin
@@ -111,38 +111,33 @@ async function loadTrainerContext(trainerId, now) {
     ),
     // Movimiento 3 Coach Pro — el dolor de TODA la cartera en una consulta,
     // para que el motor de reglas pueda condicionar sobre él (métrica
-    // pain_max). Mismo criterio que las sesiones de arriba: entra en el
-    // evaluador nocturno porque su consulta es barata en lote.
+    // pain_max). Mismo criterio que las sesiones de arriba: entra en la
+    // evaluación porque su consulta es barata en lote.
     painDao.listForUsersSince(clientIds, windowStart),
+    // Adherencia nutricional de toda la cartera: una agregación con solo las
+    // marcas de cumplimiento, sin el árbol de autopopulate.
+    dietDaysDao.listTrackingDaysForUsers(clientIds, windowStart, isoDate(now)),
   ]);
 
   const anthropometryByClient = groupBy(anthropometryEntries, (entry) => String(entry.userId));
-  const dietIdByClient = new Map(
-    // Sin wrapper, el "id de dieta" de un cliente ES su propio id.
-    clientDiets.map((user) => [String(user._id), user._id])
-  );
   const tableIdByClient = new Map(
-    clientDiets.map((user) => [String(user._id), user.tableInUse]).filter(([, table]) => table)
+    clientUsers.map((user) => [String(user._id), user.tableInUse]).filter(([, table]) => table)
   );
 
-  // Adherencia: secuencial a propósito, no Promise.all sobre todos los
-  // clientes. getFullyPopulatedDietDaysForDiet arrastra la cascada de
-  // autopopulate (meals -> customProducts -> product, customRecipes ->
-  // recipe); lanzar 30 en paralelo puede saturar el pool de conexiones de
-  // Mongoose y competir con el tráfico real de la app. De noche, la latencia
-  // acumulada no le importa a nadie; un pico de conexiones sí.
-  const adherenceByClient = new Map();
-  for (const [clientKey, dietId] of dietIdByClient) {
-    const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(
-      dietId,
-      windowStart,
-      now.toISOString().slice(0, 10)
-    );
-    adherenceByClient.set(
-      clientKey,
-      dietDaysNutritionUtil.computeRangeAdherence(days, SIGNAL_THRESHOLDS.analysisWindowDays)
-    );
-  }
+  // Todos los clientes llevan adherencia, también los que no tienen días
+  // (percentage null, daysWithData 0): la Cartera y lastActivityFor
+  // distinguen "sin datos" de "sin cliente".
+  const trackingDaysByClient = groupBy(trackingDays, (day) => String(day.userId));
+  const adherenceByClient = new Map(
+    clientUsers.map((user) => {
+      const clientKey = String(user._id);
+      const days = trackingDaysByClient.get(clientKey) || [];
+      return [
+        clientKey,
+        dietDaysNutritionUtil.computeRangeAdherence(days, SIGNAL_THRESHOLDS.analysisWindowDays),
+      ];
+    })
+  );
 
   return {
     activeClients,
@@ -297,74 +292,42 @@ function buildSignalsFromSnapshots(snapshots) {
  * Persiste las señales de un profesional: crea las nuevas, refresca las que
  * siguen vigentes, respeta el silencio de las cerradas a mano y cierra las
  * que ya no aplican. Idempotente — ejecutarlo dos veces seguidas no cambia
- * nada la segunda vez.
+ * nada la segunda vez. Coste fijo: 2 lecturas y 2 escrituras, tenga el
+ * profesional 3 alertas o 60 (antes, 2 consultas en serie por alerta).
  */
 async function persistSignals(trainerId, clientSignals, now) {
-  const stillOpenKeys = [];
-  let created = 0;
-  let refreshed = 0;
-  let skippedByCooldown = 0;
+  const [openIdByKey, silencedKeys] = await Promise.all([
+    coachAlertDao.listOpenIdsByKey(trainerId, { fromRules: false }),
+    coachAlertDao.listManuallyClosedKeysSince(
+      trainerId,
+      new Date(now.getTime() - ALERT_COOLDOWN_DAYS * 86400000)
+    ),
+  ]);
 
-  for (const { clientId, signals } of clientSignals) {
-    for (const signal of signals) {
-      const dedupeKey = dedupeKeyFor(trainerId, clientId, signal.type);
-      const existing = await coachAlertDao.findOpenByDedupeKey(dedupeKey);
+  const candidates = clientSignals.flatMap(({ clientId, signals }) =>
+    signals.map((signal) => ({
+      trainerId,
+      clientId,
+      type: signal.type,
+      priority: signal.priority,
+      reason: signal.reason,
+      context: signal.context,
+      dedupeKey: dedupeKeyFor(trainerId, clientId, signal.type),
+    }))
+  );
 
-      if (existing) {
-        stillOpenKeys.push(dedupeKey);
-        await coachAlertDao.refresh(existing._id, {
-          reason: signal.reason,
-          context: signal.context,
-          priority: signal.priority,
-          lastSeenAt: now,
-        });
-        refreshed++;
-        continue;
-      }
-
-      const lastClosed = await coachAlertDao.findLastManuallyClosedByDedupeKey(dedupeKey);
-      if (
-        lastClosed?.resolvedAt &&
-        now.getTime() - new Date(lastClosed.resolvedAt).getTime() <
-          ALERT_COOLDOWN_DAYS * 86400000
-      ) {
-        skippedByCooldown++;
-        continue;
-      }
-
-      await coachAlertDao.create({
-        trainerId,
-        clientId,
-        type: signal.type,
-        priority: signal.priority,
-        reason: signal.reason,
-        context: signal.context,
-        dedupeKey,
-        lastSeenAt: now,
-        createdAt: now,
-      });
-      stillOpenKeys.push(dedupeKey);
-      created++;
-    }
-  }
-
-  // Lo que estaba abierto y ya no sale en la evaluación es un problema
-  // resuelto solo (el cliente respondió, el coach confirmó el cuestionario,
-  // el peso volvió a moverse). Se cierra sin nota ni autor.
-  const autoResolved = await coachAlertDao.autoResolveMissing(trainerId, stillOpenKeys);
-
-  return {
-    created,
-    refreshed,
-    skippedByCooldown,
-    autoResolved: autoResolved?.modifiedCount || 0,
-  };
+  const plan = planAlertWrites(candidates, { openIdByKey, silencedKeys, now });
+  const result = await coachAlertDao.applyWritePlan(trainerId, plan, { fromRules: false });
+  return { ...result, skippedByCooldown: plan.skipped };
 }
 
-/** Evalúa un único profesional. Exportada para poder forzarla a mano. */
-async function evaluateTrainer(trainerId, now = new Date()) {
-  const context = await loadTrainerContext(trainerId, now);
-  const snapshots = buildClientSnapshots(context, now);
+/**
+ * Evalúa un único profesional. `context` permite reutilizar uno ya cargado
+ * (la Cartera lo tiene en la mano); sin él, se carga aquí.
+ */
+async function evaluateTrainer(trainerId, now = new Date(), context = null) {
+  const loaded = context || (await loadTrainerContext(trainerId, now));
+  const snapshots = buildClientSnapshots(loaded, now);
   const signalResult = await persistSignals(
     trainerId,
     buildSignalsFromSnapshots(snapshots),
@@ -381,27 +344,67 @@ async function evaluateTrainer(trainerId, now = new Date()) {
   return { ...signalResult, rules: ruleResult };
 }
 
-/**
- * Job nocturno. Un profesional que falla NUNCA aborta el resto — mismo
- * criterio que el resto de jobs diarios.
- */
-async function runAlertEvaluationJob(now = new Date()) {
-  const trainerIds = await trainerClientDao.listTrainerIdsWithLiveClients();
-  const totals = { trainers: trainerIds.length, created: 0, refreshed: 0, autoResolved: 0, failed: 0 };
+// --- Evaluación bajo demanda (sin cron) ---
+//
+// Antes un cron a las 05:00 evaluaba a TODOS los profesionales con clientes,
+// abrieran la app o no. Ahora la primera lectura de alertas del día de cada
+// profesional (panel, Cartera, resumen del cliente) lo evalúa, y el resto
+// del día se lee lo ya escrito. Misma frescura que el cron (una vez al día:
+// las señales por tiempo cuentan días), coste solo para quien mira, y ningún
+// proceso programado.
+//
+// El estado vive en memoria a propósito: perderlo (reinicio, despliegue)
+// solo cuesta repetir una evaluación idempotente, y consultarlo no cuesta ni
+// una consulta por petición. Con varios procesos, cada uno evaluaría una vez
+// al día: trabajo repetido, nunca alertas duplicadas (índice único parcial
+// de dedupeKey, y applyWritePlan ignora ese E11000).
+//
+// Peticiones simultáneas del mismo profesional (el panel y la Cartera a la
+// vez) se unen a la evaluación en curso en vez de lanzar otra.
+const evaluations = new Map(); // String(trainerId) -> { day, pending, promise }
 
-  for (const trainerId of trainerIds) {
-    try {
-      const result = await evaluateTrainer(trainerId, now);
-      totals.created += result.created;
-      totals.refreshed += result.refreshed;
-      totals.autoResolved += result.autoResolved;
-    } catch (error) {
-      totals.failed++;
-      console.error("[coach-alerts] fallo evaluando al profesional:", String(trainerId), error.message);
+function startEvaluation(trainerId, now, context) {
+  const key = String(trainerId);
+  const entry = { day: isoDate(now), pending: true, promise: null };
+  entry.promise = evaluateTrainer(trainerId, now, context).then(
+    (result) => {
+      entry.pending = false;
+      return result;
+    },
+    (error) => {
+      // Sin marca: la siguiente lectura lo reintenta.
+      if (evaluations.get(key) === entry) evaluations.delete(key);
+      throw error;
     }
-  }
+  );
+  evaluations.set(key, entry);
+  return entry.promise;
+}
 
-  return totals;
+/**
+ * Garantiza que las alertas del profesional están evaluadas HOY antes de
+ * leerlas. Si ya lo están, no toca la BD. Nunca lanza: si la evaluación
+ * falla se registra y se sirven las alertas que ya había — un fallo aquí no
+ * debe dejar al entrenador sin panel.
+ *
+ * `context`: si quien llama ya cargó loadTrainerContext (la Cartera), se
+ * reutiliza y la evaluación no vuelve a leer nada de los clientes.
+ */
+async function ensureEvaluatedToday(trainerId, { now = new Date(), context = null } = {}) {
+  const current = evaluations.get(String(trainerId));
+  const promise =
+    current?.day === isoDate(now) ? current.promise : startEvaluation(trainerId, now, context);
+  try {
+    await promise;
+  } catch (error) {
+    console.error("[coach-alerts] fallo evaluando al profesional:", String(trainerId), error.message);
+  }
+}
+
+/** "Revisar ahora": evalúa ya, salvo que haya una evaluación en curso, a la que se une. */
+function evaluateNow(trainerId, now = new Date()) {
+  const current = evaluations.get(String(trainerId));
+  return current?.pending ? current.promise : startEvaluation(trainerId, now, null);
 }
 
 // --- helper privado ---
@@ -418,7 +421,8 @@ function groupBy(items, keyFn) {
 module.exports = {
   ALERT_COOLDOWN_DAYS,
   evaluateTrainer,
-  runAlertEvaluationJob,
+  ensureEvaluatedToday,
+  evaluateNow,
   // Reutilizada por clientProgress/roster-service (la Cartera): carga el
   // mismo contexto del entrenador con el presupuesto de consultas de
   // arriba. No la copies: si diverge, la Cartera y las alertas dejan de

@@ -133,6 +133,56 @@ module.exports = {
       .sort({ date: 1 });
   },
 
+  // Coach Pro — días de VARIOS usuarios con solo lo que lee
+  // diet-days-nutrition-util#computeRangeAdherence: Meal.completed y, de cada
+  // item, assignedByTrainerId + consumed. Sustituye, para las alertas y la
+  // Cartera, a un getFullyPopulatedDietDaysForUser por cliente y en serie,
+  // que arrastraba el árbol entero de autopopulate (productos, recetas,
+  // ingredientes) para contar marcas. Una agregación para toda la cartera.
+  // Sin orden: la adherencia de un rango no depende de él.
+  async listTrackingDaysForUsers(userIds, startDate, endDate) {
+    if (!userIds.length) return [];
+    const itemFields = [{ $project: { assignedByTrainerId: 1, consumed: 1 } }];
+    return dietDaySchema.aggregate([
+      {
+        $match: {
+          userId: { $in: userIds.map((id) => new mongoose.Types.ObjectId(String(id))) },
+          date: { $gte: startDate, $lte: endDate },
+        },
+      },
+      { $project: { userId: 1, date: 1, meals: 1 } },
+      {
+        $lookup: {
+          from: "meals",
+          localField: "meals",
+          foreignField: "_id",
+          as: "meals",
+          pipeline: [
+            { $project: { completed: 1, customProducts: 1, customRecipes: 1 } },
+            {
+              $lookup: {
+                from: "customproducts",
+                localField: "customProducts",
+                foreignField: "_id",
+                as: "customProducts",
+                pipeline: itemFields,
+              },
+            },
+            {
+              $lookup: {
+                from: "customrecipes",
+                localField: "customRecipes",
+                foreignField: "_id",
+                as: "customRecipes",
+                pipeline: itemFields,
+              },
+            },
+          ],
+        },
+      },
+    ]);
+  },
+
   async createDietDay(standardDietDay) {
     try {
       let meals = standardDietDay.meals;

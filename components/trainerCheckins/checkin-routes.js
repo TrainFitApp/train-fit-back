@@ -8,6 +8,7 @@ const router = express.Router();
 
 // --- Lado profesional: agenda y programación de un cliente ---
 router.getAsync("/clients/:clientId/checkin-agenda", auth(["trainer"]), requireActiveClient(), agenda.agenda);
+router.getAsync("/clients/:clientId/checkin-summary", auth(["trainer"]), requireActiveClient(), agenda.summary);
 router.getAsync("/clients/:clientId/checkin-schedules", auth(["trainer"]), requireActiveClient(), agenda.listSchedules);
 router.postAsync("/clients/:clientId/checkin-schedules", auth(["trainer"]), requireActiveClient(), agenda.saveSchedule);
 // Antes de /:scheduleId a secas, o el genérico se comería la ruta literal.
@@ -19,6 +20,7 @@ router.getAsync(
 );
 router.putAsync("/clients/:clientId/checkin-schedules/:scheduleId", auth(["trainer"]), requireActiveClient(), agenda.saveSchedule);
 router.patchAsync("/clients/:clientId/checkin-schedules/:scheduleId/active", auth(["trainer"]), requireActiveClient(), agenda.setActive);
+router.postAsync("/clients/:clientId/checkin-schedules/:scheduleId/request", auth(["trainer"]), requireActiveClient(), agenda.requestNow);
 router.deleteAsync("/clients/:clientId/checkin-schedules/:scheduleId", auth(["trainer"]), requireActiveClient(), agenda.deleteSchedule);
 router.postAsync("/clients/:clientId/checkin-responses/:responseId/review", auth(["trainer"]), requireActiveClient(), agenda.review);
 

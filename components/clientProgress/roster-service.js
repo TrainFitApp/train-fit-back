@@ -1,6 +1,7 @@
 const {
   loadTrainerContext,
   buildClientSnapshots,
+  ensureEvaluatedToday,
 } = require("../coachAlerts/coach-alert-service");
 const { SIGNAL_THRESHOLDS } = require("../coachAlerts/coach-signals-service");
 const { computeAdherence } = require("./adherence-service");
@@ -22,18 +23,16 @@ const CoachAlert = require("../coachAlerts/coach-alert-schema");
  * es invisible en Hoy y evidente aquí.
  *
  * NADA de lo que se calcula aquí es nuevo:
- *   - loadTrainerContext + buildClientSnapshots son literalmente los del
- *     evaluador nocturno de alertas. Reusarlos garantiza que el "62%" de la
- *     Cartera es el mismo número que disparó la alerta, no otro parecido.
+ *   - loadTrainerContext + buildClientSnapshots son literalmente los de la
+ *     evaluación de alertas. Reusarlos garantiza que el "62%" de la Cartera
+ *     es el mismo número que disparó la alerta, no otro parecido.
  *   - computeAdherence es el mismo cálculo puro que la pestaña Resumen de la
  *     ficha, con la misma ventana de 28 días.
  *
- * Coste: el de loadTrainerContext (6 consultas fijas + 2 por cliente con
- * dieta) más 4 agrupadas. Es UN profesional bajo demanda, mirando su propia
- * cartera — el mismo trabajo que el job nocturno hace por él cada noche, no
- * un fan-out sobre la plataforma. La parte cara sigue siendo el bucle
- * secuencial de adherencia nutricional de loadTrainerContext; si algún día
- * molesta, se arregla allí y las dos vistas mejoran a la vez.
+ * Coste: el de loadTrainerContext (11 consultas fijas, ninguna por cliente)
+ * más 4 agrupadas. Si hoy aún no se habían evaluado las alertas, se evalúan
+ * con ESE mismo contexto: los recuentos de alertas salen al día sin volver a
+ * leer nada de los clientes.
  */
 
 // Misma ventana que el resumen de la ficha y que el evaluador de alertas.
@@ -167,7 +166,7 @@ async function buildRoster(trainerId, now = new Date()) {
   const [activeTasks, phasesByClient, alertsByClient] = await Promise.all([
     trainerTaskDao.listForClients(trainerId, clientIds),
     routineAssignmentDao.listByClients(clientIds),
-    countOpenAlertsByClient(trainerId),
+    ensureEvaluatedToday(trainerId, { now, context }).then(() => countOpenAlertsByClient(trainerId)),
   ]);
 
   const currentTableIds = [

@@ -1,8 +1,8 @@
 const cron = require("node-cron");
 const { runReminderJob } = require("./invite-reminder-service");
 
-// TASK-065 (MASTER_BACKLOG.md) — mismo patrón que TASK-025
-// (coach-alert-cron.js): corre una vez al día, con su propia válvula
+// TASK-065 (MASTER_BACKLOG.md) — mismo patrón que TASK-025 (el antiguo
+// cron de alertas, ya retirado): corre una vez al día, con su propia válvula
 // de apagado por variable de entorno. Horario distinto (09:15 en vez de
 // 09:00) para no acumular ambos jobs en el mismo tick del scheduler.
 function startInviteReminderCron() {

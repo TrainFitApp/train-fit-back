@@ -4,7 +4,6 @@ mongoose.set("strictQuery", true);
 const app = require("../app");
 const { buildMongoUri, redactMongoUri } = require("../scripts/_mongo-uri");
 const billingReconciliationJob = require("../components/billing/billing-reconciliation-job");
-const { startCoachAlertCron } = require("../components/coachAlerts/coach-alert-cron");
 
 // -------------------------------------------------------
 // 🧩 Normalización del puerto
@@ -62,9 +61,8 @@ function connectWithRetry() {
       require("../components/trainerBilling/adapter").start();
       // Los check-ins NO tienen cron: sus solicitudes son fechas calculadas
       // y el aviso lo ve el cliente al abrir la app (docs/plan-revisiones.md).
-      // Fase 1 Coach Pro — evaluador nocturno de señales que alimenta las
-      // alertas del panel del profesional (05:00, ver coach-alert-cron.js).
-      startCoachAlertCron();
+      // Las alertas del coach tampoco: se evalúan bajo demanda, una vez al
+      // día por profesional (coach-alert-service.js#ensureEvaluatedToday).
     })
     .catch((err) => {
       console.error("❌ MongoDB error:", err.message);

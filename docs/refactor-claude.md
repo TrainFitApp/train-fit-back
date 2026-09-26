@@ -64,7 +64,7 @@ Estado a **2026-09-25**. La parte del front está en `train-fit-front/docs/refac
 - Agenda y calendario: `checkin-agenda-service.js`.
 
 ### Coach Pro
-- `coachAlerts/`: alertas diarias, cron a las **05:00** (`DISABLE_COACH_ALERT_CRON`). El evaluador **escribe** en la BD.
+- `coachAlerts/`: alertas diarias **sin cron**. La primera lectura del día de cada entrenador (panel, Cartera o resumen del cliente) evalúa y **escribe** en la BD; `POST /trainer/alerts/evaluate` fuerza una evaluación.
 - `coachRules/` (reglas WHEN/IF/THEN), `coachProtocols/`, `coachTasks/` y `planChanges/` (historial de cambios con motivo).
 - `clientProgress/`: adherencia en 4 dimensiones, Cartera (roster) y progreso.
 - `supplements/`.
@@ -107,7 +107,6 @@ Rutas nuevas registradas en `routes/index.js`:
 
 | Cron | Hora | Se apaga con |
 |---|---|---|
-| Alertas del coach | 05:00 | `DISABLE_COACH_ALERT_CRON=true` |
 | Recordatorio de invitaciones | 09:15 | `DISABLE_INVITE_REMINDER_CRON=true` |
 | Conciliación de facturación | (ya estaba) | |
 

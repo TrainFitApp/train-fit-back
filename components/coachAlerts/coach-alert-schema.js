@@ -16,8 +16,9 @@ const Schema = mongoose.Schema;
 // 30 clientes en cada carga del dashboard sería un fan-out de cientos de
 // consultas (ver coach-alert-service.js, riesgo R1 de la auditoría).
 //
-// Por eso: el cron nocturno evalúa y ESCRIBE aquí; el dashboard LEE de aquí
-// con una sola consulta indexada.
+// Por eso: la evaluación (una vez al día por profesional, en su primera
+// lectura — coach-alert-service.js#ensureEvaluatedToday) ESCRIBE aquí; el
+// resto de lecturas del dashboard son una sola consulta indexada.
 const CoachAlertSchema = new Schema(
   {
     trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
@@ -106,10 +107,10 @@ CoachAlertSchema.index({ trainerId: 1, status: 1, priority: 1, createdAt: -1 });
 CoachAlertSchema.index({ clientId: 1, status: 1, createdAt: -1 });
 
 // Como mucho UNA alerta abierta por dedupeKey. Es un invariante de datos, no
-// solo una comprobación del servicio: si dos ejecuciones del cron se
-// solaparan (reinicio en caliente, ejecución manual del script mientras
-// corre la programada), el índice impide el duplicado aunque la lógica de
-// upsert perdiera la carrera. Parcial sobre status:"open" a propósito — el
+// solo una comprobación del servicio: si dos evaluaciones del mismo
+// profesional se solaparan (dos procesos, o un script manual mientras la
+// app evalúa), el índice impide el duplicado aunque la lógica de upsert
+// perdiera la carrera. Parcial sobre status:"open" a propósito — el
 // histórico de resueltas SÍ puede repetir clave (mismo problema, meses
 // después) y debe conservarse entero.
 CoachAlertSchema.index(

@@ -148,6 +148,10 @@ async function openForClient(clientId, today = todayIso(), trainerIds = null) {
  * Solicitudes ya CERRADAS sin respuesta, mirando hacia atrás `sinceDays`.
  * Es lo que hace que un check-in esté "vencido": no que hayan pasado N días
  * desde la última respuesta, sino que una ventana concreta se cerró vacía.
+ * `open` son las que siguen sin respuesta pero todavía se pueden responder.
+ *
+ * Sin tope de ocurrencias: el resumen de Seguimiento mira hasta 3 años atrás
+ * y una programación diaria pasa de las 400 de occurrenceDatesBetween.
  *
  * `answered` es un Set de claves "scheduleId:fecha".
  */
@@ -156,9 +160,10 @@ function missedOccurrences(schedules, answered, today, sinceDays = 60) {
   let missed = 0;
   let expected = 0;
   let answeredCount = 0;
+  let open = 0;
   let lastMissedDate = null;
   for (const schedule of schedules) {
-    for (const occurrence of occurrenceDatesBetween(schedule, from, today)) {
+    for (const occurrence of occurrenceDatesBetween(schedule, from, today, Infinity)) {
       const respondida = answered.has(`${schedule._id}:${occurrence.date}`);
       expected++;
       if (respondida) {
@@ -167,23 +172,54 @@ function missedOccurrences(schedules, answered, today, sinceDays = 60) {
       }
       // Solo cuenta como perdida si su ventana ya cerró: la de hoy todavía
       // se puede responder.
-      if (!occurrence.next || occurrence.next > today) continue;
+      if (isOpen(occurrence, today)) {
+        open++;
+        continue;
+      }
       missed++;
       if (!lastMissedDate || occurrence.date > lastMissedDate) lastMissedDate = occurrence.date;
     }
   }
-  return { missed, expected, answered: answeredCount, lastMissedDate };
+  return { missed, expected, answered: answeredCount, open, lastMissedDate };
+}
+
+/** Abiertas y cerradas sin respuesta de un cliente en los últimos `sinceDays`. */
+async function summaryFor(trainerId, clientId, sinceDays, today = todayIso()) {
+  const schedules = await Schedule.find({ trainerId, clientId }).lean();
+  const responses = await Response.find({
+    trainerId,
+    clientId,
+    occurrenceDate: { $gte: addDaysToIsoDate(today, -sinceDays) },
+  })
+    .select("scheduleId occurrenceDate")
+    .lean();
+  const answered = new Set(responses.map((r) => `${r.scheduleId}:${r.occurrenceDate}`));
+  const { open, missed } = missedOccurrences(schedules, answered, today, sinceDays);
+  return { open, missed };
+}
+
+/** La ocurrencia abierta HOY de una programación, si aún no tiene respuesta. */
+async function openUnanswered(schedule, today = todayIso()) {
+  const occurrence = occurrenceCovering(schedule, today);
+  if (!occurrence || !isOpen(occurrence, today)) return null;
+  const answered = await Response.exists({ scheduleId: schedule._id, occurrenceDate: occurrence.date });
+  return answered ? null : occurrence;
+}
+
+/** Próxima fecha (posterior a hoy) de UNA programación activa, o null. */
+function nextDateOf(schedule, today) {
+  if (!schedule.active) return null;
+  const covering = occurrenceCovering(schedule, today);
+  const candidate = covering ? covering.next : schedule.startDate;
+  return candidate && candidate > today ? candidate : null;
 }
 
 /** ¿Cuándo toca el próximo check-in? La más cercana de las programaciones activas. */
 function nextOccurrenceForClient(schedules, today) {
   let next = null;
   for (const schedule of schedules) {
-    if (!schedule.active) continue;
-    const covering = occurrenceCovering(schedule, today);
-    const candidate = covering ? covering.next : schedule.startDate;
-    if (!candidate) continue;
-    if (candidate > today && (!next || candidate < next)) next = candidate;
+    const candidate = nextDateOf(schedule, today);
+    if (candidate && (!next || candidate < next)) next = candidate;
   }
   return next;
 }
@@ -295,6 +331,9 @@ async function saveResponse({ schedule, occurrence, values, today = todayIso() }
 module.exports = {
   todayIso,
   missedOccurrences,
+  summaryFor,
+  openUnanswered,
+  nextDateOf,
   nextOccurrenceForClient,
   isOpen,
   occurrenceStatus,

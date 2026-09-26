@@ -3,11 +3,15 @@ const checkinDao = require("./checkin-dao");
 const agenda = require("./checkin-agenda-service");
 const notificationDao = require("../notifications/notification-dao");
 const { validateTiming, validDate } = require("./checkin-schedule-dates");
+const { CHECKIN_FIELDS_BY_KEY } = require("./checkin-field-catalog");
 const { isoDate } = require("../util/date-util");
 
 const scope = (req) => ({ trainerId: req.auth.userId, clientId: req.params.clientId });
 const validId = (id) => typeof id === "string" && /^[a-f\d]{24}$/i.test(id);
 const notFound = (res) => res.status(404).send({ message: "Check-in no encontrado" });
+
+// Tope del resumen de Seguimiento: el chip más largo es "3 años".
+const MAX_SUMMARY_DAYS = 3 * 365;
 
 // Timing por defecto al aplicar una plantilla desde la biblioteca: empieza
 // hoy, semanal. El entrenador lo afina después en la ficha del cliente —
@@ -26,12 +30,42 @@ function scheduleContent(definition) {
   };
 }
 
+// PURO. Preguntas elegidas campo a campo, sin plantilla: solo claves del
+// catálogo, sin repetir, ninguna obligatoria y sin preguntas propias.
+// null si alguna clave no existe.
+function looseContent(fields) {
+  const enabledFields = [...new Set(fields)];
+  if (enabledFields.some((key) => !CHECKIN_FIELDS_BY_KEY.has(key))) return null;
+  return { sourceTemplateId: null, enabledFields, requiredFields: [], customQuestions: [] };
+}
+
 function hasQuestions(content) {
   return !!content.enabledFields?.length || !!content.customQuestions?.some((q) => q.enabled !== false);
 }
 
+/**
+ * Las preguntas que pide el cuerpo de la petición: campos sueltos
+ * (`enabledFields`) o una plantilla (`sourceTemplateId`). Al editar, volver a
+ * mandar la misma plantilla no la copia otra vez: `content` sale null y las
+ * preguntas se quedan como estaban.
+ */
+async function requestedContent(req, data, existing) {
+  if (Array.isArray(data.enabledFields)) {
+    const content = looseContent(data.enabledFields);
+    return content ? { content } : { error: "Hay un campo de check-in que no existe" };
+  }
+  if (existing && (!data.sourceTemplateId || String(existing.sourceTemplateId) === data.sourceTemplateId)) {
+    return { content: null };
+  }
+  const definition = validId(data.sourceTemplateId)
+    ? await checkinDao.getDefinitionById(req.auth.userId, data.sourceTemplateId)
+    : null;
+  return definition ? { content: scheduleContent(definition) } : { error: "Selecciona una plantilla disponible" };
+}
+
 module.exports = {
   scheduleContent,
+  looseContent,
   hasQuestions,
   defaultTiming,
 
@@ -50,7 +84,25 @@ module.exports = {
       agenda.entryOfResponse(response)
     );
     const reviewCount = responses.filter((r) => r.status === "responded").length;
-    return res.send({ schedules, entries, responses, reviewCount });
+    const today = agenda.todayIso();
+    return res.send({
+      schedules: schedules.map((schedule) => ({ ...schedule, nextDate: agenda.nextDateOf(schedule, today) })),
+      entries,
+      responses,
+      reviewCount,
+    });
+  },
+
+  // GET /trainer/clients/:clientId/checkin-summary?days=N — de las ocurrencias
+  // de los últimos N días (hoy incluido), cuántas siguen abiertas y cuántas
+  // se cerraron sin respuesta. Calculado al vuelo, igual que la agenda.
+  async summary(req, res) {
+    const days = Number(req.query.days);
+    if (!Number.isInteger(days) || days < 1 || days > MAX_SUMMARY_DAYS) {
+      return res.status(400).send({ message: "Elige un rango de hasta 3 años" });
+    }
+    const { open, missed } = await agenda.summaryFor(req.auth.userId, req.params.clientId, days - 1);
+    return res.send({ days, open, missed });
   },
 
   // GET /trainer/clients/:clientId/checkin-schedules
@@ -105,27 +157,57 @@ module.exports = {
       interval: data.interval,
     };
 
+    const { content, error } = await requestedContent(req, data, existing);
+    if (error) return res.status(400).send({ message: error });
+    if (content && !hasQuestions(content)) {
+      return res.status(400).send({ message: "El check-in necesita al menos una pregunta activa" });
+    }
+
     if (existing) {
       if (data.revision !== undefined && data.revision !== existing.revision) {
         return res.status(409).send({ message: "La programación ha cambiado. Recarga antes de guardarla" });
       }
+      // Cambiar las preguntas no toca lo ya respondido: cada respuesta guarda
+      // una copia de las suyas (checkin-response-schema.js).
       const updated = await Schedule.findOneAndUpdate(
         { ...scope(req), _id: existing._id, revision: existing.revision },
-        { $set: { ...timing, name: data.name.trim() }, $inc: { revision: 1 } },
+        { $set: { ...content, ...timing, name: data.name.trim() }, $inc: { revision: 1 } },
         { new: true }
       ).lean();
       if (!updated) return res.status(409).send({ message: "La programación está cambiando. Recarga y vuelve a intentarlo" });
       return res.send(updated);
     }
 
-    const definition = validId(data.sourceTemplateId)
-      ? await checkinDao.getDefinitionById(req.auth.userId, data.sourceTemplateId)
-      : null;
-    if (!definition) return res.status(400).send({ message: "Selecciona una plantilla disponible" });
-    const content = scheduleContent(definition);
-    if (!hasQuestions(content)) return res.status(400).send({ message: "El check-in necesita al menos una pregunta activa" });
-
     const created = await Schedule.create({ ...scope(req), ...content, ...timing, name: data.name.trim() });
+    return res.status(201).send(created);
+  },
+
+  // POST /trainer/clients/:clientId/checkin-schedules/:scheduleId/request —
+  // "Enviarlo ahora". Sin solicitudes guardadas no se adelanta la ocurrencia:
+  // se crea una programación "once" de hoy con las mismas preguntas (mismos
+  // _id en las propias, para que sus respuestas se sigan leyendo igual). Si
+  // hoy ya tiene una abierta sin responder, no se duplica.
+  async requestNow(req, res) {
+    if (!validId(req.params.scheduleId)) return notFound(res);
+    const schedule = await Schedule.findOne({ ...scope(req), _id: req.params.scheduleId }).lean();
+    if (!schedule) return notFound(res);
+    if (!schedule.active) return res.status(409).send({ message: "Reanuda la programación antes de enviarla" });
+
+    const today = agenda.todayIso();
+    if (await agenda.openUnanswered(schedule, today)) return res.send({ alreadyOpen: true });
+
+    const created = await Schedule.create({
+      ...scope(req),
+      name: schedule.name,
+      sourceTemplateId: schedule.sourceTemplateId,
+      enabledFields: schedule.enabledFields,
+      requiredFields: schedule.requiredFields,
+      customQuestions: schedule.customQuestions,
+      startDate: today,
+      time: schedule.time,
+      frequency: "once",
+      interval: 1,
+    });
     return res.status(201).send(created);
   },
 

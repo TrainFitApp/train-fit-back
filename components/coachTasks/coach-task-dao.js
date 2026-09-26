@@ -5,6 +5,11 @@ module.exports = {
     return CoachTask.create({ trainerId, ...data });
   },
 
+  // Las tareas que crean las reglas de nivel "automatic" en una pasada.
+  async createMany(trainerId, items) {
+    return CoachTask.insertMany(items.map((data) => ({ trainerId, ...data })));
+  },
+
   // Pendientes primero y por fecha de vencimiento. Las tareas sin dueDate
   // (null) quedan al final: Mongo ordena null antes que cualquier string en
   // ascendente, así que se ordena por un campo derivado que las empuja al

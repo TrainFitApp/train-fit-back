@@ -31,8 +31,9 @@ module.exports = {
     return CoachRule.findOneAndDelete({ _id: id, trainerId });
   },
 
-  async markEvaluated(id, when) {
-    return CoachRule.updateOne({ _id: id }, { $set: { lastEvaluatedAt: when } });
+  // Todas las reglas evaluadas en una pasada, en una escritura.
+  async markEvaluated(ids, when) {
+    return CoachRule.updateMany({ _id: { $in: ids } }, { $set: { lastEvaluatedAt: when } });
   },
 
   // Freno de emergencia: la regla afectó a más clientes de la cuenta en una

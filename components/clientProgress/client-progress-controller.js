@@ -9,6 +9,7 @@ const {
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 const { taskLabel } = require("../trainerTasks/task-label");
 const coachAlertDao = require("../coachAlerts/coach-alert-dao");
+const coachAlertService = require("../coachAlerts/coach-alert-service");
 const tableDao = require("../tables/table-dao");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
 const {
@@ -174,7 +175,12 @@ module.exports = {
     const to = isoDate(new Date());
     const from = addDays(to, -(SUMMARY_WINDOW_DAYS - 1));
 
-    const data = await loadClientWindow(trainerId, clientId, { from, to });
+    // Las alertas del resumen salen de la evaluación diaria del profesional:
+    // si hoy aún no se ha hecho, se hace a la vez que se carga la ventana.
+    const [data] = await Promise.all([
+      loadClientWindow(trainerId, clientId, { from, to }),
+      coachAlertService.ensureEvaluatedToday(trainerId),
+    ]);
     if (!data) return res.status(404).send({ message: "Cliente no encontrado" });
 
     const [alerts, activePlan, currentRoutinePhase] = await Promise.all([

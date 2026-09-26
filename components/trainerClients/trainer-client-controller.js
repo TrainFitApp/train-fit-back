@@ -13,6 +13,7 @@ async function withSeatFlags(trainerId, clients) {
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const coachAlertDao = require("../coachAlerts/coach-alert-dao");
+const coachAlertService = require("../coachAlerts/coach-alert-service");
 
 // Los 3 únicos tipos que este endpoint devolvía antes de la Fase 1 Coach
 // Pro. CoachAlert produce 8; los 5 restantes se filtran aquí a propósito
@@ -165,8 +166,8 @@ const controller = {
   //
   // Lo que SÍ cambia es de dónde salen los datos: antes recalculaba las 3
   // señales al vuelo en cada petición; ahora lee las alertas que ya calculó
-  // el evaluador nocturno. Mantener las dos implementaciones habría sido
-  // exactamente la duplicación de lógica que este trabajo evita — y con el
+  // la evaluación diaria (ensureEvaluatedToday). Mantener las dos
+  // implementaciones habría sido exactamente la duplicación de lógica que este trabajo evita — y con el
   // agravante de que podrían discrepar entre sí (dos definiciones de "check-in
   // vencido" divergiendo con el tiempo).
   //
@@ -175,6 +176,7 @@ const controller = {
   // filas en blanco. El orden lo da el DAO (prioridad, luego más reciente),
   // que es el mismo criterio de urgencia que aplicaba el sort anterior.
   async getAttentionItems(req, res) {
+    await coachAlertService.ensureEvaluatedToday(req.auth.userId);
     const alerts = await coachAlertDao.listForTrainer(req.auth.userId, { status: "open" });
 
     const items = alerts

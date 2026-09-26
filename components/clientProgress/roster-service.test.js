@@ -90,7 +90,7 @@ test("daysSince", async (t) => {
 
 // La Cartera entera depende de dos funciones que viven en otro componente
 // (coachAlerts). Ese acoplamiento es DELIBERADO —reutilizar el contexto del
-// evaluador nocturno en vez de duplicarlo era el objetivo del movimiento 1—
+// evaluador de alertas en vez de duplicarlo era el objetivo del movimiento 1—
 // pero no lo cubría ningún test: `loadTrainerContext` estaba declarada y NO
 // exportada, así que buildRoster lanzaba "loadTrainerContext is not a
 // function" en cuanto alguien abría la pestaña. Compiló, pasó los 517 tests
@@ -99,7 +99,7 @@ test("contrato con coachAlerts", async (t) => {
   const coachAlertService = require("../coachAlerts/coach-alert-service");
 
   await t.test("coach-alert-service exporta lo que la Cartera importa", () => {
-    for (const nombre of ["loadTrainerContext", "buildClientSnapshots"]) {
+    for (const nombre of ["loadTrainerContext", "buildClientSnapshots", "ensureEvaluatedToday"]) {
       assert.equal(
         typeof coachAlertService[nombre],
         "function",

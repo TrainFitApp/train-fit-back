@@ -8,44 +8,77 @@ const CoachAlert = require("./coach-alert-schema");
 const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 
 module.exports = {
-  async findOpenByDedupeKey(dedupeKey) {
-    return CoachAlert.findOne({ dedupeKey, status: "open" }).lean();
+  // Abiertas del profesional en UN ámbito, como dedupeKey -> _id: lo que
+  // planAlertWrites necesita para decidir entre insertar y refrescar. Una
+  // consulta por evaluación en vez de una por alerta candidata.
+  //   fromRules false: señales del sistema (ruleId null).
+  //   fromRules true:  alertas de regla, incluida la de regla desbocada.
+  // Van por separado porque las dos pasadas son independientes: si la de
+  // reglas falla, sus alertas deben quedarse como están.
+  async listOpenIdsByKey(trainerId, { fromRules }) {
+    const rows = await CoachAlert.find({ trainerId, status: "open", ruleId: ruleScope(fromRules) })
+      .select("dedupeKey")
+      .lean();
+    return new Map(rows.map((row) => [row.dedupeKey, row._id]));
   },
 
-  // El cierre MANUAL más reciente de este mismo problema — el servicio lo
-  // usa para no reabrir algo que el coach acaba de cerrar a mano (periodo de
-  // silencio, ver coach-alert-service.js#ALERT_COOLDOWN_DAYS).
+  // Claves cerradas A MANO desde `since` — el servicio no las reabre durante
+  // el periodo de silencio (coach-alert-service.js#ALERT_COOLDOWN_DAYS).
   //
   // Solo cuentan los cierres humanos: `dismissed` (siempre manual) o
-  // `resolved` con resolvedBy. Los cierres AUTOMÁTICOS (autoResolveMissing,
-  // resolvedBy null) quedan fuera a propósito — si contaran, un cliente que
-  // responde su check-in cerraría la alerta automáticamente y eso silenciaría
-  // la de la siguiente durante dos semanas, justo el caso que la alerta
-  // existe para detectar.
-  async findLastManuallyClosedByDedupeKey(dedupeKey) {
-    return CoachAlert.findOne({
-      dedupeKey,
+  // `resolved` con resolvedBy. Los cierres AUTOMÁTICOS (resolvedBy null)
+  // quedan fuera a propósito — si contaran, un cliente que responde su
+  // check-in cerraría la alerta automáticamente y eso silenciaría la de la
+  // siguiente durante dos semanas, justo el caso que la alerta existe para
+  // detectar.
+  async listManuallyClosedKeysSince(trainerId, since) {
+    const keys = await CoachAlert.distinct("dedupeKey", {
+      trainerId,
+      resolvedAt: { $gte: since },
       $or: [{ status: "dismissed" }, { status: "resolved", resolvedBy: { $ne: null } }],
-    })
-      .sort({ resolvedAt: -1 })
-      .select("resolvedAt")
-      .lean();
+    });
+    return new Set(keys);
   },
 
-  async create(alert) {
-    return CoachAlert.create(alert);
-  },
+  /**
+   * Aplica un plan de alert-write-plan.js: inserta las nuevas, refresca las
+   * que siguen vigentes (frase y números sí, createdAt NO: el coach necesita
+   * ver que el problema lleva 3 semanas ahí) y cierra solas las del mismo
+   * ámbito que ya no salen.
+   *
+   * El cierre automático va sin nota ni autor: nadie hizo nada explícito, el
+   * problema desapareció solo (el cliente respondió, el coach confirmó el
+   * cuestionario...). Corre en paralelo con el bulkWrite: su $nin excluye
+   * todo lo que este inserta o refresca, así que no pueden pisarse.
+   *
+   * Un E11000 solo puede venir de otra evaluación del mismo profesional en
+   * otro proceso que insertó la misma alerta un instante antes: el índice
+   * único parcial ya garantiza lo que se quería, así que no es un error.
+   */
+  async applyWritePlan(trainerId, plan, { fromRules }) {
+    const ops = [
+      ...plan.inserts.map((document) => ({ insertOne: { document } })),
+      ...plan.refreshes.map(({ _id, set }) => ({ updateOne: { filter: { _id }, update: { $set: set } } })),
+    ];
 
-  // Refresca una alerta abierta que sigue vigente: los números y la frase se
-  // actualizan (el estancamiento pasa de 3 a 4 semanas), createdAt NO — es
-  // la fecha en que apareció el problema, y el coach necesita ver que lleva
-  // 3 semanas ahí.
-  async refresh(id, { reason, context, priority, lastSeenAt }) {
-    return CoachAlert.findByIdAndUpdate(
-      id,
-      { $set: { reason, context, priority, lastSeenAt } },
-      { new: true }
-    ).lean();
+    const [written, resolved] = await Promise.all([
+      ops.length ? bulkWriteIgnoringDuplicates(ops) : null,
+      CoachAlert.updateMany(
+        {
+          trainerId,
+          status: "open",
+          ruleId: ruleScope(fromRules),
+          dedupeKey: { $nin: plan.keptKeys },
+        },
+        { $set: { status: "resolved", resolvedAt: new Date(), resolvedBy: null } }
+      ),
+    ]);
+
+    return {
+      created: written?.insertedCount || 0,
+      refreshed: plan.refreshes.length,
+      autoResolved: resolved?.modifiedCount || 0,
+    };
   },
 
   async listForTrainer(trainerId, { status = "open", limit = 100 } = {}) {
@@ -109,38 +142,23 @@ module.exports = {
       { new: true }
     ).lean();
   },
-
-  // Cierre automático: la condición ya no se cumple (el coach confirmó el
-  // cuestionario, el cliente respondió el check-in...). Se marcan como
-  // "resolved" sin nota — nadie hizo nada explícito, el problema
-  // desapareció solo. Sin esto, una alerta de check-in seguiría abierta
-  // eternamente después de que el cliente respondiera.
-  async autoResolveMissing(trainerId, stillOpenDedupeKeys) {
-    return CoachAlert.updateMany(
-      { trainerId, status: "open", ruleId: null, dedupeKey: { $nin: stillOpenDedupeKeys } },
-      { $set: { status: "resolved", resolvedAt: new Date(), resolvedBy: null } }
-    );
-  },
-
-  // Fase 3 — el mismo cierre automático para las alertas DE REGLA, que
-  // autoResolveMissing excluye a propósito (`ruleId: null`). Van por
-  // separado porque las dos pasadas son independientes: si la evaluación de
-  // reglas falla, las alertas de regla deben quedarse como están en vez de
-  // cerrarse todas por no aparecer en una lista que nunca se completó.
-  async autoResolveMissingRuleAlerts(trainerId, stillOpenDedupeKeys) {
-    return CoachAlert.updateMany(
-      {
-        trainerId,
-        status: "open",
-        ruleId: { $ne: null },
-        dedupeKey: { $nin: stillOpenDedupeKeys },
-      },
-      { $set: { status: "resolved", resolvedAt: new Date(), resolvedBy: null } }
-    );
-  },
 };
 
 // --- helpers privados ---
+
+function ruleScope(fromRules) {
+  return fromRules ? { $ne: null } : null;
+}
+
+async function bulkWriteIgnoringDuplicates(ops) {
+  try {
+    return await CoachAlert.bulkWrite(ops, { ordered: false });
+  } catch (error) {
+    const writeErrors = [].concat(error.writeErrors || []);
+    if (!writeErrors.length || writeErrors.some((e) => e.code !== 11000)) throw error;
+    return error.result;
+  }
+}
 
 function toObjectId(value) {
   return value instanceof mongoose.Types.ObjectId ? value : new mongoose.Types.ObjectId(value);
