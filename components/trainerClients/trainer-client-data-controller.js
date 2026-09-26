@@ -209,10 +209,19 @@ module.exports = {
   // GET /trainer/clients/:clientId/anthropometry — F09, requireActiveClient() sin scope
   async getClientAnthropometry(req, res) {
     const clientId = req.params.clientId;
-    const maxDate = req.query.maxDate ? new Date(req.query.maxDate) : new Date();
-    const minDate = req.query.minDate
-      ? new Date(req.query.minDate)
-      : new Date(maxDate.getTime() - 90 * 24 * 60 * 60 * 1000);
+    // Anthropometry.date es un String "YYYY-MM-DD": con objetos Date Mongoose
+    // los casteaba a "Sun Jun 28 2026…" y ningún día cumplía el filtro (siempre []).
+    const toIsoDay = (value) => new Date(value).toISOString().slice(0, 10);
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    let maxDate;
+    let minDate;
+    try {
+      // Sin maxDate: mañana (UTC), para no dejar fuera el "hoy" local de husos por delante.
+      maxDate = toIsoDay(req.query.maxDate || Date.now() + DAY_MS);
+      minDate = toIsoDay(req.query.minDate || new Date(maxDate).getTime() - 90 * DAY_MS);
+    } catch (e) {
+      return res.status(400).send({ message: "minDate y maxDate deben ser fechas válidas" });
+    }
 
     const entries = await anthropometryService.getAnthropometriesByUserIdBetweenDates(
       clientId,
@@ -677,13 +686,13 @@ module.exports = {
   },
 
   // POST /trainer/clients/:clientId/nutrition-preferences/request — F29, requireActiveClient("nutrition").
+  // Sin notificación: el cliente lo ve en "Pendiente de ti" del tab Coach
+  // (request-status.js#isRequestPending).
   async requestNutritionPreferences(req, res) {
     const preferences = await nutritionPreferencesDao.markRequested(
       req.params.clientId,
       req.auth.userId
     );
-
-    await notificationDao.create(req.params.clientId, req.auth.userId, "nutrition_preferences_requested", {});
 
     return res.send(preferences);
   },
@@ -711,8 +720,8 @@ module.exports = {
     if (cooksAtHome != null && !cooksAtHomeValues.includes(cooksAtHome)) {
       return res.status(400).send({ message: "cooksAtHome debe ser 'yes', 'no' o 'sometimes'" });
     }
-    // El profesional SÍ puede pautar las restricciones desde aquí (el
-    // cliente no: las fija el intake). Si no viene, el dao no las toca.
+    // Restricciones: las pone el intake y las editan tanto el profesional
+    // (aquí) como el cliente (sus preferencias). Si no viene, el dao no las toca.
     if (
       dietaryFlags != null &&
       (!Array.isArray(dietaryFlags) || !dietaryFlags.every((flag) => validDietaryFlags.includes(flag)))

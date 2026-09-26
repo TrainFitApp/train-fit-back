@@ -3,6 +3,7 @@ const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
 const { weekForClientAt } = require("../planAssignments/week-service");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
+const { isRequestPending } = require("../nutritionPreferences/request-status");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
@@ -83,7 +84,7 @@ module.exports = {
       nutritionPreferences = {
         requestedAt: preferences.requestedAt,
         respondedAt: preferences.respondedAt,
-        pending: !preferences.respondedAt,
+        pending: isRequestPending(preferences),
         requestedByName: trainerName(preferences.requestedBy),
       };
     }
