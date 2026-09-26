@@ -24,6 +24,13 @@ module.exports = {
     return TrainerClient.findOne(query);
   },
 
+  // Scopes ("training"/"nutrition") que ESTE profesional tiene activos con el
+  // cliente: hay una relación por scope.
+  async findActiveScopes(trainerId, clientId) {
+    const relations = await TrainerClient.find({ trainerId, clientId, status: "active" }).select("scope").lean();
+    return [...new Set(relations.map((relation) => relation.scope).filter(Boolean))];
+  },
+
   // ¿Existe alguna relación activa del cliente para este scope, con CUALQUIER
   // profesional? Usado por F14 para decidir si aplican las exenciones de límite.
   async hasActiveRelation(clientId, scope) {

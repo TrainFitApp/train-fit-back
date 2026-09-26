@@ -11,8 +11,11 @@ const { rejectIfReadOnly } = require("./trainer-seat-service");
  *
  * @param {"training"|"nutrition"|null} requiredScope — si se omite, cualquier
  * scope activo del cliente con este profesional satisface la comprobación.
+ * @param {{allowReadOnly?: boolean}} options — allowReadOnly deja pasar
+ * escrituras con el cliente en solo lectura. Solo para estado propio del
+ * entrenador que no toca datos del cliente (p. ej. marcar notas como vistas).
  */
-function requireActiveClient(requiredScope) {
+function requireActiveClient(requiredScope, { allowReadOnly = false } = {}) {
   return async (req, res, next) => {
     try {
       const trainerId = req.auth.userId;
@@ -45,7 +48,7 @@ function requireActiveClient(requiredScope) {
 
       // Por encima del cupo del plan, los clientes fuera de las plazas activas
       // se pueden consultar pero no modificar (trainer-seat-service.js).
-      if (await rejectIfReadOnly(req, res, clientId)) return;
+      if (!allowReadOnly && await rejectIfReadOnly(req, res, clientId)) return;
 
       req.trainerClientRelation = relation;
       next();

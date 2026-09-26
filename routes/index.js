@@ -46,6 +46,7 @@ const painRoutes = require("../components/painLog/pain-routes");
 const supplementRoutes = require("../components/supplements/supplement-routes");
 const trainerNutritionalGoalRoutes = require("../components/nutritionalGoals/trainer-nutritional-goal-routes");
 const exerciseScoreRoutes = require("../components/exerciseScores/exercise-score-routes");
+const clientNotesRoutes = require("../components/clientNotes/client-notes-routes");
 
 const router = express.Router();
 
@@ -105,5 +106,7 @@ router.use("/trainer", coachProtocolRoutes);
 // Bajo /trainer y sin :clientId: no son de un cliente, son del método del
 // profesional.
 router.use("/trainer", exerciseScoreRoutes);
+// Tab "Notas" de la ficha: todo lo que ha escrito el cliente, con leído por entrenador.
+router.use("/trainer", clientNotesRoutes);
 
 module.exports = router;
