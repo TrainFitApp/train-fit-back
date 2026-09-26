@@ -60,12 +60,6 @@ function connectWithRetry() {
         console.error("❌ Falta .build/trainer-billing: ejecuta `npm run build:trainer-billing` antes de arrancar (ver docs/TRAINERS_PAGOS_PRODUCCION.md).");
       }
       require("../components/trainerBilling/adapter").start();
-      // TASK-025 existía desde antes pero nunca se llamaba desde el
-      // arranque real (confirmado por grep: cero require() del módulo
-      // fuera de sí mismo) — el cron de recordatorios de check-in llevaba
-      // construido pero inerte. Arrancado aquí junto al nuevo de medidas.
-      startCheckinReminderCron();
-      startAnthropometryRequestReminderCron();
       // Los check-ins NO tienen cron: sus solicitudes son fechas calculadas
       // y el aviso lo ve el cliente al abrir la app (docs/plan-revisiones.md).
       // Fase 1 Coach Pro — evaluador nocturno de señales que alimenta las

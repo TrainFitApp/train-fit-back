@@ -885,7 +885,7 @@ function buildTraining(exerciseIds) {
 // ---------------------------------------------------------------------------
 // SEGUIMIENTO: hábitos, dolor, suplementos, notas, cobros, historial, pendientes
 // ---------------------------------------------------------------------------
-function buildTracking() {
+function buildTracking(kcalP2) {
   // Hábitos (el de pasos ya lo tienen; no se toca)
   const HABITS = [
     { key: "water", type: "water", label: null, target: 2.5, unit: "l", rate: 0.85 },
@@ -943,7 +943,7 @@ function buildTracking() {
     { days: 70, entity: "diet_plan", action: "assigned", name: "Adaptación", reason: "Alta. Empezamos en mantenimiento para medir adherencia real.", changes: [{ field: "kcalTotal", label: "Calorías", previousValue: null, newValue: null }] },
     { days: 42, entity: "routine", action: "assigned", name: "Hipertrofia torso-pierna", reason: "Cierra el bloque de adaptación. Entra torso-pierna de 3 días.", changes: [{ field: "name", label: "Rutina", previousValue: null, newValue: "Hipertrofia torso-pierna" }] },
     { days: 28, entity: "diet_plan", action: "replaced", name: "Definición vegetariana", reason: "Pasa a definición: -300 kcal sobre el gasto calculado.", changes: [{ field: "phaseName", label: "Fase", previousValue: "Adaptación", newValue: "Definición" }] },
-    { days: 14, entity: "diet_plan", action: "updated", name: "Definición vegetariana", reason: "Perdía menos de lo previsto: bajo un 4 % las cantidades esta semana.", changes: [{ field: "kcalTotal", label: "Calorías", previousValue: 3419, newValue: 3282 }] },
+    { days: 14, entity: "diet_plan", action: "updated", name: "Definición vegetariana", reason: "Perdía menos de lo previsto: bajo un 4 % las cantidades esta semana.", changes: [{ field: "kcalTotal", label: "Calorías", previousValue: kcalP2, newValue: Math.round(kcalP2 * 0.96) }] },
     { days: 10, entity: "checkin_config", action: "updated", name: "Check-in semanal", reason: "Añado la pregunta de comidas fuera de casa: es donde se le escapa el plan.", changes: [{ field: "customQuestions", label: "Preguntas propias", previousValue: 5, newValue: 6 }] },
   ];
   CHANGES.forEach((c, i) =>
@@ -1041,14 +1041,24 @@ async function main() {
   const trainer = await User.findOne({ email: TRAINER_EMAIL }).select("_id roles").lean();
   const client = await User.findOne({ email: CLIENT_EMAIL }).select("_id sex height birth steps activity training objetive tableInUse").lean();
   if (!trainer || !client) throw new Error(`Faltan cuentas: ${!trainer ? TRAINER_EMAIL : ""} ${!client ? CLIENT_EMAIL : ""}. Este script no las crea.`);
+  // `training` guarda el factor COMBINADO de la tabla pasos × días de
+  // entrenamiento (training-factor.js): uno que no casa con ninguna columna
+  // del rango de pasos del perfil inflaría la necesidad (p. ej. steps 1 con
+  // training 1.5 daba ~3.400 kcal) y todo lo sembrado saldría desmedido.
+  const profileTraining = trainingDaysFromFactors(client.steps, client.training);
+  if (!CLEAN && !(profileTraining && profileTraining.exact)) {
+    throw new Error(`El perfil de ${CLIENT_EMAIL} tiene steps=${client.steps} y training=${client.training}, que no es un factor válido: corrígelo antes de sembrar.`);
+  }
   TRAINER_ID = trainer._id;
   CLIENT_ID = client._id;
   console.log(`[seed-full] trainer=${TRAINER_ID} cliente=${CLIENT_ID}`);
 
   // Antropometría existente (no se pisa) y ejercicios del catálogo
   require("../components/anthropometry/anthropometry-dao");
+  // Fechas ocupadas por filas que NO son de este seed (las suyas se reescriben).
   const existing = await mongoose.model("Anthropometry").find({ userId: CLIENT_ID }).select("date").lean();
-  const existingDates = new Set(existing.map((a) => a.date));
+  const ownIds = new Set(Array.from({ length: 200 }, (_, i) => String(oid("anth:" + (i - 100)))));
+  const existingDates = new Set(existing.filter((a) => !ownIds.has(String(a._id))).map((a) => a.date));
 
   const Exercise = require("../components/exercises/exercise-schema");
   const exerciseIds = {};
@@ -1069,7 +1079,7 @@ async function main() {
   const dd = buildDietDays(nut.contents);
   const ci = buildCheckins(nut.phases, existingDates);
   const tr = buildTraining(exerciseIds);
-  const tk = buildTracking();
+  const tk = buildTracking(nut.needP2.target.kcal);
 
   const byModel = {};
   for (const op of ops) (byModel[op.model] ||= []).push(op);
