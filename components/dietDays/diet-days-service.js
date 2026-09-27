@@ -2,6 +2,8 @@ const dietDayDao = require("./diet-days-dao");
 const dietDayUtil = require("./diet-days-util");
 const aggregateService = require("../util/aggregate-service");
 const anthropometryModel = require("../anthropometry/anthropometry-service");
+const dietTemplateDao = require("../dietTemplates/diet-template-dao");
+const { buildShoppingList } = require("./shopping-list-service");
 
 module.exports = {
   async getDietDays(page, limit) {
@@ -67,6 +69,17 @@ module.exports = {
 
   async getFullyPopulatedDietDaysForUser(userId, startDate, endDate) {
     return dietDayDao.getFullyPopulatedDietDaysForUser(userId, startDate, endDate);
+  },
+
+  // Lista de la compra del cliente para [from, to]: sale del plan, no de los
+  // días materializados (ver shopping-list-service.js). La comparten la ruta
+  // del cliente y la del entrenador.
+  async getShoppingList(userId, from, to) {
+    const [plans, marks] = await Promise.all([
+      dietTemplateDao.listCoveringRange(userId, from, to),
+      dietDayDao.listMenuMarks(userId, from, to),
+    ]);
+    return { ...buildShoppingList({ from, to, plans, marks }), period: { from, to } };
   },
 
   async countDaysWithoutChoice(userId, startDate, endDate) {

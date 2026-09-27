@@ -133,6 +133,15 @@ module.exports = {
       .sort({ date: 1 });
   },
 
+  // Lista de la compra — solo el menú elegido y si el día está saltado, sin
+  // el árbol de autopopulate.
+  async listMenuMarks(userId, startDate, endDate) {
+    return dietDaySchema
+      .find({ userId, date: { $gte: startDate, $lte: endDate } })
+      .select("date menuName skipped")
+      .lean();
+  },
+
   // Coach Pro — días de VARIOS usuarios con solo lo que lee
   // diet-days-nutrition-util#computeRangeAdherence: Meal.completed y, de cada
   // item, assignedByTrainerId + consumed. Sustituye, para las alertas y la

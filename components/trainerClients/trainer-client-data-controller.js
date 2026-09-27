@@ -14,8 +14,8 @@ const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("./trainer-client-dao");
 const { listSkippedDates } = require("../dietDays/diet-skips");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
-const dietDaysDao = require("../dietDays/diet-days-dao");
-const { buildShoppingList } = require("../dietDays/shopping-list-service");
+const { shoppingRange } = require("../dietDays/shopping-list-service");
+const dietDaysService = require("../dietDays/diet-days-service");
 const { summarizeFoodCompliance } = require("../dietDays/food-compliance");
 const planResolver = require("../planAssignments/plan-resolver");
 const planChangeService = require("../planChanges/plan-change-service");
@@ -553,38 +553,17 @@ module.exports = {
 
   // GET /trainer/clients/:clientId/shopping-list?from=&to= — Movimiento 5
   // Coach Pro. Lo que el cliente tiene que comprar para cumplir el plan de
-  // ese rango, sumado por producto.
-  //
-  // No hay modelo nuevo: es otra lectura de los MISMOS DietDay que ya sirven
-  // el calendario y la adherencia. Guardarla como entidad la dejaría
-  // desfasada en cuanto el entrenador cambiara una comida, que es lo normal.
-  //
-  // Se leen solo los días MATERIALIZADOS (getFullyPopulatedDietDaysForDiet),
-  // no se resuelve el plan al vuelo para los que falten: mismo criterio y
-  // mismo motivo que en el evaluador nocturno de alertas — resolver cada
-  // fecha son 3 consultas más con la cascada entera de autopopulate, y aquí
-  // el rango puede ser un mes.
+  // ese rango: menús × días, con sus alternativas (shopping-list-service.js).
+  // Sin modelo nuevo: se calcula del plan al pedirla, porque el plan cambia.
   async getClientShoppingList(req, res) {
     const clientId = req.params.clientId;
     const client = await userSchema.findById(clientId).select("_id").lean();
     if (!client?._id) {
-      return res.send({ items: [], daysWithPlan: 0, period: null });
+      return res.send({ items: [], daysWithPlan: 0, segments: [], period: null });
     }
-
-    const from = req.query.from || todayIsoDate();
-    // Una semana por defecto: es como se hace la compra.
-    const to = req.query.to || addDaysToIsoDate(from, 6);
-
-    const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(
-      client._id,
-      from,
-      to
-    );
-
-    return res.send({
-      ...buildShoppingList(days),
-      period: { from, to },
-    });
+    const range = shoppingRange(req.query);
+    if (!range) return res.status(400).send({ message: "Rango inválido (YYYY-MM-DD, máx. 62 días)" });
+    return res.send(await dietDaysService.getShoppingList(client._id, range.from, range.to));
   },
 
   // GET /trainer/clients/:clientId/payments — F26, requireActiveClient() sin scope

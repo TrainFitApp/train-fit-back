@@ -1,18 +1,22 @@
 const trainerClientService = require("../trainerClients/trainer-client-service");
 const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
 const { weekForClientAt } = require("../planAssignments/week-service");
+const DietTemplate = require("../dietTemplates/diet-template-schema");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const { isRequestPending } = require("../nutritionPreferences/request-status");
 const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
+const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
+const { isoDate } = require("../util/date-util");
+const { pickTrainingPlan, pickNutritionPlan } = require("./current-plans");
 
 module.exports = {
   // GET /coach/dashboard — cliente autenticado. Agrega, de TODOS sus
   // profesionales con relación ACTIVA, todo lo que hoy vive disperso en
   // pantallas separadas (check-ins, comidas propuestas, preferencias,
-  // cobros, rutina/objetivo asignados). No introduce ninguna colección
+  // cobros, rutina y dieta asignadas). No introduce ninguna colección
   // nueva ni modifica lógica de negocio existente — es una capa de
   // agregación de solo lectura sobre DAOs/servicios ya construidos.
   async getDashboard(req, res) {
@@ -104,24 +108,52 @@ module.exports = {
         };
       });
 
-    // --- Rutina asignada actualmente ---
-    const user = await userSchema.findById(clientId).select("tableInUse");
-    let assignedRoutine = null;
-    if (user?.tableInUse) {
-      const table = await Table.findById(user.tableInUse).select("name assignedByTrainerId");
+    // --- Tu plan actual: rutina y fase de dieta (current-plans.js) ---
+    // Solo cuenta lo de un profesional con relación activa: lo de uno ya
+    // desvinculado no es "tu plan".
+    const currentPlans = { training: null, nutrition: null };
+
+    const [user, routinePhases, assignedTables] = await Promise.all([
+      userSchema.findById(clientId).select("tableInUse").lean(),
+      routineAssignmentDao.listByClient(clientId),
+      Table.find({ userId: clientId, assignedByTrainerId: { $in: activeTrainerIds } }).select("_id").lean(),
+    ]);
+    const training = pickTrainingPlan({
+      tableInUseId: user?.tableInUse,
+      phases: routinePhases,
+      assignedTables: assignedTables.map((t) => ({ tableId: t._id, assignedAt: t._id.getTimestamp() })),
+      today,
+    });
+    if (training) {
+      const table = await Table.findById(training.tableId).select("name assignedByTrainerId").lean();
       if (table?.assignedByTrainerId && activeTrainerIdSet.has(String(table.assignedByTrainerId))) {
-        // Table no tiene createdAt/updatedAt: asignar SIEMPRE crea una copia
-        // nueva (ver table-service.js#assignTemplateToClient/assignNewRoutineToClient),
-        // así que el timestamp del ObjectId es una fecha de asignación fiable.
+        // Table no tiene createdAt: asignar siempre crea una copia nueva, así
+        // que sin fase de rutina la fecha es la del ObjectId.
         const assignedAt = table._id.getTimestamp();
         touchActivity(table.assignedByTrainerId, assignedAt);
-        assignedRoutine = {
-          tableId: table._id,
+        currentPlans.training = {
+          status: training.status,
           name: table.name,
           assignedByTrainerName: trainerName(table.assignedByTrainerId),
-          assignedAt,
+          startDate: training.startDate || isoDate(assignedAt),
         };
       }
+    }
+
+    // lean(): sin autopopular los menús, aquí solo hacen falta fechas y nombres.
+    const dietDocs = await DietTemplate.find({ clientId })
+      .select("phaseId phaseName name trainerId startDate endDate createdAt")
+      .lean();
+    const nutrition = pickNutritionPlan({ docs: dietDocs, today });
+    if (nutrition && activeTrainerIdSet.has(String(nutrition.head.trainerId))) {
+      const { head } = nutrition;
+      touchActivity(head.trainerId, head.createdAt);
+      currentPlans.nutrition = {
+        status: nutrition.status,
+        name: head.phaseName || head.name,
+        assignedByTrainerName: trainerName(head.trainerId),
+        startDate: head.startDate,
+      };
     }
 
     const professionalsWithActivity = professionals
@@ -141,7 +173,7 @@ module.exports = {
       pendingMealProposals,
       nutritionPreferences,
       pendingPayments,
-      assignedRoutine,
+      currentPlans,
     });
   },
 
