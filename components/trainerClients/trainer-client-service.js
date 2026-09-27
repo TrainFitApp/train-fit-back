@@ -9,7 +9,7 @@ const notificationDao = require("../notifications/notification-dao");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { todayIsoDate } = require("../util/date-util");
-const { intakePendingOnAccept } = require("./intake-pending");
+const { intakePendingOnAccept, intakeStatusFor } = require("./intake-pending");
 
 // Datos de perfil que el intake confirma y reescribe en `User` (los metió el
 // cliente al registrarse). Rangos = los mismos que valida el schema / sign-up.
@@ -32,6 +32,21 @@ function extractUserProfilePatch(data) {
     patch.objetive = num(data.objetive);
   }
   return patch;
+}
+
+// Estado del cuestionario de un par (profesional, cliente) según
+// intakeStatusFor; null si no hay relación activa o es antigua sin
+// cuestionario. Lo comparten el envío del cliente y el guard de la ficha.
+async function intakeStatusOfPair(trainerId, clientId) {
+  const [activeRelations, intake] = await Promise.all([
+    trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, ["active"]),
+    clientIntakeDao.getByTrainerAndClient(trainerId, clientId),
+  ]);
+  if (!activeRelations.length) return null;
+  return intakeStatusFor({
+    intakePending: activeRelations.some((relation) => relation.intakePending),
+    intake,
+  });
 }
 
 const VALID_SCOPES = ["training", "nutrition"];
@@ -292,14 +307,20 @@ module.exports = {
    * TODAS sus relaciones activas con este profesional a la vez (el
    * cuestionario es uno por par profesional-cliente, no por scope). La
    * relación ya era "active" desde que aceptó: aquí no cambia de estado.
+   * Mientras el profesional no lo marque revisado, el cliente puede volver a
+   * enviarlo: sobrescribe el anterior con los mismos efectos, pero sin
+   * notificaciones (solo avisan del primer envío).
    * Reutiliza ClientNutritionPreferences (F29) para alergias/preferencias —
    * no se duplica ese dato en un schema aparte.
    */
   async submitIntake(trainerId, clientId, intakeData) {
-    const activeRelations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
-      "active",
-    ]);
-    if (!activeRelations.some((relation) => relation.intakePending)) {
+    const status = await intakeStatusOfPair(trainerId, clientId);
+    if (status === "reviewed") {
+      const err = new Error("Tu profesional ya ha revisado tu cuestionario: ya no se puede cambiar");
+      err.code = "INTAKE_ALREADY_REVIEWED";
+      throw err;
+    }
+    if (!status) {
       const err = new Error("No tienes ningún cuestionario pendiente con este profesional");
       err.code = "NO_INTAKE_PENDING";
       throw err;
@@ -337,29 +358,105 @@ module.exports = {
       }
     }
 
-    await trainerClientDao.clearIntakePending(trainerId, clientId);
-    await notificationDao.create(clientId, trainerId, "intake_submitted", {});
-    await notificationDao.createForTrainer(trainerId, clientId, "intake_submitted_trainer", {});
+    if (status === "pending") {
+      await trainerClientDao.clearIntakePending(trainerId, clientId);
+      await notificationDao.create(clientId, trainerId, "intake_submitted", {});
+      await notificationDao.createForTrainer(trainerId, clientId, "intake_submitted_trainer", {});
+    }
 
     return intake;
   },
 
+  // El intake tal como lo rellenó el cliente. El formulario escribe en tres
+  // sitios (ver submitIntake): lo propio del cuestionario en ClientIntake, el
+  // perfil en User y lo de nutrición en ClientNutritionPreferences. Devolver
+  // solo ClientIntake dejaba al entrenador sin ver medio formulario. Son los
+  // valores actuales: cada reenvío del cliente los reescribe, así que en la
+  // revisión coinciden con lo último que envió.
+  async getIntakeWithAnswers(trainerId, clientId) {
+    const intake = await clientIntakeDao.getByTrainerAndClient(trainerId, clientId);
+    if (!intake) return null;
+    const [user, preferences] = await Promise.all([
+      userSchema.findById(clientId).select("weight height sex birth steps activity training objetive").lean(),
+      nutritionPreferencesDao.getByClientId(clientId),
+    ]);
+    return {
+      ...intake,
+      profile: user
+        ? {
+            weight: user.weight ?? null,
+            height: user.height ?? null,
+            sex: user.sex ?? null,
+            birth: user.birth ?? null,
+            steps: user.steps ?? null,
+            activity: user.activity ?? null,
+            training: user.training ?? null,
+            objetive: user.objetive ?? null,
+          }
+        : null,
+      nutrition: preferences
+        ? {
+            dietaryFlags: preferences.dietaryFlags || [],
+            allergies: preferences.allergies || "",
+            favoriteFoods: preferences.favoriteFoods || "",
+            dislikedFoods: preferences.dislikedFoods || "",
+            cooksAtHome: preferences.cooksAtHome ?? null,
+          }
+        : null,
+    };
+  },
+
+  // Guard de la ficha (front): sin enviar o por revisar no se entra.
+  async getIntakeStatus(trainerId, clientId) {
+    return intakeStatusOfPair(trainerId, clientId);
+  },
+
+  // El profesional da por revisado el cuestionario: desde ese momento el
+  // cliente solo puede verlo. null si aún no lo ha enviado.
+  async markIntakeReviewed(trainerId, clientId) {
+    const relations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
+      "en_revision",
+      "active",
+    ]);
+    if (!relations.length) {
+      const err = new Error("No tienes una relación con este cliente que permita revisar su cuestionario");
+      err.code = "FORBIDDEN";
+      throw err;
+    }
+    // Un cuestionario creado por el profesional antes de que el cliente
+    // envíe el suyo no cuenta como enviado.
+    if (relations.some((relation) => relation.intakePending)) return null;
+    return clientIntakeDao.markReviewed(trainerId, clientId);
+  },
+
   /**
-   * Cuestionarios iniciales que el cliente tiene pendientes (relaciones
-   * activas con intakePending), con lo que necesita el formulario de cada
-   * profesional. Nunca bloquea la app: `blocked` queda siempre en false
-   * (lo siguen leyendo builds antiguas del cliente, que con true le
-   * redirigían a la pantalla del cuestionario).
+   * El cuestionario inicial de cada profesional activo del cliente, con su
+   * estado (intakeStatusFor: pendiente / enviado y editable / revisado) y lo
+   * que necesita el formulario. Nunca bloquea la app: `blocked` queda
+   * siempre en false (lo siguen leyendo builds antiguas del cliente, que con
+   * true le redirigían a la pantalla del cuestionario).
    */
   async getOnboardingStatus(clientId) {
-    const active = await trainerClientDao.findActiveByClient(clientId);
-    const pending = active.filter((relation) => relation.intakePending);
+    const [active, intakes] = await Promise.all([
+      trainerClientDao.findActiveByClient(clientId),
+      clientIntakeDao.listStateByClient(clientId),
+    ]);
+    const intakeByTrainer = new Map(intakes.map((intake) => [String(intake.trainerId), intake]));
+    const statusByRelation = new Map();
+    for (const relation of active) {
+      const intakeStatus = intakeStatusFor({
+        intakePending: relation.intakePending,
+        intake: intakeByTrainer.get(String(relation.trainerId)),
+      });
+      if (intakeStatus) statusByRelation.set(String(relation._id), intakeStatus);
+    }
+    const withIntake = active.filter((relation) => statusByRelation.has(String(relation._id)));
 
-    if (!pending.length) {
+    if (!withIntake.length) {
       return { blocked: false, relations: [] };
     }
 
-    const enriched = await attachTrainerInfo(pending);
+    const enriched = await attachTrainerInfo(withIntake);
     // TASK-049 — el formulario de cuestionario inicial necesita saber qué
     // campos activó cada profesional. Un solo $in por los trainerId únicos
     // (no por relación, ya que enabledFields es por trainer, no por scope),
@@ -377,6 +474,7 @@ module.exports = {
         trainerId: r.trainerId,
         scope: r.scope,
         status: r.status,
+        intakeStatus: statusByRelation.get(String(r._id)),
         trainer: r.trainer,
         // Campos FORZADOS (no toggleables, no en el panel de invites):
         //   · profileBiometrics + activityProfile — el intake confirma datos
