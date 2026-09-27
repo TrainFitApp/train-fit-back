@@ -1,7 +1,11 @@
 const CoachProtocol = require("./coach-protocol-schema");
 const checkinDao = require("../trainerCheckins/checkin-dao");
 const CheckinSchedule = require("../trainerCheckins/checkin-schedule-schema");
-const { scheduleContent, hasQuestions, defaultTiming } = require("../trainerCheckins/checkin-agenda-controller");
+const { scheduleContent, hasQuestions } = require("../trainerCheckins/checkin-agenda-controller");
+const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { protocolCheckins } = require("./protocol-content");
+const { isoDate } = require("../util/date-util");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const tableService = require("../tables/table-service");
@@ -35,21 +39,34 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
     }
   };
 
-  await step("checkin", "Programación de check-in", async () => {
-    if (!protocol.checkinTemplateId) return "skipped";
-    const definition = await checkinDao.getDefinitionById(trainerId, protocol.checkinTemplateId);
-    if (!definition) return "skipped";
-    // Aplicar un protocolo programa el check-in (fechas por defecto: desde
-    // hoy, semanal); el entrenador las afina luego en la ficha del cliente.
-    const content = scheduleContent(definition);
-    if (!hasQuestions(content)) return "skipped";
-    await CheckinSchedule.findOneAndUpdate(
-      { trainerId, clientId, sourceTemplateId: definition._id },
-      { $set: { ...content, ...defaultTiming(), active: true }, $inc: { revision: 1 } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-    return true;
-  });
+  const today = isoDate(new Date());
+  const checkins = protocolCheckins(protocol);
+  if (!checkins.length) {
+    steps.push({ key: "checkin", label: "Check-ins", status: "skipped" });
+  }
+  // Un paso por check-in: cada uno se programa (o falla) por su cuenta.
+  for (const [index, checkin] of checkins.entries()) {
+    const definition = await checkinDao.getDefinitionById(trainerId, checkin.templateId).catch(() => null);
+    await step(`checkin:${index}`, `Check-in "${definition?.name || "plantilla eliminada"}"`, async () => {
+      if (!definition) return "skipped";
+      const content = scheduleContent(definition);
+      if (!hasQuestions(content)) return "skipped";
+      // Empieza el día de aplicar (o el elegido), con la cadencia del
+      // protocolo. El entrenador la afina luego en la ficha del cliente.
+      const timing = {
+        startDate: startDate || today,
+        time: checkin.time || "09:00",
+        frequency: checkin.frequency || "weekly",
+        interval: checkin.interval || 1,
+      };
+      await CheckinSchedule.findOneAndUpdate(
+        { trainerId, clientId, sourceTemplateId: definition._id },
+        { $set: { ...content, ...timing, active: true }, $inc: { revision: 1 } },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      return true;
+    });
+  }
 
   await step("dietPlan", "Plan de nutrición", async () => {
     if (!protocol.dietTemplateId) return "skipped";
@@ -61,7 +78,7 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
       trainerId,
       clientId,
       template: plan,
-      startDate: startDate || new Date().toISOString().slice(0, 10),
+      startDate: startDate || today,
       endMode: "indefinite",
     });
     await planChangeService.recordPlanAssignment({
@@ -71,6 +88,22 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
       newAssignment: assignment,
       planName: plan.name,
       reason: reason || `Aplicado el protocolo "${protocol.name}"`,
+    });
+    return true;
+  });
+
+  // Después del plan de dieta: el objetivo del protocolo es el que queda.
+  await step("nutritionTarget", "Objetivo de kcal y macros", async () => {
+    const target = protocol.nutritionTarget;
+    if (!target) return "skipped";
+    // Mismo permiso que editar el objetivo en la ficha: llevar la nutrición.
+    const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId, "nutrition");
+    if (!relation) throw new Error("No llevas la nutrición de este cliente");
+    await nutritionalGoalService.setManualGoalForClient(trainerId, clientId, {
+      kcalTotal: target.kcal,
+      proteinsGTotal: target.protein,
+      carbohydratesGTotal: target.carbs,
+      fatGTotal: target.fat,
     });
     return true;
   });

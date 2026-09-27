@@ -1,6 +1,13 @@
 const coachProtocolService = require("./coach-protocol-service");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { isReadOnly } = require("../trainerClients/trainer-seat-service");
+const {
+  normalizeCheckins,
+  validateCheckins,
+  normalizeNutritionTarget,
+  validateNutritionTarget,
+} = require("./protocol-content");
+const { validDate } = require("../trainerCheckins/checkin-schedule-dates");
 
 const TASK_TYPES = ["steps", "water", "sleep", "cardio", "custom"];
 
@@ -16,16 +23,31 @@ function validateDailyTasks(tasks) {
   return null;
 }
 
+// Un check-in suelto en checkinTemplateId (clientes sin actualizar) se
+// guarda ya como lista: el campo antiguo queda null.
 function buildPayload(body) {
+  const checkins = Array.isArray(body.checkins)
+    ? normalizeCheckins(body.checkins)
+    : normalizeCheckins(body.checkinTemplateId ? [{ templateId: body.checkinTemplateId }] : []);
   return {
     name: String(body.name || "").trim(),
     description: String(body.description || "").trim(),
-    checkinTemplateId: body.checkinTemplateId || null,
+    checkinTemplateId: null,
+    checkins,
     dietTemplateId: body.dietTemplateId || null,
     routineTemplateId: body.routineTemplateId || null,
     ruleIds: body.ruleIds || [],
     dailyTasks: body.dailyTasks || [],
+    nutritionTarget: normalizeNutritionTarget(body.nutritionTarget),
   };
+}
+
+function payloadError(body, payload) {
+  return (
+    validateDailyTasks(body.dailyTasks) ||
+    validateCheckins(payload.checkins) ||
+    validateNutritionTarget(payload.nutritionTarget)
+  );
 }
 
 module.exports = {
@@ -39,11 +61,12 @@ module.exports = {
     if (!body.name?.trim()) {
       return res.status(400).send({ message: "El protocolo necesita un nombre" });
     }
-    const taskError = validateDailyTasks(body.dailyTasks);
-    if (taskError) return res.status(400).send({ message: taskError });
+    const payload = buildPayload(body);
+    const error = payloadError(body, payload);
+    if (error) return res.status(400).send({ message: error });
 
     try {
-      const protocol = await coachProtocolService.create(req.auth.userId, buildPayload(body));
+      const protocol = await coachProtocolService.create(req.auth.userId, payload);
       return res.status(201).send(protocol);
     } catch (e) {
       if (e.code === 11000) {
@@ -54,15 +77,16 @@ module.exports = {
   },
 
   async update(req, res) {
-    const taskError = validateDailyTasks(req.body?.dailyTasks);
-    if (taskError) return res.status(400).send({ message: taskError });
+    const body = req.body || {};
+    if (!body.name?.trim()) {
+      return res.status(400).send({ message: "El protocolo necesita un nombre" });
+    }
+    const payload = buildPayload(body);
+    const error = payloadError(body, payload);
+    if (error) return res.status(400).send({ message: error });
 
     try {
-      const protocol = await coachProtocolService.update(
-        req.auth.userId,
-        req.params.id,
-        buildPayload(req.body || {})
-      );
+      const protocol = await coachProtocolService.update(req.auth.userId, req.params.id, payload);
       if (!protocol) return res.status(404).send({ message: "Protocolo no encontrado" });
       return res.send(protocol);
     } catch (e) {
@@ -91,6 +115,9 @@ module.exports = {
 
     if (!Array.isArray(clientIds) || !clientIds.length) {
       return res.status(400).send({ message: "Elige al menos un cliente" });
+    }
+    if (startDate !== undefined && startDate !== null && !validDate(startDate)) {
+      return res.status(400).send({ message: "Fecha de inicio no válida (YYYY-MM-DD)" });
     }
 
     const protocol = await coachProtocolService.findOwned(trainerId, req.params.id);

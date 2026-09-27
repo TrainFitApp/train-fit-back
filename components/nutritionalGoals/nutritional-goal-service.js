@@ -92,6 +92,28 @@ module.exports = {
     await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
     return goal._id;
   },
+
+  // El profesional fija kcal y macros a mano: el objetivo pasa a "manual" y
+  // recalcular desde el perfil deja de pisarlo. Lo usan "Objetivo
+  // nutricional" en la ficha y aplicar un protocolo. `updates` ya validado.
+  // Devuelve { goal, created }.
+  async setManualGoalForClient(trainerId, clientId, updates) {
+    const data = {
+      ...updates,
+      source: "manual",
+      updatedByTrainerId: trainerId,
+      updatedAt: new Date(),
+    };
+    const user = await userSchema.findById(clientId).select("goalInUse").lean();
+    if (user?.goalInUse) {
+      return { goal: await nutritionalGoalDao.update(user.goalInUse, data), created: false };
+    }
+    // El cliente todavía no tiene objetivo (nunca abrió la pantalla): se crea
+    // y se pone en uso, igual que hace recomputeDefaultForClient.
+    const goal = await nutritionalGoalDao.create({ userId: clientId, name: "Default", ...data });
+    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: goal._id } });
+    return { goal, created: true };
+  },
 };
 
 function round1(value) {
