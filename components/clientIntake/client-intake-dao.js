@@ -62,4 +62,29 @@ module.exports = {
   async getByTrainerAndClient(trainerId, clientId) {
     return ClientIntake.findOne({ trainerId, clientId }).lean();
   },
+
+  // Estado de los cuestionarios del cliente (uno por profesional), sin las
+  // respuestas: solo lo que necesita GET /trainer/onboarding-status.
+  async listStateByClient(clientId) {
+    return ClientIntake.find({ clientId }).select("trainerId reviewedAt").lean();
+  },
+
+  // Lo mismo para la Cartera del profesional: un solo $in para todos sus
+  // clientes, no una consulta por fila.
+  async listStateByTrainer(trainerId, clientIds) {
+    return ClientIntake.find({ trainerId, clientId: { $in: clientIds } })
+      .select("clientId reviewedAt")
+      .lean();
+  },
+
+  // Idempotente: si ya estaba revisado conserva la fecha original. null si
+  // el cliente aún no tiene cuestionario con este profesional.
+  async markReviewed(trainerId, clientId) {
+    const updated = await ClientIntake.findOneAndUpdate(
+      { trainerId, clientId, reviewedAt: null },
+      { $set: { reviewedAt: new Date() } },
+      { new: true }
+    ).lean();
+    return updated || ClientIntake.findOne({ trainerId, clientId }).lean();
+  },
 };

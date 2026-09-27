@@ -11,6 +11,8 @@ const tableDao = require("../tables/table-dao");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
 const { computeWindowedTrainingProgress, pickCurrentPhase } = require("../routineAssignments/routine-assignment-schedule");
 const CoachAlert = require("../coachAlerts/coach-alert-schema");
+const clientIntakeDao = require("../clientIntake/client-intake-dao");
+const { intakeStatusFor } = require("../trainerClients/intake-pending");
 
 /**
  * Movimiento 1 Coach Pro — la CARTERA: una fila por cliente, ordenable, con
@@ -163,11 +165,18 @@ async function buildRoster(trainerId, now = new Date()) {
   // listByClients y un único getSplitsForTables para toda la cartera, no
   // una consulta por cliente — pero SOLO de las tablas de la fase actual de
   // cada uno, no de todo el historial (ya no hace falta el resto).
-  const [activeTasks, phasesByClient, alertsByClient] = await Promise.all([
+  const [activeTasks, phasesByClient, alertsByClient, intakes] = await Promise.all([
     trainerTaskDao.listForClients(trainerId, clientIds),
     routineAssignmentDao.listByClients(clientIds),
     ensureEvaluatedToday(trainerId, { now, context }).then(() => countOpenAlertsByClient(trainerId)),
+    clientIntakeDao.listStateByTrainer(trainerId, clientIds),
   ]);
+  const intakeByClient = new Map(intakes.map((intake) => [String(intake.clientId), intake]));
+  // Scopes de cada cliente: "Rechazar" desde la Cartera termina todas sus
+  // relaciones (una por scope) sin pasar por la ficha.
+  const scopesByClient = new Map(
+    context.activeClients.filter((entry) => entry.user).map((entry) => [String(entry.user._id), entry.scopes])
+  );
 
   const currentTableIds = [
     ...new Set(
@@ -238,7 +247,13 @@ async function buildRoster(trainerId, now = new Date()) {
       clientId: snapshot.clientId,
       clientName: snapshot.clientName,
       clientEmail: snapshot.clientEmail || "",
-      intakePending: snapshot.intakePending,
+      // Cuestionario inicial: sin enviar / por revisar / revisado (null =
+      // relación antigua sin cuestionario). Ver intake-pending.js.
+      scopes: scopesByClient.get(clientKey) || [],
+      intakeStatus: intakeStatusFor({
+        intakePending: snapshot.intakePending,
+        intake: intakeByClient.get(clientKey),
+      }),
       adherence: {
         overall: adherence.overall,
         weakest: adherence.weakest,

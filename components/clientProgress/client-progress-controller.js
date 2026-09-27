@@ -241,8 +241,6 @@ module.exports = {
           }
         : null,
       routine,
-      // requireActiveClient ya dejó la relación en la request: sin consulta extra.
-      intakePending: req.trainerClientRelation?.intakePending === true,
     });
   },
 

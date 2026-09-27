@@ -63,6 +63,9 @@ const ClientIntakeSchema = new Schema(
       default: () => [],
     },
     submittedAt: { type: Date, default: Date.now },
+    // El profesional lo marca revisado desde la ficha ("Marcar revisado").
+    // Hasta entonces el cliente puede editarlo o rehacerlo; después solo verlo.
+    reviewedAt: { type: Date, default: null },
   },
   { collection: "clientintakes" }
 );

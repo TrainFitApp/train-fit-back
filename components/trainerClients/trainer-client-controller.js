@@ -275,7 +275,7 @@ const controller = {
       const intake = await trainerClientService.submitIntake(trainerId, req.auth.userId, intakeData);
       return res.status(201).send(intake);
     } catch (e) {
-      if (e.code === "NO_INTAKE_PENDING") {
+      if (e.code === "NO_INTAKE_PENDING" || e.code === "INTAKE_ALREADY_REVIEWED") {
         return res.status(400).send({ message: e.message, code: e.code });
       }
       console.error("Error en submitIntake:", e.message);
@@ -298,8 +298,31 @@ const controller = {
         message: "No tienes una relación con este cliente que permita ver su cuestionario",
       });
     }
-    const intake = await clientIntakeDao.getByTrainerAndClient(trainerId, clientId);
-    return res.send(intake);
+    return res.send(await trainerClientService.getIntakeWithAnswers(trainerId, clientId));
+  },
+
+  // GET /trainer/clients/:clientId/intake/status — { status }: "pending" |
+  // "submitted" | "reviewed" | null. Con los dos primeros el front no deja
+  // abrir la ficha (hay que revisar el intake antes).
+  async getClientIntakeStatus(req, res) {
+    const status = await trainerClientService.getIntakeStatus(req.auth.userId, req.params.clientId);
+    res.set("Cache-Control", "no-store");
+    return res.send({ status });
+  },
+
+  // POST /trainer/clients/:clientId/intake/reviewed — "Marcar revisado": el
+  // cliente deja de poder editar su cuestionario (solo verlo).
+  async markIntakeReviewed(req, res) {
+    try {
+      const intake = await trainerClientService.markIntakeReviewed(req.auth.userId, req.params.clientId);
+      if (!intake) return res.status(404).send({ message: "El cliente aún no ha enviado su cuestionario" });
+      return res.send(intake);
+    } catch (e) {
+      const handled = handleKnownError(res, e);
+      if (handled) return handled;
+      console.error("Error en markIntakeReviewed:", e.message);
+      return res.status(500).send({ message: "Internal Server Error" });
+    }
   },
 
   // PUT /trainer/clients/:clientId/intake — el profesional corrige el
@@ -321,8 +344,9 @@ const controller = {
         message: "No tienes una relación con este cliente que permita editar su cuestionario",
       });
     }
-    const intake = await clientIntakeDao.upsert(trainerId, clientId, req.body || {});
-    return res.send(intake);
+    await clientIntakeDao.upsert(trainerId, clientId, req.body || {});
+    // Misma forma que GET: la ficha reemplaza su copia con esta respuesta.
+    return res.send(await trainerClientService.getIntakeWithAnswers(trainerId, clientId));
   },
 
   // GET /trainer/seats — plazas activas cuando la cartera supera el cupo del plan.

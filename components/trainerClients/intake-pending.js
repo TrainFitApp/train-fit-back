@@ -12,4 +12,16 @@ function intakePendingOnAccept(activeWithTrainer) {
   return activeWithTrainer.some((relation) => relation.intakePending === true);
 }
 
-module.exports = { intakePendingOnAccept };
+// PURO — estado del cuestionario de un par (profesional, cliente) visto por
+// el cliente:
+//   "pending"   → aún no lo ha enviado;
+//   "submitted" → enviado y sin revisar: puede editarlo o rehacerlo;
+//   "reviewed"  → el profesional lo marcó revisado: solo lectura;
+//   null        → relación antigua sin cuestionario (no se muestra).
+function intakeStatusFor({ intakePending, intake }) {
+  if (intakePending) return "pending";
+  if (!intake) return null;
+  return intake.reviewedAt ? "reviewed" : "submitted";
+}
+
+module.exports = { intakePendingOnAccept, intakeStatusFor };
