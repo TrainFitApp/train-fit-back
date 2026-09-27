@@ -12,8 +12,8 @@ class PinnedExerciseNoteService {
     return note ? PinnedExerciseNoteDTO.fromModel(note) : null;
   }
 
-  async upsert(tableId, workoutIndex, exerciseIndex, notes) {
-    const note = await PinnedExerciseNoteDAO.upsert(tableId, workoutIndex, exerciseIndex, notes);
+  async upsert(tableId, workoutIndex, exerciseIndex, notes, authorRole) {
+    const note = await PinnedExerciseNoteDAO.upsert(tableId, workoutIndex, exerciseIndex, notes, authorRole);
     return PinnedExerciseNoteDTO.fromModel(note);
   }
 

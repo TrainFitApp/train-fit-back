@@ -13,8 +13,8 @@ class PinnedExerciseNoteDAO {
     return await PinnedExerciseNote.findByPosition(tableId, workoutIndex, exerciseIndex);
   }
 
-  async upsert(tableId, workoutIndex, exerciseIndex, notes) {
-    return await PinnedExerciseNote.upsert(tableId, workoutIndex, exerciseIndex, notes);
+  async upsert(tableId, workoutIndex, exerciseIndex, notes, authorRole) {
+    return await PinnedExerciseNote.upsert(tableId, workoutIndex, exerciseIndex, notes, authorRole);
   }
 
   async deleteById(id) {

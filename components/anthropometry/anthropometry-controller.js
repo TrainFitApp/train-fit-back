@@ -1,36 +1,28 @@
 const anthropometryModel = require("./anthropometry-service");
+const { pickMeasurements } = require("./anthropometry-origin");
 
+// Pantallas del cliente: solo ve (y edita) lo que apuntó él, nunca lo que
+// respondió en check-ins de su entrenador (anthropometry-origin.js).
 const controller = {
   async createAnthropometry(req, res) {
-    const anthropometry = await anthropometryModel.createAnthropometry({
-      userId: req.user.id,
-      date: req.body.date,
-      neck: req.body.neck,
-      chest: req.body.chest,
-      bicepsRelaxed: req.body.bicepsRelaxed,
-      bicepsContracted: req.body.bicepsContracted,
-      waist: req.body.waist,
-      abdomen: req.body.abdomen,
-      hip: req.body.hip,
-      thighContracted: req.body.thighContracted,
-      thighRelaxed: req.body.thighRelaxed,
-      calf: req.body.calf,
-      weight: req.body.weight,
-    });
+    const anthropometry = await anthropometryModel.createAnthropometry(
+      req.user.id,
+      req.body.date,
+      pickMeasurements(req.body)
+    );
     return res.send(anthropometry);
   },
 
   async getAnthropometryById(req, res) {
-    const anthropometry = await anthropometryModel.getAnthropometryById(req.params.id);
+    const anthropometry = await anthropometryModel.getAnthropometryById(req.params.id, { ownOnly: true });
     if (!anthropometry) return res.sendStatus(404);
     return res.send(anthropometry);
   },
 
   async getAnthropometryByUserIdAndDate(req, res) {
-    const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(
-      req.user.id,
-      req.body.date
-    );
+    const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(req.user.id, req.body.date, {
+      ownOnly: true,
+    });
     return res.send(anthropometry);
   },
 
@@ -38,30 +30,19 @@ const controller = {
     const anthropometries = await anthropometryModel.getAnthropometriesByUserIdBetweenDates(
       req.user.id,
       req.body.minDate,
-      req.body.maxDate
+      req.body.maxDate,
+      { ownOnly: true }
     );
     return res.send(anthropometries);
   },
 
   async getAllAnthropometriesByUserId(req, res) {
-    const anthropometries = await anthropometryModel.getAllAnthropometriesByUserId(req.user.id);
+    const anthropometries = await anthropometryModel.getAllAnthropometriesByUserId(req.user.id, { ownOnly: true });
     return res.send(anthropometries);
   },
 
   async updateAnthropometry(req, res) {
-    const anthropometry = await anthropometryModel.updateAnthropometry(req.params.id, {
-      neck: req.body.neck,
-      chest: req.body.chest,
-      bicepsRelaxed: req.body.bicepsRelaxed,
-      bicepsContracted: req.body.bicepsContracted,
-      waist: req.body.waist,
-      abdomen: req.body.abdomen,
-      hip: req.body.hip,
-      thighContracted: req.body.thighContracted,
-      thighRelaxed: req.body.thighRelaxed,
-      calf: req.body.calf,
-      weight: req.body.weight,
-    });
+    const anthropometry = await anthropometryModel.updateAnthropometry(req.params.id, pickMeasurements(req.body));
     if (!anthropometry) return res.sendStatus(404);
     return res.send(anthropometry);
   },
@@ -75,19 +56,7 @@ const controller = {
     const anthropometry = await anthropometryModel.upsertAnthropometry(
       req.user.id,
       req.body.date,
-      {
-        neck: req.body.neck,
-        chest: req.body.chest,
-        bicepsRelaxed: req.body.bicepsRelaxed,
-        bicepsContracted: req.body.bicepsContracted,
-        waist: req.body.waist,
-        abdomen: req.body.abdomen,
-        hip: req.body.hip,
-        thighContracted: req.body.thighContracted,
-        thighRelaxed: req.body.thighRelaxed,
-        calf: req.body.calf,
-        weight: req.body.weight,
-      }
+      pickMeasurements(req.body)
     );
     return res.send(anthropometry);
   },

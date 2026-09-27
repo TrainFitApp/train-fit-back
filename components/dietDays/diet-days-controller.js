@@ -77,7 +77,8 @@ const controller = {
     // Also fetch anthropometry for this date
     const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(
       req.user.id,
-      req.body.date
+      req.body.date,
+      { ownOnly: true }
     );
 
     // La meta del día es lo que suma lo PAUTADO ese día, no un objetivo
@@ -127,7 +128,8 @@ const controller = {
     // Also fetch the anthropometry that was just created
     const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(
       userId,
-      req.body.currentDate
+      req.body.currentDate,
+      { ownOnly: true }
     );
     
     return res.send({ dietDay, anthropometry });

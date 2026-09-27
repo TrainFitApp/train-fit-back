@@ -12,7 +12,8 @@ function buildTable() {
         workouts: [
           {
             name: "Empuje",
-            notes: "me dolió el hombro",
+            notes: "calienta bien los hombros",
+            clientNotes: "me dolió el hombro",
             date: new Date("2026-09-01"),
             rest: true,
             startedAt: new Date("2026-09-01"),
@@ -55,7 +56,7 @@ test("quita la ejecución y lo del cliente, deja la pauta", () => {
   const set = exercise.sets[0];
 
   assert.equal(table.assignedByTrainerId, undefined);
-  for (const field of ["notes", "date", "rest", "startedAt", "readinessPre", "sorenessPre"]) {
+  for (const field of ["clientNotes", "date", "rest", "startedAt", "readinessPre", "sorenessPre"]) {
     assert.equal(workout[field], undefined, field);
   }
   assert.equal(exercise.clientNotes, undefined);
@@ -66,6 +67,7 @@ test("quita la ejecución y lo del cliente, deja la pauta", () => {
   assert.equal(table.name, "Rutina cliente");
   assert.equal(table.splits[0].purpose, "normal");
   assert.equal(workout.name, "Empuje");
+  assert.equal(workout.notes, "calienta bien los hombros");
   assert.equal(workout.isPlannedRestDay, false);
   assert.deepEqual(workout.blocks, [{ name: "A", type: "superset" }]);
   assert.equal(exercise.notes, "codos pegados");

@@ -20,11 +20,13 @@ module.exports = {
       endDate,
     );
     
-    // Also fetch anthropometry weights for this date range (using userId)
+    // Also fetch anthropometry weights for this date range (using userId).
+    // Solo lo que apuntó el cliente: lo de check-ins no sale en su calendario.
     const anthropometries = await anthropometryModel.getAnthropometriesByUserIdBetweenDates(
       userId,
       startDate,
-      endDate
+      endDate,
+      { ownOnly: true }
     );
     
     // Merge weights into existing dietDays and create virtual entries for anthropometry-only dates

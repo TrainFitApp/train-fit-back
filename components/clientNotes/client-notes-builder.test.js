@@ -21,7 +21,7 @@ function trainingFixture() {
     ],
     workouts: [
       { _id: "w1", name: "Pierna", exercises: ["ce1"], date: new Date("2026-09-01T10:00:00Z") },
-      { _id: "w2", name: "", notes: "Me costó mucho", exercises: ["ce2"], date: new Date("2026-09-08T10:00:00Z") },
+      { _id: "w2", name: "", notes: "Pausa de 2 s abajo", clientNotes: "Me costó mucho", exercises: ["ce2"], date: new Date("2026-09-08T10:00:00Z") },
     ],
     customExercises: [
       { _id: "ce1", exercise: "e1" },
@@ -47,10 +47,19 @@ test("entrenamiento: nota de sesión y de ejercicio con su ruta y destino", () =
 
 test("entrenamiento: ignora notas vacías o solo con espacios", () => {
   const fixture = trainingFixture();
-  fixture.workouts[1].notes = "   ";
+  fixture.workouts[1].clientNotes = "   ";
   fixture.customExercises[1].clientNotes = "";
   fixture.pinnedNotes = [];
   assert.equal(buildTrainingNotes(fixture).length, 0);
+});
+
+test("entrenamiento: las notas del entrenador no salen como del cliente", () => {
+  const fixture = trainingFixture();
+  fixture.pinnedNotes[0].authorRole = "trainer";
+  const notes = buildTrainingNotes(fixture);
+  assert.equal(notes.some((note) => note.sourceType === "pinned"), false);
+  assert.equal(notes.some((note) => note.text === "Pausa de 2 s abajo"), false);
+  assert.equal(notes.find((note) => note.sourceType === "workout").text, "Me costó mucho");
 });
 
 test("nota fijada: se ancla al primer microciclo con esa posición", () => {

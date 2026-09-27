@@ -100,9 +100,10 @@ function buildTrainingNotes({ tables = [], splits = [], workouts = [], customExe
         const sessionDate = workout.date || workout.createdAt;
         const basePath = ["Entrenamiento", routineLabel(table), microLabel, dayLabel(workout, workoutIndex)];
 
-        if (hasText(workout.notes)) {
+        // Solo la del cliente: Workout.notes es la indicación del entrenador.
+        if (hasText(workout.clientNotes)) {
           notes.push(
-            makeNote("workout", workoutId, workout.notes, sessionDate, [...basePath, "Nota de la sesión"], {
+            makeNote("workout", workoutId, workout.clientNotes, sessionDate, [...basePath, "Nota de la sesión"], {
               type: "planner", tableId, splitId, workoutId, exerciseId: null,
             })
           );
@@ -131,7 +132,8 @@ function buildTrainingNotes({ tables = [], splits = [], workouts = [], customExe
   // no tiene un microciclo propio: se nombra con el primero que tenga esa
   // posición y se lleva allí al pulsarla.
   for (const pinned of pinnedNotes) {
-    if (!hasText(pinned.notes)) continue;
+    // Las que ancló el propio entrenador no son notas del cliente.
+    if (!hasText(pinned.notes) || pinned.authorRole === "trainer") continue;
     const table = tablesById.get(String(pinned.tableId));
     if (!table) continue;
     const tableId = String(table._id);
