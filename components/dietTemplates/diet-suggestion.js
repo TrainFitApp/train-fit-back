@@ -84,4 +84,22 @@ function rankTemplates(candidates, target, requiredFlags = []) {
   return { ranked };
 }
 
-module.exports = { WEIGHTS, distance, deltas, rankTemplates };
+/**
+ * El objetivo nutricional en uso del cliente (NutritionalGoal) con la forma del
+ * objetivo de la fase, para que el panel pueda alternarlo con el calculado.
+ * Sin kcal válidas no hay objetivo que ofrecer: null.
+ */
+function goalToTarget(goal) {
+  const kcal = Number(goal?.kcalTotal);
+  if (!Number.isFinite(kcal) || kcal <= 0) return null;
+  return {
+    kcal: Math.round(kcal),
+    protein: Math.round(Number(goal.proteinsGTotal) || 0),
+    carbs: Math.round(Number(goal.carbohydratesGTotal) || 0),
+    fat: Math.round(Number(goal.fatGTotal) || 0),
+    source: goal.source === "manual" ? "manual" : "calculated",
+    updatedAt: goal.updatedAt || null,
+  };
+}
+
+module.exports = { WEIGHTS, distance, deltas, rankTemplates, goalToTarget };

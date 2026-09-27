@@ -412,6 +412,17 @@ module.exports = {
 
   // status no se filtra aquí por diseño: una copia "superseded" sigue siendo
   // la respuesta correcta para fechas anteriores a cuando fue sustituida.
+  // Lista de la compra — las copias que cubren ALGÚN día de [from, to].
+  // Mismo criterio que findCoveringDate (sin filtrar status); cuál manda en
+  // cada fecha lo decide shopping-list-service#coveringPlan.
+  async listCoveringRange(clientId, from, to) {
+    return DietTemplate.find({
+      clientId,
+      startDate: { $lte: to },
+      $or: [{ endDate: null }, { endDate: { $gte: from } }],
+    }).sort({ startDate: 1 });
+  },
+
   async findCoveringDate(clientId, date) {
     return DietTemplate.findOne({
       clientId,

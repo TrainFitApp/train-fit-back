@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { rankTemplates } = require("./diet-suggestion");
+const { rankTemplates, goalToTarget } = require("./diet-suggestion");
 
 const TARGET = { kcal: 2500, protein: 180, carbs: 250, fat: 70 };
 
@@ -97,5 +97,39 @@ test("rankTemplates", async (t) => {
       TARGET
     );
     assert.equal(ranked[0]._id, "fatOff");
+  });
+});
+
+test("goalToTarget", async (t) => {
+  await t.test("pasa el objetivo del cliente a la forma del objetivo de fase", () => {
+    const updatedAt = new Date("2026-09-20T10:00:00Z");
+    assert.deepEqual(
+      goalToTarget({
+        kcalTotal: 2450.4,
+        proteinsGTotal: 180.6,
+        carbohydratesGTotal: 250,
+        fatGTotal: 70.2,
+        source: "manual",
+        updatedAt,
+      }),
+      { kcal: 2450, protein: 181, carbs: 250, fat: 70, source: "manual", updatedAt }
+    );
+  });
+
+  await t.test("sin kcal válidas o sin objetivo no hay nada que ofrecer", () => {
+    assert.equal(goalToTarget(null), null);
+    assert.equal(goalToTarget({ kcalTotal: 0, proteinsGTotal: 150 }), null);
+    assert.equal(goalToTarget({ kcalTotal: "x" }), null);
+  });
+
+  await t.test("macros ausentes salen a 0 y la fuente por defecto es calculated", () => {
+    assert.deepEqual(goalToTarget({ kcalTotal: 2000 }), {
+      kcal: 2000,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      source: "calculated",
+      updatedAt: null,
+    });
   });
 });

@@ -4,14 +4,14 @@ const { resolveOwnedDietDay, applyResolvedPlanToDietDay } = require("./diet-day-
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const planResolver = require("../planAssignments/plan-resolver");
 const userSchema = require("../users/schema");
-const dietDaysDao = require("./diet-days-dao");
-const { buildShoppingList } = require("./shopping-list-service");
-const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
 const { computeDayTracking } = require("./diet-days-nutrition-util");
 const { clearPlannedDay, isDaySkipped } = require("./diet-skips");
+const { buildMenuPreviews } = require("./menu-preview");
+const { shoppingRange } = require("./shopping-list-service");
 const { weekForClientAt } = require("../planAssignments/week-service");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 
 const controller = {
   // GET /diet-days/shopping-list?from=&to= — Movimiento 5 Coach Pro.
@@ -25,14 +25,9 @@ const controller = {
   // (trainer-client-data-controller#getClientShoppingList): la lista es la
   // misma, solo cambia de quién.
   async getMyShoppingList(req, res) {
-    const from = req.query.from || todayIsoDate();
-    // Una semana por defecto: es como se hace la compra.
-    const to = req.query.to || addDaysToIsoDate(from, 6);
-
-    // Refactor nutrición (2026-09) — ya no hace falta leer antes el usuario
-    // para sacar su dietInUse: los días se consultan por dueño directo.
-    const days = await dietDaysDao.getFullyPopulatedDietDaysForUser(req.user.id, from, to);
-    return res.send({ ...buildShoppingList(days), period: { from, to } });
+    const range = shoppingRange(req.query);
+    if (!range) return res.status(400).send({ message: "Rango inválido (YYYY-MM-DD, máx. 62 días)" });
+    return res.send(await dietDayModel.getShoppingList(req.user.id, range.from, range.to));
   },
 
   // GET /dietdays/timeline?from&to — fases (color estable por orden de
@@ -239,31 +234,9 @@ const controller = {
 
     const options = plan.menus.map((m) => m.name);
     // Preview de cada menú (solo lectura) para que el cliente vea qué hay
-    // antes de elegir: comidas con sus alimentos y cantidades. La 1ª
-    // alternativa de cada comida; las demás llegan como propuestas al
-    // elegir (ver applyResolvedPlanToDietDay).
-    const previews = plan.menus.map((menu) => ({
-      name: menu.name,
-      meals: (menu.meals || []).map((m) => {
-        const alt = (m.alternatives || [])[0] || {};
-        const round = (q) => (Number.isFinite(Number(q)) ? Math.round(Number(q) * 10) / 10 : null);
-        return {
-          name: m.slot || m.name || "",
-          items: [
-            ...(alt.customProducts || []).map((cp) => ({
-              name: cp?.product?.name || cp?.name || "",
-              quantity: round(cp?.quantity),
-              unit: cp?.product?.unit || "g",
-            })),
-            ...(alt.customRecipes || []).map((cr) => ({
-              name: cr?.recipe?.name || cr?.name || "",
-              quantity: round(cr?.quantity),
-              unit: "ración",
-            })),
-          ],
-        };
-      }),
-    }));
+    // antes de elegir: comidas con sus alimentos, cantidades y alternativas
+    // (ver menu-preview.js).
+    const previews = buildMenuPreviews(plan.menus);
     const dietDay = await dietDayModel.findByUserAndDate(userId, date);
     const selected = dietDay?.menuName || null;
     return res.send({ needsChoice: !selected, selected, options, previews, skipped: false });

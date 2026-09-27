@@ -1,9 +1,11 @@
 const dietTemplateDao = require("./diet-template-dao");
 const { contentMacroProfile } = require("./diet-macro-profile");
-const { rankTemplates } = require("./diet-suggestion");
+const { rankTemplates, goalToTarget } = require("./diet-suggestion");
 const { effectiveSuitability } = require("./diet-suitability");
 const { resolveClientNutritionTarget } = require("../nutritionalGoals/nutrition-target-resolver");
+const nutritionalGoalDao = require("../nutritionalGoals/nutritional-goal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
+const userSchema = require("../users/schema");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { stepsFromHabit } = require("../planAssignments/week-need");
 const { addDaysToIsoDate, isoDate } = require("../util/date-util");
@@ -21,6 +23,14 @@ function sanitizeTarget(target) {
     carbs: Math.round(Number(target?.carbs) || 0),
     fat: Math.round(Number(target?.fat) || 0),
   };
+}
+
+// El objetivo nutricional en uso del cliente (User.goalInUse), o null si no
+// tiene o no llega a tener kcal.
+async function currentGoalOf(clientId) {
+  const user = await userSchema.findById(clientId).select("goalInUse").lean();
+  const goal = user?.goalInUse ? await nutritionalGoalDao.findById(user.goalInUse) : null;
+  return goalToTarget(goal);
 }
 
 module.exports = {
@@ -54,12 +64,13 @@ module.exports = {
       ? await trainerTaskDao.listCompletionsForTasksInRange([stepsTask._id], stepsWindow.start, stepsWindow.end)
       : [];
     const latestSteps = stepsFromHabit(stepsTask, stepsCompletions.length, stepsWindow, today);
-    const [resolved, prefs] = await Promise.all([
+    const [resolved, prefs, currentGoal] = await Promise.all([
       resolveClientNutritionTarget(clientId, 0, macroOverride, {
         stepsRangeKey: latestSteps?.key || null,
         useClientObjetive: true,
       }),
       nutritionPreferencesDao.getByClientId(clientId),
+      currentGoalOf(clientId),
     ]);
 
     if (!resolved.ok) {
@@ -104,6 +115,9 @@ module.exports = {
       // El calculado siempre viaja, aunque el entrenador haya tecleado
       // encima: es lo que permite volver atrás de un vistazo.
       calculated,
+      // El objetivo que el cliente tiene ahora (null = ninguno): el panel deja
+      // alternar entre él y el calculado.
+      currentGoal,
       // Qué pasos entraron en el cálculo y de dónde (null = del rango del
       // perfil del cliente).
       stepsFromHabit: latestSteps,
