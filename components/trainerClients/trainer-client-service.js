@@ -92,7 +92,7 @@ async function sendInviteMail(trainerUser, clientEmail, scopes) {
   const html = mail.generateMail(
     "Tienes una invitación",
     `${trainerName} te ha invitado a TrainFit para llevar tu ${scopeLabels}. Abre la app para aceptarla o rechazarla.`,
-    "https://trainfit.net/descargar/",
+    "https://trainfit.net/#/Mas",
     "Abrir TrainFit"
   );
   try {
