@@ -6,3 +6,4 @@ file.log
 .build/
 .stripe-local/
 bash.exe.stackdump
+scripts/backups/
