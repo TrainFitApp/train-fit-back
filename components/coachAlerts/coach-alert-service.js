@@ -237,6 +237,7 @@ function buildClientSnapshots(context, now) {
       clientEmail: entry.user.email || "",
       shortName: shortName(entry.user),
       relationStatus: "active",
+      intakePending: Boolean(entry.intakePending),
       now,
       entries,
       adherence,

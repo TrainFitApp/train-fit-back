@@ -9,6 +9,7 @@ const notificationDao = require("../notifications/notification-dao");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { todayIsoDate } = require("../util/date-util");
+const { intakePendingOnAccept } = require("./intake-pending");
 
 // Datos de perfil que el intake confirma y reescribe en `User` (los metió el
 // cliente al registrarse). Rangos = los mismos que valida el schema / sign-up.
@@ -265,20 +266,20 @@ module.exports = {
     });
     if (overlapping) throw new OverlapError(invitation.scope);
 
-    // TAREA 3 — si el cliente YA tiene una relación activa con ESTE MISMO
-    // profesional (p.ej. aceptó "training" hace tiempo y ahora acepta
-    // "nutrition" del mismo profesional), el cuestionario inicial ya se hizo
-    // y ya fue confirmado — no tiene sentido repetir el ciclo completo.
-    // Pasa directo a "active", igual que el comportamiento anterior.
-    const alreadyActiveWithTrainer = await trainerClientDao.findActiveByTrainerAndClient(
+    // 2026-09 — aceptar formaliza la relación al momento: "active" y el
+    // cliente ya sale en Clientes. El cuestionario inicial queda pendiente
+    // aparte (intakePending), sin bloquear la app del cliente ni esperar a
+    // que el profesional confirme nada.
+    const activeWithTrainer = await trainerClientDao.findByTrainerAndClientInStatuses(
       invitation.trainerId,
-      clientUser._id
+      clientUser._id,
+      ["active"]
     );
-    const nextStatus = alreadyActiveWithTrainer ? "active" : "cuestionario_pendiente";
 
-    const updated = await trainerClientDao.updateStatus(invitation._id, nextStatus, {
+    const updated = await trainerClientDao.updateStatus(invitation._id, "active", {
       clientId: clientUser._id,
       respondedAt: new Date(),
+      intakePending: intakePendingOnAccept(activeWithTrainer),
     });
     await notificationDao.createForTrainer(invitation.trainerId, clientUser._id, "invite_accepted", {
       scope: invitation.scope,
@@ -287,17 +288,18 @@ module.exports = {
   },
 
   /**
-   * TAREA 3 — el cliente envía el cuestionario inicial. Transiciona TODAS sus
-   * relaciones "cuestionario_pendiente" con este profesional a "en_revision"
-   * a la vez (el cuestionario es uno por par profesional-cliente, no por
-   * scope). Reutiliza ClientNutritionPreferences (F29) para alergias/
-   * preferencias — no se duplica ese dato en un schema aparte.
+   * TAREA 3 — el cliente envía el cuestionario inicial. Lo da por enviado en
+   * TODAS sus relaciones activas con este profesional a la vez (el
+   * cuestionario es uno por par profesional-cliente, no por scope). La
+   * relación ya era "active" desde que aceptó: aquí no cambia de estado.
+   * Reutiliza ClientNutritionPreferences (F29) para alergias/preferencias —
+   * no se duplica ese dato en un schema aparte.
    */
   async submitIntake(trainerId, clientId, intakeData) {
-    const pendingRelations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
-      "cuestionario_pendiente",
+    const activeRelations = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
+      "active",
     ]);
-    if (!pendingRelations.length) {
+    if (!activeRelations.some((relation) => relation.intakePending)) {
       const err = new Error("No tienes ningún cuestionario pendiente con este profesional");
       err.code = "NO_INTAKE_PENDING";
       throw err;
@@ -335,7 +337,7 @@ module.exports = {
       }
     }
 
-    await trainerClientDao.updateManyStatus(trainerId, clientId, "cuestionario_pendiente", "en_revision");
+    await trainerClientDao.clearIntakePending(trainerId, clientId);
     await notificationDao.create(clientId, trainerId, "intake_submitted", {});
     await notificationDao.createForTrainer(trainerId, clientId, "intake_submitted_trainer", {});
 
@@ -343,44 +345,21 @@ module.exports = {
   },
 
   /**
-   * TAREA 3 — el profesional confirma explícitamente al cliente tras revisar
-   * su cuestionario. Transiciona TODAS las relaciones "en_revision" de este
-   * par a "active" a la vez.
-   */
-  async confirmClient(trainerId, clientId) {
-    const inReview = await trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, [
-      "en_revision",
-    ]);
-    if (!inReview.length) {
-      const err = new Error("Este cliente no tiene ningún cuestionario en revisión");
-      err.code = "NO_INTAKE_IN_REVIEW";
-      throw err;
-    }
-
-    await trainerClientDao.updateManyStatus(trainerId, clientId, "en_revision", "active");
-    await notificationDao.create(clientId, trainerId, "client_confirmed", {});
-    return trainerClientDao.findByTrainerAndClientInStatuses(trainerId, clientId, ["active"]);
-  },
-
-  /**
-   * TAREA 3 — ¿debe el cliente ver la pantalla de estado (cuestionario/en
-   * revisión) en vez del resto de la app? Solo si NO tiene ninguna relación
-   * activa con NADIE todavía Y tiene al menos una relación en curso de alta
-   * (cuestionario_pendiente/en_revision) — un cliente con al menos un
-   * profesional ya activo nunca vuelve a quedar bloqueado por una alta nueva
-   * con otro profesional distinto.
+   * Cuestionarios iniciales que el cliente tiene pendientes (relaciones
+   * activas con intakePending), con lo que necesita el formulario de cada
+   * profesional. Nunca bloquea la app: `blocked` queda siempre en false
+   * (lo siguen leyendo builds antiguas del cliente, que con true le
+   * redirigían a la pantalla del cuestionario).
    */
   async getOnboardingStatus(clientId) {
-    const [active, onboarding] = await Promise.all([
-      trainerClientDao.findActiveByClient(clientId),
-      trainerClientDao.findAllByClient(clientId, { status: ["cuestionario_pendiente", "en_revision"] }),
-    ]);
+    const active = await trainerClientDao.findActiveByClient(clientId);
+    const pending = active.filter((relation) => relation.intakePending);
 
-    if (active.length || !onboarding.length) {
+    if (!pending.length) {
       return { blocked: false, relations: [] };
     }
 
-    const enriched = await attachTrainerInfo(onboarding);
+    const enriched = await attachTrainerInfo(pending);
     // TASK-049 — el formulario de cuestionario inicial necesita saber qué
     // campos activó cada profesional. Un solo $in por los trainerId únicos
     // (no por relación, ya que enabledFields es por trainer, no por scope),
@@ -393,7 +372,7 @@ module.exports = {
       trainerIntakeConfigService.getCustomQuestionsByTrainers(trainerIds),
     ]);
     return {
-      blocked: true,
+      blocked: false,
       relations: enriched.map((r) => ({
         trainerId: r.trainerId,
         scope: r.scope,
@@ -529,5 +508,8 @@ async function aggregateByOtherParty(relations, otherPartyField) {
     user: usersById.get(id) || null,
     scopes: byOtherParty.get(id).map((r) => r.scope),
     relations: byOtherParty.get(id),
+    // Solo tiene sentido visto desde el profesional: el cliente aún no ha
+    // enviado su cuestionario inicial (ver trainer-client-schema.js).
+    intakePending: byOtherParty.get(id).some((r) => r.intakePending),
   }));
 }

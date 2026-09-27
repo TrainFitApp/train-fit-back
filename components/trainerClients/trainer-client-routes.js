@@ -19,11 +19,10 @@ router.getAsync("/dashboard/attention-items", auth(["trainer"]), controller.getA
 router.getAsync("/clients/check-email", auth(["trainer"]), controller.checkClientEmailStatus);
 router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByTrainer);
 
-// --- TAREA 3: cuestionario inicial — el profesional revisa/confirma ANTES
-// de que la relación esté "active", por eso NO llevan requireActiveClient.
+// --- TAREA 3: cuestionario inicial. Sin requireActiveClient: el controller
+// admite también relaciones antiguas en "en_revision".
 router.getAsync("/clients/:clientId/intake", auth(["trainer"]), controller.getClientIntake);
 router.putAsync("/clients/:clientId/intake", auth(["trainer"]), requireWritableSeat(), controller.updateClientIntake);
-router.postAsync("/clients/:clientId/confirm", auth(["trainer"]), requireWritableSeat(), controller.confirmClient);
 
 // Plazas activas cuando la cartera supera el cupo del plan (trainer-seat-service.js).
 router.getAsync("/seats", auth(["trainer"]), controller.getSeats);

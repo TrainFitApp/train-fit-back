@@ -284,8 +284,8 @@ const controller = {
   },
 
   // GET /trainer/clients/:clientId/intake — el profesional revisa el
-  // cuestionario. NO usa requireActiveClient a propósito: la relación está
-  // en "en_revision" (aún no "active") justo cuando hace falta revisarla.
+  // cuestionario (null si el cliente aún no lo ha enviado). NO usa
+  // requireActiveClient: admite también relaciones antiguas en "en_revision".
   async getClientIntake(req, res) {
     const trainerId = req.auth.userId;
     const clientId = req.params.clientId;
@@ -305,7 +305,7 @@ const controller = {
   // PUT /trainer/clients/:clientId/intake — el profesional corrige el
   // cuestionario del cliente (mismo control de acceso que getClientIntake).
   // A propósito NO pasa por trainerClientService.submitIntake: ese método
-  // exige status "cuestionario_pendiente" y además reescribe preferencias
+  // exige un cuestionario pendiente (intakePending) y además reescribe preferencias
   // nutricionales/perfil de User — aquí solo se corrigen los campos propios
   // de ClientIntake, sin tocar el estado de la relación ni disparar de nuevo
   // esos efectos secundarios pensados para el envío inicial del cliente.
@@ -323,21 +323,6 @@ const controller = {
     }
     const intake = await clientIntakeDao.upsert(trainerId, clientId, req.body || {});
     return res.send(intake);
-  },
-
-  // POST /trainer/clients/:clientId/confirm — el profesional confirma
-  // explícitamente al cliente tras revisar su cuestionario.
-  async confirmClient(req, res) {
-    try {
-      const result = await trainerClientService.confirmClient(req.auth.userId, req.params.clientId);
-      return res.send(trainerClientDto.multiple(result));
-    } catch (e) {
-      if (e.code === "NO_INTAKE_IN_REVIEW") {
-        return res.status(400).send({ message: e.message, code: e.code });
-      }
-      console.error("Error en confirmClient:", e.message);
-      return res.status(500).send({ message: "Internal Server Error" });
-    }
   },
 
   // GET /trainer/seats — plazas activas cuando la cartera supera el cupo del plan.

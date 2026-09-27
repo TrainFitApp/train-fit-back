@@ -17,11 +17,10 @@ const TrainerClientSchema = new Schema(
     // propósito: es el único gate que ya comprueban ~15 archivos existentes
     // (requireActiveClient, hasActiveRelation, coach-dashboard, billing F14/
     // F21) y renombrarlo obligaría a tocarlos todos sin necesidad real.
-    // Los 2 estados nuevos son intermedios entre "pending" (invitación sin
-    // responder) y "active" (coaching desbloqueado): al aceptar, el cliente
-    // pasa a "cuestionario_pendiente"; al enviar el cuestionario inicial,
-    // pasa a "en_revision"; solo cuando el profesional lo confirma
-    // explícitamente pasa a "active". No existe "pausado" (rompería la
+    // "cuestionario_pendiente"/"en_revision" eran estados intermedios
+    // (aceptar → cuestionario → confirmación del profesional → "active").
+    // Desde 2026-09 aceptar pasa directo a "active" (ver intakePending);
+    // se conservan en el enum por los datos antiguos. No existe "pausado" (rompería la
     // regla ya documentada de que revoked es terminal, sin deshacer — F08)
     // ni "finalizado" (redundante con revoked/declined, que ya cubren
     // "relación terminada").
@@ -31,6 +30,13 @@ const TrainerClientSchema = new Schema(
       default: "pending",
       index: true,
     },
+    // 2026-09 — aceptar la invitación ya deja la relación "active" (el
+    // cliente sale en Clientes al momento); el cuestionario inicial queda
+    // pendiente aparte, sin bloquear nada. Todas las relaciones del mismo
+    // par (trainer, cliente) llevan el mismo valor: el cuestionario es uno
+    // por par, no por scope. "cuestionario_pendiente"/"en_revision" solo
+    // quedan en datos antiguos.
+    intakePending: { type: Boolean, default: false },
     invitedAt: { type: Date, default: Date.now },
     respondedAt: { type: Date, default: null },
     revokedAt: { type: Date, default: null },

@@ -243,14 +243,12 @@ module.exports = {
     return TrainerClient.find({ trainerId, clientId, status: { $in: statuses } });
   },
 
-  // Transiciona TODAS las relaciones de un par (trainerId, clientId) que
-  // estén en `fromStatus` a `toStatus` a la vez — el cuestionario/confirmación
-  // es una única acción que afecta a todos los scopes del mismo profesional
-  // simultáneamente, nunca uno a uno.
-  async updateManyStatus(trainerId, clientId, fromStatus, toStatus, extra = {}) {
+  // El cliente envió el cuestionario inicial: deja de estar pendiente en
+  // todas las relaciones activas del par a la vez (uno por par, no por scope).
+  async clearIntakePending(trainerId, clientId) {
     return TrainerClient.updateMany(
-      { trainerId, clientId, status: fromStatus },
-      { $set: { status: toStatus, ...extra } }
+      { trainerId, clientId, status: "active", intakePending: true },
+      { $set: { intakePending: false } }
     );
   },
 };

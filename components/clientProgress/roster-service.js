@@ -238,6 +238,7 @@ async function buildRoster(trainerId, now = new Date()) {
       clientId: snapshot.clientId,
       clientName: snapshot.clientName,
       clientEmail: snapshot.clientEmail || "",
+      intakePending: snapshot.intakePending,
       adherence: {
         overall: adherence.overall,
         weakest: adherence.weakest,
