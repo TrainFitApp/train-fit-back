@@ -110,25 +110,13 @@ module.exports = {
       proteinsGTotal: round1(req.body?.proteinsGTotal),
       carbohydratesGTotal: round1(req.body?.carbohydratesGTotal),
       fatGTotal: round1(req.body?.fatGTotal),
-      source: "manual",
-      updatedByTrainerId: req.auth.userId,
-      updatedAt: new Date(),
     };
     if (req.body?.fiberGTotal !== undefined) {
       const fiber = Number(req.body.fiberGTotal);
       updates.fiberGTotal = Number.isFinite(fiber) && fiber >= 0 ? round1(fiber) : null;
     }
 
-    const user = await userSchema.findById(clientId).select("goalInUse").lean();
-    if (user?.goalInUse) {
-      const updated = await nutritionalGoalDao.update(user.goalInUse, updates);
-      return res.send(goalResponse(updated));
-    }
-
-    // El cliente todavía no tiene objetivo (nunca abrió la pantalla): se crea
-    // y se pone en uso, igual que hace recomputeDefaultForClient.
-    const created = await nutritionalGoalDao.create({ userId: clientId, name: "Default", ...updates });
-    await userSchema.findByIdAndUpdate(clientId, { $set: { goalInUse: created._id } });
-    return res.status(201).send(goalResponse(created));
+    const { goal, created } = await nutritionalGoalService.setManualGoalForClient(req.auth.userId, clientId, updates);
+    return res.status(created ? 201 : 200).send(goalResponse(goal));
   },
 };

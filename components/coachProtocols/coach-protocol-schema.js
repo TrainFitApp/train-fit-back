@@ -21,10 +21,39 @@ const CoachProtocolSchema = new Schema(
     description: { type: String, trim: true, maxlength: 500, default: "" },
 
     // Plantillas del profesional, reutilizables tal cual.
+    // Solo en protocolos anteriores a `checkins` (se lee como un check-in
+    // semanal, ver protocol-content.js#protocolCheckins). Al guardar queda null.
     checkinTemplateId: { type: Schema.Types.ObjectId, ref: "CheckinTemplateDefinition", default: null },
+    // Check-ins que se programan al aplicar, cada uno con su cadencia
+    // (mismos valores que CheckinSchedule). La fecha de inicio es la de
+    // aplicar.
+    checkins: [
+      {
+        _id: false,
+        templateId: { type: Schema.Types.ObjectId, ref: "CheckinTemplateDefinition", required: true },
+        frequency: { type: String, enum: ["once", "daily", "weekly", "monthly"], default: "weekly" },
+        interval: { type: Number, min: 1, max: 52, default: 1 },
+        time: { type: String, default: "09:00" },
+      },
+    ],
     dietTemplateId: { type: Schema.Types.ObjectId, ref: "DietTemplate", default: null },
     routineTemplateId: { type: Schema.Types.ObjectId, ref: "Table", default: null },
     ruleIds: [{ type: Schema.Types.ObjectId, ref: "CoachRule" }],
+
+    // Objetivo nutricional que se fija al aplicar (kcal y g/día, cuadrados
+    // con las kcal). null = no se toca el del cliente.
+    nutritionTarget: {
+      type: new Schema(
+        {
+          kcal: { type: Number, required: true, min: 1 },
+          protein: { type: Number, required: true, min: 0 },
+          carbs: { type: Number, required: true, min: 0 },
+          fat: { type: Number, required: true, min: 0 },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
 
     // Hábitos diarios (TrainerTask) que se crean para el cliente al aplicar.
     // Mismo shape que TrainerTask menos trainerId/clientId, que solo se
