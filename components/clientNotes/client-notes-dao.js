@@ -22,7 +22,7 @@ module.exports = {
     const splits = splitIds.length ? await Split.find({ _id: { $in: splitIds } }).select("workouts").lean() : [];
     const workoutIds = splits.flatMap((split) => split.workouts || []);
     const workouts = workoutIds.length
-      ? await Workout.find({ _id: { $in: workoutIds } }).select("name notes date createdAt exercises").lean()
+      ? await Workout.find({ _id: { $in: workoutIds } }).select("name clientNotes date createdAt exercises").lean()
       : [];
     const customExerciseIds = workouts.flatMap((workout) => workout.exercises || []);
     const [customExercises, pinnedNotes] = await Promise.all([

@@ -14,6 +14,9 @@ const AnthropometrySchema = new Schema({
   },
   weight: { type: Number },
   checkinSources: { type: [Schema.Types.ObjectId], default: undefined, select: false },
+  // Campos de este día que vienen de un check-in pedido por el entrenador:
+  // el cliente no los ve en sus pantallas (anthropometry-origin.js).
+  checkinFields: { type: [String], default: undefined },
   neck: { type: Number },
   chest: { type: Number },
   // Deprecados (MVP-trainers D8, 2026-08-01): un único valor histórico sin

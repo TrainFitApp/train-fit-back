@@ -37,7 +37,12 @@ const WorkoutSorenessSchema = Schema(
 
 const WorkoutSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
+  // 2026-09 — mismo reparto que CustomExercise.notes/clientNotes: `notes` es
+  // la indicación de quien construye la rutina (el entrenador si la tabla
+  // está asignada) y `clientNotes` lo que apunta el cliente al entrenar. Las
+  // notas anteriores a la separación se quedan en `notes`.
   notes: { type: String, trim: true, maxlength: 500 },
+  clientNotes: { type: String, trim: true, maxlength: 500 },
   date: Date,
   order: Number,
   cronometer: Number,

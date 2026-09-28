@@ -5,6 +5,7 @@ class PinnedExerciseNoteDTO {
     this.workoutIndex = data.workoutIndex;
     this.exerciseIndex = data.exerciseIndex;
     this.notes = data.notes;
+    this.authorRole = data.authorRole || null;
     this.createdAt = data.createdAt;
     this.updatedAt = data.updatedAt;
   }

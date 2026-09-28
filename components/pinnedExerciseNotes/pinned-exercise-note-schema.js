@@ -22,6 +22,13 @@ const PinnedExerciseNoteSchema = Schema({
     trim: true,
     maxlength: 500,
   },
+  // 2026-09 — quién la ancló (ver tables/note-authorship.js). null = anterior
+  // a este campo: la puede tocar cualquiera y cuenta como del cliente.
+  authorRole: {
+    type: String,
+    enum: ["trainer", "client"],
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

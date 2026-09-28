@@ -198,14 +198,18 @@ module.exports = {
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
 
-    return res.send(
-      open.map(({ schedule, entry }) => ({
+    // `prefill`: medidas ya apuntadas en el periodo del check-in, para que
+    // el formulario salga relleno. El cliente revisa y envía.
+    const entries = await Promise.all(
+      open.map(async ({ schedule, occurrence, entry }) => ({
         ...entry,
         trainerId: String(schedule.trainerId),
         trainer: trainersById.get(String(schedule.trainerId)) || null,
         week,
+        prefill: await agenda.prefillFor(clientId, schedule, occurrence, today),
       }))
     );
+    return res.send(entries);
   },
 
   // GET /trainer/checkins/mine/history — histórico del cliente (solo lectura:

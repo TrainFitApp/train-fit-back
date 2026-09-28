@@ -14,10 +14,10 @@ const WORKOUT_EXECUTION_FIELDS = [
   "readinessPre",
   "perceivedEffortPost",
   "sorenessPre",
-  // Workout.notes la escriben el cliente y el entrenador indistintamente (es
-  // una de las fuentes de "Notas del cliente", ver client-notes-builder.js):
-  // no hay forma de saber de quién es, así que no se copia.
-  "notes",
+  // 2026-09 — la nota del cliente vive aparte (clientNotes) y no se copia.
+  // Workout.notes es ya la indicación del entrenador: pauta, se copia igual
+  // que CustomExercise.notes.
+  "clientNotes",
 ];
 
 const CUSTOM_EXERCISE_CLIENT_FIELDS = ["clientNotes"];

@@ -2,6 +2,7 @@ class Workout {
   constructor(data) {
     this.name = data.name;
     this.notes = data.notes;
+    this.clientNotes = data.clientNotes;
     this.date = data.date;
     this.cronometer = data.cronometer;
     this.paused = data.paused;

@@ -3,24 +3,37 @@ const PinnedExerciseNoteService = require("./pinned-exercise-note-service");
 const PinnedExerciseNoteModel = require("./pinned-exercise-note-schema");
 const tableSchema = require("../tables/table-schema");
 const tableAccess = require("../tables/table-access");
+const { noteAuthorRole, canWritePinnedNote } = require("../tables/note-authorship");
 
 // Sin rejectIfAssignedTableLockedForOwner a propósito: la nota anclada es del
 // cliente (como clientNotes en custom-exercise-controller.js), no toca lo que
-// pautó el entrenador.
+// pautó el entrenador. Devuelve la tabla (o null tras responder el error).
 async function assertCanAccessTable(req, res, tableId) {
   if (!mongoose.isValidObjectId(tableId)) {
     res.status(400).json({ success: false, message: "Invalid table id" });
-    return false;
+    return null;
   }
   const table = await tableSchema.findById(tableId).select("_id userId").lean();
   if (!table) {
     res.status(404).json({ success: false, message: "Rutina no encontrada" });
-    return false;
+    return null;
   }
   if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
     res.status(403).json({ success: false, message: "No tienes permiso para esta rutina" });
-    return false;
+    return null;
   }
+  return table;
+}
+
+// 2026-09 — cada uno edita o borra solo la nota que ancló él. 409 con código
+// para que el front diga de quién es en vez de un error genérico.
+function rejectIfNotAuthor(req, res, table, existing) {
+  if (canWritePinnedNote(existing, noteAuthorRole(req.user.id, table.userId))) return false;
+  res.status(409).json({
+    success: false,
+    code: "PINNED_NOTE_NOT_AUTHOR",
+    message: "Esta nota anclada la escribió otra persona",
+  });
   return true;
 }
 
@@ -75,13 +88,21 @@ class PinnedExerciseNoteController {
       }
       const position = parsePosition(req, res);
       if (!position) return;
-      if (!(await assertCanAccessTable(req, res, tableId))) return;
+      const table = await assertCanAccessTable(req, res, tableId);
+      if (!table) return;
+      const existing = await PinnedExerciseNoteService.getByPosition(
+        tableId,
+        position.workoutIndex,
+        position.exerciseIndex
+      );
+      if (rejectIfNotAuthor(req, res, table, existing)) return;
 
       const note = await PinnedExerciseNoteService.upsert(
         tableId,
         position.workoutIndex,
         position.exerciseIndex,
-        notes.trim().slice(0, 500)
+        notes.trim().slice(0, 500),
+        noteAuthorRole(req.user.id, table.userId)
       );
       res.send(note);
     } catch (error) {
@@ -96,11 +117,13 @@ class PinnedExerciseNoteController {
       if (!mongoose.isValidObjectId(id)) {
         return res.status(400).json({ success: false, message: "Invalid note id" });
       }
-      const note = await PinnedExerciseNoteModel.findById(id).select("tableId").lean();
+      const note = await PinnedExerciseNoteModel.findById(id).select("tableId authorRole").lean();
       if (!note) {
         return res.status(404).json({ success: false, message: "Pinned exercise note not found" });
       }
-      if (!(await assertCanAccessTable(req, res, note.tableId))) return;
+      const table = await assertCanAccessTable(req, res, note.tableId);
+      if (!table) return;
+      if (rejectIfNotAuthor(req, res, table, note)) return;
       await PinnedExerciseNoteService.deleteById(id);
       res.send({ success: true, message: "Pinned exercise note deleted" });
     } catch (error) {
@@ -114,7 +137,14 @@ class PinnedExerciseNoteController {
       const { tableId } = req.params;
       const position = parsePosition(req, res);
       if (!position) return;
-      if (!(await assertCanAccessTable(req, res, tableId))) return;
+      const table = await assertCanAccessTable(req, res, tableId);
+      if (!table) return;
+      const existing = await PinnedExerciseNoteService.getByPosition(
+        tableId,
+        position.workoutIndex,
+        position.exerciseIndex
+      );
+      if (rejectIfNotAuthor(req, res, table, existing)) return;
       await PinnedExerciseNoteService.deleteByPosition(
         tableId,
         position.workoutIndex,

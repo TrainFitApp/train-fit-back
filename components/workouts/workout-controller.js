@@ -2,6 +2,7 @@ const workoutModel = require("./workout-service");
 const tableSchema = require("../tables/table-schema");
 const tableAccess = require("../tables/table-access");
 const { sanitizeSoreness } = require("./soreness-catalog");
+const { noteAuthorRole, stripForeignWorkoutNotes } = require("../tables/note-authorship");
 const { withPinnedNotesSync } = require("../pinnedExerciseNotes/pinned-exercise-note-anchor-sync");
 
 const BLOCK_TYPES = new Set(["straight", "superset", "circuit", "warmup", "finisher"]);
@@ -48,6 +49,15 @@ async function assertCanAccessTableId(req, res, idTable) {
     return null;
   }
   return table;
+}
+
+// 2026-09 — notes (entrenador) y clientNotes (cliente): cada uno escribe solo
+// la suya, ver tables/note-authorship.js.
+function stripForeignNotes(req, table, workout) {
+  return stripForeignWorkoutNotes(workout, {
+    authorRole: noteAuthorRole(req.user.id, table.userId),
+    trainerManaged: Boolean(table.assignedByTrainerId),
+  });
 }
 
 async function assertCanAccessWorkoutId(req, res, idWorkout) {
@@ -208,14 +218,15 @@ module.exports = {
   // añadir/quitar ejercicios, entrenamientos y microciclos sigue bloqueado
   // en el resto de este archivo.
   async modifyWorkout(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.body?._id))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.body?._id);
+    if (!table) return;
 
     // Movimiento 2 Coach Pro — las agujetas viajan por aquí (junto a
     // readinessPre, en el mismo guardado que arranca la sesión), así que se
     // saneen aquí mismo. modifyWorkout escribe con $set y sin
     // runValidators, de modo que los min/max del esquema no llegarían a
     // ejecutarse: mismo motivo por el que ya existe sanitizeWorkoutBlocks.
-    const body = { ...req.body };
+    const body = stripForeignNotes(req, table, req.body);
     if (Object.prototype.hasOwnProperty.call(body, "sorenessPre")) {
       body.sorenessPre = sanitizeSoreness(body.sorenessPre);
     }
@@ -312,8 +323,9 @@ module.exports = {
     const table = await assertCanAccessWorkoutId(req, res, req.body?.workout?._id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    // $set del workout entero: mismo reparto de notas que modifyWorkout.
     const workout = await workoutModel.updateWorkout(
-      req.body.workout,
+      stripForeignNotes(req, table, req.body.workout),
       req.body.customExercise,
     );
     return res.send(workout);

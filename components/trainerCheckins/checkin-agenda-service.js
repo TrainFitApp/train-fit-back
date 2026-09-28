@@ -10,9 +10,11 @@
 const Schedule = require("./checkin-schedule-schema");
 const Response = require("./checkin-response-schema");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
+const { ownViews, checkinWritableFields } = require("../anthropometry/anthropometry-origin");
 const notificationDao = require("../notifications/notification-dao");
 const { CHECKIN_FIELDS_BY_KEY, isPlausibleValue, scaleLevelsFor } = require("./checkin-field-catalog");
 const { validateCustomAnswer, normalizeCustomAnswer } = require("./checkin-custom-question");
+const { prefillWindow, anthropometryPrefill, changedAnthropometryFields } = require("./checkin-prefill");
 const { occurrenceDatesBetween, occurrenceCovering, historyOccurrences } = require("./checkin-schedule-dates");
 const { isoDate, addDaysToIsoDate } = require("../util/date-util");
 
@@ -142,6 +144,18 @@ async function openForClient(clientId, today = todayIso(), trainerIds = null) {
     out.push({ schedule, occurrence, response, entry: entryOf(schedule, occurrence, response, today) });
   }
   return out;
+}
+
+/**
+ * Medidas que el cliente ya apuntó dentro del periodo de este check-in, para
+ * rellenar el formulario (checkin-prefill.js). Solo rellena: no responde.
+ */
+async function prefillFor(clientId, schedule, occurrence, today = todayIso()) {
+  const window = prefillWindow(schedule, occurrence, today);
+  // Solo lo que apuntó el cliente: las respuestas de check-ins anteriores no
+  // rellenan el siguiente.
+  const anthropometries = await anthropometryDao.getAnthropometriesByUserIdBetweenDates(clientId, window.from, window.to);
+  return anthropometryPrefill(schedule.enabledFields, ownViews(anthropometries), window);
 }
 
 /**
@@ -279,6 +293,7 @@ function validateAnswers(schedule, input) {
 async function saveResponse({ schedule, occurrence, values, today = todayIso() }) {
   const { weekForClientAt } = require("../planAssignments/week-service");
   const week = await weekForClientAt(schedule.clientId, occurrence.date);
+  const prefill = await prefillFor(schedule.clientId, schedule, occurrence, today);
   const now = new Date();
 
   const previous = await Response.findOne({ scheduleId: schedule._id, occurrenceDate: occurrence.date }).lean();
@@ -309,15 +324,17 @@ async function saveResponse({ schedule, occurrence, values, today = todayIso() }
   ).lean();
 
   // La composición corporal alimenta las gráficas de peso: se escribe con la
-  // fecha en que se responde, no con la de la solicitud.
-  const anthropometryFields = {};
-  for (const [key, value] of Object.entries(values)) {
-    const field = CHECKIN_FIELDS_BY_KEY.get(key);
-    if (field?.storage === "anthropometry") anthropometryFields[field.anthropometryField] = value;
-  }
+  // fecha en que se responde, no con la de la solicitud. Lo que llegó del
+  // autorrelleno sin tocar ya está guardado en su día: no se duplica hoy.
+  // Se marca como check-in (el cliente no lo ve en sus pantallas) y nunca
+  // pisa lo que el cliente apuntó él mismo ese día.
+  const existing = await anthropometryDao.getAnthropometryByUserIdAndDate(schedule.clientId, today);
+  const anthropometryFields = checkinWritableFields(existing, changedAnthropometryFields(values, prefill));
   let anthropometry = null;
   if (Object.keys(anthropometryFields).length) {
-    anthropometry = await anthropometryDao.mergeAnthropometryFields(schedule.clientId, today, anthropometryFields);
+    anthropometry = await anthropometryDao.mergeAnthropometryFields(schedule.clientId, today, anthropometryFields, {
+      fromCheckin: true,
+    });
   }
 
   await notificationDao.createForTrainer(schedule.trainerId, schedule.clientId, "checkin_responded", {
@@ -342,6 +359,7 @@ module.exports = {
   agendaFor,
   scheduleHistory,
   openForClient,
+  prefillFor,
   validateAnswers,
   saveResponse,
 };

@@ -82,10 +82,25 @@ module.exports = {
     }
   },
 
-  async mergeAnthropometryFields(userId, date, fields) {
+  // `fromCheckin` marca los campos como respuesta de check-in: el entrenador
+  // los ve, el cliente no (anthropometry-origin.js).
+  async mergeAnthropometryFields(userId, date, fields, { fromCheckin = false } = {}) {
+    const update = { $set: fields, $setOnInsert: { userId, date } };
+    if (fromCheckin) update.$addToSet = { checkinFields: { $each: Object.keys(fields) } };
+    return Anthropometry.findOneAndUpdate({ userId, date }, update, { new: true, upsert: true }).lean();
+  },
+
+  // Lo que apunta el propio cliente: si ese campo venía de un check-in, deja
+  // de serlo y pasa a ser suyo.
+  async upsertOwnFields(userId, date, fields) {
+    if (!Object.keys(fields).length) return Anthropometry.findOne({ userId, date }).lean();
     return Anthropometry.findOneAndUpdate(
       { userId, date },
-      { $set: fields, $setOnInsert: { userId, date } },
+      {
+        $set: fields,
+        $pull: { checkinFields: { $in: Object.keys(fields) } },
+        $setOnInsert: { userId, date },
+      },
       { new: true, upsert: true }
     ).lean();
   },

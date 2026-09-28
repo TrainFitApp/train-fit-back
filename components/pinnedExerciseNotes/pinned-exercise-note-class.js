@@ -5,6 +5,7 @@ class PinnedExerciseNote {
     this.workoutIndex = data.workoutIndex;
     this.exerciseIndex = data.exerciseIndex;
     this.notes = data.notes;
+    this.authorRole = data.authorRole;
     this.createdAt = data.createdAt;
     this.updatedAt = data.updatedAt;
   }
@@ -25,11 +26,11 @@ class PinnedExerciseNote {
     return await PinnedExerciseNoteModel.findOne({ tableId, workoutIndex, exerciseIndex }).lean();
   }
 
-  static async upsert(tableId, workoutIndex, exerciseIndex, notes) {
+  static async upsert(tableId, workoutIndex, exerciseIndex, notes, authorRole) {
     const PinnedExerciseNoteModel = require("./pinned-exercise-note-schema");
     return await PinnedExerciseNoteModel.findOneAndUpdate(
       { tableId, workoutIndex, exerciseIndex },
-      { tableId, workoutIndex, exerciseIndex, notes },
+      { tableId, workoutIndex, exerciseIndex, notes, authorRole },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     ).lean();
   }
