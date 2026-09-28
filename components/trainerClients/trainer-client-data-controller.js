@@ -6,7 +6,8 @@ const dietDaysUtil = require("../dietDays/diet-days-util");
 const dietModel = require("../diets/diet-model");
 const mealModel = require("../meals/meal-service");
 const trainerNoteDao = require("../trainerNotes/trainer-note-dao");
-const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
+const trainerPaymentService = require("../trainerPayments/trainer-payment-service");
+const paymentsController = require("../trainerPayments/trainer-payment-controller");
 const { resolveOwnedDietDay, getTrackingDaysForClient } = require("../dietDays/diet-day-resolver");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
@@ -566,56 +567,34 @@ module.exports = {
     return res.send(await dietDaysService.getShoppingList(client._id, range.from, range.to));
   },
 
-  // GET /trainer/clients/:clientId/payments — F26, requireActiveClient() sin scope
-  async listPayments(req, res) {
-    const payments = await trainerPaymentDao.list(req.auth.userId, req.params.clientId);
-    return res.send(payments);
-  },
+  // --- Cobros (F26): contrato ANTIGUO de apps anteriores, sobre el dominio
+  // nuevo (components/trainerPayments). Mismo requireActiveClient() de
+  // siempre. La app actual usa /trainer/payments/clients/:clientId/*.
 
-  // POST /trainer/clients/:clientId/payments — F26, requireActiveClient() sin scope
-  async createPayment(req, res) {
-    const { amount, currency, dueDate, note } = req.body || {};
-    const numericAmount = Number(amount);
-    if (!numericAmount || numericAmount <= 0) {
-      return res.status(400).send({ message: "amount debe ser un número positivo" });
-    }
-    if (!dueDate) {
-      return res.status(400).send({ message: "dueDate es obligatorio" });
-    }
-    const dueDateObj = new Date(dueDate);
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    if (dueDateObj < todayStart) {
-      return res.status(400).send({ message: "La fecha de vencimiento no puede ser en el pasado" });
-    }
+  // GET /trainer/clients/:clientId/payments — lista plana con el saldo real.
+  listPayments: paymentsController.handler((req) =>
+    trainerPaymentService.listLegacyPayments(req.auth.userId, req.params.clientId)
+  ),
 
-    const payment = await trainerPaymentDao.create(req.auth.userId, req.params.clientId, {
-      amount: numericAmount,
-      currency: currency || "EUR",
-      dueDate: dueDateObj,
-      note,
-    });
+  // POST /trainer/clients/:clientId/payments — {amount, dueDate, note}. Ya no
+  // avisa al cliente por defecto: solo si el entrenador activó sus avisos.
+  createPayment: paymentsController.write(
+    (req) => trainerPaymentService.createLegacyPayment(req.auth.userId, req.params.clientId, req.body, req.auth.userId),
+    201
+  ),
 
-    await notificationDao.create(req.params.clientId, req.auth.userId, "payment_created", {
-      amount: numericAmount,
-      currency: currency || "EUR",
-      dueDate: dueDateObj,
-    });
-
-    return res.status(201).send(payment);
-  },
-
-  // PATCH /trainer/clients/:clientId/payments/:paymentId — F26, requireActiveClient() sin scope
-  async setPaymentPaid(req, res) {
-    const payment = await trainerPaymentDao.markPaid(
+  // PATCH /trainer/clients/:clientId/payments/:paymentId — {paid}. paid:true
+  // repetido no duplica pagos ni mueve la fecha; paid:false nunca borra un
+  // historial parcial (409 LEGACY_CONFLICT si no es representable).
+  setPaymentPaid: paymentsController.write((req) =>
+    trainerPaymentService.legacySetPaid(
       req.auth.userId,
       req.params.clientId,
       req.params.paymentId,
-      req.body?.paid !== false
-    );
-    if (!payment) return res.status(404).send({ message: "Cobro no encontrado" });
-    return res.send(payment);
-  },
+      req.body?.paid !== false,
+      req.auth.userId
+    )
+  ),
 
   // POST /trainer/clients/:clientId/diet-days/:date/meals/:mealSlot/propose
   // F28, requireActiveClient("nutrition"). body: { alternatives: [{label, customProducts, customRecipes}] }

@@ -531,19 +531,23 @@ module.exports = {
   async revokeByTrainer(trainerId, clientId, scope) {
     const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId, scope);
     if (!relation) return null; // ya no activa, o nunca existió — idempotente
-    return trainerClientDao.updateStatus(relation._id, "revoked", {
+    const revoked = await trainerClientDao.updateStatus(relation._id, "revoked", {
       revokedBy: "trainer",
       revokedAt: new Date(),
     });
+    await closePaymentsIfLastScope(trainerId, clientId);
+    return revoked;
   },
 
   async revokeByClient(clientId, scope) {
     const relation = await trainerClientDao.findActiveByClientAndScope(clientId, scope);
     if (!relation) return null;
-    return trainerClientDao.updateStatus(relation._id, "revoked", {
+    const revoked = await trainerClientDao.updateStatus(relation._id, "revoked", {
       revokedBy: "client",
       revokedAt: new Date(),
     });
+    await closePaymentsIfLastScope(relation.trainerId, clientId);
+    return revoked;
   },
 
   async listHistoryByTrainer(trainerId) {
@@ -562,6 +566,18 @@ module.exports = {
 
 // F04: adjunta {trainer: {name, lastname, email}} a cada invitación SIN
 // agrupar — cada documento sigue siendo su propia tarjeta.
+// Cobros 2026-09 — al terminar el ÚLTIMO scope activo con este entrenador se
+// finaliza la cuota y se apagan los avisos del cliente (la deuda se queda).
+// Si solo termina entrenamiento y sigue nutrición, no se toca nada. Si esto
+// falla, el job de cobros lo corrige en su siguiente pasada.
+async function closePaymentsIfLastScope(trainerId, clientId) {
+  try {
+    await require("../trainerPayments/trainer-payment-service").onRelationChanged(trainerId, clientId);
+  } catch (error) {
+    console.error("[TrainerPayments] No se pudo cerrar la cuota tras la baja:", error.message);
+  }
+}
+
 async function attachTrainerInfo(invites) {
   const trainerIds = [
     ...new Set(invites.filter((i) => i.trainerId).map((i) => String(i.trainerId))),

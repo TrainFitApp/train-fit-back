@@ -70,6 +70,14 @@ Estado a **2026-09-25**. La parte del front está en `train-fit-front/docs/refac
 - `supplements/`.
 - Catálogos **duplicados a mano** con `shared-core` del front (check-in, agujetas, dolor, puntuaciones), cada uno con su test de paridad.
 
+### Cobros entrenador → cliente (2026-09-27, rama `david`)
+Detalle completo en `components/trainerPayments/README.md`.
+- `trainerpayments` pasa a ser el **cobro** (obligación) con pagos **embebidos**, saldo en céntimos (`amountCents − receivedCents − cancelledCents`) y escritura compare-and-swap por `revision`. Mismos `_id`; los campos antiguos se mantienen sincronizados.
+- **Cuota** recurrente única por pareja en `trainerpaymentprofiles` (segmentos, precio por vigencia, pausa/reanudación, fin); preferencias del entrenador en `trainerpaymentsettings` (zona, hora, hitos −3/0/+3).
+- Núcleo puro en **TypeScript estricto** (`components/trainerPayments/src` → `.build/trainer-payments`), como trainerBilling pero sin acoplarse a él.
+- Rutas nuevas `/trainer/payments/*` con autorización financiera propia (cliente activo con plazas; antiguo cliente solo para cerrar su deuda). Las rutas antiguas `/trainer/clients/:id/payments` siguen, con adaptador seguro (`LEGACY_CONFLICT`).
+- Avisos in-app `payment_reminder` (sin push) con job cada 15 min; `payment_created` ya solo sale si el entrenador activó los avisos del cliente. `GET /coach/dashboard` devuelve el saldo restante.
+
 ### Transversal
 - Auth: tests del refresh token (`auth/refresh-flow.test.js`).
 - Facturación: entitlements de entrenador en RevenueCat (`trainer_pro` / `trainer_unlimited`) y `User.professionalPremium`.
@@ -81,6 +89,8 @@ Estado a **2026-09-25**. La parte del front está en `train-fit-front/docs/refac
 |---|---|
 | **Nuevas** | `trainerclients`, `clientintakes`, `trainerintakeconfigs`, `clientnutritionpreferences`, `diettemplates`, `notifications`, `trainertasks`, `taskcompletions`, `trainernotes`, `trainerpayments`, `coachalerts`, `coachrules`, `coachprotocols`, `coachtasks`, `planchanges`, `routineassignments`, `checkintemplatedefinitions`, `checkinschedules`, `checkinresponses`, `supplements`, `exercisescores`, dolor (`PainEntry`, `PainThreshold`) |
 | **Eliminadas** | `diets` (la migra `migrate-nutrition-model.js`) |
+
+Cobros (2026-09-27): nuevas `trainerpaymentprofiles` y `trainerpaymentsettings`; `trainerpayments` gana campos (`schemaVersion`, `amountCents`, `dueDay`, `payments[]`, `status`…), todos aditivos. Tipo nuevo `payment_reminder` en `notifications`.
 
 | Schema | Campos nuevos | Campos quitados |
 |---|---|---|
@@ -110,6 +120,8 @@ Rutas nuevas registradas en `routes/index.js`:
 | Recordatorio de invitaciones | 09:15 | `DISABLE_INVITE_REMINDER_CRON=true` |
 | Conciliación de facturación | (ya estaba) | |
 
+Cuotas y avisos de cobro (`trainerPayments/`) **no tienen cron**: se ponen al día en la primera lectura de cada usuario (sus avisos, el contador, el Coach o Cobros) y quedan en memoria hasta el siguiente hito o medianoche. Ver `components/trainerPayments/README.md`.
+
 No hay **ninguna variable nueva obligatoria**. Opcionales: `CORS_OPEN` (solo desarrollo), `REVENUECAT_TRAINER_PRO_ENTITLEMENT_ID` y `REVENUECAT_TRAINER_UNLIMITED_ENTITLEMENT_ID` (tienen valor por defecto), y `VERIFY_BASE_URL` (solo para los scripts `verify-*`).
 
 ## Migración de la base de datos de producción
@@ -124,6 +136,7 @@ Producción viene de `main`, así que **no tiene** `diettemplates`, `mealproposa
 | 2 | `cleanup-nutrition-legacy.js` | Limpia la estructura huérfana que haya quedado (`diets`, `dietInUse`). |
 | 3 | `migrate-anthropometry-lateral-backfill.js` | Aditivo: copia bíceps y gemelo antiguos a los dos lados L/R. |
 | 4 | `verify-nutrition-model.js` (`npm run verify:nutrition-model`) | Comprueba el modelo con los DAOs reales. |
+| 5 | `migrate-trainer-payments-v2.js` (`npm run migrate:trainer-payments[:dry-run]`) | Aditivo y repetible: cobros antiguos a la forma nueva (movimiento equivalente para los pagados, sin avisos). Reporta y NO convierte otras divisas, decimales raros, fechas ambiguas y huérfanos. Ver `components/trainerPayments/README.md`. |
 | — | `migrate-pautado-assigned-quantity`, `migrate-meal-alternatives-default`, `migrate-diet-template-drop-nulls`, `unassign-trainer-goals`, `drop-food-exchanges` | Arreglan datos que solo existieron en `pre`. En producción el `--dry-run` debería dar 0; si da 0, no hace falta ejecutarlos. |
 
 Notas:
@@ -137,7 +150,7 @@ Notas:
 
 ## Orden de despliegue
 1. Backup de producción → `--dry-run` de los pasos 1 a 4 → migración.
-2. Desplegar el **back** (`refactor-claude` ya fusionada en `main`). Las apps de cliente ya publicadas siguen funcionando gracias a `/diets/*`.
+2. Desplegar el **back** (`refactor-claude` ya fusionada en `main`). Las apps de cliente ya publicadas siguen funcionando gracias a `/diets/*`. Antes de arrancar: `npm run build:ts` (compila trainerBilling y trainerPayments; PM2 no ejecuta `prestart`).
 3. Publicar la nueva versión de la **app del cliente** y la **app del entrenador** (nueva en las tiendas). Ver el doc del front.
 
 ## Pendiente antes de fusionar

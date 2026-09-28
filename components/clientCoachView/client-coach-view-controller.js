@@ -5,7 +5,8 @@ const DietTemplate = require("../dietTemplates/diet-template-schema");
 const mealProposalDao = require("../mealProposals/meal-proposal-dao");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
 const { isRequestPending } = require("../nutritionPreferences/request-status");
-const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
+const trainerPaymentService = require("../trainerPayments/trainer-payment-service");
+const paymentReminders = require("../trainerPayments/trainer-payment-reminder-service");
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
@@ -94,19 +95,20 @@ module.exports = {
     }
 
     // --- Cobros pendientes ---
-    const paymentsRaw = await trainerPaymentDao.listPendingForClient(clientId);
-    const pendingPayments = paymentsRaw
-      .filter((p) => activeTrainerIdSet.has(String(p.trainerId)))
-      .map((p) => {
-        touchActivity(p.trainerId, p.createdAt);
-        return {
-          paymentId: p._id,
-          amount: p.amount,
-          currency: p.currency,
-          dueDate: p.dueDate,
-          trainerName: trainerName(p.trainerId),
-        };
-      });
+    // Lectura informativa de siempre, con el SALDO RESTANTE real (tras pagos
+    // parciales; sin cobros liquidados, cancelados ni anulados). Nunca notas
+    // privadas, métodos ni movimientos: el cliente no gestiona cobros.
+    // Sin cron: las cuotas que ya tocan se generan aquí, al abrir el Coach.
+    let pendingPayments = [];
+    try {
+      await paymentReminders.ensureClientUpToDate(clientId);
+      const pending = await trainerPaymentService.listCoachPending(clientId, activeTrainerIds, trainerName);
+      pendingPayments = pending.items;
+      for (const { trainerId, at } of pending.activity) touchActivity(trainerId, at);
+    } catch (error) {
+      // Un fallo de cobros no tumba el resto del Coach.
+      console.error("[Coach] No se pudieron cargar los cobros pendientes:", error.message);
+    }
 
     // --- Tu plan actual: rutina y fase de dieta (current-plans.js) ---
     // Solo cuenta lo de un profesional con relación activa: lo de uno ya

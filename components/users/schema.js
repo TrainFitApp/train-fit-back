@@ -223,9 +223,16 @@ UserSchema.pre("deleteOne", async function (next) {
       await trainerNoteSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
+      // Cobros: se borran igual que el resto (decisión vigente; la baja de una
+      // relación los conserva, el borrado de la cuenta no). Ver
+      // components/trainerPayments/README.md.
       await trainerPaymentSchema.deleteMany({
         $or: [{ trainerId: user._id }, { clientId: user._id }],
       });
+      await require("../trainerPayments/trainer-payment-profile-schema").deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await require("../trainerPayments/trainer-payment-settings-schema").deleteMany({ trainerId: user._id });
       // deleteMany (no deleteOne) dispara el hook en cascada de
       // trainer-task-schema.js que borra los TaskCompletion de cada tarea.
       await trainerTaskSchema.deleteMany({
