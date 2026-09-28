@@ -47,6 +47,7 @@ const supplementRoutes = require("../components/supplements/supplement-routes");
 const trainerNutritionalGoalRoutes = require("../components/nutritionalGoals/trainer-nutritional-goal-routes");
 const exerciseScoreRoutes = require("../components/exerciseScores/exercise-score-routes");
 const clientNotesRoutes = require("../components/clientNotes/client-notes-routes");
+const trainerPaymentRoutes = require("../components/trainerPayments/trainer-payment-routes");
 
 const router = express.Router();
 
@@ -108,5 +109,8 @@ router.use("/trainer", coachProtocolRoutes);
 router.use("/trainer", exerciseScoreRoutes);
 // Tab "Notas" de la ficha: todo lo que ha escrito el cliente, con leído por entrenador.
 router.use("/trainer", clientNotesRoutes);
+// Cobros 2026-09 — /trainer/payments/*: cuota, cobros, pagos registrados,
+// vista global y preferencias de avisos (solo el entrenador).
+router.use("/trainer", trainerPaymentRoutes);
 
 module.exports = router;

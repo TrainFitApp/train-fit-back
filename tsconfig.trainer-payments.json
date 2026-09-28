@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "rootDir": "components/trainerPayments/src",
+    "outDir": ".build/trainer-payments"
+  },
+  "include": ["components/trainerPayments/src/**/*.ts"]
+}

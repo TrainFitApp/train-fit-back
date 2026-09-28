@@ -11,7 +11,6 @@ async function withSeatFlags(trainerId, clients) {
     readOnly: Boolean(client.user?._id) && !state.active.has(String(client.user._id)) }));
 }
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
-const trainerPaymentDao = require("../trainerPayments/trainer-payment-dao");
 const coachAlertDao = require("../coachAlerts/coach-alert-dao");
 const coachAlertService = require("../coachAlerts/coach-alert-service");
 
@@ -149,14 +148,6 @@ const controller = {
     return res.send({ total });
   },
 
-  // GET /trainer/payments/summary — cobros agregados de TODOS los clientes
-  // del trainer (dashboard, tarjeta + gráfica "Cobros"): pendiente/vencido
-  // actual + serie mensual de los últimos 6 meses + variación vs mes
-  // pasado. Ver trainer-payment-dao.js#getPaymentsOverview.
-  async getPaymentsSummary(req, res) {
-    const summary = await trainerPaymentDao.getPaymentsOverview(req.auth.userId);
-    return res.send(summary);
-  },
 
   // GET /trainer/dashboard/attention-items — SUPERSEDIDO por
   // GET /trainer/alerts (ver coachAlerts/). Se mantiene, y con el mismo

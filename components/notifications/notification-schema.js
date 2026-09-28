@@ -40,6 +40,12 @@ const NotificationSchema = new Schema(
         // enum porque hay notificaciones de este tipo guardadas y marcarlas
         // como leídas revalida el documento.
         "anthropometry_requested",
+        // --- Cobros 2026-09: recordatorio in-app de un cobro con saldo. El
+        // destinatario lo dice `recipient` (entrenador siempre; cliente solo
+        // si el entrenador lo activó). Payload sin notas ni movimientos:
+        // { chargeId, dueDay, dueRevision, offset, milestone, balanceCents,
+        //   currency, concept } + `resolution` al liquidarse/cancelarse.
+        "payment_reminder",
         // --- Cliente → trainer (destinatario: trainer) ---
         "invite_accepted",
         "intake_submitted_trainer",

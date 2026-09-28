@@ -57,6 +57,37 @@ module.exports = {
     ).lean();
   },
 
+  // --- Cobros 2026-09 ---
+  // Alta idempotente: dedupeKey es único, así que dos procesos (o un
+  // reintento) nunca crean el mismo aviso dos veces. null = ya existía.
+  async createIdempotent({ clientId, trainerId, recipient, type, payload, dedupeKey, createdAt }) {
+    try {
+      return await Notification.create({ clientId, trainerId, recipient, type, payload, dedupeKey, createdAt });
+    } catch (error) {
+      if (error.code === 11000) return null;
+      throw error;
+    }
+  },
+
+  async deleteById(notificationId) {
+    return Notification.deleteOne({ _id: notificationId });
+  },
+
+  // Un cobro liquidado/cancelado/anulado deja de ser deuda: sus avisos pasan a
+  // históricos (resolution) y dejan de contar como no leídos. `beforeDueRevision`
+  // limita la resolución a los avisos de un vencimiento ya cambiado.
+  async resolvePaymentNotifications(trainerId, chargeId, resolution, { beforeDueRevision = null, now = new Date() } = {}) {
+    const filter = {
+      trainerId,
+      type: { $in: ["payment_reminder", "payment_created"] },
+      "payload.chargeId": String(chargeId),
+      "payload.resolution": { $exists: false },
+    };
+    if (beforeDueRevision !== null) filter["payload.dueRevision"] = { $lt: beforeDueRevision };
+    await Notification.updateMany({ ...filter, read: false }, { $set: { read: true, readAt: now } });
+    await Notification.updateMany(filter, { $set: { "payload.resolution": resolution, "payload.resolvedAt": now } });
+  },
+
   async markAllReadForTrainer(trainerId) {
     return Notification.updateMany(
       { trainerId, recipient: "trainer", read: false },
