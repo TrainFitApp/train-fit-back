@@ -409,20 +409,18 @@ test("buildBlockMuscleGroups", async (t) => {
     assert.equal(blocks.length, 1);
     assert.deepEqual(
       blocks[0].muscleGroups.map((g) => g.group).sort(),
-      ["pecho", "triceps"]
+      ["Pectoral", "Tríceps"]
     );
     // 10x100 = 1000, completo en los dos grupos, no repartido a 500 cada uno.
     assert.ok(blocks[0].muscleGroups.every((g) => g.volume === 1000));
   });
 
-  await t.test("sin grupo primario, cae al secundario", () => {
+  // 2026-09 — series fraccionales, igual que el Análisis del Planner.
+  await t.test("un músculo secundario cuenta media serie y medio volumen", () => {
     const blocks = buildBlockMuscleGroups([
       muscleGroupSet(1, "a", "Semana 1", 10, 50, [], ["core"]),
     ]);
-    assert.deepEqual(
-      blocks[0].muscleGroups.map((g) => g.group),
-      ["core"]
-    );
+    assert.deepEqual(blocks[0].muscleGroups, [{ group: "Abdomen", volume: 250, sets: 0.5 }]);
   });
 
   await t.test("un ejercicio sin ficha en el catálogo (sin grupos) no aporta nada", () => {
@@ -432,8 +430,8 @@ test("buildBlockMuscleGroups", async (t) => {
 
   await t.test("agrega varias series del mismo grupo dentro del microciclo", () => {
     const blocks = buildBlockMuscleGroups([
-      muscleGroupSet(3, "a", "Semana 1", 10, 100, ["pierna"]),
-      muscleGroupSet(1, "a", "Semana 1", 8, 100, ["pierna"]),
+      muscleGroupSet(3, "a", "Semana 1", 10, 100, ["cuadriceps"]),
+      muscleGroupSet(1, "a", "Semana 1", 8, 100, ["cuadriceps"]),
     ]);
     assert.equal(blocks[0].muscleGroups[0].volume, 1000 + 800);
   });
@@ -445,7 +443,7 @@ test("buildBlockMuscleGroups", async (t) => {
     ]);
     assert.deepEqual(
       blocks[0].muscleGroups.map((g) => g.group),
-      ["espalda", "biceps"]
+      ["Espalda", "Bíceps"]
     );
   });
 
@@ -596,11 +594,11 @@ test("buildSessionMuscleGroups", async (t) => {
   await t.test("agrupa por sesión, no por microciclo", () => {
     const sessions = buildSessionMuscleGroups([
       muscleGroupSet(5, "a", "Semana 1", 10, 100, ["pecho"]),
-      muscleGroupSet(2, "a", "Semana 1", 10, 100, ["pierna"]),
+      muscleGroupSet(2, "a", "Semana 1", 10, 100, ["cuadriceps"]),
     ]);
     assert.equal(sessions.length, 2);
-    assert.deepEqual(sessions[0].muscleGroups.map((g) => g.group), ["pecho"]);
-    assert.deepEqual(sessions[1].muscleGroups.map((g) => g.group), ["pierna"]);
+    assert.deepEqual(sessions[0].muscleGroups.map((g) => g.group), ["Pectoral"]);
+    assert.deepEqual(sessions[1].muscleGroups.map((g) => g.group), ["Cuádriceps"]);
   });
 
   await t.test("sin grupo muscular no aporta nada", () => {

@@ -1,0 +1,2964 @@
+[
+  {
+    "_id": "65ca4135c595b8b7d15098d7",
+    "name": "Press inclinado máquina",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098da",
+    "name": "Sentadilla hack",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098d9",
+    "name": "Press plano en máquina",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098dc",
+    "name": "Prensa vertical",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098dd",
+    "name": "Curl femoral de pie",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098de",
+    "name": "Hip thrust máquina",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e2",
+    "name": "Remo alto en máquina",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      " Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e3",
+    "name": "Aperturas en máquina contractora",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Pectoral superior",
+      "Pectoral inferior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e4",
+    "name": "Extensión de Cuádriceps",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e7",
+    "name": "Patada de glúteo máquina",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e6",
+    "name": "Prensa en máquina",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Glúteo",
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098ee",
+    "name": "Jalón unilateral",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f1",
+    "name": "Remo gironda",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      " Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f7",
+    "name": "Aductores en máquina",
+    "muscleGroups1": [
+      "Piernas",
+      "Aductor"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098fc",
+    "name": "Pull through",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509901",
+    "name": "Elevaciones laterales en polea",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides lateral"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150990b",
+    "name": "Curl en polea alta",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150990c",
+    "name": "Curl bíceps tumbado polea",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509916",
+    "name": "Zancadas en multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150991f",
+    "name": "Aperturas con mancuernas",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509922",
+    "name": "Sentadilla búlgara",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509929",
+    "name": "Goblet squat",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150992c",
+    "name": "Sostener mancuernas",
+    "muscleGroups1": [
+      "Brazos",
+      "Antebrazo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150992e",
+    "name": "Remo con mancuerna unilateral",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509930",
+    "name": "Remo con mancuernas apoyado en banco inclinado",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509936",
+    "name": "Pájaros con mancuernas banco inclinado",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides posterior"
+    ],
+    "muscleGroups2": [
+      "Espalda alta"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509939",
+    "name": "Extensión de tríceps overhead mancuerna",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150993b",
+    "name": "Curl bíceps mancuernas",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509948",
+    "name": "Sentadilla Frontal",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150994b",
+    "name": "Remo al mentón",
+    "muscleGroups1": [
+      "Hombro",
+      "Delotides lateral"
+    ],
+    "muscleGroups2": [
+      "Espalda alta"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150994c",
+    "name": "Press militar trasnuca",
+    "muscleGroups1": [
+      "Hombro",
+      "Delotides anterior"
+    ],
+    "muscleGroups2": [
+      "Deltoides lateral",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509950",
+    "name": "Peso muerto",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Espalda",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509951",
+    "name": "Peso muerto rumano",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509952",
+    "name": "Peso muerto sumo",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509955",
+    "name": "Curl prono antebrazo barra",
+    "muscleGroups1": [
+      "Brazos",
+      "Antebrazo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509956",
+    "name": "Remo pendlay",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509961",
+    "name": "Flexiones pies elevados",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509964",
+    "name": "Curl nordico",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral"
+    ],
+    "muscleGroups2": [
+      "Espalda baja"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509966",
+    "name": "Dominadas",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Antebrazo",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150997b",
+    "name": "Bici estatica",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509984",
+    "name": "Golpear al saco",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509987",
+    "name": "Empujar cajón",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509986",
+    "name": "Salto al cajón",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509989",
+    "name": "Máquina de escaleras o stepper",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150998c",
+    "name": "Butt kicks",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150998e",
+    "name": "Botar pelota medicinal",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150998f",
+    "name": "Skierg",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509990",
+    "name": "Step ups",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509992",
+    "name": "Spoto press",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509997",
+    "name": "Curl 21",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509995",
+    "name": "Buenos días con barra",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Espalda baja"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509998",
+    "name": "Curl de bíceps alterno",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150999a",
+    "name": "Curl de bíceps polea unilateral",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150999e",
+    "name": "Box squat",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150999b",
+    "name": "Elevaciones laterales sentado",
+    "muscleGroups1": [
+      "Hombro",
+      "Delotides lateral"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a1",
+    "name": "Gemelo en máquina de pie",
+    "muscleGroups1": [
+      "Piernas",
+      "Gemelos"
+    ],
+    "muscleGroups2": [
+      "Sóleo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a3",
+    "name": "Hombro posterior en máquina",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides posterior",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a4",
+    "name": "Reverse hyper en banco",
+    "muscleGroups1": [
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a5",
+    "name": "Pájaros con mancuernas",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides posterior",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a7",
+    "name": "Patada de glúteo en multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a9",
+    "name": "Peso muerto en déficit de altura",
+    "muscleGroups1": [
+      "Piernas",
+      "Espalda, Femoral",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099af",
+    "name": "Prensa unilateral",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b1",
+    "name": "Press banca agarre cerrado",
+    "muscleGroups1": [
+      "Pectoral",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099c0",
+    "name": "Peso muerto rumano piernas rígidas mancuernas ",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Glúteo",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Espalda"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098ed",
+    "name": "Jalón agarre cerrado",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f3",
+    "name": "Elevaciones laterales en máquina",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides lateral"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f5",
+    "name": "Curl de bíceps en máquina",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f8",
+    "name": "Abductores en máquina",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098fe",
+    "name": "Pull over en polea",
+    "muscleGroups1": [
+      "Espalda"
+    ],
+    "muscleGroups2": [
+      "Espalda alta, Espalda baja, Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f9",
+    "name": "Cruce poleas ascendente",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098ff",
+    "name": "Jalón polea unilateral banco inclinado",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda alta",
+      "Espalda baja",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509902",
+    "name": "Elevaciones frontales en polea",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior"
+    ],
+    "muscleGroups2": [
+      "Deltoides lateral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509907",
+    "name": "Extensión overhead unilateral polea",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509908",
+    "name": "Patada de tríceps unilateral en polea",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509918",
+    "name": "Press militar trasnuca multipower",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior",
+      "deltoides lateral"
+    ],
+    "muscleGroups2": [
+      "Espalda alta",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150991a",
+    "name": "Remo al menton multipower",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides lateral"
+    ],
+    "muscleGroups2": [
+      "Espalda alta"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509920",
+    "name": "Aperturas con mancuernas banco inclinado",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509921",
+    "name": "Puente de glúteo",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509925",
+    "name": "Hip thrust unilateral",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509927",
+    "name": "Peso muerto rumano unilateral",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Glúteo",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Espalda"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509928",
+    "name": "HiperExtensiónes glúteo",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Glúteo",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Espalda"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150992a",
+    "name": "Curl supino antebrazo mancuerna",
+    "muscleGroups1": [
+      "Brazos",
+      "Antebrazo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509932",
+    "name": "Encogimientos",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509938",
+    "name": "Press francés mancuernas",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150993c",
+    "name": "Curl en banco scott mancuerna unilateral",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509934",
+    "name": "Elevaciones laterales con mancuernas",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides lateral"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150993e",
+    "name": "Curl martillo",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150993f",
+    "name": "Curl concentrado",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509949",
+    "name": "Sentadilla sumo",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509947",
+    "name": "Sentadilla barra alta",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150994d",
+    "name": "Svend press banco plano",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509957",
+    "name": "Remo 90",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150995f",
+    "name": "Curl araña con barra",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509960",
+    "name": "Flexiones",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509969",
+    "name": "Remo con peso corporal",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Antebrazo",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509967",
+    "name": "Dominadas agarre neutro",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      " Antebrazo",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150996a",
+    "name": "Remo en trx",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Antebrazo",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150996b",
+    "name": "HiperExtensión lumbar",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509972",
+    "name": "Hip thrust",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509974",
+    "name": "Crunch oblicuos",
+    "muscleGroups1": [
+      "Abdomen",
+      "Oblicuos"
+    ],
+    "muscleGroups2": [
+      "Recto abdominal"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509976",
+    "name": "Abdominales bicicleta",
+    "muscleGroups1": [
+      "Abdomen",
+      "Recto abdominal, Oblicuos"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509970",
+    "name": "Plancha",
+    "muscleGroups1": [
+      "Abdomen",
+      "Recto abdominal"
+    ],
+    "muscleGroups2": [
+      "Oblicuos"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509979",
+    "name": "Cinta",
+    "muscleGroups1": [],
+    "muscleGroups2": []
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509985",
+    "name": "Rope training",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150998b",
+    "name": "Mountain climbers",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509983",
+    "name": "Saltar a la comba",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150998d",
+    "name": "Desplazamientos laterales",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509993",
+    "name": "Remo meadows",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Deltoides posterior",
+      "Bíceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509994",
+    "name": "Belt squat",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo, Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509999",
+    "name": "Curl de bíceps agarre prono polea",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150999f",
+    "name": "Gemelo en multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Gemelos"
+    ],
+    "muscleGroups2": [
+      "Sóleo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a2",
+    "name": "Glúteo medio con banda elástica",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a8",
+    "name": "Peso muerto barra hexagonal",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a6",
+    "name": "Pájaros con mancuernas sentado",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides posterior",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099ad",
+    "name": "Pin press",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099aa",
+    "name": "Peso muerto con parada",
+    "muscleGroups1": [
+      "Piernas",
+      "Espalda",
+      "Femoral",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b0",
+    "name": "Press arnold",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides lateral",
+      "Deltoides anterior"
+    ],
+    "muscleGroups2": [
+      "Deltoides poterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b3",
+    "name": "Push press con barra",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Pectoral superior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b5",
+    "name": "Rack pull",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Espalda alta"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b2",
+    "name": "Press militar en máquina",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior"
+    ],
+    "muscleGroups2": [
+      "Pectoral superior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b9",
+    "name": "Remo en polea baja",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099ba",
+    "name": "Sentadilla barra baja",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo",
+      "Espalda baja"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098d8",
+    "name": "Press declinado en máquina",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral inferior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e1",
+    "name": "Remo máquina",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e8",
+    "name": "Curl femoral sentado",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098db",
+    "name": "Pull over máquina",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e9",
+    "name": "Curl femoral tumbado",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098ef",
+    "name": "Jalón trasnuca",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098ea",
+    "name": "Jalón al pecho agarre prono",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f0",
+    "name": "Pull down máquina",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f4",
+    "name": "Curl predicador en máquina",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509904",
+    "name": "Cruce posterior en poleas",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides posterior"
+    ],
+    "muscleGroups2": [
+      "Espalda alta"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509909",
+    "name": "Curl de bíceps con barra en polea",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509906",
+    "name": "Extensión de tríceps overhead con cuerda",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150990d",
+    "name": "Curl bayesian",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150990e",
+    "name": "Crunch en polea",
+    "muscleGroups1": [
+      "Abdomen",
+      "Recto abdominal"
+    ],
+    "muscleGroups2": [
+      "Oblicuos"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150990f",
+    "name": "Press pallof",
+    "muscleGroups1": [
+      "Abdomen",
+      "Oblicuos",
+      "Recto abdominal"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509912",
+    "name": "Press declinado en multipower",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral inferior"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509910",
+    "name": "Press banca en multipower",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Pectoral inferior",
+      "Pectoral superior",
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509913",
+    "name": "Sentadilla sumo multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509917",
+    "name": "Remo en multipower",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150991b",
+    "name": "Kaz press",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Pectoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509923",
+    "name": "Zancadas",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509933",
+    "name": "Press militar mancuerna",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior",
+      "Deltoides lateral"
+    ],
+    "muscleGroups2": [
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509940",
+    "name": "Curl araña con mancuernas",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509935",
+    "name": "Elevaciones frontales con mancuernas",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509942",
+    "name": "Press larsen",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509946",
+    "name": "Press landmine",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509945",
+    "name": "Svend press banco inclinado",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150994f",
+    "name": "Dead french press",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509958",
+    "name": "Remo 45",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150995c",
+    "name": "Curl bíceps barra z agarre prono",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150995b",
+    "name": "Curl bíceps barra z",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509965",
+    "name": "Aguantar colgado en barra",
+    "muscleGroups1": [
+      "Brazos",
+      "Antebrazo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509962",
+    "name": "Flexiones rodillas apoyadas",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150996c",
+    "name": "Extensión lumbar en el suelo",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509971",
+    "name": "Rueda abdominal",
+    "muscleGroups1": [
+      "Abdomen",
+      "Recto abdominal"
+    ],
+    "muscleGroups2": [
+      "Oblicuos"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509973",
+    "name": "Crunch invertido",
+    "muscleGroups1": [
+      "Abdomen",
+      "Recto abdominal"
+    ],
+    "muscleGroups2": [
+      "Oblicuos"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509977",
+    "name": "Plancha lateral aductor",
+    "muscleGroups1": [
+      "Abdomen",
+      "Piernas",
+      "Aductor",
+      "Oblicuos"
+    ],
+    "muscleGroups2": [
+      "Recto abdominal"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150996e",
+    "name": "Fondos tríceps en banco",
+    "muscleGroups1": [
+      " Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      "Pectoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509978",
+    "name": "Gemelos de pie con barra",
+    "muscleGroups1": [
+      "Piernas",
+      "Gemelo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150997d",
+    "name": "AirBike",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150997a",
+    "name": "Correr",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150997e",
+    "name": "Trotar",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509980",
+    "name": "Burpees",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509981",
+    "name": "Jumping jacks",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509982",
+    "name": "Skipping o elevación de rodillas",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509991",
+    "name": "Sissy squat",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509988",
+    "name": "Rowerg o máquina de Remo",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509996",
+    "name": "Buenos días en multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Espalda baja"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150999c",
+    "name": "Máquina de dominadas asistidas",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Antebrazo",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099ab",
+    "name": "Peso muerto rumano piernas rígidas",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150999d",
+    "name": "Gemelo en prensa",
+    "muscleGroups1": [
+      "Piernas",
+      "Gemelo"
+    ],
+    "muscleGroups2": [
+      "Sóleo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099ae",
+    "name": "Pin squat",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099ac",
+    "name": "Peso muerto rumano en multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b4",
+    "name": "Push press con mancuernas",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Pectoral superior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099bb",
+    "name": "Zancadas con barra",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Glúteo,"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099be",
+    "name": "Fondos en máquina sentado",
+    "muscleGroups1": [
+      "Triceps"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Pectoral",
+      "Delotides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099bf",
+    "name": "Press tumbado en máquina",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099c2",
+    "name": "Abducción de pie en máquina",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b7",
+    "name": "Remo gironda agarre supino",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e0",
+    "name": "Remo en T",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098e5",
+    "name": "Prensa 45",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Glúteo",
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098df",
+    "name": "Remo en punta",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098ec",
+    "name": "Jalón al pecho agarre supino",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098eb",
+    "name": "Jalón al pecho agarre neutro",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f2",
+    "name": "Pájaros en máquina contractora",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides Posterior"
+    ],
+    "muscleGroups2": [
+      "Espalda alta"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098f6",
+    "name": "Crunch abdominal en máquina",
+    "muscleGroups1": [
+      "Abdomen",
+      "Recto Abdominal"
+    ],
+    "muscleGroups2": [
+      "Oblicuos"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098fb",
+    "name": "Patada de glúteo polea",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098fa",
+    "name": "Cruce poleas descendente",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral inferior"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15098fd",
+    "name": "Glúteo medio en polea",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509903",
+    "name": "Facepull",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides posterior",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509900",
+    "name": "Remo horizontal banco polea unilateral",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda alta",
+      "Espalda baja",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509905",
+    "name": "Extensión de Tríceps con cuerda en polea alta",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150990a",
+    "name": "Curl martillo polea",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509911",
+    "name": "Press inclinado en multipower",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509915",
+    "name": "Sentadillla bulgara multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509914",
+    "name": "Sentadilla multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Femoral",
+      "glúteo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509919",
+    "name": "Press militar multipower",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides anterior",
+      "deltoides lateral"
+    ],
+    "muscleGroups2": [
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150991c",
+    "name": "Press inclinado con mancuernas",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150991d",
+    "name": "Press declinado con mancuernas",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral inferior"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509924",
+    "name": "Puente de glúteo unilateral",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150991e",
+    "name": "Press mancuernas banco plano",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Deltoides anterior",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509926",
+    "name": "Peso muerto rumano mancuernas",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Glúteo",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Espalda"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150992b",
+    "name": "Curl prono antebrazo mancuerna",
+    "muscleGroups1": [
+      "Brazos",
+      "Antebrazo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150992d",
+    "name": "Seal row banco inclinado mancuernas",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509931",
+    "name": "Pull over mancuerna",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150992f",
+    "name": "Bend over row",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509937",
+    "name": "Elevacion lateral banco inclinado",
+    "muscleGroups1": [
+      "Hombro",
+      "Deltoides lateral"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150993a",
+    "name": "Patada de tríceps mancuerna",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150993d",
+    "name": "Curl de bíceps en banco inclinado",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509943",
+    "name": "Press inclinado",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral superior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509941",
+    "name": "Press Banca",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150994a",
+    "name": "Press militar barra",
+    "muscleGroups1": [
+      "Hombro",
+      "Delotides anterior"
+    ],
+    "muscleGroups2": [
+      "Deltoides lateral",
+      "Tríceps"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509944",
+    "name": "Press declinado",
+    "muscleGroups1": [
+      "Pectoral",
+      "Pectoral inferior"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Deltoides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150994e",
+    "name": "Press francés barra Z",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509954",
+    "name": "Curl supino antebrazo barra",
+    "muscleGroups1": [
+      "Brazos",
+      "Antebrazo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509953",
+    "name": "Peso muerto piernas rígidas",
+    "muscleGroups1": [
+      "Piernas",
+      "Femoral",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Aductor"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150995a",
+    "name": "Curl bíceps barra",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509959",
+    "name": "Remo 45 agarre supino",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta",
+      "Espalda baja"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150995e",
+    "name": "Dead curl",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150995d",
+    "name": "Curl en banco scott barra z",
+    "muscleGroups1": [
+      "Brazos",
+      "Bíceps"
+    ],
+    "muscleGroups2": [
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509963",
+    "name": "Fondos en paralelas",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": [
+      "Tríceps",
+      "Delotides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509968",
+    "name": "Dominadas agarre supino",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Antebrazo",
+      "Deltoides posterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150996d",
+    "name": "Fondos paralelas tríceps",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      "Pectoral",
+      "Delotides anterior"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150996f",
+    "name": "Crunch abdominal",
+    "muscleGroups1": [
+      "Abdomen",
+      "Recto abdominal"
+    ],
+    "muscleGroups2": [
+      "Oblicuos"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d1509975",
+    "name": "Plancha lateral oblicuos",
+    "muscleGroups1": [
+      "Abdomen",
+      "Oblicuos"
+    ],
+    "muscleGroups2": [
+      "Recto abdominal"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150997c",
+    "name": "Bici",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150997f",
+    "name": "Bicicleta elíptica",
+    "muscleGroups1": [
+      ""
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d150998a",
+    "name": "Sentadillas con salto",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b6",
+    "name": "Remo gironda agarre prono",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099a0",
+    "name": "Gemelo/soleo en máquina sentado",
+    "muscleGroups1": [
+      "Piernas",
+      "Sóleo"
+    ],
+    "muscleGroups2": [
+      "Gemelos"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099b8",
+    "name": "Remo unilateral polea",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099bd",
+    "name": "Prensa pendular",
+    "muscleGroups1": [
+      "Piernas",
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Glúteo",
+      "Femoral"
+    ]
+  },
+  {
+    "_id": "65ca4135c595b8b7d15099c1",
+    "name": "Remo bajo en máquina",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Bíceps",
+      "Deltoides posterior",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "678bf8a971dc46a9679eb4bf",
+    "name": "Upper back",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c3",
+    "name": "Sentadilla sissy en máquina",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c2",
+    "name": "Sentadilla V",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c5",
+    "name": "Seal row",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c8",
+    "name": "Oblicuos en máquina",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c9",
+    "name": "Remo en gironda unilateral",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Espalda baja",
+      "Deltoides posterior",
+      "Bíceps",
+      "Antebrazo"
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c4",
+    "name": "Sentadilla con barra safety",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c6",
+    "name": "Peso muerto rumano barra hexagonal",
+    "muscleGroups1": [
+      "Espalda",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba1871dc46a9679eb4c7",
+    "name": "Patada de gúteo bilateral en multipower",
+    "muscleGroups1": [
+      "Piernas",
+      "Glúteo"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba8d71dc46a9679eb4ca",
+    "name": "Extensión de tríceps en máquina",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6790ba8d71dc46a9679eb4cb",
+    "name": "Extensión de tríceps overhead mancuerna unilateral",
+    "muscleGroups1": [
+      "Brazos",
+      "Tríceps"
+    ],
+    "muscleGroups2": [
+      ""
+    ]
+  },
+  {
+    "_id": "6a8d8328287b647f2e3f931a",
+    "name": "Press banca (demo)",
+    "muscleGroups1": [
+      "Pectoral"
+    ],
+    "muscleGroups2": []
+  },
+  {
+    "_id": "6a9b0f9e3e7089c86d93b69a",
+    "name": "test",
+    "muscleGroups1": [
+      "Gemelo",
+      "Espalda baja",
+      "Cuello",
+      "Espalda alta"
+    ],
+    "muscleGroups2": [
+      "Pectoral superior",
+      "Deltoides posterior",
+      "Deltoides lateral",
+      "Pectoral inferior"
+    ]
+  },
+  {
+    "_id": "6aa92c9e498e0a417be41232",
+    "name": "Peso muerto (mock)",
+    "muscleGroups1": [
+      "Espalda"
+    ],
+    "muscleGroups2": [
+      "Pierna"
+    ]
+  },
+  {
+    "_id": "6aa92c9e498e0a417be41234",
+    "name": "Press banca (mock)",
+    "muscleGroups1": [
+      "Pecho"
+    ],
+    "muscleGroups2": [
+      "Hombros"
+    ]
+  },
+  {
+    "_id": "6aa92c9e498e0a417be41236",
+    "name": "Press militar (mock)",
+    "muscleGroups1": [
+      "Hombros"
+    ],
+    "muscleGroups2": []
+  },
+  {
+    "_id": "6aa92c9e498e0a417be41238",
+    "name": "Dominadas (mock)",
+    "muscleGroups1": [
+      "Espalda"
+    ],
+    "muscleGroups2": []
+  },
+  {
+    "_id": "6aa92c9f498e0a417be4123c",
+    "name": "Fondos (mock)",
+    "muscleGroups1": [
+      "Pecho"
+    ],
+    "muscleGroups2": []
+  },
+  {
+    "_id": "6aa92c9f498e0a417be4123e",
+    "name": "Plancha (mock)",
+    "muscleGroups1": [
+      "Core"
+    ],
+    "muscleGroups2": []
+  },
+  {
+    "_id": "54c3daac0f77c1fcc9e6d2e7",
+    "name": "Sentadilla goblet a banco · prueba",
+    "muscleGroups1": [
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "295be880a5fe557b4b3636eb",
+    "name": "Remo con banda sentado · prueba",
+    "muscleGroups1": [
+      "Espalda"
+    ],
+    "muscleGroups2": [
+      "Bíceps"
+    ]
+  },
+  {
+    "_id": "2ab813e1c7c583b2a58c7da0",
+    "name": "Sentadilla goblet a banco · prueba",
+    "muscleGroups1": [
+      "Cuádriceps"
+    ],
+    "muscleGroups2": [
+      "Glúteo"
+    ]
+  },
+  {
+    "_id": "8265e7bddbb759a791525a98",
+    "name": "Remo con banda sentado · prueba",
+    "muscleGroups1": [
+      "Espalda"
+    ],
+    "muscleGroups2": [
+      "Bíceps"
+    ]
+  }
+]

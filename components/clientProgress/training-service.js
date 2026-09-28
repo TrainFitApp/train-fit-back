@@ -1,3 +1,9 @@
+const {
+  MUSCLE_ROLES,
+  groupOf,
+  normalizeMuscles,
+  fromLegacyMuscleGroups,
+} = require("../exercises/muscle-catalog");
 const { buildWeekWindows, isoDate } = require("./progress-service");
 
 // Fase 6 Coach Pro — volumen, PRs y evolución de cargas (§17).
@@ -286,27 +292,62 @@ function buildBlockReadiness(sets) {
 }
 
 /**
+ * Cuánto cuenta una serie para cada GRUPO muscular (2026-09): mismo criterio
+ * que la pestaña Análisis del Planner (planner-metrics.ts#countMuscleTree),
+ * para que el progreso del cliente y la planificación hablen el mismo
+ * idioma. Series fraccionales: principal ×1, secundario ×0,5, estabilizador
+ * no cuenta; un ejercicio aporta a su grupo el MAYOR factor de sus
+ * músculos en ese grupo, no la suma.
+ *
+ * Fuente: Exercise.muscles. Si el ejercicio aún no lo tiene (sin migrar),
+ * se traduce su muscleGroups1/2 con el mismo traductor que la migración.
+ * El cardio no suma series de hipertrofia.
+ *
+ * Devuelve Map<etiqueta del grupo, factor>. La etiqueta es la canónica en
+ * español ("Pectoral", "Bíceps"), la que TranslateDbPipe ya traduce.
+ */
+function groupFactorsOf(set) {
+  const factors = new Map();
+  if (set.isCardio) return factors;
+
+  const muscles = Array.isArray(set.muscles)
+    ? normalizeMuscles(set.muscles)
+    : fromLegacyMuscleGroups(set.muscleGroups1, set.muscleGroups2).muscles;
+
+  for (const { muscle, role } of muscles) {
+    const factor = MUSCLE_ROLES[role];
+    const group = groupOf(muscle);
+    if (!factor || !group) continue;
+    factors.set(group.label, Math.max(factors.get(group.label) || 0, factor));
+  }
+  return factors;
+}
+
+function roundSets(value) {
+  return Math.round(value * 10) / 10;
+}
+
+/**
  * Tarea 4 (2026-09) — carga por grupo muscular, por microciclo: qué está
  * trabajando más un cliente y qué se le está quedando corto, mirando los
  * ejercicios que de verdad ha hecho (no la ficha teórica de la rutina).
  *
- * El grupo muscular no está en el Set, está en el Exercise del catálogo
- * (muscleGroups1/2, ver exercise-schema.js) — listCompletedSetsForUser ya lo
- * proyecta. Un ejercicio propio del cliente sin ficha en el catálogo no
- * aporta grupo: se ignora en vez de inventarle uno.
+ * El grupo muscular no está en el Set, está en el Exercise del catálogo —
+ * listCompletedSetsForUser ya lo proyecta. Un ejercicio propio del cliente
+ * sin músculos no aporta grupo: se ignora en vez de inventarle uno.
  *
- * Reparto: el volumen COMPLETO de la serie se suma a CADA grupo implicado
- * (primario, o secundario si el ejercicio no tiene primario). Dividir el
- * volumen entre grupos fingiría una precisión biomecánica ("este ejercicio
- * trabaja 60% pecho, 40% tríceps") que ningún dato del sistema respalda.
+ * Reparto (desde 2026-09): series y volumen se ponderan con groupFactorsOf,
+ * igual que el Análisis del Planner. Antes el volumen completo iba a cada
+ * etiqueta de muscleGroups1 y "Pectoral" y "Pectoral superior" contaban
+ * como dos músculos.
  */
 function buildBlockMuscleGroups(sets) {
   const blocks = new Map();
 
   for (const set of sets || []) {
     if (!set.splitId) continue;
-    const groups = set.muscleGroups1?.length ? set.muscleGroups1 : set.muscleGroups2 || [];
-    if (!groups.length) continue;
+    const factors = groupFactorsOf(set);
+    if (!factors.size) continue;
 
     const key = String(set.splitId);
     if (!blocks.has(key)) {
@@ -325,9 +366,12 @@ function buildBlockMuscleGroups(sets) {
     if (!block.end || day > block.end) block.end = day;
 
     const volume = volumeOf(set);
-    for (const group of new Set(groups)) {
+    for (const [group, factor] of factors) {
       const current = block.muscleGroups.get(group) || { volume: 0, sets: 0 };
-      block.muscleGroups.set(group, { volume: current.volume + volume, sets: current.sets + 1 });
+      block.muscleGroups.set(group, {
+        volume: current.volume + volume * factor,
+        sets: current.sets + factor,
+      });
     }
   }
 
@@ -339,7 +383,7 @@ function buildBlockMuscleGroups(sets) {
       start: block.start,
       end: block.end,
       muscleGroups: [...block.muscleGroups.entries()]
-        .map(([group, data]) => ({ group, volume: Math.round(data.volume), sets: data.sets }))
+        .map(([group, data]) => ({ group, volume: Math.round(data.volume), sets: roundSets(data.sets) }))
         .sort((a, b) => b.volume - a.volume),
     }));
 }
@@ -449,8 +493,8 @@ function buildSessionMuscleGroups(sets) {
   const sessions = new Map();
 
   for (const set of sets || []) {
-    const groups = set.muscleGroups1?.length ? set.muscleGroups1 : set.muscleGroups2 || [];
-    if (!groups.length) continue;
+    const factors = groupFactorsOf(set);
+    if (!factors.size) continue;
 
     const day = isoDate(set.date);
     if (!day) continue;
@@ -466,8 +510,8 @@ function buildSessionMuscleGroups(sets) {
 
     const session = sessions.get(day);
     const volume = volumeOf(set);
-    for (const group of groups) {
-      session.muscleGroups.set(group, (session.muscleGroups.get(group) || 0) + volume);
+    for (const [group, factor] of factors) {
+      session.muscleGroups.set(group, (session.muscleGroups.get(group) || 0) + volume * factor);
     }
   }
 

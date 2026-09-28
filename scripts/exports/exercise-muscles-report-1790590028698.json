@@ -1,0 +1,207 @@
+{
+  "dryRun": false,
+  "counts": {
+    "curated": 246,
+    "legacy": 12,
+    "cardio": 0,
+    "unresolved": 27,
+    "skipped": 0,
+    "unchanged": 0
+  },
+  "unresolved": [
+    {
+      "_id": "69fa1abb3bd4f1da4d624d4f",
+      "name": "sexo anal",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "69fa1b743bd4f1da4d624efa",
+      "name": "dos",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "69fa1c513bd4f1da4d624ff8",
+      "name": "sexy",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "69fa1ee73bd4f1da4d6252ef",
+      "name": "yfjd",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "69fdf872b7d6b287902a5f00",
+      "name": "ejercicio",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "69fdf97db7d6b287902a60b8",
+      "name": "dd",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "69fdf9a7b7d6b287902a6136",
+      "name": "test",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355362",
+      "name": "PRESS PECHO POLEA LATERAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355364",
+      "name": "PAPEL ABDOMINAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355366",
+      "name": "POLEA ABDOMI-ANAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355368",
+      "name": "Press pecho polea lateral",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a535536a",
+      "name": "Papel abdominal",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a535536c",
+      "name": "Polea abdomi-anal",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a535536e",
+      "name": "PRESS PECHO POLEA LATERAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355370",
+      "name": "PAPEL ABDOMINAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355372",
+      "name": "POLEA ABDOMI-ANAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355374",
+      "name": "PRESS PECHO POLEA LATERAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355376",
+      "name": "PAPEL ABDOMINAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a10ff50657b89b8a5355378",
+      "name": "POLEA ABDOMI-ANAL",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a53781a77c524db8a08ea4f",
+      "name": "hh",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a5f3f9a50ee0cb33517daef",
+      "name": "sadsa",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a88225e605ec77acac1c8b7",
+      "name": "isometrico",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a8984abafee6cb72d489c55",
+      "name": "faaaaa",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6a902a5bb95738f5f24d79c7",
+      "name": "nuevo ejercicio",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6aa92c9e498e0a417be41230",
+      "name": "Sentadilla (mock)",
+      "global": true,
+      "muscleGroups1": [
+        "Pierna"
+      ],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6aa92c9e498e0a417be4123a",
+      "name": "Curl femoral (mock)",
+      "global": true,
+      "muscleGroups1": [
+        "Pierna"
+      ],
+      "muscleGroups2": []
+    },
+    {
+      "_id": "6ab7d2f21ddb697de07027c3",
+      "name": "Prueba ejercicio",
+      "global": false,
+      "muscleGroups1": [],
+      "muscleGroups2": []
+    }
+  ],
+  "missingCurated": []
+}

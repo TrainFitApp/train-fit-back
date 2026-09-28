@@ -592,6 +592,10 @@ module.exports = {
           // ejercicio propio del cliente sin ficha en el catálogo.
           muscleGroups1: "$exerciseInfo.muscleGroups1",
           muscleGroups2: "$exerciseInfo.muscleGroups2",
+          // 2026-09 — músculos con énfasis (ver muscle-catalog.js): el
+          // progreso por grupo cuenta igual que el Análisis del Planner.
+          muscles: "$exerciseInfo.muscles",
+          isCardio: "$exerciseInfo.isCardio",
           // 2026-09 — pulso de readiness/esfuerzo (1-5) de LA SESIÓN, no de
           // la serie: se repite en cada set de la misma sesión a propósito
           // (mismo criterio que splitId/splitName arriba, misma agregación

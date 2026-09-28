@@ -4,6 +4,30 @@ const workoutSchema = require("../workouts/workout-schema");
 const userSchema = require("../users/schema");
 const { Types } = require("mongoose");
 const { cleanObject } = require("../util/clean-data");
+const {
+  normalizeMuscles,
+  toLegacyMuscleGroups,
+  fromLegacyMuscleGroups,
+  expandMuscleFilter,
+} = require("./muscle-catalog");
+
+// updateOne no pasa por el hook pre("validate") del schema: la sincronía
+// entre `muscles` y la proyección antigua se hace aquí, con las mismas
+// funciones. Si llega `muscles`, manda; si solo llega el modelo antiguo (la
+// app cliente edita así sus ejercicios propios), se traduce.
+function withSyncedMuscles(fields) {
+  if (Array.isArray(fields.muscles)) {
+    const muscles = normalizeMuscles(fields.muscles);
+    return { ...fields, muscles, ...toLegacyMuscleGroups(muscles) };
+  }
+  if (Array.isArray(fields.muscleGroups1) || Array.isArray(fields.muscleGroups2)) {
+    const { muscles } = fromLegacyMuscleGroups(fields.muscleGroups1, fields.muscleGroups2);
+    // Solo "Piernas" o "Brazos" no dicen qué músculo es: mejor conservar lo
+    // que ya había que borrarlo.
+    return muscles.length ? { ...fields, muscles } : fields;
+  }
+  return fields;
+}
 
 // trainerId set = plantilla suelta (ver workout-schema.js). Se pasa
 // trainerId:{$ne:null} explícito para saltar el guardarraíl por defecto del
@@ -124,6 +148,19 @@ module.exports = {
             category: {
               $in: searchExercisesFilterGroup.category,
             },
+          },
+        });
+      }
+
+      // Filtro por músculo del catálogo de dos niveles (2026-09): ejercicios
+      // en los que ese músculo es PRINCIPAL. Con secundarios, buscar
+      // "Tríceps" traería todos los presses de pecho. Las versiones de la
+      // app anteriores siguen mandando muscleGroups1/2 y se atienden abajo.
+      const muscleIds = expandMuscleFilter(searchExercisesFilterGroup.muscles);
+      if (muscleIds.length > 0) {
+        agg.push({
+          $match: {
+            muscles: { $elemMatch: { muscle: { $in: muscleIds }, role: "primary" } },
           },
         });
       }
@@ -274,7 +311,7 @@ module.exports = {
   },
 
   async updateExercise(id, exercise) {
-    const cleanedExercise = cleanObject(exercise);
+    const cleanedExercise = withSyncedMuscles(cleanObject(exercise));
     const update = {};
 
     if (Object.keys(cleanedExercise).length > 0) {
