@@ -7,3 +7,4 @@ file.log
 .stripe-local/
 bash.exe.stackdump
 scripts/backups/
+.media-local/

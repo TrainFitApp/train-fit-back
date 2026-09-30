@@ -57,6 +57,12 @@ const TrainerClientSchema = new Schema(
     // quitado 2026-09: nunca llegó a ser el denominador real de "adherencia
     // de entrenamiento" — esa se calcula sobre la fase vigente
     // (RoutineAssignment), no sobre un número declarado aparte.
+    // Fotos de progreso (docs/plan-medidas-multimedia.md, decisión 4). Un
+    // profesional ve las fotos del cliente desde que empezó la relación;
+    // las anteriores, solo si el cliente las comparte. `...AskedAt` recuerda
+    // que ya se le hizo la pregunta para no repetirla.
+    mediaHistorySharedAt: { type: Date, default: null },
+    mediaHistoryAskedAt: { type: Date, default: null },
     trainingGoalType: {
       type: String,
       enum: ["strength", "hypertrophy", "endurance", "mobility", "general", null],

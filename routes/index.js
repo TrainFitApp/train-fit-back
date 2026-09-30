@@ -48,6 +48,10 @@ const trainerNutritionalGoalRoutes = require("../components/nutritionalGoals/tra
 const exerciseScoreRoutes = require("../components/exerciseScores/exercise-score-routes");
 const clientNotesRoutes = require("../components/clientNotes/client-notes-routes");
 const trainerPaymentRoutes = require("../components/trainerPayments/trainer-payment-routes");
+const mediaRoutes = require("../components/media/media-routes");
+const progressMediaRoutes = require("../components/progressMedia/progress-media-routes");
+const formCheckRoutes = require("../components/formChecks/form-check-routes");
+const techniqueVideoRoutes = require("../components/techniqueVideos/technique-video-routes");
 
 const router = express.Router();
 
@@ -69,6 +73,13 @@ router.use(painRoutes);
 // Movimiento 5 Coach Pro — misma razón que painRoutes: sirve a los dos lados
 // y sus rutas ya llevan escrito el prefijo que le toca a cada una.
 router.use(supplementRoutes);
+// Fotos y vídeos (docs/plan-medidas-multimedia.md). /media firma subidas y
+// sirve el almacenamiento local de desarrollo; el resto van sin prefijo, como
+// painRoutes, porque sirven a cliente y profesional.
+router.use("/media", mediaRoutes);
+router.use(progressMediaRoutes);
+router.use(formCheckRoutes);
+router.use(techniqueVideoRoutes);
 router.use(trainerNutritionalGoalRoutes);
 router.use(dietTemplateRoutes);
 router.use(mealSnippetRoutes);

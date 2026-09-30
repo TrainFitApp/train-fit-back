@@ -62,6 +62,32 @@ module.exports = {
     return TrainerClient.find({ clientId, status: "active" }).sort({ respondedAt: -1 });
   },
 
+  // Fotos de progreso: relaciones activas del cliente con el nombre del
+  // profesional, para la pregunta única de compartir el historial.
+  async findActiveByClientWithTrainer(clientId) {
+    return TrainerClient.find({ clientId, status: "active" })
+      .populate("trainerId", "name lastname email")
+      .sort({ respondedAt: 1 })
+      .lean();
+  },
+
+  // Todas las relaciones activas de un par (hay una por scope).
+  async findActiveRelationsOfPair(trainerId, clientId) {
+    return TrainerClient.find({ trainerId, clientId, status: "active" }).lean();
+  },
+
+  // Decisión 4 del plan de fotos: el cliente comparte (o deja de compartir)
+  // con este profesional sus fotos anteriores a la relación. Se guarda en
+  // todas las relaciones activas del par. Devuelve false si no hay ninguna.
+  async setMediaHistory(trainerId, clientId, shared) {
+    const now = new Date();
+    const result = await TrainerClient.updateMany(
+      { trainerId, clientId, status: "active" },
+      { $set: { mediaHistorySharedAt: shared ? now : null, mediaHistoryAskedAt: now } }
+    );
+    return (result.matchedCount ?? result.n ?? 0) > 0;
+  },
+
   async findActiveByClientAndScope(clientId, scope) {
     return TrainerClient.findOne({ clientId, scope, status: "active" });
   },

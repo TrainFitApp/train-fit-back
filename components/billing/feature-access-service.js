@@ -66,6 +66,16 @@ function canSeeAds(user, hasActiveTrainerRelation = false) {
   return !isPremiumUser(user) && !hasActiveTrainerRelation;
 }
 
+// Fotos y vídeos (docs/plan-medidas-multimedia.md, decisiones 1 y 7): suben
+// gratis los entrenadores, los clientes premium y los clientes con relación
+// activa con un profesional (cualquier scope, mientras dure) — misma
+// exención que canSeeAds y canAddMicrocycle.
+function canUploadMedia(user, hasActiveTrainerRelation = false) {
+  if (!user) return false;
+  if (Array.isArray(user.roles) && user.roles.includes("trainer")) return true;
+  return isPremiumUser(user) || Boolean(hasActiveTrainerRelation);
+}
+
 function getRemaining(limit, used) {
   if (limit === Number.MAX_SAFE_INTEGER) return null;
   return Math.max(limit - used, 0);
@@ -193,6 +203,7 @@ module.exports = {
   canCreateRecipe,
   canCreateNutritionalGoal,
   canSeeAds,
+  canUploadMedia,
   buildEntitlements,
   isPremiumTrainer,
   getTrainerLimits,

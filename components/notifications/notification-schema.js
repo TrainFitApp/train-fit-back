@@ -46,7 +46,15 @@ const NotificationSchema = new Schema(
         // { chargeId, dueDay, dueRevision, offset, milestone, balanceCents,
         //   currency, concept } + `resolution` al liquidarse/cancelarse.
         "payment_reminder",
+        // --- Revisiones de técnica (docs/plan-medidas-multimedia.md) ---
+        // Trainer → cliente: el entrenador respondió a su vídeo.
+        "form_check_reviewed",
         // --- Cliente → trainer (destinatario: trainer) ---
+        // El cliente mandó un vídeo de técnica; y aviso único de que una
+        // revisión se borra en 7 días o menos (payload: formCheckId,
+        // exerciseName, expiresAt).
+        "form_check_submitted",
+        "form_check_expiring",
         "invite_accepted",
         "intake_submitted_trainer",
         "checkin_responded",
