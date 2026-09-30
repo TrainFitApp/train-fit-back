@@ -15,6 +15,8 @@ const ALWAYS_ALLOWED = [
   "http://localhost",
   "http://localhost:8100",
   "http://localhost:8101",
+  // App de profesionales publicada como web.
+  "https://trainers.trainfit.net",
 ];
 
 // A partir de la TERCERA app del monorepo `ionic serve` ya reparte 8102,
