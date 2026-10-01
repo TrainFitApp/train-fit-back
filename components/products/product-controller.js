@@ -42,7 +42,14 @@ module.exports = {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 10).toString(), 10);
     const search = typeof req.body === "string" ? req.body : req.body?.search;
-    const products = await productModel.searchProduct(page, limit, search);
+    // El usuario autenticado, para que también encuentre SUS productos: un
+    // entrenador que crea un producto tiene que poder volver a buscarlo.
+    const products = await productModel.searchProduct(
+      page,
+      limit,
+      search,
+      req?.user?.id,
+    );
     return res.send(products);
   },
 

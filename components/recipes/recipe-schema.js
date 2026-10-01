@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { buildSearchFields } = require("../util/search-index");
 const Schema = mongoose.Schema;
 
 const RecipeSchema = Schema(
@@ -10,8 +11,9 @@ const RecipeSchema = Schema(
       trim: true,
       maxlength: 100,
     },
+    // Derivados de búsqueda, ver components/util/search-index.js.
     nameNormalized: String,
-    namePrefixes: [String],
+    searchTokens: [String],
     // Descripción opcional
     description: { type: String, trim: true, maxlength: 2000 },
     // TASK-046 (MASTER_BACKLOG.md) — categorización libre (tipo de cocina,
@@ -49,5 +51,44 @@ const RecipeSchema = Schema(
 // Las variaciones por comida se representan en CustomRecipe.
 
 RecipeSchema.plugin(require("mongoose-autopopulate"));
+
+// ─── Campos derivados de búsqueda ──────────────────────────────────────
+// Mismo criterio que Product: los calcula el schema para que no haya forma de
+// guardar una receta que la búsqueda no encuentre. Índices en
+// scripts/rebuild-search-indexes.js (npm run rebuild:search-indexes).
+
+RecipeSchema.pre("save", function syncSearchFieldsOnSave(next) {
+  if (this.isModified("name") || !this.nameNormalized) {
+    const { nameNormalized, searchTokens } = buildSearchFields({ name: this.name });
+    this.nameNormalized = nameNormalized;
+    this.searchTokens = searchTokens;
+  }
+  next();
+});
+
+async function syncSearchFieldsOnUpdate() {
+  const update = this.getUpdate() || {};
+  if (Array.isArray(update)) return;
+
+  const set = update.$set || {};
+  const hasName =
+    Object.prototype.hasOwnProperty.call(set, "name") ||
+    Object.prototype.hasOwnProperty.call(update, "name");
+
+  if (!hasName) return;
+
+  const name = Object.prototype.hasOwnProperty.call(set, "name")
+    ? set.name
+    : update.name;
+  const { nameNormalized, searchTokens } = buildSearchFields({ name });
+
+  this.setUpdate({
+    ...update,
+    $set: { ...set, nameNormalized, searchTokens },
+  });
+}
+
+RecipeSchema.pre("findOneAndUpdate", syncSearchFieldsOnUpdate);
+RecipeSchema.pre("updateOne", syncSearchFieldsOnUpdate);
 
 module.exports = mongoose.model("Recipe", RecipeSchema);

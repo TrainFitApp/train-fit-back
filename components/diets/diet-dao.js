@@ -8,6 +8,21 @@ function toObjectId(id) {
   return new mongoose.Types.ObjectId(id);
 }
 
+// Los recientes salen de recorrer los días de dieta del usuario: sin acotar,
+// el pipeline desplegaba TODAS sus comidas y TODOS sus alimentos de siempre
+// para quedarse con 15. Se limita a los días más recientes, que es de donde
+// pueden salir: `date` es "YYYY-MM-DD", así que el orden de cadena es el
+// cronológico y el índice {userId, date} sirve para el $sort.
+const RECENT_DAYS_SCANNED = 120;
+
+function recentDaysMatchStage(userObjectId) {
+  return [
+    { $match: { userId: userObjectId } },
+    { $sort: { date: -1 } },
+    { $limit: RECENT_DAYS_SCANNED },
+  ];
+}
+
 // Refactor nutrición (2026-09) — la colección `diets` ya no existe. Este
 // componente sobrevive SOLO como capa de compatibilidad para las apps ya
 // instaladas, que siguen llamando a /diets/... con lo que ellas creen que es
@@ -60,7 +75,7 @@ module.exports = {
     // vez de en el wrapper Diet. $dietDay se conserva como nombre de campo
     // para no reescribir el resto del pipeline.
     const pipeline = [
-      { $match: { userId: dietObjectId } },
+      ...recentDaysMatchStage(dietObjectId),
       { $addFields: { dietDay: "$$ROOT" } },
       {
         $addFields: {
@@ -156,7 +171,7 @@ module.exports = {
     // vez de en el wrapper Diet. $dietDay se conserva como nombre de campo
     // para no reescribir el resto del pipeline.
     const pipeline = [
-      { $match: { userId: dietObjectId } },
+      ...recentDaysMatchStage(dietObjectId),
       { $addFields: { dietDay: "$$ROOT" } },
       {
         $addFields: {

@@ -80,6 +80,8 @@ module.exports = {
     shieldFilter,
     favFilter,
     userId,
+    recentIds = [],
+    authUserId = null,
   ) {
     return mealDao.searchAllWithFilters(
       page,
@@ -90,6 +92,8 @@ module.exports = {
       shieldFilter,
       favFilter,
       userId,
+      recentIds,
+      authUserId,
     );
   },
 
