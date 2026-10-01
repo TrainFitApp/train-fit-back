@@ -32,9 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 22: `npm test` le pasa globs a `node --test`, que Node 20 no
+      # entiende ("Could not find components/**/*.test.js").
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - run: npm ci --no-audit --fund=false

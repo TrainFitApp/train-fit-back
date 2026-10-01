@@ -10,9 +10,12 @@
 entera: el deploy es manual, así que el run en rojo es el aviso para no
 desplegar ese commit.
 
-Lo que protege `develop` es el hook local `.githooks/pre-push` (lint + tests
-antes de cualquier push a `develop` o `main`): Render despliega PRE sin pasar
-por ningún check.
+Lo que protege `develop` es el hook local `.githooks/pre-push` (`npm run
+verify`, lint + tests, antes de cualquier push a `develop` o `main`): Render
+despliega PRE sin pasar por ningún check.
+
+Los tests necesitan **Node ≥ 22**: `npm test` le pasa globs a `node --test`, que
+Node 20 no entiende. El hook lo comprueba antes y el CI usa Node 22.
 
 ## Configuración de cada entorno
 

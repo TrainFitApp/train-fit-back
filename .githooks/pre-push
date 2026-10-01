@@ -28,6 +28,15 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "pre-push: aviso, hay cambios sin commitear; se comprueban tal como están."
 fi
 
+# `npm test` le pasa globs a `node --test`, que solo los entiende desde Node 21.
+# Con Node 20 sale "Could not find components/**/*.test.js" y parecería un test
+# roto.
+if [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
+  echo "pre-push: los tests del back necesitan Node >= 22 (tienes $(node -v))."
+  echo "pre-push: cambia de versión (p. ej. \`nvm use 22\`) y vuelve a hacer push."
+  exit 1
+fi
+
 npm run verify || {
   echo ""
   echo "pre-push: lint o tests fallan; push a $protected cancelado."
