@@ -3,6 +3,7 @@
   "version": "101.3.47",
   "private": true,
   "scripts": {
+    "prepare": "node .githooks/install.js",
     "start": "node ./bin/www",
     "serve": "cross-env NODE_ENV=development node --watch bin/www",
     "serve:open": "cross-env NODE_ENV=development CORS_OPEN=1 node --watch bin/www",

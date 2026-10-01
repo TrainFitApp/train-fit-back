@@ -1,0 +1,35 @@
+#!/bin/sh
+# Bloquea un push a develop o main si no pasan lint y tests.
+#
+# Solo mira la rama de DESTINO en el remoto: subir una rama de feature no
+# ejecuta nada, y `git push origin mi-rama:develop` sí. Es la primera barrera;
+# la que no se puede saltar es la protección de rama en GitHub.
+#
+# Se activa con `npm install` (script `prepare`) o a mano:
+#   git config core.hooksPath .githooks
+# Para saltarlo en una emergencia: git push --no-verify
+
+protected=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Borrar una rama remota no sube código: nada que comprobar.
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+  case "$remote_ref" in
+    refs/heads/develop|refs/heads/main) protected="${remote_ref#refs/heads/}" ;;
+  esac
+done
+
+[ -z "$protected" ] && exit 0
+
+echo "pre-push: push a $protected, comprobando lint y tests…"
+
+# Se comprueba el árbol de trabajo, no el commit: con cambios sin commitear el
+# resultado puede no corresponder a lo que se sube.
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "pre-push: aviso, hay cambios sin commitear; se comprueban tal como están."
+fi
+
+npm run lint --if-present && npm test || {
+  echo ""
+  echo "pre-push: lint o tests fallan; push a $protected cancelado."
+  exit 1
+}

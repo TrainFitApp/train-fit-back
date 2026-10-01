@@ -1,0 +1,53 @@
+name: API CI
+
+# Verificación de la rama de PRO. NO despliega:
+#
+#   develop -> PRE: Render despliega solo con cada push (auto-deploy).
+#   main    -> PRO: PM2 en el servidor, a mano (ver README de esta carpeta).
+#
+# Sin secretos y sin base de datos: los tests que necesitan Mongo
+# (trainer-payments-db, stripe-local) se marcan como omitidos si no hay uno
+# local, así que nunca se tocan las bases de PRE ni de PRO.
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+concurrency:
+  group: api-ci-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint + tests + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci --no-audit --fund=false
+
+      # El back aún no tiene linter. Con --if-present este paso empieza a
+      # correr solo en cuanto exista el script `lint`.
+      - name: Lint
+        run: npm run lint --if-present
+
+      # `pretest` ya compila el TypeScript, pero así un fallo de compilación
+      # sale con su propio nombre y no escondido dentro de los tests.
+      - name: Build TypeScript (trainerBilling + trainerPayments)
+        run: npm run build:ts
+
+      - name: Tests
+        run: npm test
