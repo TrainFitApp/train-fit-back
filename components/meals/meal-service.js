@@ -101,10 +101,6 @@ module.exports = {
     return mealDao.addMealProduct(idMeal, idProduct);
   },
 
-  async addMealCustomRecipe(idMeal, idRecipe) {
-    return mealDao.addMealCustomRecipe(idMeal, idRecipe);
-  },
-
   async updateMeal({ id, name, products, notes }) {
     return mealDao.updateMeal({ id, name, products, notes });
   },
@@ -125,16 +121,8 @@ module.exports = {
     return mealDao.deleteMealProduct(idMeal, idProduct);
   },
 
-  async deleteMealCustomRecipe(idMeal, idCustomRecipe) {
-    return mealDao.deleteMealCustomRecipe(idMeal, idCustomRecipe);
-  },
-
   async deleteMealCustomProducts(id) {
     return mealDao.deleteMealCustomProducts(id);
-  },
-
-  async deleteMealCustomRecipes(id) {
-    return mealDao.deleteMealCustomRecipes(id);
   },
 
   async addMealCustomRecipe(idMeal, idCustomRecipe) {

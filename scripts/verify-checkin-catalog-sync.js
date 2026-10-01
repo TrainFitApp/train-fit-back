@@ -38,7 +38,7 @@ function extractArrayLiteral(source, marker) {
       if (depth === 0) break;
     }
   }
-  if (depth !== 0) throw new Error(`No se encontró el "]" de cierre para "${constName}"`);
+  if (depth !== 0) throw new Error(`No se encontró el "]" de cierre para "${marker}"`);
 
   const literal = source.slice(bracketStart, i + 1);
   // eslint-disable-next-line no-new-func -- fuente propia y de confianza (archivo del repo), no input externo.

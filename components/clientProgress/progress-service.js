@@ -212,7 +212,6 @@ function buildComparison(series) {
     nutritionAdherence: delta(current.nutritionAdherence, previous.nutritionAdherence),
     sessions: delta(current.sessions, previous.sessions),
     habitsAdherence: delta(current.habitsAdherence, previous.habitsAdherence),
-    sessions: delta(current.sessions, previous.sessions),
     measurements: Object.keys(measurements).length ? measurements : null,
     wellbeing: Object.keys(wellbeing).length ? wellbeing : null,
   };
