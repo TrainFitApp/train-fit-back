@@ -216,8 +216,17 @@ test("configuration defaults to disabled and exposes only public catalog data", 
 
 test("configuration fails closed for unsafe live, sandbox in production, unknown tax and wrong frontend", async (t) => {
   const live = { TRAINER_BILLING_MODE: "live", STRIPE_KEY: "rk_live_unit_test_placeholder",
-    TRAINER_BILLING_TAX_POLICY: "stripe_tax", TRAINER_BILLING_FRONTEND_URL: "https://trainers.example.test" };
+    TRAINER_BILLING_TAX_POLICY: "stripe_tax", TRAINER_BILLING_FRONTEND_URL: "https://trainers.example.test",
+    STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID: "pmc_unittest", TRAINER_BILLING_TERMS_URL: "https://trainfit.example.test/condiciones",
+    TRAINER_BILLING_SUPPORT_EMAIL: "facturacion@example.test" };
   const cases = [
+    // Decisiones 2026-09-28: live exige métodos de pago explícitos, condiciones y buzón de facturación.
+    [{ ...live, STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID: "" }, "PAYMENT_METHOD_CONFIGURATION_REQUIRED"],
+    [{ ...live, TRAINER_BILLING_TERMS_URL: "" }, "TERMS_URL_REQUIRED"],
+    [{ ...live, TRAINER_BILLING_SUPPORT_EMAIL: "" }, "SUPPORT_EMAIL_REQUIRED"],
+    [{ ...live, TRAINER_BILLING_TERMS_URL: "http://trainfit.example.test/condiciones" }, "INVALID_TERMS_URL"],
+    [{ STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID: "card" }, "INVALID_PAYMENT_METHOD_CONFIGURATION"],
+    [{ TRAINER_BILLING_SUPPORT_EMAIL: "facturacion" }, "INVALID_SUPPORT_EMAIL"],
     [{ TRAINER_BILLING_MODE: "staging" }, "INVALID_MODE"],
     [{ ...live, STRIPE_KEY: "rk_test_unit_test_placeholder" }, "LIVE_RESTRICTED_KEY_REQUIRED"],
     [{ ...live, STRIPE_KEY: "sk_live_unit_test_placeholder" }, "LIVE_RESTRICTED_KEY_REQUIRED"],
@@ -243,12 +252,27 @@ test("configuration fails closed for unsafe live, sandbox in production, unknown
 
 test("a complete live configuration is accepted only with a restricted key, Stripe Tax and an HTTPS frontend", () => {
   const config = loadConfig(sandboxEnv({ TRAINER_BILLING_MODE: "live", STRIPE_KEY: "rk_live_unit_test_placeholder",
-    TRAINER_BILLING_TAX_POLICY: "stripe_tax", TRAINER_BILLING_FRONTEND_URL: "https://trainers.example.test/", NODE_ENV: "production" }));
+    TRAINER_BILLING_TAX_POLICY: "stripe_tax", TRAINER_BILLING_FRONTEND_URL: "https://trainers.example.test/", NODE_ENV: "production",
+    STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID: "pmc_unittest", TRAINER_BILLING_TERMS_URL: "https://trainfit.example.test/condiciones",
+    TRAINER_BILLING_SUPPORT_EMAIL: "Facturacion@Example.test" }));
   assert.deepEqual(config.errors, []);
   assert.equal(config.mode, "live");
   assert.equal(config.taxPolicy, "stripe_tax");
   assert.equal(config.frontendUrl, "https://trainers.example.test");
+  assert.equal(config.paymentMethodConfiguration, "pmc_unittest");
+  assert.deepEqual(publicPlans(config).support, { email: "facturacion@example.test", termsUrl: "https://trainfit.example.test/condiciones" });
   assert.equal(loadConfig(sandboxEnv({ TRAINER_BILLING_TAX_POLICY: "stripe_tax" })).errors.length, 0, "the sandbox may also test Stripe Tax");
+  assert.deepEqual(publicPlans(loadConfig(sandboxEnv())).support, { email: null, termsUrl: null }, "optional in the sandbox");
+});
+
+test("with Managed Payments live needs no payment method configuration: Stripe sells and picks the methods", () => {
+  const managed = loadConfig(sandboxEnv({ TRAINER_BILLING_MODE: "live", STRIPE_KEY: "rk_live_unit_test_placeholder",
+    TRAINER_BILLING_TAX_POLICY: "managed_payments", TRAINER_BILLING_FRONTEND_URL: "https://trainers.example.test", NODE_ENV: "production",
+    TRAINER_BILLING_TERMS_URL: "https://trainfit.example.test/condiciones", TRAINER_BILLING_SUPPORT_EMAIL: "facturacion@example.test" }));
+  assert.deepEqual(managed.errors, []);
+  assert.equal(managed.taxPolicy, "managed_payments");
+  assert.equal(publicPlans(managed).taxPolicy, "managed_payments", "the app tells trainers who sells");
+  assert.equal(loadConfig(sandboxEnv({ TRAINER_BILLING_TAX_POLICY: "managed_payments" })).errors.length, 0, "the sandbox may test it too");
 });
 
 test("checkout only accepts a catalog plan and interval", async () => {

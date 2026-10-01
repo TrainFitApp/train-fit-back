@@ -1,5 +1,14 @@
 // Adaptador CommonJS del backend existente. La lógica de negocio vive en TS strict.
 let runtime;
+// Aviso de renovación anual (30 y 7 días antes) por el canal transaccional existente (SES).
+const notifier = {
+  async renewalReminder(input) {
+    const { sendMailSES, generateMail } = require("../util/mail");
+    const mail = require("./renewal-reminder-mail").buildRenewalReminder(input);
+    const html = generateMail(mail.title, mail.description, mail.linkHref, mail.linkContent);
+    await sendMailSES(input.email, mail.subject, html, input.supportEmail ? { replyTo: input.supportEmail } : {});
+  },
+};
 function getRuntime() {
   if (runtime) return runtime;
   const { createRuntime } = require("../../.build/trainer-billing/runtime");
@@ -20,8 +29,14 @@ function getRuntime() {
         { "professionalPremium.stripeRevision": { $lte: value.stripeRevision } },
       ] }, { $set: { professionalPremium: value } });
     },
-  });
+  }, notifier);
   return runtime;
+}
+
+function adminUserId(value) {
+  if (typeof value === "string" && /^[a-f0-9]{24}$/.test(value)) return value;
+  const { BillingError } = require("../../.build/trainer-billing/types");
+  throw new BillingError("INVALID_USER", "Entrenador no válido.", 400);
 }
 
 async function getEntitlements(userId) {
@@ -84,6 +99,21 @@ const controller = {
     return getEntitlements(String(req.user._id));
   }),
   webhook: handler((req) => getRuntime().webhook(req.body, req.headers["stripe-signature"])),
+  // Gestión (auth admin): casos de dinero, ficha del entrenador e intervenciones registradas con su autor.
+  adminCases: handler((req) => getRuntime().service.adminCases(req.query?.status)),
+  // Buscar la ficha de un entrenador por su email (para actuar aunque no tenga casos abiertos).
+  adminLookup: handler(async (req) => {
+    const { BillingError } = require("../../.build/trainer-billing/types");
+    const { normalizeEmail, isValidEmailFormat } = require("../util/normalize-email");
+    const email = normalizeEmail(req.query?.email);
+    if (!isValidEmailFormat(email)) throw new BillingError("INVALID_EMAIL", "Email no válido.", 400);
+    const user = await require("../users/schema").findOne({ email }).select("_id email roles").lean();
+    if (!user || !(user.roles || []).includes("trainer")) throw new BillingError("TRAINER_NOT_FOUND", "No hay ningún entrenador con ese email.", 404);
+    return { userId: String(user._id), email: user.email };
+  }),
+  adminTrainer: handler((req) => getRuntime().service.adminTrainer(adminUserId(req.params.userId))),
+  adminIntervene: handler((req) => getRuntime().service.intervene(adminUserId(req.params.userId), req.body || {},
+    { id: String(req.user._id), email: req.user.email || null })),
 };
 
 module.exports = {

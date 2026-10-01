@@ -1,5 +1,28 @@
 # Facturación Trainers
 
+> **01/10/2026 — Managed Payments** (`TRAINER_BILLING_TAX_POLICY=managed_payments`). Stripe vende como comerciante registrado, a través de Link: calcula, cobra, declara y paga el IVA y emite la factura. Cobra un 3,5 % más por transacción. Motivo: todavía no hay alta fiscal; detalle en la guía, A0.
+> - **Checkout:** `managed_payments: { enabled: true }`, sin `automatic_tax`, `tax_id_collection`, `customer_update`, `payment_method_configuration` ni `custom_text` (Stripe rechaza `custom_text`). `consent_collection` sigue funcionando si la URL de condiciones está también en los datos públicos de la cuenta.
+> - **Precios:** `exclusive` también aquí (IVA aparte). Previsualizaciones y renovación salen con el IVA de Stripe sin pasar `automatic_tax`.
+> - **Calendarios:** las suscripciones de Managed Payments tienen `issuer` y `liability` = `stripe`. `copyPhase` no los reenvía (la API solo admite `self`/`account`) y la fase los hereda de `default_settings`.
+> - **Live:** no exige configuración de métodos de pago. El preflight avisa de que el estado de Managed Payments se mira en el Dashboard.
+> - **Verificación:** `.stripe-local/claude/verify-managed.cjs`, 12/12 en el sandbox.
+
+> **28/09/2026 — política de dinero y operativa.** Guía para el negocio y la puesta en producción: [`docs/stripe-trainers-guia.md`](../../docs/stripe-trainers-guia.md).
+> - **Reembolsos:** ya no cancelan nada por sí solos (sustituye a la regla del 21/09). Cada cargo reembolsado abre un caso en `trainerbillingcases` con qué financiaba el pago (`financing.ts`: periodo, subida, mensual → anual o desconocido), el estado de cada reembolso (incluido el fallido) y el efecto sugerido. El efecto lo decide una persona en Gestión.
+> - **Disputas:** al abrirse se pausan los cobros (`pause_collection: keep_as_draft`) y los reintentos de las facturas abiertas; el acceso se mantiene y los cambios de plan se bloquean (`COLLECTION_PAUSED`). Si se pierde, se retira solo lo que financiaba el pago: el periodo vigente (ajuste `revoke_period`) o la subida (precio anterior sin prorrateo). Un periodo antiguo o desconocido nunca toca el acceso de hoy. Al cerrarse, el caso pide decidir si se reanudan los cobros. Los avisos de fraude temprano abren un caso.
+> - **Eventos nuevos (31 en total):** `charge.refund.updated`, `refund.created|updated|failed`, `charge.dispute.updated|closed|funds_withdrawn|funds_reinstated` y `radar.early_fraud_warning.created|updated`. Cada objeto se relee de Stripe. Además, cada 10 minutos se recuperan con `events.list` los eventos de dinero de las últimas 72 h, por si un webhook se perdió.
+> - **Gestión (auth `admin`):** `GET /admin/trainers/cases`, `GET /admin/trainers/lookup?email=`, `GET /admin/trainers/:userId` y `POST /admin/trainers/:userId/interventions`. Acciones: `resolve_case`, `end_service_now`, `cancel_renewal`, `resume_renewal`, `revert_upgrade`, `grant_access`, `end_grant`, `restore_period_access`, `pause_collection`, `resume_collection`. Cada intervención queda en `trainerbillinginterventions` con motivo obligatorio, autor, estado antes y después, y resultado.
+> - **Acceso efectivo** (`effectiveAccess`): lo pagado según Stripe, menos los periodos retirados, más las excepciones hasta una fecha. Nunca se finge un cobro.
+> - **Checkout:** `payment_method_configuration` (tarjeta, Apple Pay, Google Pay y Link), aceptación de condiciones (`consent_collection`, guardada en la cuenta) y texto de renovación y cancelación. En live son obligatorios `STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID`, `TRAINER_BILLING_TERMS_URL` y `TRAINER_BILLING_SUPPORT_EMAIL`.
+> - **Aviso de renovación anual** a 30 y 7 días: por email (SES, sin duplicados: se marca antes de enviar) desde el ciclo de reconciliación existente, sin cron nuevo, y en la app (`billing.renewalNotice`).
+> - **Hecho también:**
+>   - `billing.review` ya no se envía al entrenador;
+>   - en la app se muestran Link, las carteras y los importes reembolsados;
+>   - `CORS_EXTRA_ORIGINS` existe de verdad (`components/util/cors-origin.js`);
+>   - el test del webhook está arreglado y los tests de pagos entran en `npm test`;
+>   - el preflight revisa permisos, métodos de pago, portal completo, webhook y registro de IVA de España.
+> - Lo que sigue por debajo de este bloque es historia (21/09 y 18/09). Donde contradiga lo anterior, manda lo anterior.
+
 > **21/09/2026 — modo real implementado (desactivado por defecto).**
 > - `TRAINER_BILLING_MODE=live` exige `rk_live_`, `TRAINER_BILLING_TAX_POLICY=stripe_tax` y `TRAINER_BILLING_FRONTEND_URL` en `https://` fuera de localhost. El modo `test` sigue exigiendo clave de prueba, frontend local y la BD `trainfit_stripe_local`, y no funciona con `NODE_ENV=production`.
 > - `assertMode` rechaza objetos de Stripe del otro entorno; cuentas y eventos se separan por `mode`.
@@ -101,13 +124,13 @@ Una bajada programada limita también nuevas invitaciones al cupo futuro. La com
 - `professionalPremium.source` permanece stripe tras expirar/cancelar. RC no puede sobrescribirlo; `premium` consumidor es independiente. Restaurar RC profesional usa únicamente identidad autenticada y consulta del servidor.
 - Borrado explícito marca una tumba persistente, caduca checkouts abiertos y cancela suscripciones antes de eliminar al usuario. Si falla, la cuenta se conserva para reintentar. Los hooks impiden saltarse ese flujo mediante borrados Mongoose directos. No hay reembolso implícito.
 
-Registrar los eventos: `checkout.session.completed`, `checkout.session.expired`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed`, `customer.subscription.pending_update_applied`, `customer.subscription.pending_update_expired`, `subscription_schedule.updated`, `subscription_schedule.released`, `subscription_schedule.completed`, `subscription_schedule.canceled`, `invoice.paid`, `invoice.payment_failed`, `invoice.payment_action_required`, `invoice.finalization_failed`. El webhook queda antes del parser JSON y del bloqueo de mantenimiento.
+Registrar los 31 eventos de `SUPPORTED_EVENT_TYPES` (`src/stripe-gateway.ts`; lista agrupada en la guía, paso A7): los 19 de suscripciones, checkout, calendarios y facturas, más los 12 de dinero (`MONEY_EVENT_TYPES`: reembolsos, disputas y avisos de fraude). El webhook queda antes del parser JSON y del bloqueo de mantenimiento.
 
 ## Límites explícitos de esta fase
 
 - LIVE, Stripe Tax y registros fiscales no están configurados. No basta cambiar una variable para vender en producción: requiere una siguiente fase con decisión fiscal, dominio HTTPS, credenciales live y verificación real.
 - Los cambios en autoservicio se implementan para una suscripción con un artículo y el catálogo permitido. Estados o configuraciones avanzadas no admitidos requieren revisión; no se modifican de forma aproximada. Sin pruebas gratuitas configuradas; cupones pueden introducirse si se crean en Stripe.
-- Reembolso y cancelación son operaciones distintas. Un reembolso aislado no retira automáticamente acceso ni cancela renovaciones. No se procesan eventos refund/dispute todavía.
+- Reembolso y cancelación son operaciones distintas. Un reembolso aislado no retira automáticamente acceso ni cancela renovaciones: abre un caso y decide una persona (28/09/2026; ver la cabecera).
 - El cupo deduplica scopes y contempla los cuatro estados de onboarding. Las invitaciones de cuentas Stripe se serializan por entrenador para evitar excederlo con altas simultáneas. No archiva clientes existentes al cancelar; queda por definir el tratamiento de las relaciones que excedan Free antes de producción.
 - Una respuesta de creación de customer incierta durante más de 23 h, o Checkout incierto durante más de 25 min, se bloquea para revisión. No se crea otro cobro por adivinar que el anterior falló. Cuentas con más de 100 sesiones históricas también requieren revisión antes de más altas (límite conservador de esta versión).
 - Las pruebas unitarias del core/gateway usan dobles en memoria, sin Stripe ni correo. Las pruebas reales de sandbox y su alcance se registran en `docs/TRAINERS_STRIPE_SANDBOX.md` del workspace. No constituyen un despliegue de producción.
