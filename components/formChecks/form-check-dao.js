@@ -38,6 +38,21 @@ module.exports = {
     return FormCheck.countDocuments({ trainerId, status: "pending", clientId: { $in: clientIds } });
   },
 
+  // Cartera: pendientes por cliente en una sola agregación.
+  async countPendingByClient(trainerId, clientIds) {
+    const rows = await FormCheck.aggregate([
+      {
+        $match: {
+          trainerId: new mongoose.Types.ObjectId(String(trainerId)),
+          status: "pending",
+          clientId: { $in: clientIds.map((id) => new mongoose.Types.ObjectId(String(id))) },
+        },
+      },
+      { $group: { _id: "$clientId", count: { $sum: 1 } } },
+    ]);
+    return new Map(rows.map((row) => [String(row._id), row.count]));
+  },
+
   async update(id, set) {
     return FormCheck.findByIdAndUpdate(id, { $set: set }, { new: true }).lean();
   },

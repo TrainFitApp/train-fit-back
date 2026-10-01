@@ -77,6 +77,16 @@ module.exports = {
       .lean();
   },
 
+  // Bandeja «Por revisar»: cuestionarios enviados que el profesional aún no
+  // ha marcado como revisados.
+  async listUnreviewedByTrainer(trainerId, clientIds) {
+    return ClientIntake.find({ trainerId, clientId: { $in: clientIds }, reviewedAt: null })
+      .select("clientId submittedAt")
+      .sort({ submittedAt: 1 })
+      .populate("clientId", "name lastname email")
+      .lean();
+  },
+
   // Idempotente: si ya estaba revisado conserva la fecha original. null si
   // el cliente aún no tiene cuestionario con este profesional.
   async markReviewed(trainerId, clientId) {

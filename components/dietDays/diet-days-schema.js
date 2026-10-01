@@ -37,10 +37,31 @@ DietDaySchema.plugin(mongooseAutopopulate);
 
 // "El día de tal fecha de este usuario" es LA consulta del módulo (se hace en
 // cada apertura de la pantalla de dieta). Compuesto y en este orden porque
-// también sirve para los rangos (userId + date entre X e Y) y para el
-// historial de saltos (userId + skipped), que solo añade un filtro sobre un
+// también sirve para los rangos (userId + date entre X e Y) y para la
+// historia de saltos (userId + skipped), que solo añade un filtro sobre un
 // prefijo ya indexado.
-DietDaySchema.index({ userId: 1, date: 1 });
+//
+// ÚNICO (2026-10) — un usuario no puede tener dos días con la misma fecha.
+// No es una optimización: era posible acabar con días solapados (dos
+// documentos con el mismo (userId, date)) porque cada "crear producto/receta
+// en un día nuevo" hacía un create a ciegas, sin mirar si el día ya existía.
+// El invariante se defiende aquí, en la base, y no solo en el código:
+// dietDays/diet-days-dao.js#ensureDietDay es la única vía de creación y se
+// apoya en este índice para resolver la carrera (dos peticiones simultáneas
+// para la misma fecha: la perdedora recibe E11000 y relee la ganadora).
+//
+// `partialFilterExpression`: los días huérfanos sin userId (restos del
+// modelo viejo con wrapper Diet) se quedan fuera del índice en vez de
+// colisionar todos entre sí por `null`.
+//
+// Al desplegar esto sobre una base que ya tenía el índice NO único hay que
+// pasar `npm run migrate:dietday-unique` (funde duplicados, sustituye el
+// índice). Si no, mongoose no puede crear el índice (IndexOptionsConflict) y
+// la protección se queda sin aplicar.
+DietDaySchema.index(
+  { userId: 1, date: 1 },
+  { unique: true, partialFilterExpression: { userId: { $type: "objectId" } } },
+);
 
 const handleDeleteOne = async function (next) {
   try {

@@ -116,4 +116,34 @@ module.exports = {
   async markAllSeenForTrainer(trainerId) {
     return CheckinResponse.updateMany({ trainerId, seenByTrainer: false }, { $set: { seenByTrainer: true } });
   },
+
+  // --- Bandeja «Por revisar» y Cartera ---
+  // Respuestas que esperan el comentario del profesional. Sin status cuenta
+  // como respondida, igual que en la agenda (checkin-agenda-service.js).
+
+  async listPendingReviewForTrainer(trainerId, clientIds) {
+    return CheckinResponse.find({ trainerId, clientId: { $in: clientIds }, status: { $ne: "reviewed" } })
+      .select("clientId name occurrenceDate respondedAt week")
+      .sort({ respondedAt: 1 })
+      .populate("clientId", "name lastname email")
+      .lean();
+  },
+
+  async countPendingReviewForTrainer(trainerId, clientIds) {
+    return CheckinResponse.countDocuments({ trainerId, clientId: { $in: clientIds }, status: { $ne: "reviewed" } });
+  },
+
+  async countPendingReviewByClient(trainerId, clientIds) {
+    const rows = await CheckinResponse.aggregate([
+      {
+        $match: {
+          trainerId: new mongoose.Types.ObjectId(String(trainerId)),
+          clientId: { $in: clientIds.map((id) => new mongoose.Types.ObjectId(String(id))) },
+          status: { $ne: "reviewed" },
+        },
+      },
+      { $group: { _id: "$clientId", count: { $sum: 1 } } },
+    ]);
+    return new Map(rows.map((row) => [String(row._id), row.count]));
+  },
 };

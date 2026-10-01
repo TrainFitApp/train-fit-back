@@ -288,6 +288,9 @@ UserSchema.pre("deleteOne", async function (next) {
       await require("../media/media-schema").deleteMany({
         $or: [{ ownerId: user._id }, { subjectId: user._id }],
       });
+
+      // Recientes ocultos del buscador de alimentos.
+      await require("../hiddenRecentFoods/hidden-recent-food-schema").deleteMany({ userId: user._id });
     }
     next();
   } catch (e) {

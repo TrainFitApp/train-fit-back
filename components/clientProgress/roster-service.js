@@ -13,6 +13,8 @@ const { computeWindowedTrainingProgress, pickCurrentPhase } = require("../routin
 const CoachAlert = require("../coachAlerts/coach-alert-schema");
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
 const { intakeStatusFor } = require("../trainerClients/intake-pending");
+const checkinDao = require("../trainerCheckins/checkin-dao");
+const formCheckDao = require("../formChecks/form-check-dao");
 
 /**
  * Movimiento 1 Coach Pro — la CARTERA: una fila por cliente, ordenable, con
@@ -165,18 +167,25 @@ async function buildRoster(trainerId, now = new Date()) {
   // listByClients y un único getSplitsForTables para toda la cartera, no
   // una consulta por cliente — pero SOLO de las tablas de la fase actual de
   // cada uno, no de todo el historial (ya no hace falta el resto).
-  const [activeTasks, phasesByClient, alertsByClient, intakes] = await Promise.all([
-    trainerTaskDao.listForClients(trainerId, clientIds),
-    routineAssignmentDao.listByClients(clientIds),
-    ensureEvaluatedToday(trainerId, { now, context }).then(() => countOpenAlertsByClient(trainerId)),
-    clientIntakeDao.listStateByTrainer(trainerId, clientIds),
-  ]);
-  const intakeByClient = new Map(intakes.map((intake) => [String(intake.clientId), intake]));
   // Scopes de cada cliente: "Rechazar" desde la Cartera termina todas sus
   // relaciones (una por scope) sin pasar por la ficha.
   const scopesByClient = new Map(
     context.activeClients.filter((entry) => entry.user).map((entry) => [String(entry.user._id), entry.scopes])
   );
+  // Revisiones de técnica: solo de clientes de entrenamiento (el
+  // nutricionista no las ve, form-check-service.js#activeTrainingClientIds).
+  const trainingClientIds = clientIds.filter((id) => (scopesByClient.get(String(id)) || []).includes("training"));
+
+  const [activeTasks, phasesByClient, alertsByClient, intakes, pendingCheckins, pendingFormChecks] = await Promise.all([
+    trainerTaskDao.listForClients(trainerId, clientIds),
+    routineAssignmentDao.listByClients(clientIds),
+    ensureEvaluatedToday(trainerId, { now, context }).then(() => countOpenAlertsByClient(trainerId)),
+    clientIntakeDao.listStateByTrainer(trainerId, clientIds),
+    // Columna «Por revisar»: lo que el cliente ha mandado y espera respuesta.
+    clientIds.length ? checkinDao.countPendingReviewByClient(trainerId, clientIds) : new Map(),
+    trainingClientIds.length ? formCheckDao.countPendingByClient(trainerId, trainingClientIds) : new Map(),
+  ]);
+  const intakeByClient = new Map(intakes.map((intake) => [String(intake.clientId), intake]));
 
   const currentTableIds = [
     ...new Set(
@@ -271,6 +280,8 @@ async function buildRoster(trainerId, now = new Date()) {
       sessions: (snapshot.workoutDates || []).length,
       openAlerts: alerts.total,
       urgentAlerts: alerts.high,
+      pendingCheckins: pendingCheckins.get(clientKey) || 0,
+      pendingFormChecks: pendingFormChecks.get(clientKey) || 0,
     };
   });
 }

@@ -580,6 +580,9 @@ module.exports = {
           // bloque contra bloque no cueste una segunda consulta cara.
           splitId: "$splitDocs._id",
           splitName: "$splitDocs.name",
+          // Tipo de microciclo (split-schema SPLIT_PURPOSES): en una descarga
+          // el volumen baja a propósito y el resumen no debe alarmarse.
+          splitPurpose: "$splitDocs.purpose",
           // El nombre del ejercicio del catálogo; si el CustomExercise no
           // apunta a ninguno (ejercicio propio del usuario), se cae a su
           // propio nombre para no perder la serie del agregado.
