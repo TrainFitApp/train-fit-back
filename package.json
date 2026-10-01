@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "prepare": "node .githooks/install.js",
+    "lint": "eslint --quiet .",
+    "lint:report": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "verify": "npm run lint && npm test",
     "start": "node ./bin/www",
     "serve": "cross-env NODE_ENV=development node --watch bin/www",
     "serve:open": "cross-env NODE_ENV=development CORS_OPEN=1 node --watch bin/www",
@@ -89,6 +93,7 @@
     "typescript": "5.9.3"
   },
   "devDependencies": {
-    "debug": "~2.6.9"
+    "debug": "~2.6.9",
+    "eslint": "^8.57.1"
   }
 }

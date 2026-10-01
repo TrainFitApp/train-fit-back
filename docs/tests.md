@@ -8,7 +8,14 @@ Estado a **2026-10-01**. La parte del front está en `train-fit-front/docs/tests
 npm test                      # todo: 1270 casos
 node --test components/dietDays/diet-days-nutrition-util.test.js   # uno solo
 npm run test:trainer-billing  # solo facturación del profesional (compila los .ts antes)
+npm run lint                  # solo errores (verde hoy)
+npm run lint:report           # con los 160 avisos heredados
+npm run verify                # lint + test
 ```
+
+El lint llegó en 2026-10 (`.eslintrc.json`, `eslint:recommended` a secas, sin
+reglas de estilo). La política error/warn y lo que se arregló para montarlo
+están comentados en el propio fichero de configuración.
 
 `npm test` **descubre los ficheros por glob** (`components/**`, `services/**`,
 `middleware/**`, `scripts/**`). No hay lista a mano que mantener, y

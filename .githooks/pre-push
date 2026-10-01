@@ -28,7 +28,7 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "pre-push: aviso, hay cambios sin commitear; se comprueban tal como están."
 fi
 
-npm run lint --if-present && npm test || {
+npm run verify || {
   echo ""
   echo "pre-push: lint o tests fallan; push a $protected cancelado."
   exit 1

@@ -39,10 +39,8 @@ jobs:
 
       - run: npm ci --no-audit --fund=false
 
-      # El back aún no tiene linter. Con --if-present este paso empieza a
-      # correr solo en cuanto exista el script `lint`.
       - name: Lint
-        run: npm run lint --if-present
+        run: npm run lint
 
       # `pretest` ya compila el TypeScript, pero así un fallo de compilación
       # sale con su propio nombre y no escondido dentro de los tests.

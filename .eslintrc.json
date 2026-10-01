@@ -1,0 +1,38 @@
+// Lint del backend. No había ninguno hasta 2026-10, así que arranca con
+// `eslint:recommended` a secas: nada de estilo, solo las reglas que señalan
+// errores de verdad (claves duplicadas, variables no definidas, código
+// inalcanzable, case sin break…). El formato no se toca.
+//
+// ERROR vs WARN, misma política que el front (ver train-fit-front/.eslintrc.base.json):
+// error son las reglas que HOY se cumplen; warn las que ya se incumplen y
+// bloquearían el lint desde el primer día. Para subir una a error, déjala a
+// cero y súbela.
+//
+// Lo que se arregló para poder dejarlas en error:
+//   · no-dupe-keys (7 casos): siete métodos definidos dos veces con el MISMO
+//     cuerpo. No cambiaba el comportamiento (en JS gana el último), pero si
+//     algún día los dos cuerpos difieren sí es un bug silencioso, y ahora
+//     salta.
+//   · no-undef (1): un mensaje de error usaba una variable inexistente
+//     (`constName` en vez de `marker`), así que al fallar salía un
+//     ReferenceError que tapaba el problema real.
+{
+  "root": true,
+  "env": { "node": true, "es2022": true },
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "script" },
+  "extends": ["eslint:recommended"],
+  "ignorePatterns": [".build/**", "node_modules/**", "coverage/**"],
+  "rules": {
+    // 93 casos. Código muerto: de lo primero que convendría limpiar, y lo que
+    // más valor daría subir a error.
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    // 58 casos de `try { ... } catch (e) { throw e }`. Inocuo pero inútil.
+    "no-useless-catch": "warn",
+    // 8 bloques vacíos.
+    "no-empty": "warn",
+    // 4 escapes de más en expresiones regulares.
+    "no-useless-escape": "warn",
+    // 2 funciones declaradas dentro de un bloque.
+    "no-inner-declarations": "warn"
+  }
+}
