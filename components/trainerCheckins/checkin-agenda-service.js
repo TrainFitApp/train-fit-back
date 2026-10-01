@@ -280,9 +280,28 @@ function validateAnswers(schedule, input) {
     if (field.type === "text" && (typeof value !== "string" || !value.trim() || value.length > 1000)) {
       return { error: "El comentario debe tener entre 1 y 1000 caracteres" };
     }
+    // Fotos: el _id del día de progreso. Que sea suyo y tenga fotos lo
+    // comprueba validatePhotoAnswers (necesita Mongo).
+    if (field.type === "photos" && !/^[a-f0-9]{24}$/i.test(String(value))) {
+      return { error: `Añade las fotos de ${field.label}` };
+    }
     values[key] = typeof value === "string" ? value.trim() : value;
   }
   return Object.keys(values).length ? { values } : { error: "Responde al menos una pregunta" };
+}
+
+/**
+ * Las respuestas de tipo fotos apuntan a un día de progreso del propio
+ * cliente con al menos una foto. Devuelve { error } o {}.
+ */
+async function validatePhotoAnswers(clientId, values) {
+  const progressMediaService = require("../progressMedia/progress-media-service");
+  for (const [key, value] of Object.entries(values || {})) {
+    if (CHECKIN_FIELDS_BY_KEY.get(key)?.type !== "photos") continue;
+    const day = await progressMediaService.dayForCheckin(clientId, value);
+    if (!day) return { error: "Añade al menos una foto antes de enviar" };
+  }
+  return {};
 }
 
 /**
@@ -337,6 +356,13 @@ async function saveResponse({ schedule, occurrence, values, today = todayIso() }
     });
   }
 
+  // Los días de fotos enviados quedan enlazados a esta respuesta: para este
+  // profesional son visibles siempre (responder ya es enviárselos).
+  for (const [key, value] of Object.entries(values)) {
+    if (CHECKIN_FIELDS_BY_KEY.get(key)?.type !== "photos") continue;
+    await require("../progressMedia/progress-media-service").linkCheckin(value, response._id, schedule.trainerId);
+  }
+
   await notificationDao.createForTrainer(schedule.trainerId, schedule.clientId, "checkin_responded", {
     scheduleName: schedule.name,
     occurrenceDate: occurrence.date,
@@ -361,5 +387,6 @@ module.exports = {
   openForClient,
   prefillFor,
   validateAnswers,
+  validatePhotoAnswers,
   saveResponse,
 };

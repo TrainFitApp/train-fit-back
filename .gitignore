@@ -9,3 +9,4 @@ bash.exe.stackdump
 scripts/backups/
 .env.stripe.prod
 .env.stripe.local
+.media-local/

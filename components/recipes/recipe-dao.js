@@ -8,7 +8,7 @@ const mealSchema = require("../meals/meal-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const mealModel = require("../meals/meal-service");
 const dietDayDao = require("../dietDays/diet-days-dao");
-const dietDayUtil = require("../dietDays/diet-days-util");
+const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
 const recipeMergeService = require("./recipe-merge.service");
 
 const customProductSchema = require("../customProducts/custom-product-schema");
@@ -587,10 +587,10 @@ module.exports = {
       }
 
       const hasMealContext = !!context?.mealId;
+      // `context.dietInUseId` ya no se mira (el dueño del día es el usuario
+      // autenticado); las apps viejas lo siguen mandando y no estorba.
       const hasNewDietDayContext =
-        !!context?.dietInUseId &&
-        context?.indexMeal !== undefined &&
-        context?.currentDate;
+        context?.indexMeal !== undefined && !!context?.currentDate;
 
       if (!hasMealContext && !hasNewDietDayContext) {
         return { recipe: recipeDoc };
@@ -644,17 +644,24 @@ module.exports = {
         };
       }
 
-      const standardDietDay = dietDayUtil.getStandardDietDay(context.currentDate);
-      const dietDay = await dietDayDao.createCustomRecipeOnNewDietDay(
-        nextCustomRecipe,
+      // Crear la receta y pautársela en una fecha que todavía no tiene día,
+      // en una sola llamada. Dos arreglos aquí (2026-10):
+      //   · el dueño del día es el usuario autenticado. Antes se pasaba
+      //     `context.dietInUseId` (el id del wrapper Diet, que ya no existe)
+      //     en el hueco del userId: el día nacía con un dueño que no era
+      //     nadie, invisible para el cliente — y la siguiente lectura de esa
+      //     fecha creaba OTRO día, el solapamiento que se veía en BD.
+      //   · el día se asegura (resolveOwnedDietDay), no se crea a ciegas.
+      const dietDay = await resolveOwnedDietDay(userId, context.currentDate);
+      const updatedDietDay = await dietDayDao.addCustomRecipeToMeal(
+        dietDay,
         context.indexMeal,
-        context.dietInUseId,
-        standardDietDay,
+        nextCustomRecipe,
       );
 
       return {
         recipe: recipeDoc,
-        dietDay,
+        dietDay: updatedDietDay,
       };
     } catch (err) {
       throw err;

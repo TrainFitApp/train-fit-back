@@ -11,6 +11,7 @@ const userSchema = require("../users/schema");
 const { isSamePermutation } = require("../util/permutation-util");
 const { diffBlocks, applyBlockDiff } = require("./workout-row-blocks");
 const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
+const { clearWorkoutExecutionState } = require("./workout-copy-util");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -56,9 +57,7 @@ function cloneWorkoutForTemplateCopy(workoutTemp, options = {}) {
       : { ...workoutTemp };
 
   clonedWorkout._id = new mongoose.Types.ObjectId();
-  delete clonedWorkout.date;
-  delete clonedWorkout.paused;
-  delete clonedWorkout.cronometer;
+  clearWorkoutExecutionState(clonedWorkout);
 
   if (options.nameSuffix) {
     clonedWorkout.name = `${clonedWorkout.name || ""} ${options.nameSuffix}`.trim();

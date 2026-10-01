@@ -3,7 +3,7 @@ const Schema = mongoose.Schema;
 
 const ProductSchema = Schema({
   code: { type: String, trim: true, maxlength: 100 },
-  name: { type: String, trim: true, maxlength: 200 },
+  name: { type: String, trim: true, maxlength: 300 },
   brand: { type: String, trim: true, maxlength: 200 },
   nameNormalized: String,
   brandNormalized: String,
@@ -62,7 +62,7 @@ const ProductSchema = Schema({
 
   // Product information
   servingUnit: String,
-  ingredients: { type: String, trim: true, maxlength: 2000 },
+  ingredients: { type: String, trim: true, maxlength: 5000 },
 
   // Allergens and dietary characteristics
   allergens: {

@@ -56,7 +56,7 @@ const CustomProductSchema = Schema({
   caffeine100g: { type: Number, min: 0, max: 100000 },
   taurine100g: { type: Number, min: 0, max: 100000 },
   alcohol100g: { type: Number, min: 0, max: 100000 },
-  ingredients: { type: String, trim: true, maxlength: 2000 },
+  ingredients: { type: String, trim: true, maxlength: 5000 },
   allergens: {
     type: [String],
     validate: {

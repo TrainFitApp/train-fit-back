@@ -3,7 +3,6 @@ const dietDayModel = require("./diet-days-service");
 const { resolveOwnedDietDay, applyResolvedPlanToDietDay } = require("./diet-day-resolver");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const planResolver = require("../planAssignments/plan-resolver");
-const userSchema = require("../users/schema");
 const { computeDayTracking } = require("./diet-days-nutrition-util");
 const { clearPlannedDay, isDaySkipped } = require("./diet-skips");
 const { buildMenuPreviews } = require("./menu-preview");
@@ -11,6 +10,17 @@ const { shoppingRange } = require("./shopping-list-service");
 const { weekForClientAt } = require("../planAssignments/week-service");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Toda escritura sobre "el día de tal fecha" necesita una fecha válida: sin
+// ella el día se crearía con una fecha basura y dejaría de encontrarse por
+// (userId, date), que es la clave del módulo. Devuelve null y responde 400.
+const requireIsoDate = (req, res) => {
+  const date = req.body?.date || req.body?.currentDate || req.params?.date;
+  if (ISO_DATE.test(date || "")) return date;
+
+  res.status(400).send({ message: "Fecha inválida (YYYY-MM-DD)" });
+  return null;
+};
 
 
 const controller = {
@@ -105,69 +115,79 @@ const controller = {
     });
   },
 
+  // POST /dietdays — "asegúrame el día de esta fecha". Idempotente: si ya
+  // existe lo devuelve, nunca crea un segundo (ver
+  // diet-days-dao.js#ensureDietDay). El dueño sale SIEMPRE del token: con un
+  // id del body cualquiera podría crear días en la dieta de otro. `meals` del
+  // body se ignora a propósito — un día nace con sus 6 huecos estándar y nada
+  // más, nunca con comidas dictadas por el cliente.
   async createDietDay(req, res) {
-    const dietDay = await dietDayModel.createDietDay({
-      // Sin userId el día nacería huérfano: no lo encontraría ninguna
-      // consulta por dueño y quedaría fuera de la cascada de borrado.
-      userId: req.user.id,
-      date: req.body.date,
-      meals: req.body.meals,
-    });
+    const date = requireIsoDate(req, res);
+    if (!date) return;
 
-    return res.send(dietDay);
+    return res.send(await resolveOwnedDietDay(req.user.id, date));
   },
 
+  // El peso del día vive en Anthropometry, no en el DietDay; la ruta se
+  // mantiene porque las apps ya instaladas la usan. El día se asegura igual
+  // que en cualquier otra escritura, en esta misma llamada.
   async createDayWeightOnNewDietDay(req, res) {
     const userId = req.user.id;
-    const dietDay = await dietDayModel.createDayWeightOnNewDietDay(
-      req.body.dayWeight,
-      req.body.currentDate,
-      userId
-    );
-    
-    // Also fetch the anthropometry that was just created
+    const date = requireIsoDate(req, res);
+    if (!date) return;
+
+    const dietDay = await resolveOwnedDietDay(userId, date);
+    if (req.body.dayWeight) {
+      await dietDayModel.setDayWeight(userId, date, req.body.dayWeight);
+    }
+
     const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(
       userId,
-      req.body.currentDate,
+      date,
       { ownOnly: true }
     );
-    
+
     return res.send({ dietDay, anthropometry });
   },
 
+  // Añadir un alimento a una comida de una fecha, en UNA llamada: el día se
+  // resuelve (o se crea) y el producto se añade dentro de la misma petición.
+  // Antes esto era "crear día a ciegas + añadir producto", así que abrir una
+  // fecha que ya tenía día —o dos checkbox seguidos del buscador— dejaba dos
+  // DietDay solapados en la misma fecha.
   async createCustomProductOnNewDietDay(req, res) {
-    const dietDay = await dietDayModel.createCustomProductOnNewDietDay(
-      req.body.customProduct,
-      req.body.indexMeal,
-      req.body.currentDate,
-      // El dueño es SIEMPRE el del token, nunca un id del body: si no,
-      // cualquiera podría crear días en la dieta de otro.
-      req.user.id,
-    );
+    const userId = req.user.id;
+    const date = requireIsoDate(req, res);
+    if (!date) return;
 
-    return res.send(dietDay);
+    const dietDay = await resolveOwnedDietDay(userId, date);
+    return res.send(
+      await dietDayModel.addCustomProductToMeal(
+        dietDay,
+        req.body.indexMeal,
+        req.body.customProduct,
+        userId,
+      ),
+    );
   },
 
+  // Variante receta de createCustomProductOnNewDietDay. La otra vía para lo
+  // mismo es POST /recipes/compose con context.{indexMeal,currentDate} (crear
+  // la receta y pautarla a la vez): las dos acaban en el mismo
+  // resolveOwnedDietDay + addCustomRecipeToMeal.
   async createCustomRecipeOnNewDietDay(req, res) {
-    const dietDay = await dietDayModel.createCustomRecipeOnNewDietDay(
-      req.body.customRecipe,
-      req.body.indexMeal,
-      req.user.id,
-      req.body.currentDate,
+    const userId = req.user.id;
+    const date = requireIsoDate(req, res);
+    if (!date) return;
+
+    const dietDay = await resolveOwnedDietDay(userId, date);
+    return res.send(
+      await dietDayModel.addCustomRecipeToMeal(
+        dietDay,
+        req.body.indexMeal,
+        req.body.customRecipe,
+      ),
     );
-
-    return res.send(dietDay);
-  },
-
-  async createOwnCustomRecipeOnNewDietDay(req, res) {
-    const dietDay = await dietDayModel.createOwnCustomRecipeOnNewDietDay(
-      req.params.idUser,
-      req.body.customRecipe,
-      req.body.date,
-      req.body.indexMeal,
-    );
-
-    return res.send(dietDay);
   },
 
   async addDietDayMeal(req, res) {
@@ -179,14 +199,17 @@ const controller = {
     return res.send(dietDay);
   },
 
+  // La nota del día. El día se identifica por (dueño del token, fecha) y se
+  // asegura en la misma llamada: antes la app tenía que crear el día, colgarlo
+  // de la dieta y escribir la nota en tres peticiones, y si la nota se
+  // guardaba sobre un día que ya existía en BD pero que la app no tenía
+  // todavía con _id, se creaba un día duplicado.
   async updateDietDay(req, res) {
-    const dietDay = await dietDayModel.updateDietDay(req.params.id, {
-      notes: req.body.notes,
-      date: req.body.date,
-      meals: req.body.meals,
-    });
+    const date = requireIsoDate(req, res);
+    if (!date) return;
 
-    return res.send(dietDay);
+    await resolveOwnedDietDay(req.user.id, date);
+    return res.send(await dietDayModel.setNotes(req.user.id, date, req.body.notes));
   },
 
   async pasteDietDayByUser(req, res) {

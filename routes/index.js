@@ -21,6 +21,7 @@ const envManager = require("../components/envManager/env-manager-routes");
 const serverManager = require("../components/serverManager/server-manager-routes");
 const gitManager = require("../components/gitManager/git-manager-routes");
 const pinnedExerciseNotes = require("../components/pinnedExerciseNotes/pinned-exercise-note-routes");
+const hiddenRecentFoods = require("../components/hiddenRecentFoods/hidden-recent-food-routes");
 const anthropometry = require("../components/anthropometry/anthropometry-routes");
 const nutritionalGoals = require("../components/nutritionalGoals/nutritional-goal-routes");
 const remoteConfig = require("../components/remoteConfig/remote-config-routes");
@@ -48,6 +49,11 @@ const trainerNutritionalGoalRoutes = require("../components/nutritionalGoals/tra
 const exerciseScoreRoutes = require("../components/exerciseScores/exercise-score-routes");
 const clientNotesRoutes = require("../components/clientNotes/client-notes-routes");
 const trainerPaymentRoutes = require("../components/trainerPayments/trainer-payment-routes");
+const mediaRoutes = require("../components/media/media-routes");
+const progressMediaRoutes = require("../components/progressMedia/progress-media-routes");
+const formCheckRoutes = require("../components/formChecks/form-check-routes");
+const reviewQueueRoutes = require("../components/reviewQueue/review-queue-routes");
+const techniqueVideoRoutes = require("../components/techniqueVideos/technique-video-routes");
 
 const router = express.Router();
 
@@ -69,6 +75,13 @@ router.use(painRoutes);
 // Movimiento 5 Coach Pro — misma razón que painRoutes: sirve a los dos lados
 // y sus rutas ya llevan escrito el prefijo que le toca a cada una.
 router.use(supplementRoutes);
+// Fotos y vídeos (docs/plan-medidas-multimedia.md). /media firma subidas y
+// sirve el almacenamiento local de desarrollo; el resto van sin prefijo, como
+// painRoutes, porque sirven a cliente y profesional.
+router.use("/media", mediaRoutes);
+router.use(progressMediaRoutes);
+router.use(formCheckRoutes);
+router.use(techniqueVideoRoutes);
 router.use(trainerNutritionalGoalRoutes);
 router.use(dietTemplateRoutes);
 router.use(mealSnippetRoutes);
@@ -79,6 +92,7 @@ router.use("/meals", meals);
 router.use("/customproducts", customProducts);
 router.use("/recipes", recipes);
 router.use("/customrecipes", customRecipes);
+router.use("/recent-foods", hiddenRecentFoods);
 router.use("/customexercises", customExercises);
 router.use("/tables", tables);
 router.use("/splits", splits);
@@ -112,5 +126,7 @@ router.use("/trainer", clientNotesRoutes);
 // Cobros 2026-09 — /trainer/payments/*: cuota, cobros, pagos registrados,
 // vista global y preferencias de avisos (solo el entrenador).
 router.use("/trainer", trainerPaymentRoutes);
+// Bandeja «Por revisar»: check-ins, revisiones de técnica y cuestionarios.
+router.use("/trainer", reviewQueueRoutes);
 
 module.exports = router;

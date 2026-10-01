@@ -253,6 +253,8 @@ module.exports = {
 
     const result = agenda.validateAnswers(schedule, req.body?.values);
     if (result.error) return res.status(400).send({ message: result.error, code: "CHECKIN_INVALID_ANSWER" });
+    const photos = await agenda.validatePhotoAnswers(clientId, result.values);
+    if (photos.error) return res.status(400).send({ message: photos.error, code: "CHECKIN_INVALID_ANSWER" });
 
     const saved = await agenda.saveResponse({
       schedule,

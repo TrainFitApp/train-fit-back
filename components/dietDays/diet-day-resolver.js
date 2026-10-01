@@ -1,4 +1,3 @@
-const userSchema = require("../users/schema");
 const dietDaysService = require("./diet-days-service");
 const dietDaysUtil = require("./diet-days-util");
 const dietDaySchema = require("./diet-days-schema");
@@ -20,11 +19,10 @@ const { daysInRange, addDaysToIsoDate } = require("../util/date-util");
 // (solo al resincronizar un día ya creado — al crear/elegir menú se deja
 // como estaba, que es lo de siempre).
 async function applyResolvedPlanToDietDay(dietDayDoc, date, resolved, trainerId, clientId, { clearMissing = false } = {}) {
-  // dietDaysService.createDietDay MUTA standardDietDay.meals (sustituye los
-  // objetos {name,...} por sus _id ya creados) — dietDaysUtil.MEALS es la
-  // fuente de verdad original (índice -> nombre de slot) que usó
-  // getStandardDietDay para construirlos, así que se lee de ahí y no de un
-  // array que pudiera venir ya mutado.
+  // dietDaysUtil.MEALS es la fuente de verdad del hueco (índice -> nombre de
+  // slot): el mismo mapa que usó getStandardDietDay al construir las comidas
+  // del día, así que el nombre se lee de ahí y nunca de `meals[i].name`, que
+  // puede llegar sin poblar.
   let appliedAny = false;
   for (let i = 0; i < dietDayDoc.meals.length; i++) {
     const slotName = dietDaysUtil.MEALS[i];
@@ -88,15 +86,12 @@ async function resolveOwnedDietDay(userId, date) {
   // Refactor nutrición (2026-09) — ya no hay wrapper Diet que crear ni
   // enganchar: un día pertenece a su usuario por su propio userId, así que
   // "asegurar que el usuario tiene dieta" deja de existir como paso.
-  let dietDay = await dietDaysService.findByUserAndDate(userId, date);
-  if (!dietDay) {
-    const standardDietDay = dietDaysUtil.getStandardDietDay(date);
-    const dietDayDoc = await dietDaysService.createDietDay({
-      ...standardDietDay,
-      userId,
-    });
-    dietDay = dietDayDoc;
-
+  //
+  // 2026-10 — la creación vive entera en ensureDietDay (idempotente y a
+  // prueba de carreras); aquí solo queda lo que es propio del resolver:
+  // aplicar el plan activo.
+  let { dietDay, created } = await dietDaysService.ensureDietDay(userId, date);
+  if (created) {
     // Auditoría de arquitectura (nutrición) — SOLO al crear un día nuevo: si
     // el cliente tiene un PlanAssignment activo que cubre esta fecha, se
     // rellena desde ahí en vez de quedar con las 6 comidas vacías de
@@ -107,7 +102,7 @@ async function resolveOwnedDietDay(userId, date) {
     // nunca debe tirar abajo la creación del día ya hecha. Sin menú elegido
     // todavía (ver plan-resolver.js) esto también devuelve null — el día se
     // crea vacío hasta que el cliente elija explícitamente.
-    const appliedAny = await trySyncEmptyDietDayWithActivePlan(dietDayDoc, date, userId);
+    const appliedAny = await trySyncEmptyDietDayWithActivePlan(dietDay, date, userId);
     if (appliedAny) {
       dietDay = await dietDaysService.findByUserAndDate(userId, date);
     }
