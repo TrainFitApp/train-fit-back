@@ -170,15 +170,17 @@ const htmlToText = (html) => {
   return text.trim();
 };
 
-const sendMailSES = async (to, subject, html) => {
+// options.replyTo: buzón al que responde el usuario (p. ej. facturación en los avisos de Trainers).
+const sendMailSES = async (to, subject, html, options = {}) => {
   const text = htmlToText(html);
+  const replyTo = options.replyTo || fromEmail || "registro@trainfit.net";
 
   const mailOptions = {
     from: {
       name: "TrainFit",
       address: fromEmail || "registro@trainfit.net",
     },
-    replyTo: fromEmail || "registro@trainfit.net",
+    replyTo,
     to,
     subject,
     html,
@@ -186,7 +188,7 @@ const sendMailSES = async (to, subject, html) => {
 
     headers: {
       "List-Unsubscribe": `<mailto:${fromEmail || "registro@trainfit.net"}>`,
-      "Reply-To": fromEmail || "registro@trainfit.net",
+      "Reply-To": replyTo,
       "X-Mailer": "TrainFit Mailer v1.0",
       "X-Priority": "3",
       "X-Auto-Response-Suppress": "OOF, AutoReply",

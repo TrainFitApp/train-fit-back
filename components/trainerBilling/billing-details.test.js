@@ -43,7 +43,19 @@ test("invoice history keeps only this customer's finalized invoices and Stripe-h
   assert.equal(details.invoices[1].reason, "other");
   assert.equal(details.invoices[1].hostedUrl, undefined, "a lookalike host is never linked");
   assert.equal(details.invoices[1].pdfUrl, undefined, "a non-https PDF is never linked");
-  assert.deepEqual(details.paymentMethod, { brand: "visa", last4: "4242", expMonth: 9, expYear: 2027 });
+  assert.deepEqual(details.paymentMethod, { brand: "visa", last4: "4242", expMonth: 9, expYear: 2027, kind: "card", wallet: null });
+});
+
+test("Link and card wallets are shown as such instead of disappearing", async (t) => {
+  const { gateway } = fixture();
+  t.mock.method(gateway.stripe.invoices, "list", async () => ({ data: [] }));
+  const retrieve = t.mock.method(gateway.stripe.subscriptions, "retrieve", async () => ({ livemode: false, customer: "cus_me",
+    default_payment_method: { type: "link", link: { email: "t@example.test" } } }));
+  assert.deepEqual((await gateway.billingDetails("cus_me", "sub_me")).paymentMethod,
+    { brand: "link", last4: "", expMonth: 0, expYear: 0, kind: "link", wallet: null });
+  retrieve.mock.mockImplementation(async () => ({ livemode: false, customer: "cus_me", default_payment_method: { type: "card",
+    card: { brand: "mastercard", last4: "4444", exp_month: 1, exp_year: 2030, wallet: { type: "apple_pay" } } } }));
+  assert.equal((await gateway.billingDetails("cus_me", "sub_me")).paymentMethod.wallet, "apple_pay");
 });
 
 test("the payment method is optional: a permission error hides it instead of failing the page", async (t) => {

@@ -1,7 +1,20 @@
 import Stripe from "stripe";
 import { createHash, randomBytes } from "node:crypto";
 import { API_VERSION } from "./config";
-import { Account, BillingDetails, BillingError, ChangeOperation, ChangeQuote, Config, EventRecord, Gateway, InvoiceView, Mode, PaymentMethodView, PlanPrice, QuoteLine, Session, Subscription, User } from "./types";
+import { classifyInvoice, unknownFinanced } from "./financing";
+import { Account, BillingDetails, BillingError, ChangeOperation, ChangeQuote, Config, DisputeView, EventRecord, FraudWarningView, Gateway, InvoiceView, Mode, PaymentContext, PaymentMethodView, PlanPrice, QuoteLine, RefundView, Session, Subscription, User } from "./types";
+
+// Eventos que procesa el backend. Los de dinero (reembolsos, disputas, avisos de fraude)
+// también se recuperan con events.list si un webhook se pierde (service.backfillMoneyEvents).
+export const MONEY_EVENT_TYPES = ["charge.refunded", "charge.refund.updated", "refund.created", "refund.updated", "refund.failed",
+  "charge.dispute.created", "charge.dispute.updated", "charge.dispute.closed", "charge.dispute.funds_withdrawn",
+  "charge.dispute.funds_reinstated", "radar.early_fraud_warning.created", "radar.early_fraud_warning.updated"];
+export const SUPPORTED_EVENT_TYPES = ["checkout.session.completed", "checkout.session.expired", "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed", "customer.subscription.created", "customer.subscription.updated",
+  "customer.subscription.deleted", "customer.subscription.paused", "customer.subscription.resumed",
+  "customer.subscription.pending_update_applied", "customer.subscription.pending_update_expired",
+  "subscription_schedule.updated", "subscription_schedule.released", "subscription_schedule.completed", "subscription_schedule.canceled",
+  "invoice.paid", "invoice.payment_failed", "invoice.payment_action_required", "invoice.finalization_failed", ...MONEY_EVENT_TYPES];
 
 function id(value: string | { id: string } | null | undefined): string | null {
   return typeof value === "string" ? value : value?.id || null;
@@ -16,7 +29,43 @@ function sessionView(session: Stripe.Checkout.Session, mode: Mode): Session {
   return { id: session.id, customerId: id(session.customer), subscriptionId: id(session.subscription),
     status: session.status, url: session.url, livemode: session.livemode,
     userId: session.metadata?.trainfitUserId, scope: session.metadata?.scope,
-    attempt: session.metadata?.attempt, priceId: session.metadata?.priceId };
+    attempt: session.metadata?.attempt, priceId: session.metadata?.priceId,
+    termsAccepted: session.consent?.terms_of_service === "accepted" };
+}
+// Solo identificadores: los objetos se releen de Stripe al procesar (nunca se confía en el payload).
+function eventRecord(event: Stripe.Event, mode: Mode): EventRecord | null {
+  if (!SUPPORTED_EVENT_TYPES.includes(event.type)) return null;
+  const object = event.data.object as unknown as { id?: string; object?: string; customer?: string | { id: string } | null;
+    payment_intent?: string | { id: string } | null; refunded?: boolean; charge?: string | { id: string } | null };
+  const record: EventRecord = { eventId: event.id, type: event.type, customerId: id(object.customer), mode, status: "pending", attempts: 0 };
+  if (event.type === "charge.refunded") {
+    record.detail = { chargeId: object.id, paymentIntentId: id(object.payment_intent), fullyRefunded: object.refunded === true };
+  } else if (event.type.startsWith("refund.") || event.type === "charge.refund.updated") {
+    record.detail = { refundId: object.id, chargeId: id(object.charge) || undefined, paymentIntentId: id(object.payment_intent) };
+  } else if (event.type.startsWith("charge.dispute.")) {
+    // A Dispute carries no customer: the service resolves it through its payment.
+    record.detail = { disputeId: object.id, chargeId: id(object.charge) || undefined, paymentIntentId: id(object.payment_intent) };
+  } else if (event.type.startsWith("radar.early_fraud_warning.")) {
+    record.detail = { warningId: object.id, chargeId: id(object.charge) || undefined, paymentIntentId: id(object.payment_intent) };
+  } else if (event.type === "checkout.session.completed") {
+    record.detail = { sessionId: object.id };
+  }
+  return record;
+}
+// Texto junto al botón de pago: renovación, cómo cancelar y contacto (prevención de disputas).
+export function checkoutText(interval: PlanPrice["interval"], config: Config): Stripe.Checkout.SessionCreateParams.CustomText {
+  const period = interval === "annual" ? "cada año" : "cada mes";
+  const support = config.supportEmail ? ` Dudas de facturación: ${config.supportEmail}.` : "";
+  return {
+    submit: { message: `La suscripción se renueva automáticamente ${period} hasta que canceles la renovación en Mi cuenta → Suscripción. ` +
+      `Mantienes el acceso hasta el final del periodo pagado; cancelar no devuelve automáticamente el periodo ya pagado.${support}` },
+    ...(config.termsUrl ? { terms_of_service_acceptance: {
+      message: `Acepto las [condiciones de contratación de TrainFit Trainers](${config.termsUrl}).` } } : {}),
+  };
+}
+function refundView(refund: Stripe.Refund): RefundView {
+  return { id: refund.id, amount: refund.amount, status: refund.status || "pending", reason: refund.reason || null,
+    failureReason: refund.failure_reason || null, createdAt: new Date(refund.created * 1000) };
 }
 function invoiceUrl(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
@@ -46,10 +95,15 @@ function copyPhase(phase: Stripe.SubscriptionSchedule.Phase): Stripe.Subscriptio
     throw new BillingError("UNSUPPORTED_SUBSCRIPTION", "Esta configuración requiere revisión de soporte.");
   }
   const item = phase.items[0]!;
-  const settings = phase.invoice_settings;
+  // Managed Payments: Stripe emite la factura y responde del impuesto (issuer y liability "stripe").
+  // La API no admite enviarlos (solo self/account): la fase los hereda de los ajustes por defecto
+  // del calendario, que los conservan (comprobado en el sandbox, 2026-10-01).
+  const stripeManaged = (phase.invoice_settings?.issuer?.type as string | undefined) === "stripe" ||
+    (phase.automatic_tax?.liability?.type as string | undefined) === "stripe";
+  const settings = stripeManaged ? null : phase.invoice_settings;
   return { start_date: phase.start_date, end_date: phase.end_date, currency: phase.currency,
     collection_method: phase.collection_method || "charge_automatically",
-    automatic_tax: phase.automatic_tax ? { enabled: phase.automatic_tax.enabled } : undefined,
+    automatic_tax: phase.automatic_tax && !stripeManaged ? { enabled: phase.automatic_tax.enabled } : undefined,
     billing_cycle_anchor: phase.billing_cycle_anchor || "automatic",
     default_payment_method: id(phase.default_payment_method) || undefined,
     default_tax_rates: phase.default_tax_rates?.map((rate) => rate.id) || [],
@@ -69,8 +123,11 @@ export class StripeGateway implements Gateway {
     this.stripe = new Stripe(config.key, { apiVersion: API_VERSION, timeout: 10000, maxNetworkRetries: 2 });
   }
   private check(livemode: boolean): void { assertMode(livemode, this.config.mode); }
-  // IVA aparte (decisión 2026-09-21): Stripe Tax calcula el impuesto sobre precios sin IVA.
+  // IVA aparte (decisión 2026-09-21): precios sin IVA. Con Stripe Tax lo calcula esta integración;
+  // con Managed Payments (2026-10-01) Stripe es el vendedor y lo calcula, declara y paga él.
   private get stripeTax(): boolean { return this.config.taxPolicy === "stripe_tax"; }
+  private get managedPayments(): boolean { return this.config.taxPolicy === "managed_payments"; }
+  private get vatOnTop(): boolean { return this.stripeTax || this.managedPayments; }
   private taxOf(invoice: Stripe.Invoice): number {
     return (invoice.total_taxes || []).reduce((sum, tax) => sum + (tax.amount || 0), 0);
   }
@@ -86,7 +143,7 @@ export class StripeGateway implements Gateway {
     if (!current.active || current.type !== "recurring" || current.currency !== "eur" ||
         current.unit_amount !== price.amount || current.recurring?.interval !== (price.interval === "annual" ? "year" : "month") ||
         current.recurring.interval_count !== 1 || current.recurring.usage_type !== "licensed" ||
-        (this.stripeTax && current.tax_behavior !== "exclusive")) {
+        (this.vatOnTop && current.tax_behavior !== "exclusive")) {
       throw new BillingError("PRICE_MISMATCH", "El precio configurado no coincide con el catálogo.", 503);
     }
   }
@@ -123,14 +180,14 @@ export class StripeGateway implements Gateway {
         latestInvoiceId: id(invoice), latestInvoiceStatus: invoice?.status,
         latestInvoiceUrl: invoiceUrl(invoice?.hosted_invoice_url), latestInvoiceAmountDue: invoice?.amount_due,
         pendingUpdate: Boolean(sub.pending_update), pendingUpdateExpiresAt: sub.pending_update?.expires_at,
-        collectionMethod: sub.collection_method,
+        collectionMethod: sub.collection_method, collectionPaused: Boolean(sub.pause_collection),
         billingNow: testClock && typeof testClock !== "string" ? testClock.frozen_time : undefined,
         fingerprint: createHash("sha256").update(JSON.stringify({ id: sub.id, price: item.price.id,
           item: item.id, quantity: item.quantity, start: item.current_period_start, end: item.current_period_end,
           status: sub.status, cancel: sub.cancel_at_period_end, cancelAt: sub.cancel_at, schedule: id(sub.schedule),
           pending: sub.pending_update, invoice: id(invoice), invoiceStatus: invoice?.status,
           discounts: sub.discounts, itemDiscounts: item.discounts, tax: sub.default_tax_rates,
-          itemTax: item.tax_rates, mode: sub.billing_mode, collection: sub.collection_method })).digest("hex") };
+          itemTax: item.tax_rates, mode: sub.billing_mode, collection: sub.collection_method, pause: sub.pause_collection })).digest("hex") };
     }));
   }
   async listSessions(customerId: string): Promise<Session[]> {
@@ -148,11 +205,22 @@ export class StripeGateway implements Gateway {
     const suffix = key.slice(-8).replace(/[0-9]/g, (digit) => String.fromCharCode(97 + Number(digit)));
     const session = await this.stripe.checkout.sessions.create({ mode: "subscription", customer: account.customerId,
       client_reference_id: user.id, metadata, subscription_data: { metadata },
-      line_items: [{ price: price.id, quantity: 1 }], automatic_tax: { enabled: this.stripeTax },
-      // Stripe Tax necesita la dirección de facturación; el NIF permite la inversión
-      // del sujeto pasivo a empresas de la UE y figura en la factura.
-      ...(this.stripeTax ? { billing_address_collection: "required" as const, tax_id_collection: { enabled: true },
-        customer_update: { address: "auto" as const, name: "auto" as const } } : {}),
+      line_items: [{ price: price.id, quantity: 1 }],
+      // Managed Payments: Stripe vende como comerciante registrado; él calcula el impuesto, pide la
+      // dirección, elige los métodos de pago y no admite texto propio (comprobado en el sandbox, 2026-10-01).
+      ...(this.managedPayments ? { managed_payments: { enabled: true }, billing_address_collection: "required" as const } : {
+        automatic_tax: { enabled: this.stripeTax },
+        // Stripe Tax necesita la dirección de facturación; el NIF permite la inversión
+        // del sujeto pasivo a empresas de la UE y figura en la factura.
+        ...(this.stripeTax ? { billing_address_collection: "required" as const, tax_id_collection: { enabled: true },
+          customer_update: { address: "auto" as const, name: "auto" as const } } : {}),
+        // Métodos de pago de la configuración aprobada (tarjeta, Apple Pay, Google Pay y Link).
+        ...(this.config.paymentMethodConfiguration ? { payment_method_configuration: this.config.paymentMethodConfiguration } : {}),
+        custom_text: checkoutText(price.interval, this.config),
+      }),
+      // Con condiciones publicadas, Checkout exige aceptarlas (y Stripe guarda la aceptación en la sesión).
+      // Requiere la URL de condiciones también en los datos públicos de la cuenta.
+      ...(this.config.termsUrl ? { consent_collection: { terms_of_service: "required" as const } } : {}),
       allow_promotion_codes: true,
       success_url: `${this.config.frontendUrl}/tabs/subscription?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${this.config.frontendUrl}/tabs/subscription?checkout=cancelled`,
@@ -188,13 +256,13 @@ export class StripeGateway implements Gateway {
     // at the future renewal is an explicit tariff estimate; coupons and credit
     // balances may expire or change before that date.
     if (kind === "scheduled" && intervalChanges) return { amountDueNow: 0, renewalAmount: price.amount,
-      renewalAt: sub.currentPeriodEnd, creditBalance: 0, renewalExcludesTax: this.stripeTax };
+      renewalAt: sub.currentPeriodEnd, creditBalance: 0, renewalExcludesTax: this.vatOnTop };
     // With a schedule attached (a change being replaced, or a completed schedule
     // still owning its last phase) Stripe previews the schedule's next phase and
     // ignores subscription_details.items for the renewal: verified in sandbox,
     // it returned the old scheduled price. The tariff is the honest estimate.
     if (kind === "scheduled" && sub.scheduleId) return { amountDueNow: 0, renewalAmount: price.amount,
-      renewalAt: sub.currentPeriodEnd, creditBalance: 0, renewalExcludesTax: this.stripeTax };
+      renewalAt: sub.currentPeriodEnd, creditBalance: 0, renewalExcludesTax: this.vatOnTop };
     const details: Stripe.InvoiceCreatePreviewParams.SubscriptionDetails = {
       items: [{ id: sub.itemId, price: price.id, quantity: 1 }],
       proration_behavior: kind === "immediate" ? "always_invoice" : "none",
@@ -218,7 +286,7 @@ export class StripeGateway implements Gateway {
       lines: kind === "immediate" ? this.quoteLines(invoice.lines.data) : [],
       taxAmount: kind === "immediate" ? this.taxOf(invoice) : 0,
       // Tras cambiar de periodicidad no hay previsualización de la renovación: la tarifa va sin IVA.
-      renewalExcludesTax: this.stripeTax && intervalChanges };
+      renewalExcludesTax: this.vatOnTop && intervalChanges };
   }
   // Desglose del cobro de hoy (crédito del plan actual y cargo del nuevo), como
   // el resumen de confirmación del portal. Importes de Stripe; etiquetas nuestras.
@@ -250,7 +318,8 @@ export class StripeGateway implements Gateway {
         amountDue: invoice.amount_due, currency: invoice.currency,
         reason: reason || "other",
         periodStart: line ? new Date(line.period.start * 1000) : null, periodEnd: line ? new Date(line.period.end * 1000) : null,
-        hostedUrl: invoiceUrl(invoice.hosted_invoice_url), pdfUrl: pdfUrl(invoice.invoice_pdf) });
+        hostedUrl: invoiceUrl(invoice.hosted_invoice_url), pdfUrl: pdfUrl(invoice.invoice_pdf),
+        creditedAmount: invoice.post_payment_credit_notes_amount || 0 });
     }
     return { invoices, paymentMethod: subscriptionId ? await this.paymentMethod(subscriptionId, customerId) : null };
   }
@@ -265,8 +334,12 @@ export class StripeGateway implements Gateway {
         const customer = await this.stripe.customers.retrieve(customerId, { expand: ["invoice_settings.default_payment_method"] });
         method = "deleted" in customer && customer.deleted ? null : (customer as Stripe.Customer).invoice_settings?.default_payment_method || null;
       }
-      if (!method || typeof method === "string" || method.type !== "card" || !method.card) return null;
-      return { brand: method.card.brand, last4: method.card.last4, expMonth: method.card.exp_month, expYear: method.card.exp_year };
+      if (!method || typeof method === "string") return null;
+      // Link guarda el pago en su propia cartera: sin marca ni últimos 4 dígitos.
+      if (method.type === "link") return { brand: "link", last4: "", expMonth: 0, expYear: 0, kind: "link", wallet: null };
+      if (method.type !== "card" || !method.card) return null;
+      return { brand: method.card.brand, last4: method.card.last4, expMonth: method.card.exp_month, expYear: method.card.exp_year,
+        kind: "card", wallet: method.card.wallet?.type || null };
     } catch { return null; }
   }
   async upcomingRenewal(sub: Subscription): Promise<{ at: number; amount: number; priceId: string | null; subtotal: number } | null> {
@@ -348,26 +421,94 @@ export class StripeGateway implements Gateway {
     try { event = this.stripe.webhooks.constructEvent(body, signature, this.config.webhookSecret); }
     catch { throw new BillingError("INVALID_SIGNATURE", "Firma de webhook inválida.", 400); }
     this.check(event.livemode);
-    const supported = new Set(["checkout.session.completed", "checkout.session.expired", "checkout.session.async_payment_succeeded",
-      "checkout.session.async_payment_failed", "customer.subscription.created", "customer.subscription.updated",
-      "customer.subscription.deleted", "customer.subscription.paused", "customer.subscription.resumed",
-      "customer.subscription.pending_update_applied", "customer.subscription.pending_update_expired",
-      "subscription_schedule.updated", "subscription_schedule.released", "subscription_schedule.completed", "subscription_schedule.canceled",
-      "invoice.paid", "invoice.payment_failed", "invoice.payment_action_required", "invoice.finalization_failed",
-      "charge.refunded", "charge.dispute.created"]);
-    if (!supported.has(event.type)) return null;
-    const object = event.data.object as unknown as { id?: string; customer?: string | { id: string } | null;
-      payment_intent?: string | { id: string } | null; refunded?: boolean; charge?: string | { id: string } | null };
-    const record: EventRecord = { eventId: event.id, type: event.type, customerId: id(object.customer),
-      mode: this.config.mode, status: "pending", attempts: 0 };
-    if (event.type === "charge.refunded") {
-      record.detail = { chargeId: object.id, paymentIntentId: id(object.payment_intent), fullyRefunded: object.refunded === true };
+    return eventRecord(event, this.config.mode);
+  }
+  // Recupera eventos recientes de la API (firmados por el propio acceso de la clave), p. ej. tras una caída del webhook.
+  async recentEvents(types: string[], since: number): Promise<EventRecord[]> {
+    const records: EventRecord[] = [];
+    for await (const event of this.stripe.events.list({ types, created: { gte: since }, limit: 100 })) {
+      this.check(event.livemode);
+      const record = eventRecord(event, this.config.mode);
+      if (record) records.push(record);
+      if (records.length >= 500) break;
     }
-    // A Dispute carries no customer: the service resolves it through its payment.
-    if (event.type === "charge.dispute.created") {
-      record.detail = { disputeId: object.id, chargeId: id(object.charge) || undefined, paymentIntentId: id(object.payment_intent) };
+    return records.reverse();
+  }
+  // Cargo → PaymentIntent → factura → qué financiaba. Siempre desde Stripe, nunca desde el payload del evento.
+  async paymentContext(ref: { chargeId?: string | null; paymentIntentId?: string | null }): Promise<PaymentContext | null> {
+    let charge: Stripe.Charge | null = ref.chargeId ? await this.stripe.charges.retrieve(ref.chargeId) : null;
+    let paymentIntentId = ref.paymentIntentId || (charge ? id(charge.payment_intent) : null);
+    if (!charge && paymentIntentId) charge = (await this.stripe.charges.list({ payment_intent: paymentIntentId, limit: 1 })).data[0] || null;
+    if (charge) { this.check(charge.livemode); paymentIntentId ||= id(charge.payment_intent); }
+    if (!paymentIntentId) return null;
+    let financed = unknownFinanced({ currency: charge?.currency || "eur" });
+    const payments = await this.stripe.invoicePayments.list({ payment: { type: "payment_intent", payment_intent: paymentIntentId }, limit: 1 });
+    const invoiceId = id(payments.data[0]?.invoice as string | { id: string } | null | undefined);
+    if (invoiceId) {
+      const invoice = await this.stripe.invoices.retrieve(invoiceId);
+      this.check(invoice.livemode);
+      const lines = invoice.lines.has_more ? await this.stripe.invoices.listLineItems(invoice.id, { limit: 100 }) : invoice.lines;
+      financed = lines.has_more ? unknownFinanced({ invoiceId, currency: invoice.currency }) : classifyInvoice(this.config, {
+        id: invoice.id, subscriptionId: id(invoice.parent?.subscription_details?.subscription), customerId: id(invoice.customer),
+        billingReason: invoice.billing_reason || null, amountPaid: invoice.amount_paid, currency: invoice.currency,
+        lines: lines.data.filter((line) => line.parent?.type === "subscription_item_details").map((line) => ({
+          amount: line.amount, priceId: id(line.pricing?.price_details?.price), proration: Boolean(line.parent?.subscription_item_details?.proration),
+          subscriptionItem: line.parent?.subscription_item_details?.subscription_item || null,
+          periodStart: line.period.start, periodEnd: line.period.end })) });
     }
-    return record;
+    const refunds = charge ? (await this.stripe.refunds.list({ charge: charge.id, limit: 100 })).data.map(refundView) : [];
+    return { chargeId: charge?.id || null, paymentIntentId, customerId: (charge ? id(charge.customer) : null) || financed.customerId,
+      amount: charge?.amount || 0, amountRefunded: charge?.amount_refunded || 0, refunded: charge?.refunded === true,
+      currency: charge?.currency || financed.currency, refunds, financed };
+  }
+  async getDispute(disputeId: string): Promise<DisputeView> {
+    const dispute = await this.stripe.disputes.retrieve(disputeId);
+    this.check(dispute.livemode);
+    const due = dispute.evidence_details?.due_by;
+    return { id: dispute.id, status: dispute.status, amount: dispute.amount, currency: dispute.currency, reason: dispute.reason || null,
+      chargeId: id(dispute.charge), paymentIntentId: id(dispute.payment_intent), dueBy: due ? new Date(due * 1000) : null,
+      createdAt: new Date(dispute.created * 1000) };
+  }
+  async getFraudWarning(warningId: string): Promise<FraudWarningView> {
+    const warning = await this.stripe.radar.earlyFraudWarnings.retrieve(warningId);
+    this.check(warning.livemode);
+    return { id: warning.id, chargeId: id(warning.charge), paymentIntentId: id(warning.payment_intent), fraudType: warning.fraud_type || null,
+      actionable: warning.actionable, createdAt: new Date(warning.created * 1000) };
+  }
+  // Disputa (decisión 2026-09-28): sin cobros nuevos mientras se resuelve. Las facturas nuevas quedan en
+  // borrador y las abiertas dejan de reintentarse; el acceso ya pagado no cambia.
+  async pauseCollection(subscriptionId: string, key: string): Promise<{ pausedInvoiceIds: string[] }> {
+    const sub = await this.stripe.subscriptions.update(subscriptionId, { pause_collection: { behavior: "keep_as_draft" } }, { idempotencyKey: key });
+    this.check(sub.livemode);
+    const pausedInvoiceIds: string[] = [];
+    for (const invoice of (await this.stripe.invoices.list({ subscription: subscriptionId, status: "open", limit: 100 })).data) {
+      if (!invoice.auto_advance) continue;
+      await this.stripe.invoices.update(invoice.id, { auto_advance: false }, { idempotencyKey: `${key}-${invoice.id}` });
+      pausedInvoiceIds.push(invoice.id);
+    }
+    return { pausedInvoiceIds };
+  }
+  // Reanuda cobros. Solo vuelve a cobrarse el borrador del periodo vigente: nunca periodos ya pasados
+  // durante la pausa (el entrenador no tuvo acceso de pago en ellos). Los reintentos pausados se reactivan.
+  async resumeCollection(subscriptionId: string, pausedInvoiceIds: string[], key: string, now: number): Promise<void> {
+    const sub = await this.stripe.subscriptions.update(subscriptionId, { pause_collection: "" }, { idempotencyKey: key });
+    this.check(sub.livemode);
+    for (const draft of (await this.stripe.invoices.list({ subscription: subscriptionId, status: "draft", limit: 100 })).data) {
+      const line = draft.lines.data.find((entry) => entry.parent?.type === "subscription_item_details");
+      if (draft.auto_advance || !line || line.period.end <= now) continue;
+      await this.stripe.invoices.update(draft.id, { auto_advance: true }, { idempotencyKey: `${key}-${draft.id}` });
+    }
+    for (const invoiceId of pausedInvoiceIds) {
+      const invoice = await this.stripe.invoices.retrieve(invoiceId);
+      if (invoice.status !== "open" || invoice.auto_advance) continue;
+      await this.stripe.invoices.update(invoiceId, { auto_advance: true }, { idempotencyKey: `${key}-${invoiceId}` });
+    }
+  }
+  // Deshace una subida: vuelve al precio anterior sin prorrateo, así que no genera factura ni cobro.
+  async revertPrice(subscriptionId: string, itemId: string, priceId: string, key: string): Promise<void> {
+    const sub = await this.stripe.subscriptions.update(subscriptionId, { items: [{ id: itemId, price: priceId, quantity: 1 }],
+      proration_behavior: "none" }, { idempotencyKey: key });
+    this.check(sub.livemode);
   }
   async invoiceForPayment(paymentIntentId: string) {
     const payments = await this.stripe.invoicePayments.list({ payment: { type: "payment_intent", payment_intent: paymentIntentId }, limit: 1 });

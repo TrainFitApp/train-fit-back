@@ -247,3 +247,23 @@ test("all Trainer billing routes require trainer authorization", () => {
   ]);
   for (const route of trainerRoutes) assert.deepEqual(route.handlers[0].roles, ["trainer"]);
 });
+
+test("Trainer billing management routes require admin authorization", () => {
+  const registrations = [];
+  const router = {};
+  for (const method of ["getAsync", "postAsync"]) router[method] = (route, ...handlers) => registrations.push({ method, route, handlers });
+  const handler = () => {};
+  loadLegacy("../billing/billing-routes.js", {
+    "@awaitjs/express": { Router: () => router },
+    "../../middleware/validateAuth": { auth: (roles) => ({ roles: plain(roles) }) },
+    "../trainerBilling/adapter": { controller: { adminCases: handler, adminLookup: handler, adminTrainer: handler, adminIntervene: handler } },
+  });
+  const adminRoutes = registrations.filter((registration) => registration.route.startsWith("/admin/trainers"));
+  assert.deepEqual(adminRoutes.map((route) => `${route.method} ${route.route}`), [
+    "getAsync /admin/trainers/cases", "getAsync /admin/trainers/lookup", "getAsync /admin/trainers/:userId",
+    "postAsync /admin/trainers/:userId/interventions"]);
+  for (const route of adminRoutes) {
+    assert.deepEqual(route.handlers[0].roles, ["admin"]);
+    assert.equal(route.handlers[1], handler);
+  }
+});

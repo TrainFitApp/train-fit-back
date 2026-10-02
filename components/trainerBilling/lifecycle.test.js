@@ -672,45 +672,7 @@ test("a failed renewal exposes its open invoice; a pending change invoice does n
   assert.equal((await change.repository.get(USER_ID)).renewalPayment, null);
 });
 
-test("a full refund of the charge paying the current period ends paid access immediately", async () => {
-  const { service, gateway, repository } = setup();
-  gateway.invoiceForPayment = async () => ({ invoiceId: "in_paid_original", subscriptionId: SUBSCRIPTION_ID, customerId: CUSTOMER_ID });
-  const cancelled = [];
-  gateway.cancelSubscription = async (id) => { cancelled.push(id); gateway.subscription.status = "canceled"; gateway.updateFingerprint(); };
-  await service.event({ eventId: "evt_refund", type: "charge.refunded", customerId: CUSTOMER_ID, mode: "test",
-    status: "pending", attempts: 0, detail: { chargeId: "ch_1", paymentIntentId: "pi_1", fullyRefunded: true } });
-  assert.deepEqual(cancelled, [SUBSCRIPTION_ID]);
-  assert.equal(professional(repository).entitled, false);
-  assert.equal((await repository.get(USER_ID)).status, "canceled");
-  // The same event redelivered does nothing more.
-  await service.event({ eventId: "evt_refund", type: "charge.refunded", customerId: CUSTOMER_ID, mode: "test",
-    status: "pending", attempts: 0, detail: { chargeId: "ch_1", paymentIntentId: "pi_1", fullyRefunded: true } });
-  assert.equal(cancelled.length, 1);
-});
-
-test("partial refunds, refunds of older invoices and disputes never change access; they flag the account", async (t) => {
-  for (const [label, detail, invoiceId] of [
-    ["partial", { chargeId: "ch_p", paymentIntentId: "pi_p", fullyRefunded: false }, "in_paid_original"],
-    ["older invoice", { chargeId: "ch_o", paymentIntentId: "pi_o", fullyRefunded: true }, "in_older"],
-  ]) await t.test(label, async () => {
-    const { service, gateway, repository } = setup();
-    gateway.invoiceForPayment = async () => ({ invoiceId, subscriptionId: SUBSCRIPTION_ID, customerId: CUSTOMER_ID });
-    gateway.cancelSubscription = async () => { throw new Error("must not cancel"); };
-    await service.event({ eventId: `evt_${label}`, type: "charge.refunded", customerId: CUSTOMER_ID, mode: "test",
-      status: "pending", attempts: 0, detail });
-    assert.equal(professional(repository).entitled, true);
-    assert.equal((await repository.get(USER_ID)).review.reason, "refund");
-  });
-  await t.test("dispute without a customer on the event", async () => {
-    const { service, gateway, repository } = setup();
-    gateway.invoiceForPayment = async () => ({ invoiceId: "in_paid_original", subscriptionId: SUBSCRIPTION_ID, customerId: CUSTOMER_ID });
-    gateway.cancelSubscription = async () => { throw new Error("must not cancel"); };
-    await service.event({ eventId: "evt_dispute", type: "charge.dispute.created", customerId: null, mode: "test",
-      status: "pending", attempts: 0, detail: { disputeId: "dp_1", paymentIntentId: "pi_1" } });
-    assert.equal(professional(repository).entitled, true);
-    assert.deepEqual({ ...(await repository.get(USER_ID)).review, at: undefined }, { reason: "dispute", reference: "dp_1", at: undefined });
-  });
-});
+// Reembolsos, disputas y avisos de fraude (política 2026-09-28): money-events.test.js.
 
 test("a failed renewal keeps the paid plan for 7 days of grace, then falls back to Free", () => {
   const renewalFailedAt = new Date("2026-10-18T12:00:00Z");
