@@ -1,19 +1,20 @@
 import mongoose, { Schema } from "mongoose";
 import { randomUUID } from "node:crypto";
-import { Account, BillingCase, BillingError, EventRecord, Intervention, Mode, Projection, Repository, User } from "./types";
+import { Account, BillingCase, BillingError, EventRecord, Intervention, Mode, Projection, Repository, SeatUsage, User } from "./types";
 
-export interface LegacyUsers {
+// Lo que la facturación necesita del resto del backend (usuarios y cartera de clientes).
+export interface UserStore {
   getUser(id: string): Promise<User | null>;
   project(account: Account, value: Projection): Promise<void>;
-  clientUsage(id: string): Promise<number>;
+  seatUsage(id: string): Promise<SeatUsage>;
 }
 interface AccountDocument extends Account { leaseOwner?: string | null; leaseUntil?: Date }
 interface StoredEvent extends EventRecord { lastAttemptAt?: Date; processedAt?: Date }
 const accountSchema = new Schema<AccountDocument>({
   userId: { type: String, required: true }, mode: { type: String, required: true, enum: ["test", "live"] },
   customerId: String, customerStartedAt: Date,
-  checkout: { key: String, priceId: String, startedAt: Date, sessionId: String, url: String },
-  subscriptionId: String, status: { type: String, default: "none" }, tier: String, interval: String,
+  checkout: { key: String, target: Schema.Types.Mixed, startedAt: Date, sessionId: String, url: String },
+  subscriptionId: String, status: { type: String, default: "none" }, tier: String, interval: String, extraSeats: Number,
   paidUntil: Date, currentPeriodEnd: Date, cancelAtPeriodEnd: { type: Boolean, default: false },
   revision: { type: Number, default: 0 }, deletedAt: Date, leaseOwner: String,
   provider: Schema.Types.Mixed, quote: Schema.Types.Mixed, change: Schema.Types.Mixed,
@@ -64,15 +65,11 @@ function duplicate(error: unknown): boolean {
 
 export class MongoRepository implements Repository {
   private initialization?: Promise<unknown>;
-  constructor(private users: LegacyUsers, private mode: Mode = "test") {}
+  // Sandbox y real conviven en la misma base sin mezclarse: cuentas, eventos y casos van por modo,
+  // y el cupo solo acepta proyecciones del modo de la clave del servidor (feature-access-service).
+  constructor(private users: UserStore, private mode: Mode = "test") {}
   async init(): Promise<void> {
-    const connection = mongoose.connection;
-    const sandboxDb = ["127.0.0.1", "localhost", "::1"].includes(connection.host) && connection.name === "trainfit_stripe_local";
-    // Sandbox data only ever lives in the isolated local DB; live data never does.
-    if (connection.readyState !== 1 || (this.mode === "test" ? !sandboxDb : connection.name === "trainfit_stripe_local")) {
-      throw new BillingError(this.mode === "test" ? "LOCAL_DATABASE_REQUIRED" : "LIVE_DATABASE_REQUIRED", this.mode === "test"
-        ? "Los pagos de prueba requieren la base de datos local aislada." : "Los pagos reales no pueden usar la base de datos de pruebas.", 503);
-    }
+    if (mongoose.connection.readyState !== 1) throw new BillingError("DATABASE_UNAVAILABLE", "La base de datos no está disponible.", 503);
     this.initialization ||= Promise.all([AccountModel.createIndexes(), EventModel.createIndexes(),
       CaseModel.createIndexes(), InterventionModel.createIndexes()]).catch((error: unknown) => {
       this.initialization = undefined;
@@ -113,7 +110,7 @@ export class MongoRepository implements Repository {
       const result = await AccountModel.updateOne({ ...identity, leaseOwner: owner, leaseUntil: { $gt: new Date() } }, { $set: {
         customerId: account.customerId, customerStartedAt: account.customerStartedAt,
         checkout: account.checkout || null, subscriptionId: account.subscriptionId || null,
-        status: account.status, tier: account.tier || null, interval: account.interval || null,
+        status: account.status, tier: account.tier || null, interval: account.interval || null, extraSeats: account.extraSeats || 0,
         paidUntil: account.paidUntil || null, currentPeriodEnd: account.currentPeriodEnd || null,
         cancelAtPeriodEnd: account.cancelAtPeriodEnd, revision, deletedAt: account.deletedAt || null,
         provider: account.provider || null, quote: account.quote || null, change: account.change || null,
@@ -133,7 +130,7 @@ export class MongoRepository implements Repository {
   }
   async project(account: Account, value: Projection): Promise<void> { await this.users.project(account, value); }
   async getUser(userId: string): Promise<User | null> { return this.users.getUser(userId); }
-  async clientUsage(userId: string): Promise<number> { return this.users.clientUsage(userId); }
+  async seatUsage(userId: string): Promise<SeatUsage> { return this.users.seatUsage(userId); }
   async saveEvent(record: EventRecord): Promise<EventRecord> {
     await this.init();
     const query = { eventId: record.eventId, mode: this.mode };

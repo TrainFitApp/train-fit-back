@@ -1,8 +1,12 @@
 import Stripe from "stripe";
 import { createHash, randomBytes } from "node:crypto";
 import { API_VERSION } from "./config";
-import { classifyInvoice, unknownFinanced } from "./financing";
-import { Account, BillingDetails, BillingError, ChangeOperation, ChangeQuote, Config, DisputeView, EventRecord, FraudWarningView, Gateway, InvoiceView, Mode, PaymentContext, PaymentMethodView, PlanPrice, QuoteLine, RefundView, Session, Subscription, User } from "./types";
+import { Interval, PlanState, PriceKind, Tier, catalogAmount, catalogPrices, isInterval, isTier, lookupKey,
+  recurringAmount } from "./catalog";
+import { stateFromLines } from "./financing";
+import { Account, BillingDetails, BillingError, ChangeKind, ChangeOperation, ChangePreview, ChangeQuote, Config, DisputeView,
+  EventRecord, FinancingInvoice, FraudWarningView, Gateway, InvoiceView, ItemUpdate, Mode, PaymentContext, PaymentMethodView,
+  PhaseItem, PriceRef, QuoteLine, RefundView, Session, Subscription, SubscriptionItemView, User } from "./types";
 
 // Eventos que procesa el backend. Los de dinero (reembolsos, disputas, avisos de fraude)
 // también se recuperan con events.list si un webhook se pierde (service.backfillMoneyEvents).
@@ -16,6 +20,11 @@ export const SUPPORTED_EVENT_TYPES = ["checkout.session.completed", "checkout.se
   "subscription_schedule.updated", "subscription_schedule.released", "subscription_schedule.completed", "subscription_schedule.canceled",
   "invoice.paid", "invoice.payment_failed", "invoice.payment_action_required", "invoice.finalization_failed", ...MONEY_EVENT_TYPES];
 
+// Los precios del catálogo llevan estos metadatos (los pone `npm run stripe:catalog`): así se
+// reconocen también los precios archivados que sigan en suscripciones antiguas.
+export const PRICE_METADATA = "trainfit_catalog";
+const PRICE_CACHE_MS = 10 * 60000;
+
 function id(value: string | { id: string } | null | undefined): string | null {
   return typeof value === "string" ? value : value?.id || null;
 }
@@ -24,13 +33,26 @@ function id(value: string | { id: string } | null | undefined): string | null {
 function assertMode(livemode: boolean, mode: Mode): void {
   if (livemode !== (mode === "live")) throw new BillingError("MODE_MISMATCH", "Se ha rechazado un recurso de otro entorno de pagos.", 409);
 }
+export function encodeTarget(state: PlanState): string { return `${state.tier}:${state.interval}:${state.extraSeats}`; }
 function sessionView(session: Stripe.Checkout.Session, mode: Mode): Session {
   assertMode(session.livemode, mode);
   return { id: session.id, customerId: id(session.customer), subscriptionId: id(session.subscription),
     status: session.status, url: session.url, livemode: session.livemode,
     userId: session.metadata?.trainfitUserId, scope: session.metadata?.scope,
-    attempt: session.metadata?.attempt, priceId: session.metadata?.priceId,
+    attempt: session.metadata?.attempt, target: session.metadata?.target,
     termsAccepted: session.consent?.terms_of_service === "accepted" };
+}
+// Precio del catálogo de Trainers según sus metadatos; null si es de otro producto o no encaja.
+export function priceRef(price: Stripe.Price): PriceRef | null {
+  const meta = price.metadata || {};
+  const kind = meta.trainfit_kind as PriceKind;
+  if (meta[PRICE_METADATA] !== "trainers" || (kind !== "base" && kind !== "seat") || !isTier(meta.trainfit_tier) ||
+      !isInterval(meta.trainfit_interval)) return null;
+  const interval = meta.trainfit_interval as Interval;
+  if (price.type !== "recurring" || price.currency !== "eur" || price.unit_amount === null ||
+      price.recurring?.interval !== (interval === "annual" ? "year" : "month") || price.recurring.interval_count !== 1 ||
+      price.recurring.usage_type !== "licensed" || price.billing_scheme !== "per_unit") return null;
+  return { id: price.id, kind, tier: meta.trainfit_tier as Tier, interval, amount: price.unit_amount };
 }
 // Solo identificadores: los objetos se releen de Stripe al procesar (nunca se confía en el payload).
 function eventRecord(event: Stripe.Event, mode: Mode): EventRecord | null {
@@ -51,17 +73,6 @@ function eventRecord(event: Stripe.Event, mode: Mode): EventRecord | null {
     record.detail = { sessionId: object.id };
   }
   return record;
-}
-// Texto junto al botón de pago: renovación, cómo cancelar y contacto (prevención de disputas).
-export function checkoutText(interval: PlanPrice["interval"], config: Config): Stripe.Checkout.SessionCreateParams.CustomText {
-  const period = interval === "annual" ? "cada año" : "cada mes";
-  const support = config.supportEmail ? ` Dudas de facturación: ${config.supportEmail}.` : "";
-  return {
-    submit: { message: `La suscripción se renueva automáticamente ${period} hasta que canceles la renovación en Mi cuenta → Suscripción. ` +
-      `Mantienes el acceso hasta el final del periodo pagado; cancelar no devuelve automáticamente el periodo ya pagado.${support}` },
-    ...(config.termsUrl ? { terms_of_service_acceptance: {
-      message: `Acepto las [condiciones de contratación de TrainFit Trainers](${config.termsUrl}).` } } : {}),
-  };
 }
 function refundView(refund: Stripe.Refund): RefundView {
   return { id: refund.id, amount: refund.amount, status: refund.status || "pending", reason: refund.reason || null,
@@ -85,110 +96,190 @@ function discountIds(discounts: Stripe.SubscriptionSchedule.Phase.Discount[]) {
     throw new BillingError("UNSUPPORTED_SUBSCRIPTION", "El descuento requiere revisión de soporte.");
   });
 }
+function subscriptionItemLine(line: Stripe.InvoiceLineItem): boolean { return line.parent?.type === "subscription_item_details"; }
+function prorationLine(line: Stripe.InvoiceLineItem): boolean { return Boolean(line.parent?.subscription_item_details?.proration); }
 
 // Reuse existing discount IDs instead of restarting coupon durations. Fail closed
-// on advanced billing settings that this single-item SaaS does not implement.
+// on advanced billing settings that this SaaS does not implement.
 function copyPhase(phase: Stripe.SubscriptionSchedule.Phase): Stripe.SubscriptionScheduleUpdateParams.Phase {
-  if (phase.items.length !== 1 || phase.add_invoice_items.length || phase.application_fee_percent ||
+  if (!phase.items.length || phase.add_invoice_items.length || phase.application_fee_percent ||
       phase.billing_thresholds || phase.on_behalf_of || phase.transfer_data || phase.trial_end || phase.trial ||
-      phase.items[0]!.billing_thresholds || phase.collection_method === "send_invoice") {
+      phase.items.some((item) => item.billing_thresholds) || phase.collection_method === "send_invoice") {
     throw new BillingError("UNSUPPORTED_SUBSCRIPTION", "Esta configuración requiere revisión de soporte.");
   }
-  const item = phase.items[0]!;
   // Managed Payments: Stripe emite la factura y responde del impuesto (issuer y liability "stripe").
   // La API no admite enviarlos (solo self/account): la fase los hereda de los ajustes por defecto
   // del calendario, que los conservan (comprobado en el sandbox, 2026-10-01).
-  const stripeManaged = (phase.invoice_settings?.issuer?.type as string | undefined) === "stripe" ||
-    (phase.automatic_tax?.liability?.type as string | undefined) === "stripe";
-  const settings = stripeManaged ? null : phase.invoice_settings;
   return { start_date: phase.start_date, end_date: phase.end_date, currency: phase.currency,
     collection_method: phase.collection_method || "charge_automatically",
-    automatic_tax: phase.automatic_tax && !stripeManaged ? { enabled: phase.automatic_tax.enabled } : undefined,
     billing_cycle_anchor: phase.billing_cycle_anchor || "automatic",
     default_payment_method: id(phase.default_payment_method) || undefined,
     default_tax_rates: phase.default_tax_rates?.map((rate) => rate.id) || [],
     description: phase.description || undefined, discounts: discountIds(phase.discounts),
     metadata: phase.metadata || undefined, proration_behavior: "none",
-    invoice_settings: settings ? { account_tax_ids: settings.account_tax_ids?.map((tax) => id(tax)!) || undefined,
-      days_until_due: settings.days_until_due || undefined, issuer: settings.issuer ? {
-        type: settings.issuer.type, account: id(settings.issuer.account) || undefined } : undefined } : undefined,
-    items: [{ price: id(item.price)!, quantity: item.quantity || 1,
+    items: phase.items.map((item) => ({ price: id(item.price)!, quantity: item.quantity ?? 1,
       discounts: discountIds(item.discounts), tax_rates: item.tax_rates?.map((rate) => rate.id) || [],
-      metadata: item.metadata || undefined }] };
+      metadata: item.metadata || undefined })) };
+}
+function samePhaseItems(a: PhaseItem[], b: PhaseItem[]): boolean {
+  const key = (items: PhaseItem[]) => items.filter((item) => item.quantity > 0).map((item) => `${item.price}x${item.quantity}`).sort().join();
+  return key(a) === key(b);
 }
 
 export class StripeGateway implements Gateway {
   readonly stripe: Stripe;
+  private book: { at: number; byKey: Map<string, PriceRef> } | null = null;
+  private refs = new Map<string, PriceRef | null>();
   constructor(private config: Config) {
     this.stripe = new Stripe(config.key, { apiVersion: API_VERSION, timeout: 10000, maxNetworkRetries: 2 });
   }
   private check(livemode: boolean): void { assertMode(livemode, this.config.mode); }
-  // IVA aparte (decisión 2026-09-21): precios sin IVA. Con Stripe Tax lo calcula esta integración;
-  // con Managed Payments (2026-10-01) Stripe es el vendedor y lo calcula, declara y paga él.
-  private get stripeTax(): boolean { return this.config.taxPolicy === "stripe_tax"; }
-  private get managedPayments(): boolean { return this.config.taxPolicy === "managed_payments"; }
-  private get vatOnTop(): boolean { return this.stripeTax || this.managedPayments; }
   private taxOf(invoice: Stripe.Invoice): number {
     return (invoice.total_taxes || []).reduce((sum, tax) => sum + (tax.amount || 0), 0);
   }
+
+  // ---- Catálogo ----
+
+  // Precios a la venta, buscados por lookup key y comprobados contra el catálogo (importe, intervalo,
+  // moneda, IVA aparte). Se cachean unos minutos: cada propuesta los necesita.
+  private async priceBook(): Promise<Map<string, PriceRef>> {
+    if (this.book && Date.now() - this.book.at < PRICE_CACHE_MS) return this.book.byKey;
+    const wanted = catalogPrices();
+    const list = await this.stripe.prices.list({ lookup_keys: wanted.map((entry) => lookupKey(entry.kind, entry.tier, entry.interval)),
+      active: true, limit: 100 });
+    const byKey = new Map<string, PriceRef>();
+    for (const price of list.data) {
+      this.check(price.livemode);
+      const ref = priceRef(price);
+      if (!ref || !price.lookup_key) continue;
+      if (lookupKey(ref.kind, ref.tier, ref.interval) !== price.lookup_key || ref.amount !== catalogAmount(ref.kind, ref.tier, ref.interval) ||
+          price.tax_behavior !== "exclusive") {
+        throw new BillingError("PRICE_MISMATCH", "El precio configurado en Stripe no coincide con el catálogo.", 503);
+      }
+      byKey.set(price.lookup_key, ref);
+      this.refs.set(ref.id, ref);
+    }
+    this.book = { at: Date.now(), byKey };
+    return byKey;
+  }
+  private async priceFor(kind: PriceKind, tier: Tier, interval: Interval): Promise<PriceRef> {
+    const ref = (await this.priceBook()).get(lookupKey(kind, tier, interval));
+    if (!ref) throw new BillingError("PRICE_CATALOG_REQUIRED", "Falta un precio del catálogo en Stripe.", 503);
+    return ref;
+  }
+  // Cualquier precio (también archivado) por id, para leer facturas y suscripciones.
+  private async priceInfo(priceId: string | null): Promise<PriceRef | null> {
+    if (!priceId) return null;
+    if (this.refs.has(priceId)) return this.refs.get(priceId)!;
+    const price = await this.stripe.prices.retrieve(priceId);
+    this.check(price.livemode);
+    const ref = priceRef(price);
+    this.refs.set(priceId, ref);
+    return ref;
+  }
+  async validateState(state: PlanState): Promise<void> {
+    if (state.tier !== "free") await this.priceFor("base", state.tier, state.interval);
+    if (state.extraSeats > 0) await this.priceFor("seat", state.tier, state.interval);
+  }
+  // Elementos con cantidad > 0 de un estado: la cuota (si el plan la tiene) y las plazas adicionales.
+  private async phaseItems(state: PlanState): Promise<PhaseItem[]> {
+    const items: PhaseItem[] = [];
+    if (state.tier !== "free") items.push({ price: (await this.priceFor("base", state.tier, state.interval)).id, quantity: 1 });
+    if (state.extraSeats > 0) items.push({ price: (await this.priceFor("seat", state.tier, state.interval)).id, quantity: state.extraSeats });
+    return items;
+  }
+  // Cambios sobre los elementos actuales para llegar al estado pedido. La plaza adicional se reutiliza
+  // (con cantidad 0 si no quedan plazas) y solo se borra si el plan de destino no vende plazas.
+  private async itemUpdates(sub: Subscription, target: PlanState): Promise<ItemUpdate[]> {
+    const updates: ItemUpdate[] = [];
+    const baseItem = sub.items.find((item) => item.price.kind === "base");
+    const seatItem = sub.items.find((item) => item.price.kind === "seat");
+    if (target.tier !== "free") {
+      const base = await this.priceFor("base", target.tier, target.interval);
+      if (!baseItem) updates.push({ price: base.id, quantity: 1 });
+      else if (baseItem.price.id !== base.id || baseItem.quantity !== 1) updates.push({ id: baseItem.id, price: base.id, quantity: 1 });
+    } else if (baseItem) updates.push({ id: baseItem.id, deleted: true });
+    const seat = catalogAmount("seat", target.tier, target.interval) !== undefined
+      ? await this.priceFor("seat", target.tier, target.interval) : null;
+    if (target.extraSeats > 0) {
+      if (!seatItem) updates.push({ price: seat!.id, quantity: target.extraSeats });
+      else if (seatItem.price.id !== seat!.id || seatItem.quantity !== target.extraSeats) {
+        updates.push({ id: seatItem.id, price: seat!.id, quantity: target.extraSeats });
+      }
+    } else if (seatItem) {
+      if (!seat) updates.push({ id: seatItem.id, deleted: true });
+      else if (seatItem.price.id !== seat.id || seatItem.quantity !== 0) updates.push({ id: seatItem.id, price: seat.id, quantity: 0 });
+    }
+    return updates;
+  }
+  // Lo que se enviará a Stripe para llegar al estado pedido; se guarda en la propuesta.
+  async changeItems(sub: Subscription, target: PlanState): Promise<{ updates: ItemUpdate[]; fromItems: PhaseItem[]; targetItems: PhaseItem[] }> {
+    return { updates: await this.itemUpdates(sub, target),
+      fromItems: sub.items.filter((item) => item.quantity > 0).map((item) => ({ price: item.price.id, quantity: item.quantity })),
+      targetItems: await this.phaseItems(target) };
+  }
+
+  // ---- Clientes, suscripciones y Checkout ----
+
   async createCustomer(user: User, idempotencyKey: string): Promise<string> {
     const customer = await this.stripe.customers.create({ email: user.email,
       metadata: { trainfitUserId: user.id, scope: "trainers" } }, { idempotencyKey });
     this.check(customer.livemode);
     return customer.id;
   }
-  async validatePrice(price: PlanPrice): Promise<void> {
-    const current = await this.stripe.prices.retrieve(price.id);
-    this.check(current.livemode);
-    if (!current.active || current.type !== "recurring" || current.currency !== "eur" ||
-        current.unit_amount !== price.amount || current.recurring?.interval !== (price.interval === "annual" ? "year" : "month") ||
-        current.recurring.interval_count !== 1 || current.recurring.usage_type !== "licensed" ||
-        (this.vatOnTop && current.tax_behavior !== "exclusive")) {
-      throw new BillingError("PRICE_MISMATCH", "El precio configurado no coincide con el catálogo.", 503);
-    }
-  }
   async listSubscriptions(customerId: string): Promise<Subscription[]> {
     const list = await this.stripe.subscriptions.list({ customer: customerId, status: "all", limit: 100,
       expand: ["data.latest_invoice", "data.test_clock"] });
     if (list.has_more) throw new BillingError("BILLING_REVIEW_REQUIRED", "Contacta con soporte para revisar tu suscripción.");
-    return Promise.all(list.data.map(async (sub): Promise<Subscription> => {
-      this.check(sub.livemode);
-      const testClock = sub.test_clock;
-      if (testClock && (typeof testClock === "string" || testClock.status !== "ready")) {
-        throw new BillingError("TEST_CLOCK_NOT_READY", "Espera a que termine de avanzar el reloj de pruebas.", 503);
-      }
-      if (testClock && typeof testClock !== "string") this.check(testClock.livemode);
-      const item = sub.items.data[0];
-      if (!item || sub.items.has_more || sub.items.data.length !== 1) {
-        throw new BillingError("UNSUPPORTED_SUBSCRIPTION", "La suscripción requiere revisión de soporte.");
-      }
-      let invoice = sub.latest_invoice;
-      if (typeof invoice === "string") invoice = await this.stripe.invoices.retrieve(invoice);
-      if (invoice) this.check(invoice.livemode);
-      const lines = invoice?.lines.has_more
-        ? await this.stripe.invoices.listLineItems(invoice.id, { limit: 100 }) : invoice?.lines;
-      if (lines?.has_more) throw new BillingError("BILLING_REVIEW_REQUIRED", "La factura requiere revisión de soporte.");
-      const paidLine = lines?.data.find((line) => id(line.pricing?.price_details?.price) === item.price.id &&
-        line.parent?.type === "subscription_item_details" && !line.parent.subscription_item_details?.proration &&
-        line.parent.subscription_item_details?.subscription_item === item.id);
-      return { id: sub.id, customerId: id(sub.customer) || "", status: sub.status, priceId: item.price.id,
-        quantity: item.quantity || 0, currentPeriodEnd: item.current_period_end,
-        cancelAtPeriodEnd: sub.cancel_at_period_end, paid: invoice?.status === "paid",
-        paidPriceId: id(paidLine?.pricing?.price_details?.price), paidPeriodEnd: paidLine?.period.end || 0,
-        livemode: sub.livemode, userId: sub.metadata.trainfitUserId, scope: sub.metadata.scope,
-        itemId: item.id, currentPeriodStart: item.current_period_start, scheduleId: id(sub.schedule),
-        latestInvoiceId: id(invoice), latestInvoiceStatus: invoice?.status,
-        latestInvoiceUrl: invoiceUrl(invoice?.hosted_invoice_url), latestInvoiceAmountDue: invoice?.amount_due,
-        pendingUpdate: Boolean(sub.pending_update), pendingUpdateExpiresAt: sub.pending_update?.expires_at,
-        collectionMethod: sub.collection_method, collectionPaused: Boolean(sub.pause_collection),
-        billingNow: testClock && typeof testClock !== "string" ? testClock.frozen_time : undefined,
-        fingerprint: createHash("sha256").update(JSON.stringify({ id: sub.id, price: item.price.id,
-          item: item.id, quantity: item.quantity, start: item.current_period_start, end: item.current_period_end,
-          status: sub.status, cancel: sub.cancel_at_period_end, cancelAt: sub.cancel_at, schedule: id(sub.schedule),
-          pending: sub.pending_update, invoice: id(invoice), invoiceStatus: invoice?.status,
-          discounts: sub.discounts, itemDiscounts: item.discounts, tax: sub.default_tax_rates,
-          itemTax: item.tax_rates, mode: sub.billing_mode, collection: sub.collection_method, pause: sub.pause_collection })).digest("hex") };
-    }));
+    return Promise.all(list.data.map((sub) => this.subscriptionView(sub)));
+  }
+  private async subscriptionView(sub: Stripe.Subscription): Promise<Subscription> {
+    this.check(sub.livemode);
+    const testClock = sub.test_clock;
+    if (testClock && (typeof testClock === "string" || testClock.status !== "ready")) {
+      throw new BillingError("TEST_CLOCK_NOT_READY", "Espera a que termine de avanzar el reloj de pruebas.", 503);
+    }
+    if (testClock && typeof testClock !== "string") this.check(testClock.livemode);
+    if (!sub.items.data.length || sub.items.has_more) throw new BillingError("UNSUPPORTED_SUBSCRIPTION", "La suscripción requiere revisión de soporte.");
+    const items: SubscriptionItemView[] = [];
+    let unknown = false;
+    for (const item of sub.items.data) {
+      const ref = priceRef(item.price);
+      if (ref) { this.refs.set(ref.id, ref); items.push({ id: item.id, price: ref, quantity: item.quantity ?? 0 }); }
+      else if ((item.quantity ?? 0) > 0) unknown = true;
+    }
+    const active = items.filter((item) => item.quantity > 0);
+    const bases = active.filter((item) => item.price.kind === "base");
+    const seats = active.filter((item) => item.price.kind === "seat");
+    // Solo una cuota y una plaza adicional; cualquier otra forma la revisa soporte.
+    const state = !unknown && bases.length <= 1 && seats.length <= 1 ? stateFromLines(bases[0], seats[0]) : null;
+    const anchor = sub.items.data.find((item) => item.id === (bases[0] || seats[0])?.id) || sub.items.data[0]!;
+    let invoice = sub.latest_invoice;
+    if (typeof invoice === "string") invoice = await this.stripe.invoices.retrieve(invoice);
+    if (invoice) this.check(invoice.livemode);
+    const lines = invoice?.lines.has_more ? await this.stripe.invoices.listLineItems(invoice.id, { limit: 100 }) : invoice?.lines;
+    if (lines?.has_more) throw new BillingError("BILLING_REVIEW_REQUIRED", "La factura requiere revisión de soporte.");
+    // Prueba de pago: la última factura está pagada y cubre los elementos vigentes.
+    const activeIds = new Set(active.map((item) => item.id));
+    const covered = (lines?.data || []).filter((line) => subscriptionItemLine(line) &&
+      activeIds.has(line.parent?.subscription_item_details?.subscription_item || ""));
+    return { id: sub.id, customerId: id(sub.customer) || "", status: sub.status, state, items,
+      currentPeriodEnd: anchor.current_period_end, currentPeriodStart: anchor.current_period_start,
+      cancelAtPeriodEnd: sub.cancel_at_period_end, paid: invoice?.status === "paid" && !sub.pending_update,
+      paidPeriodEnd: covered.length ? Math.max(...covered.map((line) => line.period.end)) : 0,
+      livemode: sub.livemode, userId: sub.metadata.trainfitUserId, scope: sub.metadata.scope, scheduleId: id(sub.schedule),
+      latestInvoiceId: id(invoice), latestInvoiceStatus: invoice?.status,
+      latestInvoiceUrl: invoiceUrl(invoice?.hosted_invoice_url), latestInvoiceAmountDue: invoice?.amount_due,
+      pendingUpdate: Boolean(sub.pending_update), pendingUpdateExpiresAt: sub.pending_update?.expires_at,
+      collectionMethod: sub.collection_method, collectionPaused: Boolean(sub.pause_collection),
+      billingNow: testClock && typeof testClock !== "string" ? testClock.frozen_time : undefined,
+      fingerprint: createHash("sha256").update(JSON.stringify({ id: sub.id,
+        items: sub.items.data.map((item) => [item.id, item.price.id, item.quantity, item.current_period_start, item.current_period_end,
+          item.discounts, item.tax_rates]),
+        status: sub.status, cancel: sub.cancel_at_period_end, cancelAt: sub.cancel_at, schedule: id(sub.schedule),
+        pending: sub.pending_update, invoice: id(invoice), invoiceStatus: invoice?.status,
+        discounts: sub.discounts, tax: sub.default_tax_rates, mode: sub.billing_mode, collection: sub.collection_method,
+        pause: sub.pause_collection })).digest("hex") };
   }
   async listSessions(customerId: string): Promise<Session[]> {
     const list = await this.stripe.checkout.sessions.list({ customer: customerId, limit: 100 });
@@ -199,48 +290,41 @@ export class StripeGateway implements Gateway {
   async getSession(sessionId: string): Promise<Session> {
     return sessionView(await this.stripe.checkout.sessions.retrieve(sessionId), this.config.mode);
   }
-  async createCheckout(user: User, account: Account, price: PlanPrice, key: string): Promise<Session> {
-    const metadata = { trainfitUserId: user.id, scope: "trainers", attempt: key, priceId: price.id };
+  async createCheckout(user: User, account: Account, target: PlanState, key: string): Promise<Session> {
+    const metadata = { trainfitUserId: user.id, scope: "trainers", attempt: key, target: encodeTarget(target) };
     // Label remains stable for retries sharing the same Stripe idempotency key.
     const suffix = key.slice(-8).replace(/[0-9]/g, (digit) => String.fromCharCode(97 + Number(digit)));
     const session = await this.stripe.checkout.sessions.create({ mode: "subscription", customer: account.customerId,
       client_reference_id: user.id, metadata, subscription_data: { metadata },
-      line_items: [{ price: price.id, quantity: 1 }],
+      line_items: (await this.phaseItems(target)).map((item) => ({ price: item.price, quantity: item.quantity })),
       // Managed Payments: Stripe vende como comerciante registrado; él calcula el impuesto, pide la
       // dirección, elige los métodos de pago y no admite texto propio (comprobado en el sandbox, 2026-10-01).
-      ...(this.managedPayments ? { managed_payments: { enabled: true }, billing_address_collection: "required" as const } : {
-        automatic_tax: { enabled: this.stripeTax },
-        // Stripe Tax necesita la dirección de facturación; el NIF permite la inversión
-        // del sujeto pasivo a empresas de la UE y figura en la factura.
-        ...(this.stripeTax ? { billing_address_collection: "required" as const, tax_id_collection: { enabled: true },
-          customer_update: { address: "auto" as const, name: "auto" as const } } : {}),
-        // Métodos de pago de la configuración aprobada (tarjeta, Apple Pay, Google Pay y Link).
-        ...(this.config.paymentMethodConfiguration ? { payment_method_configuration: this.config.paymentMethodConfiguration } : {}),
-        custom_text: checkoutText(price.interval, this.config),
-      }),
+      managed_payments: { enabled: true }, billing_address_collection: "required",
       // Con condiciones publicadas, Checkout exige aceptarlas (y Stripe guarda la aceptación en la sesión).
       // Requiere la URL de condiciones también en los datos públicos de la cuenta.
       ...(this.config.termsUrl ? { consent_collection: { terms_of_service: "required" as const } } : {}),
       allow_promotion_codes: true,
-      success_url: `${this.config.frontendUrl}/tabs/subscription?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${this.config.frontendUrl}/tabs/subscription?checkout=cancelled`,
+      success_url: `${this.config.returnUrl}/tabs/subscription?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${this.config.returnUrl}/tabs/subscription?checkout=cancelled`,
       expires_at: Math.floor(account.checkout!.startedAt.getTime() / 1000) + 3600,
       integration_identifier: `trainfit_trainers_${suffix}`,
-    }, { idempotencyKey: key });
+    } as Stripe.Checkout.SessionCreateParams, { idempotencyKey: key });
     return sessionView(session, this.config.mode);
   }
+  // Portal de la cuenta (configuración predeterminada): facturas, método de pago y cancelación a fin
+  // de periodo; nunca cambios de plan, que pasan por la propuesta de Trainers.
   async createPortal(customerId: string): Promise<string> {
-    if (!this.config.portalConfiguration) throw new BillingError("PORTAL_NOT_READY", "El portal de facturación todavía no está disponible.", 503);
-    const configuration = await this.stripe.billingPortal.configurations.retrieve(this.config.portalConfiguration);
+    const configuration = (await this.stripe.billingPortal.configurations.list({ is_default: true, active: true, limit: 1 })).data[0];
+    if (!configuration) throw new BillingError("PORTAL_NOT_READY", "El portal de facturación todavía no está disponible.", 503);
     this.check(configuration.livemode);
     const features = configuration.features;
-    if (!configuration.active || features.subscription_update?.enabled || !features.invoice_history?.enabled ||
+    if (features.subscription_update?.enabled || !features.invoice_history?.enabled ||
         !features.payment_method_update?.enabled || !features.subscription_cancel?.enabled ||
         features.subscription_cancel.mode !== "at_period_end") {
       throw new BillingError("PORTAL_NOT_READY", "El portal requiere una configuración compatible.", 503);
     }
     const session = await this.stripe.billingPortal.sessions.create({ customer: customerId,
-      configuration: configuration.id, return_url: `${this.config.frontendUrl}/tabs/subscription?from=portal` });
+      configuration: configuration.id, return_url: `${this.config.returnUrl}/tabs/subscription?from=portal` });
     return session.url;
   }
   async cancelSubscription(subscriptionId: string): Promise<void> {
@@ -249,58 +333,61 @@ export class StripeGateway implements Gateway {
   async expireSession(sessionId: string): Promise<void> {
     await this.stripe.checkout.sessions.expire(sessionId);
   }
-  async previewChange(sub: Subscription, price: PlanPrice, kind: ChangeQuote["kind"], prorationDate: number) {
-    const current = this.config.plans.flatMap((plan) => Object.values(plan.prices)).find((entry) => entry.id === sub.priceId);
-    const intervalChanges = current?.interval !== price.interval;
-    // No invoice is generated today for an annual-to-monthly change. The amount
-    // at the future renewal is an explicit tariff estimate; coupons and credit
-    // balances may expire or change before that date.
-    if (kind === "scheduled" && intervalChanges) return { amountDueNow: 0, renewalAmount: price.amount,
-      renewalAt: sub.currentPeriodEnd, creditBalance: 0, renewalExcludesTax: this.vatOnTop };
-    // With a schedule attached (a change being replaced, or a completed schedule
-    // still owning its last phase) Stripe previews the schedule's next phase and
-    // ignores subscription_details.items for the renewal: verified in sandbox,
-    // it returned the old scheduled price. The tariff is the honest estimate.
-    if (kind === "scheduled" && sub.scheduleId) return { amountDueNow: 0, renewalAmount: price.amount,
-      renewalAt: sub.currentPeriodEnd, creditBalance: 0, renewalExcludesTax: this.vatOnTop };
-    const details: Stripe.InvoiceCreatePreviewParams.SubscriptionDetails = {
-      items: [{ id: sub.itemId, price: price.id, quantity: 1 }],
-      proration_behavior: kind === "immediate" ? "always_invoice" : "none",
-      ...(kind === "immediate" ? { proration_date: prorationDate } : {}),
-    };
-    const tax = this.stripeTax ? { automatic_tax: { enabled: true } } : {};
-    const invoice = await this.stripe.invoices.createPreview({ subscription: sub.id, subscription_details: details, ...tax });
+
+  // ---- Propuestas y cambios ----
+
+  async previewChange(sub: Subscription, target: PlanState, kind: ChangeKind, prorationDate: number): Promise<ChangePreview> {
+    const intervalChanges = sub.state?.interval !== target.interval;
+    // No invoice is generated today for a scheduled change. With an interval change (or a schedule
+    // already attached, whose next phase Stripe would preview instead) the renewal is the catalog
+    // tariff: an explicit estimate without VAT; coupons and credit may change before that date.
+    const tariff = { amountDueNow: 0, deferredAmount: 0, renewalAmount: recurringAmount(target), renewalAt: sub.currentPeriodEnd,
+      creditBalance: 0, renewalExcludesTax: true };
+    if (kind === "scheduled" && (intervalChanges || sub.scheduleId)) return tariff;
+    const items = await this.itemUpdates(sub, target);
+    if (kind === "scheduled") {
+      const renewal = await this.preview(sub.id, items, "none");
+      return { ...tariff, renewalAmount: Math.max(0, renewal.amount_due), renewalExcludesTax: false };
+    }
+    if (kind === "deferred") {
+      // La prorrata no se cobra hoy: Stripe la suma a la próxima factura, que la previsualización ya incluye.
+      const upcoming = await this.preview(sub.id, items, "create_prorations", prorationDate);
+      const prorations = upcoming.lines.data.filter((line) => subscriptionItemLine(line) && prorationLine(line));
+      return { amountDueNow: 0, deferredAmount: prorations.reduce((sum, line) => sum + line.amount, 0),
+        renewalAmount: Math.max(0, upcoming.amount_due), renewalAt: sub.currentPeriodEnd, creditBalance: 0,
+        lines: await this.quoteLines(prorations), renewalExcludesTax: false };
+    }
+    const invoice = await this.preview(sub.id, items, "always_invoice", prorationDate);
+    const targetPrices = new Set((await this.phaseItems(target)).map((item) => item.price));
+    const targetLine = invoice.lines.data.find((line) => targetPrices.has(id(line.pricing?.price_details?.price) || "") && line.amount >= 0);
+    let renewalAmount = recurringAmount(target);
+    if (!intervalChanges && !sub.scheduleId) renewalAmount = Math.max(0, (await this.preview(sub.id, items, "none")).amount_due);
+    return { amountDueNow: Math.max(0, invoice.amount_due), deferredAmount: 0, renewalAmount,
+      renewalAt: intervalChanges ? targetLine?.period.end : sub.currentPeriodEnd,
+      creditBalance: Math.max(0, -(invoice.ending_balance || 0)),
+      lines: await this.quoteLines(invoice.lines.data), taxAmount: this.taxOf(invoice),
+      // Tras cambiar de periodicidad no hay previsualización de la renovación: la tarifa va sin IVA.
+      renewalExcludesTax: intervalChanges };
+  }
+  private async preview(subscriptionId: string, items: ItemUpdate[], proration: "none" | "always_invoice" | "create_prorations",
+    prorationDate?: number): Promise<Stripe.Invoice> {
+    const invoice = await this.stripe.invoices.createPreview({ subscription: subscriptionId, subscription_details: {
+      items: items as Stripe.InvoiceCreatePreviewParams.SubscriptionDetails.Item[], proration_behavior: proration,
+      ...(proration !== "none" && prorationDate ? { proration_date: prorationDate } : {}) } });
     this.check(invoice.livemode);
     if (invoice.currency !== "eur" || invoice.lines.has_more) throw new BillingError("BILLING_REVIEW_REQUIRED", "La factura requiere revisión de soporte.");
-    const targetLine = invoice.lines.data.find((line) => id(line.pricing?.price_details?.price) === price.id && line.amount >= 0);
-    let renewalAmount = price.amount;
-    if (!intervalChanges && !sub.scheduleId) {
-      const renewal = kind === "scheduled" ? invoice : await this.stripe.invoices.createPreview({ subscription: sub.id,
-        subscription_details: { items: details.items, proration_behavior: "none" }, ...tax });
-      this.check(renewal.livemode);
-      renewalAmount = Math.max(0, renewal.amount_due);
-    }
-    return { amountDueNow: kind === "immediate" ? Math.max(0, invoice.amount_due) : 0, renewalAmount,
-      renewalAt: intervalChanges ? targetLine?.period.end : sub.currentPeriodEnd,
-      creditBalance: kind === "immediate" ? Math.max(0, -(invoice.ending_balance || 0)) : 0,
-      lines: kind === "immediate" ? this.quoteLines(invoice.lines.data) : [],
-      taxAmount: kind === "immediate" ? this.taxOf(invoice) : 0,
-      // Tras cambiar de periodicidad no hay previsualización de la renovación: la tarifa va sin IVA.
-      renewalExcludesTax: this.vatOnTop && intervalChanges };
+    return invoice;
   }
-  // Desglose del cobro de hoy (crédito del plan actual y cargo del nuevo), como
-  // el resumen de confirmación del portal. Importes de Stripe; etiquetas nuestras.
-  private quoteLines(lines: Stripe.InvoiceLineItem[]): QuoteLine[] {
+  // Desglose de lo que se cobra (crédito del tiempo no usado y cargo de lo nuevo). Importes de Stripe; etiquetas nuestras.
+  private async quoteLines(lines: Stripe.InvoiceLineItem[]): Promise<QuoteLine[]> {
     const result: QuoteLine[] = [];
     for (const line of lines) {
-      const priceId = id(line.pricing?.price_details?.price);
-      const plan = this.config.plans.find((entry) => Object.values(entry.prices).some((price) => price.id === priceId));
-      const price = plan && Object.values(plan.prices).find((entry) => entry.id === priceId);
-      if (!plan || !price || line.parent?.type !== "subscription_item_details") continue;
-      const proration = Boolean(line.parent.subscription_item_details?.proration);
-      result.push({ kind: line.amount < 0 ? "credit" : proration ? "charge" : "recurring", tier: plan.tier,
-        interval: price.interval, amount: line.amount, periodStart: new Date(line.period.start * 1000),
-        periodEnd: new Date(line.period.end * 1000) });
+      if (!subscriptionItemLine(line)) continue;
+      const price = await this.priceInfo(id(line.pricing?.price_details?.price));
+      if (!price || (line.amount === 0 && !line.quantity)) continue;
+      result.push({ kind: line.amount < 0 ? "credit" : prorationLine(line) ? "charge" : "recurring", item: price.kind,
+        tier: price.tier, interval: price.interval, quantity: line.quantity ?? 0, amount: line.amount,
+        periodStart: new Date(line.period.start * 1000), periodEnd: new Date(line.period.end * 1000) });
     }
     return result;
   }
@@ -312,7 +399,7 @@ export class StripeGateway implements Gateway {
       if (id(invoice.customer) !== customerId || invoice.status === "draft") continue;
       const known = ["subscription_create", "subscription_cycle", "subscription_update"] as const;
       const reason = known.find((entry) => entry === invoice.billing_reason);
-      const line = invoice.lines.data.find((entry) => entry.parent?.type === "subscription_item_details");
+      const line = invoice.lines.data.find(subscriptionItemLine);
       invoices.push({ id: invoice.id, number: invoice.number || null, status: invoice.status || "open",
         createdAt: new Date(invoice.created * 1000), total: invoice.total, amountPaid: invoice.amount_paid,
         amountDue: invoice.amount_due, currency: invoice.currency,
@@ -342,23 +429,25 @@ export class StripeGateway implements Gateway {
         kind: "card", wallet: method.card.wallet?.type || null };
     } catch { return null; }
   }
-  async upcomingRenewal(sub: Subscription): Promise<{ at: number; amount: number; priceId: string | null; subtotal: number } | null> {
+  async upcomingRenewal(sub: Subscription): Promise<{ at: number; amount: number; state: PlanState | null; subtotal: number } | null> {
     if (sub.cancelAtPeriodEnd || sub.pendingUpdate || !["active", "past_due"].includes(sub.status)) return null;
-    const invoice = await this.stripe.invoices.createPreview({ subscription: sub.id,
-      ...(this.stripeTax ? { automatic_tax: { enabled: true } } : {}) });
+    const invoice = await this.stripe.invoices.createPreview({ subscription: sub.id });
     this.check(invoice.livemode);
     if (invoice.currency !== "eur") throw new BillingError("BILLING_REVIEW_REQUIRED", "La factura requiere revisión de soporte.");
-    const recurring = invoice.lines.data.find((line) => line.parent?.type === "subscription_item_details" &&
-      !line.parent.subscription_item_details?.proration);
-    if (!recurring) return null;
-    // priceId dice qué plan se cobrará (incluida una fase programada); subtotal
-    // antes de descuentos permite saber si el importe lleva descuento o saldo.
-    return { at: recurring.period.start, amount: Math.max(0, invoice.amount_due),
-      priceId: id(recurring.pricing?.price_details?.price), subtotal: invoice.subtotal };
+    const recurring = invoice.lines.data.filter((line) => subscriptionItemLine(line) && !prorationLine(line));
+    if (!recurring.length) return null;
+    // Estado que cobrará Stripe (incluida una fase programada); subtotal antes de descuentos
+    // permite saber si el importe lleva descuento o saldo.
+    const parts = await Promise.all(recurring.map(async (line) => ({ price: await this.priceInfo(id(line.pricing?.price_details?.price)),
+      quantity: line.quantity ?? 0 })));
+    const base = parts.find((part) => part.price?.kind === "base");
+    const seat = parts.find((part) => part.price?.kind === "seat" && part.quantity > 0);
+    return { at: recurring[0]!.period.start, amount: Math.max(0, invoice.amount_due), state: stateFromLines(base, seat),
+      subtotal: invoice.subtotal };
   }
   async applyUpgrade(quote: ChangeQuote, key: string): Promise<{ invoiceId: string }> {
     const changed = await this.stripe.subscriptions.update(quote.subscriptionId, {
-      items: [{ id: quote.itemId, price: quote.targetPriceId, quantity: 1 }],
+      items: quote.updates as Stripe.SubscriptionUpdateParams.Item[],
       payment_behavior: "pending_if_incomplete", proration_behavior: "always_invoice", proration_date: quote.prorationDate,
       // Changing the recurring interval resets the anchor automatically.
       // Stripe rejects explicit anchor=now together with proration_date.
@@ -368,19 +457,28 @@ export class StripeGateway implements Gateway {
     if (!invoiceId) throw new BillingError("BILLING_REVIEW_REQUIRED", "El cambio necesita revisión de soporte.");
     return { invoiceId };
   }
+  // Plazas adicionales mensuales: se aplican ya y la prorrata queda pendiente para la próxima factura.
+  async applyDeferred(quote: ChangeQuote, key: string): Promise<void> {
+    const changed = await this.stripe.subscriptions.update(quote.subscriptionId, {
+      items: quote.updates as Stripe.SubscriptionUpdateParams.Item[],
+      proration_behavior: "create_prorations", proration_date: quote.prorationDate,
+    }, { idempotencyKey: key });
+    this.check(changed.livemode);
+  }
   async scheduleChange(quote: ChangeQuote, key: string): Promise<{ scheduleId: string }> {
     // Stable create/update keys recover a response lost between the two calls.
     const created = await this.stripe.subscriptionSchedules.create({ from_subscription: quote.subscriptionId }, { idempotencyKey: `${key}-create` });
     this.check(created.livemode);
     const current = created.phases.find((phase) => phase.start_date <= quote.prorationDate && phase.end_date > quote.prorationDate);
-    if (!current || created.phases.length !== 1 || id(current.items[0]?.price) !== quote.priceId) {
+    if (!current || created.phases.length !== 1 ||
+        !samePhaseItems(current.items.map((item) => ({ price: id(item.price)!, quantity: item.quantity ?? 0 })), quote.fromItems)) {
       throw new BillingError("BILLING_REVIEW_REQUIRED", "La programación requiere revisión de soporte.");
     }
     const first = copyPhase(current);
     first.end_date = quote.periodEnd;
     const next: Stripe.SubscriptionScheduleUpdateParams.Phase = { ...first, start_date: quote.periodEnd,
       end_date: undefined, duration: { interval: quote.to.interval === "annual" ? "year" : "month", interval_count: 1 },
-      items: [{ ...first.items[0]!, price: quote.targetPriceId }], billing_cycle_anchor: "phase_start" };
+      items: quote.targetItems.map((item) => ({ price: item.price, quantity: item.quantity })), billing_cycle_anchor: "phase_start" };
     await this.stripe.subscriptionSchedules.update(created.id, { end_behavior: "release", proration_behavior: "none",
       phases: [first, next], metadata: { trainfitChangeId: quote.quoteId, scope: "trainers" } }, { idempotencyKey: `${key}-update` });
     return { scheduleId: created.id };
@@ -395,8 +493,9 @@ export class StripeGateway implements Gateway {
     }
     const lines = invoice.lines.has_more ? await this.stripe.invoices.listLineItems(invoice.id, { limit: 100 }) : invoice.lines;
     if (lines.has_more) throw new BillingError("BILLING_REVIEW_REQUIRED", "La factura requiere revisión de soporte.");
-    const debit = lines.data.find((line) => line.amount >= 0 && id(line.pricing?.price_details?.price) === quote.targetPriceId &&
-      line.parent?.type === "subscription_item_details" && line.parent.subscription_item_details?.subscription_item === quote.itemId);
+    const targetPrices = new Set(quote.targetItems.map((item) => item.price));
+    const debit = lines.data.find((line) => line.amount > 0 && subscriptionItemLine(line) &&
+      targetPrices.has(id(line.pricing?.price_details?.price) || ""));
     return { paid: invoice.status === "paid" && Boolean(debit), voided: invoice.status === "void" || invoice.status === "uncollectible",
       periodEnd: debit?.period.end || 0, url: invoiceUrl(invoice.hosted_invoice_url) };
   }
@@ -416,6 +515,16 @@ export class StripeGateway implements Gateway {
     const sub = await this.stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: cancel, proration_behavior: "none" }, { idempotencyKey: key });
     this.check(sub.livemode);
   }
+  // Deshace una subida: vuelve al estado anterior sin prorrateo, así que no genera factura ni cobro.
+  async revertState(sub: Subscription, state: PlanState, key: string): Promise<void> {
+    const changed = await this.stripe.subscriptions.update(sub.id, {
+      items: (await this.itemUpdates(sub, state)) as Stripe.SubscriptionUpdateParams.Item[], proration_behavior: "none" },
+    { idempotencyKey: key });
+    this.check(changed.livemode);
+  }
+
+  // ---- Webhooks y dinero ----
+
   verifyEvent(body: Buffer, signature: string): EventRecord | null {
     let event: Stripe.Event;
     try { event = this.stripe.webhooks.constructEvent(body, signature, this.config.webhookSecret); }
@@ -434,32 +543,33 @@ export class StripeGateway implements Gateway {
     }
     return records.reverse();
   }
-  // Cargo → PaymentIntent → factura → qué financiaba. Siempre desde Stripe, nunca desde el payload del evento.
+  // Cargo → PaymentIntent → factura con sus líneas. Siempre desde Stripe, nunca desde el payload del evento.
   async paymentContext(ref: { chargeId?: string | null; paymentIntentId?: string | null }): Promise<PaymentContext | null> {
     let charge: Stripe.Charge | null = ref.chargeId ? await this.stripe.charges.retrieve(ref.chargeId) : null;
     let paymentIntentId = ref.paymentIntentId || (charge ? id(charge.payment_intent) : null);
     if (!charge && paymentIntentId) charge = (await this.stripe.charges.list({ payment_intent: paymentIntentId, limit: 1 })).data[0] || null;
     if (charge) { this.check(charge.livemode); paymentIntentId ||= id(charge.payment_intent); }
     if (!paymentIntentId) return null;
-    let financed = unknownFinanced({ currency: charge?.currency || "eur" });
+    let financing: FinancingInvoice | null = null;
     const payments = await this.stripe.invoicePayments.list({ payment: { type: "payment_intent", payment_intent: paymentIntentId }, limit: 1 });
     const invoiceId = id(payments.data[0]?.invoice as string | { id: string } | null | undefined);
     if (invoiceId) {
       const invoice = await this.stripe.invoices.retrieve(invoiceId);
       this.check(invoice.livemode);
       const lines = invoice.lines.has_more ? await this.stripe.invoices.listLineItems(invoice.id, { limit: 100 }) : invoice.lines;
-      financed = lines.has_more ? unknownFinanced({ invoiceId, currency: invoice.currency }) : classifyInvoice(this.config, {
-        id: invoice.id, subscriptionId: id(invoice.parent?.subscription_details?.subscription), customerId: id(invoice.customer),
-        billingReason: invoice.billing_reason || null, amountPaid: invoice.amount_paid, currency: invoice.currency,
-        lines: lines.data.filter((line) => line.parent?.type === "subscription_item_details").map((line) => ({
-          amount: line.amount, priceId: id(line.pricing?.price_details?.price), proration: Boolean(line.parent?.subscription_item_details?.proration),
-          subscriptionItem: line.parent?.subscription_item_details?.subscription_item || null,
-          periodStart: line.period.start, periodEnd: line.period.end })) });
+      if (!lines.has_more) {
+        financing = { id: invoice.id, subscriptionId: id(invoice.parent?.subscription_details?.subscription), customerId: id(invoice.customer),
+          billingReason: invoice.billing_reason || null, amountPaid: invoice.amount_paid, currency: invoice.currency,
+          lines: await Promise.all(lines.data.filter(subscriptionItemLine).map(async (line) => ({
+            amount: line.amount, price: await this.priceInfo(id(line.pricing?.price_details?.price)), quantity: line.quantity ?? 0,
+            proration: prorationLine(line), subscriptionItem: line.parent?.subscription_item_details?.subscription_item || null,
+            periodStart: line.period.start, periodEnd: line.period.end }))) };
+      }
     }
     const refunds = charge ? (await this.stripe.refunds.list({ charge: charge.id, limit: 100 })).data.map(refundView) : [];
-    return { chargeId: charge?.id || null, paymentIntentId, customerId: (charge ? id(charge.customer) : null) || financed.customerId,
+    return { chargeId: charge?.id || null, paymentIntentId, customerId: (charge ? id(charge.customer) : null) || financing?.customerId || null,
       amount: charge?.amount || 0, amountRefunded: charge?.amount_refunded || 0, refunded: charge?.refunded === true,
-      currency: charge?.currency || financed.currency, refunds, financed };
+      currency: charge?.currency || financing?.currency || "eur", refunds, invoice: financing };
   }
   async getDispute(disputeId: string): Promise<DisputeView> {
     const dispute = await this.stripe.disputes.retrieve(disputeId);
@@ -494,7 +604,7 @@ export class StripeGateway implements Gateway {
     const sub = await this.stripe.subscriptions.update(subscriptionId, { pause_collection: "" }, { idempotencyKey: key });
     this.check(sub.livemode);
     for (const draft of (await this.stripe.invoices.list({ subscription: subscriptionId, status: "draft", limit: 100 })).data) {
-      const line = draft.lines.data.find((entry) => entry.parent?.type === "subscription_item_details");
+      const line = draft.lines.data.find(subscriptionItemLine);
       if (draft.auto_advance || !line || line.period.end <= now) continue;
       await this.stripe.invoices.update(draft.id, { auto_advance: true }, { idempotencyKey: `${key}-${draft.id}` });
     }
@@ -503,12 +613,6 @@ export class StripeGateway implements Gateway {
       if (invoice.status !== "open" || invoice.auto_advance) continue;
       await this.stripe.invoices.update(invoiceId, { auto_advance: true }, { idempotencyKey: `${key}-${invoiceId}` });
     }
-  }
-  // Deshace una subida: vuelve al precio anterior sin prorrateo, así que no genera factura ni cobro.
-  async revertPrice(subscriptionId: string, itemId: string, priceId: string, key: string): Promise<void> {
-    const sub = await this.stripe.subscriptions.update(subscriptionId, { items: [{ id: itemId, price: priceId, quantity: 1 }],
-      proration_behavior: "none" }, { idempotencyKey: key });
-    this.check(sub.livemode);
   }
   async invoiceForPayment(paymentIntentId: string) {
     const payments = await this.stripe.invoicePayments.list({ payment: { type: "payment_intent", payment_intent: paymentIntentId }, limit: 1 });

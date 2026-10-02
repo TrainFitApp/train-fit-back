@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { publicPlans, requireReady, resolvePrice } from "./config";
-import { fundingRole, planForPrice, tierRank } from "./financing";
-import { MONEY_EVENT_TYPES, checkoutKey } from "./stripe-gateway";
-import { AccessAdjustment, AccessSnapshot, Account, Actor, AdminAction, BillingCase, BillingDetails, BillingError, CaseSuggestion, ChangeQuote, Config, DisputeView, EventRecord, Financed, FraudWarningView, FundingRole, Gateway, Intervention, Interval, Notifier, PaymentContext, PriceView, Projection, Repository, Session, Subscription, Tier, User } from "./types";
+import { CATALOG, FREE_SEATS, PlanState, isTier, sameState, seatsOf, tierRank } from "./catalog";
+import { parseTarget, publicPlans, requireReady, stateView } from "./config";
+import { classifyInvoice, fundingRole } from "./financing";
+import { MONEY_EVENT_TYPES, checkoutKey, encodeTarget } from "./stripe-gateway";
+import { AccessAdjustment, AccessSnapshot, Account, Actor, AdminAction, BillingCase, BillingDetails, BillingError, CaseSuggestion, ChangeKind, ChangeQuote, Config, DisputeView, EventRecord, Financed, FraudWarningView, FundingRole, Gateway, Intervention, Interval, Notifier, PaymentContext, Projection, Repository, Session, Subscription, Tier, User } from "./types";
 
 const TERMINAL = new Set(["canceled", "incomplete_expired"]);
 // Disputa abierta (incluidas las consultas previas); el resto de estados son cierres.
@@ -10,56 +11,75 @@ const OPEN_DISPUTE = new Set(["warning_needs_response", "warning_under_review", 
 const ADMIN_ACTIONS: AdminAction[] = ["resolve_case", "end_service_now", "cancel_renewal", "resume_renewal", "revert_upgrade",
   "grant_access", "end_grant", "restore_period_access", "pause_collection", "resume_collection"];
 const DAY_MS = 86400000;
-export function changeKind(from: PriceView, to: PriceView): ChangeQuote["kind"] {
+// Cuándo se aplica un cambio (decisión 2026-10-02): lo que sube capacidad a mitad de periodo se cobra
+// al momento salvo las plazas adicionales mensuales, cuya prorrata va a la siguiente factura; lo que
+// baja capacidad, y el paso de anual a mensual, espera a la renovación.
+export function changeKind(from: PlanState, to: PlanState): ChangeKind {
   if (from.interval !== to.interval) return from.interval === "annual" ? "scheduled" : "immediate";
-  return to.clientLimit > from.clientLimit ? "immediate" : "scheduled";
+  const rank = tierRank(to.tier) - tierRank(from.tier);
+  if (rank !== 0) return rank > 0 ? "immediate" : "scheduled";
+  if (to.extraSeats > from.extraSeats) return to.interval === "monthly" ? "deferred" : "immediate";
+  return "scheduled";
 }
 function subscriptionSnapshot(sub: Subscription): string {
-  return sub.fingerprint || JSON.stringify([sub.id, sub.itemId, sub.priceId, sub.currentPeriodEnd,
+  return sub.fingerprint || JSON.stringify([sub.id, sub.items, sub.currentPeriodEnd,
     sub.latestInvoiceId, sub.latestInvoiceStatus, sub.status, sub.cancelAtPeriodEnd, sub.scheduleId, sub.pendingUpdate]);
 }
+export function paidState(account: Pick<Account, "tier" | "interval" | "extraSeats">): PlanState | null {
+  return account.tier && account.interval ? { tier: account.tier, interval: account.interval, extraSeats: account.extraSeats || 0 } : null;
+}
 // Decisión de negocio 2026-09-18: si falla el cobro de una renovación, el plan
-// pagado se mantiene 7 días mientras Stripe reintenta; después cae a Free.
+// pagado se mantiene 7 días mientras Stripe reintenta; después cae a Free. El mismo
+// margen cubre la hora en que la factura de renovación sigue en borrador.
 export const PAST_DUE_GRACE_MS = 7 * DAY_MS;
 export function accessUntil(account: Account): Date | null {
   if (!account.paidUntil) return null;
   const paidUntil = new Date(account.paidUntil);
-  return account.status === "past_due" ? new Date(paidUntil.getTime() + PAST_DUE_GRACE_MS) : paidUntil;
+  const renewing = account.status === "past_due" || (account.status === "active" && account.provider?.latestInvoiceStatus !== "paid");
+  return renewing ? new Date(paidUntil.getTime() + PAST_DUE_GRACE_MS) : paidUntil;
 }
 function activeAdjustment(entry: AccessAdjustment, now: Date): boolean {
   return !entry.liftedAt && (!entry.from || new Date(entry.from) <= now) && (!entry.until || new Date(entry.until) > now);
 }
 export interface EffectiveAccess {
-  entitled: boolean; tier: Tier | null; interval: Interval | null; expiresAt: Date | null;
+  entitled: boolean; tier: Tier | null; interval: Interval | null; extraSeats: number; seats: number; expiresAt: Date | null;
   basis: "payment" | "exception" | "none"; revokedUntil: Date | null; exception: AccessAdjustment | null;
 }
 // Acceso real = lo pagado según Stripe, menos los periodos retirados (disputa perdida o decisión
-// registrada), más las excepciones concedidas hasta una fecha. Una excepción nunca finge un cobro.
+// registrada), más las excepciones concedidas hasta una fecha. Una excepción nunca finge un cobro:
+// da las plazas incluidas en su plan y gana solo si son más que las pagadas.
 export function effectiveAccess(account: Account, now = new Date()): EffectiveAccess {
   const until = accessUntil(account);
-  const paid = !account.deletedAt && ["active", "past_due"].includes(account.status) && Boolean(account.tier && until && until > now);
+  const state = paidState(account);
+  const paid = !account.deletedAt && ["active", "past_due"].includes(account.status) && Boolean(state && until && until > now);
   const active = (account.adjustments || []).filter((entry) => activeAdjustment(entry, now));
   const revoke = active.find((entry) => entry.kind === "revoke_period");
   const byPayment = paid && !revoke;
+  const paidSeats = byPayment ? seatsOf(state!) : 0;
   const grant = account.deletedAt ? undefined : active.filter((entry) => entry.kind === "grant" && entry.tier && entry.until)
     .sort((a, b) => tierRank(b.tier) - tierRank(a.tier) || new Date(b.until!).getTime() - new Date(a.until!).getTime())[0];
-  const grantWins = Boolean(grant && (!byPayment || tierRank(grant.tier) > tierRank(account.tier)));
+  const grantSeats = grant ? CATALOG[grant.tier!].includedSeats : 0;
+  const grantWins = Boolean(grant && grantSeats > paidSeats);
   const grantUntil = grant ? new Date(grant.until!) : null;
   const expiresAt = grantUntil ? (byPayment && until! > grantUntil ? until : grantUntil) : revoke ? null : until;
-  return { entitled: byPayment || Boolean(grant), expiresAt,
-    tier: grantWins ? grant!.tier : account.tier || null,
-    interval: grantWins ? grant!.interval || account.interval || null : account.interval || null,
+  const entitled = byPayment || Boolean(grant);
+  return { entitled, expiresAt,
+    tier: grantWins ? grant!.tier : byPayment ? state!.tier : null,
+    interval: grantWins ? grant!.interval || state?.interval || null : byPayment ? state!.interval : null,
+    extraSeats: grantWins || !byPayment ? 0 : state!.extraSeats,
+    seats: entitled ? Math.max(paidSeats, grantSeats) : FREE_SEATS,
     basis: grantWins ? "exception" : byPayment ? "payment" : "none",
     revokedUntil: revoke?.until ? new Date(revoke.until) : null, exception: grant || null };
 }
 export function projection(account: Account, now = new Date()): Projection {
   const access = effectiveAccess(account, now);
-  return { entitled: access.entitled, source: "stripe", tier: access.tier, plan: access.interval, expiresAt: access.expiresAt,
+  return { entitled: access.entitled, tier: access.tier, interval: access.interval, seats: access.seats, expiresAt: access.expiresAt,
     lastSyncAt: now, stripeRevision: account.revision, stripeMode: account.mode };
 }
 export function accessSnapshot(account: Account, now = new Date()): AccessSnapshot {
   const access = effectiveAccess(account, now);
-  return { status: account.status, tier: account.tier || null, interval: account.interval || null, paidUntil: account.paidUntil || null,
+  return { status: account.status, tier: account.tier || null, interval: account.interval || null, extraSeats: account.extraSeats || 0,
+    seats: access.seats, paidUntil: account.paidUntil || null,
     cancelAtPeriodEnd: account.cancelAtPeriodEnd, entitled: access.entitled, expiresAt: access.expiresAt,
     collectionPaused: Boolean(account.hold || account.provider?.collectionPaused) };
 }
@@ -89,6 +109,12 @@ function badRequest(code: string, message: string): BillingError { return new Bi
 interface MoneyContext {
   kind: "refund" | "dispute" | "early_fraud_warning"; payment: PaymentContext | null;
   dispute?: DisputeView; warning?: FraudWarningView;
+}
+// La propuesta sin los datos internos (elementos, huella, fechas de prorrateo).
+function publicQuote(quote: ChangeQuote) {
+  const { subscriptionId: _sub, snapshot: _snapshot, prorationDate: _date, periodEnd: _period, previousScheduleId: _schedule,
+    updates: _updates, fromItems: _from, targetItems: _target, ...visible } = quote;
+  return visible;
 }
 
 export class TrainerBillingService {
@@ -134,9 +160,8 @@ export class TrainerBillingService {
     if (sub.livemode !== (this.config.mode === "live") || sub.customerId !== account.customerId || sub.scope !== "trainers" || sub.userId !== account.userId) {
       throw new BillingError("SUBSCRIPTION_NOT_OWNED", "La suscripción requiere revisión de soporte.");
     }
-    const plan = this.config.plans.find((p) => Object.values(p.prices).some((price) => price.id === sub.priceId));
-    const price = plan && Object.values(plan.prices).find((p) => p.id === sub.priceId);
-    if (!plan || !price || sub.quantity !== 1) throw new BillingError("UNKNOWN_SUBSCRIPTION_PRICE", "La suscripción requiere revisión de soporte.");
+    // Una suscripción viva fuera del catálogo (precios ajenos, dos cuotas…) la revisa soporte.
+    if (!sub.state && !TERMINAL.has(sub.status)) throw new BillingError("UNKNOWN_SUBSCRIPTION_PRICE", "La suscripción requiere revisión de soporte.");
     account.subscriptionId = sub.id;
     account.status = sub.status;
     account.cancelAtPeriodEnd = sub.cancelAtPeriodEnd;
@@ -151,24 +176,23 @@ export class TrainerBillingService {
       if (!TERMINAL.has(sub.status)) console.warn("[TrainerBilling] Collection resumed outside TrainFit; hold cleared.");
       account.hold = null;
     }
-    // A status of active alone is not proof of payment (e.g. unpaid plan change).
-    if (sub.status === "active" && sub.paid && sub.paidPriceId === price.id && sub.paidPeriodEnd > 0) {
-      account.tier = plan.tier;
-      account.interval = price.interval;
+    // A status of active alone is not proof of payment (e.g. unpaid plan change): the latest invoice
+    // must be paid and cover the current items. Monthly extra seats count from the moment they are
+    // added; their proration is collected with the next invoice (decision 2026-10-02).
+    if (sub.status === "active" && sub.paid && sub.state && sub.paidPeriodEnd > 0) {
+      this.applyState(account, sub.state);
       account.paidUntil = new Date(Math.min(sub.currentPeriodEnd, sub.paidPeriodEnd) * 1000);
     }
     const change = account.change;
     account.pendingPayment = null;
     if (change?.status === "payment_pending" && change.invoiceId) {
       const payment = await this.gateway.changePayment(account, change);
-      if (payment.paid && !sub.pendingUpdate && sub.status === "active" && sub.priceId === change.quote.targetPriceId && payment.periodEnd > 0) {
-        // This is an explicitly tracked, paid change invoice. Arbitrary proration
-        // invoices still cannot grant access through the generic renewal path.
-        account.tier = change.quote.to.tier;
-        account.interval = change.quote.to.interval;
+      if (payment.paid && !sub.pendingUpdate && sub.status === "active" && sameState(sub.state, change.quote.to) && payment.periodEnd > 0) {
+        // This is an explicitly tracked, paid change invoice.
+        this.applyState(account, change.quote.to);
         account.paidUntil = new Date(Math.min(sub.currentPeriodEnd, payment.periodEnd) * 1000);
         change.status = "applied";
-      } else if (payment.voided || (!sub.pendingUpdate && sub.priceId !== change.quote.targetPriceId)) {
+      } else if (payment.voided || (!sub.pendingUpdate && !sameState(sub.state, change.quote.to))) {
         change.status = "discarded";
       } else {
         account.pendingPayment = { url: payment.url,
@@ -176,11 +200,11 @@ export class TrainerBillingService {
       }
     }
     if (change?.status === "scheduled" && !sub.scheduleId) {
-      change.status = sub.priceId === change.quote.targetPriceId ? "applied" : "discarded";
+      change.status = sameState(sub.state, change.quote.to) ? "applied" : "discarded";
     }
     // The schedule may still own its final phase after the transition. Its change
-    // is complete once the canonical item has changed; renewal payment gates access.
-    if (change?.status === "scheduled" && sub.priceId === change.quote.targetPriceId) change.status = "applied";
+    // is complete once the items match; renewal payment gates access.
+    if (change?.status === "scheduled" && sameState(sub.state, change.quote.to)) change.status = "applied";
     if (TERMINAL.has(sub.status) || ["unpaid", "paused", "incomplete", "trialing"].includes(sub.status)) account.paidUntil = null;
     account.renewalPayment = ["past_due", "unpaid"].includes(sub.status) && sub.latestInvoiceStatus === "open" && sub.latestInvoiceId &&
       account.change?.invoiceId !== sub.latestInvoiceId
@@ -192,13 +216,17 @@ export class TrainerBillingService {
   private async refreshRenewal(account: Account, sub: Subscription): Promise<void> {
     const fingerprint = subscriptionSnapshot(sub);
     if (sub.cancelAtPeriodEnd || TERMINAL.has(sub.status) || !this.gateway.upcomingRenewal) { account.renewal = null; return; }
-    // Registros previos a guardar priceId se recalculan una vez.
-    if (account.renewal?.fingerprint === fingerprint && account.renewal.priceId !== undefined) return;
+    if (account.renewal?.fingerprint === fingerprint) return;
     try {
       const next = await this.gateway.upcomingRenewal(sub);
       account.renewal = next ? { at: new Date(next.at * 1000), amount: next.amount, fingerprint,
-        priceId: next.priceId, subtotal: next.subtotal } : null;
+        state: next.state, subtotal: next.subtotal } : null;
     } catch { account.renewal = null; }
+  }
+  private applyState(account: Account, state: PlanState): void {
+    account.tier = state.tier;
+    account.interval = state.interval;
+    account.extraSeats = state.extraSeats;
   }
   private async recoverChange(account: Account, save: () => Promise<void>): Promise<void> {
     const change = account.change;
@@ -211,6 +239,9 @@ export class TrainerBillingService {
     if (change.quote.kind === "immediate") {
       change.invoiceId = (await this.gateway.applyUpgrade(change.quote, key)).invoiceId;
       change.status = "payment_pending";
+    } else if (change.quote.kind === "deferred") {
+      await this.gateway.applyDeferred(change.quote, key);
+      change.status = "applied";
     } else {
       change.scheduleId = (await this.gateway.scheduleChange(change.quote, key)).scheduleId;
       change.status = "scheduled";
@@ -237,7 +268,7 @@ export class TrainerBillingService {
       throw new BillingError("COLLECTION_PAUSED", "Los cobros de tu suscripción están en pausa mientras revisamos una incidencia con un pago. Escríbenos para cambiar de plan.");
     }
     const sub = account.provider;
-    if (!sub || sub.status !== "active" || !account.paidUntil || new Date(account.paidUntil) <= new Date() || !sub.itemId ||
+    if (!sub || sub.status !== "active" || !account.paidUntil || new Date(account.paidUntil) <= new Date() || !sub.state ||
         (sub.collectionMethod && sub.collectionMethod !== "charge_automatically")) {
       throw new BillingError("SUBSCRIPTION_NOT_ACTIVE", "Necesitas una suscripción activa y pagada para cambiar de plan.");
     }
@@ -257,46 +288,47 @@ export class TrainerBillingService {
     }
     return sub;
   }
-  private async usageFor(userId: string, limit: number): Promise<number> {
-    const clients = await this.repository.clientUsage(userId);
-    if (!Number.isSafeInteger(clients) || clients < 0) throw new BillingError("USAGE_UNAVAILABLE", "No se ha podido comprobar el número de clientes.", 503);
-    if (clients > limit) throw new BillingError("CLIENT_LIMIT_EXCEEDED", "El plan elegido no admite todos tus clientes actuales. Reduce el número de clientes antes de cambiar.");
-    return clients;
+  private async seatUsage(userId: string) {
+    const usage = await this.repository.seatUsage(userId);
+    if (![usage.occupied, usage.reserved].every((value) => Number.isSafeInteger(value) && value >= 0)) {
+      throw new BillingError("USAGE_UNAVAILABLE", "No se ha podido comprobar el número de clientes.", 503);
+    }
+    return usage;
   }
-  async previewChange(userId: string, tier: unknown, interval: unknown) {
+  // Propuesta de cambio con importes de Stripe. Reducir nunca se bloquea por tener más clientes que
+  // plazas (decisión 2026-10-02): la propuesta dice cuántos quedarán en solo lectura al aplicarse.
+  async previewChange(userId: string, input: unknown) {
     requireReady(this.config);
-    const target = resolvePrice(this.config, tier, interval);
+    const target = parseTarget(input);
     return this.repository.withLock(userId, async (account, save) => {
       await this.refresh(account, save);
       const sub = this.editable(account);
-      const current = resolvePrice(this.config, account.tier, account.interval);
-      if (target.price.id === sub.priceId) throw new BillingError("SAME_PLAN", "Ya tienes ese plan y periodicidad.");
-      if (account.change?.status === "scheduled" && account.change.quote.targetPriceId === target.price.id) {
+      const current = sub.state!;
+      if (sameState(current, target)) throw new BillingError("SAME_PLAN", "Ya tienes ese plan, periodicidad y plazas.");
+      if (account.change?.status === "scheduled" && sameState(account.change.quote.to, target)) {
         throw new BillingError("SAME_SCHEDULED_CHANGE", "Ese cambio ya está programado.");
       }
-      const from: PriceView = { tier: current.plan.tier, interval: current.price.interval, amount: current.price.amount, clientLimit: current.plan.clientLimit };
-      const to: PriceView = { tier: target.plan.tier, interval: target.price.interval, amount: target.price.amount, clientLimit: target.plan.clientLimit };
-      const clients = await this.usageFor(userId, to.clientLimit);
-      await this.gateway.validatePrice(target.price);
-      const kind = changeKind(from, to);
+      const seats = await this.seatUsage(userId);
+      await this.gateway.validateState(target);
+      const kind = changeKind(current, target);
       // Stripe test-clock subscriptions bill in simulated time. Mixing that
       // clock with wall time can prorate even a newly started annual period.
       const prorationDate = sub.billingNow ?? Math.floor(Date.now() / 1000);
-      const preview = await this.gateway.previewChange(sub, target.price, kind, prorationDate);
-      const quote: ChangeQuote = { quoteId: checkoutKey(), expiresAt: new Date(Date.now() + 5 * 60000), kind, from, to,
-        effectiveAt: new Date((kind === "immediate" ? prorationDate : sub.currentPeriodEnd) * 1000),
-        amountDueNow: preview.amountDueNow, currency: "eur", creditBalance: preview.creditBalance || 0,
-        lines: preview.lines || [], taxAmount: preview.taxAmount || 0,
+      const preview = await this.gateway.previewChange(sub, target, kind, prorationDate);
+      const items = await this.gateway.changeItems(sub, target);
+      const quote: ChangeQuote = { quoteId: checkoutKey(), expiresAt: new Date(Date.now() + 5 * 60000), kind,
+        from: stateView(current), to: stateView(target),
+        effectiveAt: new Date((kind === "scheduled" ? sub.currentPeriodEnd : prorationDate) * 1000),
+        amountDueNow: preview.amountDueNow, deferredAmount: preview.deferredAmount, currency: "eur",
+        creditBalance: preview.creditBalance || 0, lines: preview.lines || [], taxAmount: preview.taxAmount || 0,
         nextRenewal: { at: new Date((preview.renewalAt || sub.currentPeriodEnd) * 1000), amount: preview.renewalAmount, estimated: true,
           excludesTax: Boolean(preview.renewalExcludesTax) },
-        usage: { clients, limit: from.clientLimit }, subscriptionId: sub.id, itemId: sub.itemId!, priceId: sub.priceId,
-        targetPriceId: target.price.id, snapshot: subscriptionSnapshot(sub), prorationDate, periodEnd: sub.currentPeriodEnd,
-        previousScheduleId: sub.scheduleId || undefined };
+        seats, readOnlyAfter: kind === "scheduled" ? Math.max(0, seats.occupied - seatsOf(target)) : 0,
+        subscriptionId: sub.id, snapshot: subscriptionSnapshot(sub), prorationDate, periodEnd: sub.currentPeriodEnd,
+        previousScheduleId: sub.scheduleId || undefined, ...items };
       account.quote = quote;
       await save();
-      const { subscriptionId: _sub, itemId: _item, priceId: _price, targetPriceId: _target, snapshot: _snapshot,
-        prorationDate: _date, periodEnd: _period, previousScheduleId: _schedule, ...publicQuote } = quote;
-      return publicQuote;
+      return publicQuote(quote);
     });
   }
   async changePlan(userId: string, quoteId: unknown) {
@@ -315,11 +347,11 @@ export class TrainerBillingService {
       await this.refresh(account, save);
       const sub = this.editable(account);
       if (subscriptionSnapshot(sub) !== quote.snapshot) throw new BillingError("QUOTE_STALE", "La suscripción ha cambiado. Revisa de nuevo el importe.");
-      await this.usageFor(userId, quote.to.clientLimit);
-      const target = resolvePrice(this.config, quote.to.tier, quote.to.interval);
-      await this.gateway.validatePrice(target.price);
-      const preview = await this.gateway.previewChange(sub, target.price, quote.kind, quote.prorationDate);
-      if (preview.amountDueNow !== quote.amountDueNow || preview.renewalAmount !== quote.nextRenewal.amount || (preview.creditBalance || 0) !== (quote.creditBalance || 0)) {
+      const target: PlanState = { tier: quote.to.tier, interval: quote.to.interval, extraSeats: quote.to.extraSeats };
+      await this.gateway.validateState(target);
+      const preview = await this.gateway.previewChange(sub, target, quote.kind, quote.prorationDate);
+      if (preview.amountDueNow !== quote.amountDueNow || preview.renewalAmount !== quote.nextRenewal.amount ||
+          preview.deferredAmount !== quote.deferredAmount || (preview.creditBalance || 0) !== (quote.creditBalance || 0)) {
         throw new BillingError("QUOTE_STALE", "El importe ha cambiado. Revisa una nueva propuesta antes de confirmar.");
       }
       // Persist intent before any mutation. All retries retain the same quote,
@@ -364,22 +396,14 @@ export class TrainerBillingService {
   async cancel(userId: string): Promise<void> { await this.control(userId, "cancel"); }
   async resume(userId: string): Promise<void> { await this.control(userId, "resume"); }
   async discardChange(userId: string): Promise<void> { await this.control(userId, "discard"); }
-  async checkout(userId: string, tier: unknown, interval: unknown) {
+  // Contratación desde Free: Checkout con la cuota del plan y, si se piden, las plazas adicionales.
+  async checkout(userId: string, input: unknown) {
     requireReady(this.config);
-    const { price } = resolvePrice(this.config, tier, interval);
-    const beforeLock = await this.user(userId);
-    const beforePremium = beforeLock.professionalPremium;
-    if (beforePremium?.source !== "stripe" && beforePremium?.entitled && (!beforePremium.expiresAt || new Date(beforePremium.expiresAt) > new Date())) {
-      throw new BillingError("LEGACY_SUBSCRIPTION", "Tu suscripción actual debe revisarse con soporte antes de contratar otro plan.");
-    }
+    const target = parseTarget(input);
+    const wanted = encodeTarget(target);
     return this.repository.withLock(userId, async (account, save) => {
       this.ensureOpen(account);
       const user = await this.user(userId);
-      const legacy = user.professionalPremium;
-      if (legacy?.source !== "stripe" && legacy?.entitled && (!legacy.expiresAt || new Date(legacy.expiresAt) > new Date())) {
-        throw new BillingError("LEGACY_SUBSCRIPTION", "Tu suscripción actual debe revisarse con soporte antes de contratar otro plan.");
-      }
-      // Claims professional billing authority without touching consumer premium.
       await this.persist(account, save);
       if (!account.customerId) {
         if (account.customerStartedAt && Date.now() - account.customerStartedAt.getTime() > 23 * 3600000) {
@@ -398,7 +422,7 @@ export class TrainerBillingService {
       const pending = sessions.find((s) => s.status === "open");
       if (pending) {
         this.ownSession(pending, account);
-        if (pending.priceId !== price.id) throw new BillingError("EXISTING_CHECKOUT", "Ya hay un pago abierto para otro plan. Finalízalo o espera a que caduque.");
+        if (pending.target !== wanted) throw new BillingError("EXISTING_CHECKOUT", "Ya hay un pago abierto para otro plan. Finalízalo o espera a que caduque.");
         return { url: pending.url, sessionId: pending.id, reused: true };
       }
       const attempt = account.checkout && sessions.find((s) => s.attempt === account.checkout!.key);
@@ -411,14 +435,14 @@ export class TrainerBillingService {
         throw new BillingError("CHECKOUT_REVIEW_REQUIRED", "Contacta con soporte para revisar el pago anterior.");
       }
       if (!account.checkout || attempt?.status === "expired" || terminalAttempt) {
-        account.checkout = { key: checkoutKey(), priceId: price.id, startedAt: new Date() };
-      } else if (account.checkout.priceId !== price.id) {
+        account.checkout = { key: checkoutKey(), target, startedAt: new Date() };
+      } else if (!sameState(account.checkout.target, target)) {
         throw new BillingError("EXISTING_CHECKOUT", "Estamos comprobando un pago anterior para otro plan.");
       }
-      await this.gateway.validatePrice(price);
+      await this.gateway.validateState(target);
       account.status = "checkout_pending";
       await this.persist(account, save);
-      const session = await this.gateway.createCheckout(user, account, price, account.checkout.key);
+      const session = await this.gateway.createCheckout(user, account, target, account.checkout.key);
       this.ownSession(session, account);
       if (!session.url) throw new BillingError("CHECKOUT_UNAVAILABLE", "No se ha podido abrir la página de pago.", 503);
       account.checkout.sessionId = session.id;
@@ -522,18 +546,18 @@ export class TrainerBillingService {
   }
   private async applyMoneyEvent(account: Account, save: () => Promise<void>, money: MoneyContext): Promise<void> {
     if (!this.repository.saveCase || !this.repository.getCase) return;
-    const financed = money.payment?.financed || null;
+    const financed = money.payment?.invoice ? classifyInvoice(money.payment.invoice, account) : null;
     const role: FundingRole = financed
-      ? fundingRole(financed, { subscriptionId: account.subscriptionId, tier: account.tier, interval: account.interval }, billingNow(account))
+      ? fundingRole(financed, { subscriptionId: account.subscriptionId, state: paidState(account) }, billingNow(account))
       : "unknown";
-    if (money.kind === "refund" && money.payment) await this.recordRefund(account, money.payment, role);
-    else if (money.kind === "dispute" && money.dispute) await this.handleDispute(account, save, money.dispute, money.payment, role);
-    else if (money.kind === "early_fraud_warning" && money.warning) await this.recordFraudWarning(account, money.warning, money.payment, role);
+    if (money.kind === "refund" && money.payment) await this.recordRefund(account, money.payment, financed, role);
+    else if (money.kind === "dispute" && money.dispute) await this.handleDispute(account, save, money.dispute, money.payment, financed, role);
+    else if (money.kind === "early_fraud_warning" && money.warning) await this.recordFraudWarning(account, money.warning, money.payment, financed, role);
   }
   // Política 2026-09-28: un reembolso no cambia por sí solo ni el acceso ni la suscripción; su efecto
   // depende del motivo (servicio terminado, duplicado, compensación…), así que se abre un caso con lo
   // que financiaba el pago y el efecto sugerido, y una persona decide en Gestión.
-  private async recordRefund(account: Account, payment: PaymentContext, role: FundingRole): Promise<void> {
+  private async recordRefund(account: Account, payment: PaymentContext, financed: Financed | null, role: FundingRole): Promise<void> {
     if (!payment.chargeId) return;
     const caseId = `refund:${payment.chargeId}`;
     const existing = await this.repository.getCase!(caseId);
@@ -547,7 +571,7 @@ export class TrainerBillingService {
     const changed = !existing || signature(existing.refunds) !== signature(payment.refunds);
     await this.repository.saveCase!({
       caseId, userId: account.userId, mode: account.mode, kind: "refund", priority: high ? "high" : "normal",
-      chargeId: payment.chargeId, paymentIntentId: payment.paymentIntentId, financed: payment.financed, role,
+      chargeId: payment.chargeId, paymentIntentId: payment.paymentIntentId, financed, role,
       amount, currency: payment.currency, fullyRefunded: full, refunds: payment.refunds,
       effects: existing?.effects || [], suggestion,
       ...caseLifecycle(existing, changed, "Nuevo movimiento de reembolso tras resolver el caso."),
@@ -558,7 +582,7 @@ export class TrainerBillingService {
   // reintentos mientras se resuelve. Si se pierde, se retiran solo los derechos que financiaba el
   // pago perdido; si no se puede saber cuáles, revisión manual antes de tocar el acceso.
   private async handleDispute(account: Account, save: () => Promise<void>, dispute: DisputeView, payment: PaymentContext | null,
-    role: FundingRole): Promise<void> {
+    financed: Financed | null, role: FundingRole): Promise<void> {
     const caseId = `dispute:${dispute.id}`;
     const existing = await this.repository.getCase!(caseId);
     const effects = [...(existing?.effects || [])];
@@ -576,14 +600,14 @@ export class TrainerBillingService {
       await save();
     }
     if (dispute.status === "lost" && !effects.some((effect) => effect.startsWith("rights_"))) {
-      effects.push(await this.withdrawRights(account, save, payment?.financed || null, role, caseId, `trainers-dispute-${dispute.id}`));
+      effects.push(await this.withdrawRights(account, save, financed, role, caseId, `trainers-dispute-${dispute.id}`));
     }
     const unknown = effects.includes("rights_unknown");
     const statusChanged = existing?.disputeStatus !== dispute.status;
     await this.repository.saveCase!({
       caseId, userId: account.userId, mode: account.mode, kind: "dispute", priority: open || unknown ? "high" : "normal",
       chargeId: payment?.chargeId || dispute.chargeId, paymentIntentId: payment?.paymentIntentId || dispute.paymentIntentId,
-      financed: payment?.financed || null, role, amount: dispute.amount, currency: dispute.currency,
+      financed, role, amount: dispute.amount, currency: dispute.currency,
       disputeId: dispute.id, disputeStatus: dispute.status, disputeReason: dispute.reason, dueBy: dispute.dueBy,
       effects, suggestion: open ? "respond_dispute" : unknown ? "manual_review" : "decide_collection",
       ...caseLifecycle(existing, statusChanged, `La disputa ha pasado a ${dispute.status}.`),
@@ -591,13 +615,14 @@ export class TrainerBillingService {
     if (statusChanged) console.warn("[TrainerBilling] Dispute updated; decision pending in Gestión.");
     await this.persist(account, save);
   }
-  private async recordFraudWarning(account: Account, warning: FraudWarningView, payment: PaymentContext | null, role: FundingRole): Promise<void> {
+  private async recordFraudWarning(account: Account, warning: FraudWarningView, payment: PaymentContext | null, financed: Financed | null,
+    role: FundingRole): Promise<void> {
     const caseId = `efw:${warning.id}`;
     const existing = await this.repository.getCase!(caseId);
     await this.repository.saveCase!({
       caseId, userId: account.userId, mode: account.mode, kind: "early_fraud_warning", priority: "high",
       chargeId: payment?.chargeId || warning.chargeId, paymentIntentId: payment?.paymentIntentId || warning.paymentIntentId,
-      financed: payment?.financed || null, role, amount: payment?.amount || 0, currency: payment?.currency || "eur",
+      financed, role, amount: payment?.amount || 0, currency: payment?.currency || "eur",
       warningId: warning.id, fraudType: warning.fraudType, effects: existing?.effects || [], suggestion: "review_fraud_warning",
       ...caseLifecycle(existing, false, ""),
     });
@@ -612,25 +637,26 @@ export class TrainerBillingService {
       return await this.revertUpgradeLocked(account, save, financed, `${keyBase}-revert`) ? "rights_withdrawn:upgrade" : "rights_unknown";
     }
     account.adjustments = [...(account.adjustments || []), { id: newId("adj"), kind: "revoke_period",
-      from: new Date(financed.periodStart * 1000), until: new Date(financed.periodEnd * 1000), tier: financed.tier, interval: financed.interval,
+      from: new Date(financed.periodStart * 1000), until: new Date(financed.periodEnd * 1000),
+      tier: financed.state?.tier || null, interval: financed.state?.interval || null,
       invoiceId: financed.invoiceId, reason: "Disputa perdida: el banco devolvió el pago que financiaba este periodo.",
       source: "dispute_lost", caseId, interventionId: null, createdAt: new Date(), liftedAt: null }];
     await save();
     return "rights_withdrawn:period";
   }
-  // Deshace una subida en la misma periodicidad: el precio anterior vuelve sin prorrateo (ni factura
-  // ni cobro) y el periodo base ya pagado se respeta. Si la subida ya no es la vigente, no se toca.
+  // Deshace una subida en la misma periodicidad (plan superior o más plazas): vuelve el estado anterior
+  // sin prorrateo (ni factura ni cobro) y el periodo base ya pagado se respeta. Reembolsar plazas
+  // adicionales solo devuelve esas plazas. Si la subida ya no es la vigente, no se toca.
   private async revertUpgradeLocked(account: Account, save: () => Promise<void>, financed: Financed, key: string): Promise<boolean> {
     const sub = account.provider;
-    const from = planForPrice(this.config, financed.fromPriceId);
-    const to = planForPrice(this.config, financed.priceId);
-    if (!sub?.itemId || !from || !to || from.interval !== to.interval || sub.priceId !== financed.priceId || sub.pendingUpdate ||
-        TERMINAL.has(sub.status) || !this.gateway.revertPrice) return false;
+    const from = financed.fromState;
+    const to = financed.state;
+    if (!sub || !from || !to || from.interval !== to.interval || !sameState(sub.state, to) || sub.pendingUpdate ||
+        TERMINAL.has(sub.status) || !this.gateway.revertState) return false;
     if (sub.scheduleId) await this.gateway.releaseSchedule(sub.scheduleId, `${key}-release`);
-    await this.gateway.revertPrice(sub.id, sub.itemId, financed.fromPriceId!, key);
-    account.tier = from.tier;
-    account.interval = from.interval;
-    if (account.change?.status === "applied" && account.change.quote.targetPriceId === financed.priceId) account.change.status = "reverted";
+    await this.gateway.revertState(sub, from, key);
+    this.applyState(account, from);
+    if (account.change?.status === "applied" && sameState(account.change.quote.to, to)) account.change.status = "reverted";
     else if (account.change?.status === "scheduled") account.change.status = "discarded";
     account.quote = null;
     await save();
@@ -669,7 +695,8 @@ export class TrainerBillingService {
   // Aviso de renovación anual a 30 y 7 días (decisión 2026-09-28). Se marca antes de enviar: un
   // aviso nunca se duplica; si el envío falla, se desmarca y se reintenta en la siguiente ronda.
   async remindRenewal(account: Account, save: () => Promise<void>): Promise<void> {
-    if (!this.notifier || !account.tier) return;
+    const state = paidState(account);
+    if (!this.notifier || !state) return;
     const now = new Date(billingNow(account) * 1000);
     const window = annualRenewalWindow(account, now);
     if (!window) return;
@@ -685,7 +712,7 @@ export class TrainerBillingService {
     await save();
     try {
       await this.notifier.renewalReminder({ email: user.email, stage, at, amount: account.renewal?.amount ?? null,
-        tier: account.tier, interval: "annual", manageUrl: `${this.config.frontendUrl}/tabs/subscription`,
+        tier: state.tier, seats: seatsOf(state), manageUrl: `${this.config.returnUrl}/tabs/subscription`,
         supportEmail: this.config.supportEmail || null });
     } catch {
       account.reminders = previous;
@@ -746,7 +773,8 @@ export class TrainerBillingService {
     return {
       mode: this.config.mode, user: { id: user.id, email: user.email },
       account: account ? {
-        status: account.status, tier: account.tier || null, interval: account.interval || null, paidUntil: account.paidUntil || null,
+        status: account.status, tier: account.tier || null, interval: account.interval || null,
+        extraSeats: account.extraSeats || 0, paidUntil: account.paidUntil || null,
         currentPeriodEnd: account.currentPeriodEnd || null, cancelAtPeriodEnd: account.cancelAtPeriodEnd,
         customerId: account.customerId || null, subscriptionId: account.subscriptionId || null,
         collectionPaused: Boolean(account.provider?.collectionPaused), hold: account.hold || null,
@@ -755,8 +783,8 @@ export class TrainerBillingService {
           effectiveAt: account.change.quote.effectiveAt } : null,
         termsAcceptance: account.termsAcceptance || null, deletedAt: account.deletedAt || null,
       } : null,
-      access: access ? { entitled: access.entitled, tier: access.tier, interval: access.interval, expiresAt: access.expiresAt,
-        basis: access.basis, revokedUntil: access.revokedUntil } : null,
+      access: access ? { entitled: access.entitled, tier: access.tier, interval: access.interval, seats: access.seats,
+        expiresAt: access.expiresAt, basis: access.basis, revokedUntil: access.revokedUntil } : null,
       cases: (await this.repository.listCases?.({ userId, limit: 100 })) || [],
       interventions: (await this.repository.listInterventions?.(userId, 50)) || [],
       links: account?.customerId ? { customer: `${dashboard}customers/${account.customerId}`,
@@ -813,9 +841,8 @@ export class TrainerBillingService {
       if (!until || !Number.isFinite(until.getTime()) || until.getTime() <= now || until.getTime() > now + 400 * DAY_MS) {
         throw badRequest("INVALID_UNTIL", "La fecha de la excepción debe ser futura y de como mucho 400 días.");
       }
-      const plan = this.config.plans.find((entry) => entry.tier === input.tier);
-      if (!plan) throw badRequest("INVALID_TIER", "Elige el plan que se concede.");
-      return { until: until.toISOString(), tier: plan.tier };
+      if (!isTier(input.tier) || input.tier === "free") throw badRequest("INVALID_TIER", "Elige el plan que se concede.");
+      return { until: until.toISOString(), tier: input.tier };
     }
     if (action === "end_grant" || action === "restore_period_access") {
       if (typeof input.adjustmentId !== "string" || !/^adj-[a-f0-9]{24}$/.test(input.adjustmentId)) {
@@ -895,10 +922,11 @@ export class TrainerBillingService {
   // La subida aplicada en este periodo (cuando no hay un caso con la factura que la financió).
   private appliedUpgrade(account: Account): Financed | null {
     const change = account.change;
-    if (change?.status !== "applied" || change.quote.kind !== "immediate" || change.quote.from.interval !== change.quote.to.interval) return null;
+    if (change?.status !== "applied" || change.quote.kind === "scheduled" || change.quote.from.interval !== change.quote.to.interval) return null;
+    const { from, to } = change.quote;
     return { kind: "upgrade", invoiceId: change.invoiceId || null, subscriptionId: change.quote.subscriptionId, customerId: account.customerId || null,
-      tier: change.quote.to.tier, interval: change.quote.to.interval, priceId: change.quote.targetPriceId,
-      fromTier: change.quote.from.tier, fromInterval: change.quote.from.interval, fromPriceId: change.quote.priceId,
+      state: { tier: to.tier, interval: to.interval, extraSeats: to.extraSeats },
+      fromState: { tier: from.tier, interval: from.interval, extraSeats: from.extraSeats },
       periodStart: change.quote.prorationDate, periodEnd: change.quote.periodEnd, amountPaid: change.quote.amountDueNow, currency: "eur" };
   }
 }

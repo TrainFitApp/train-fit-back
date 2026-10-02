@@ -1,10 +1,6 @@
-export type Tier = "trainer_pro" | "trainer_growth" | "trainer_scale";
-export type Interval = "monthly" | "annual";
-export type Mode = "test" | "live";
-// test_no_tax solo existe en el sandbox. En producción, precios sin IVA y dos formas de cobrarlo:
-// stripe_tax (TrainFit vende y Stripe Tax calcula el IVA con su registro) o managed_payments
-// (decisión 2026-10-01: Stripe vende como comerciante registrado y calcula, declara y paga el IVA).
-export type TaxPolicy = "test_no_tax" | "stripe_tax" | "managed_payments" | "pending";
+import type { Interval, Mode, PlanState, PriceKind, Tier } from "./catalog";
+
+export type { Interval, Mode, PlanState, PriceKind, Tier };
 
 export class BillingError extends Error {
   constructor(public code: string, message: string, public status = 409) {
@@ -13,52 +9,62 @@ export class BillingError extends Error {
   }
 }
 
-export interface PlanPrice { id: string; amount: number; interval: Interval }
-export interface Plan { tier: Tier; clientLimit: number; prices: Record<Interval, PlanPrice> }
 export interface Config {
+  // Con STRIPE_KEY la facturación está activa; su prefijo decide el modo.
   enabled: boolean;
   mode: Mode;
   key: string;
   webhookSecret: string;
-  frontendUrl: string;
-  portalConfiguration: string;
-  // Configuración de métodos de pago de Stripe (pmc_…) que usa Checkout. Vacía = la
-  // predeterminada de la cuenta (solo admitido en test).
-  paymentMethodConfiguration: string;
+  // Web de Trainers: retorno de Checkout y del portal y enlaces de los avisos.
+  returnUrl: string;
   // Condiciones de contratación: con URL, Checkout exige aceptarlas y la app las enlaza.
   termsUrl: string;
   // Buzón de facturación que se muestra al entrenador (la app, los avisos y Checkout).
   supportEmail: string;
-  taxPolicy: TaxPolicy;
   errors: string[];
-  plans: Plan[];
 }
+// Precio de Stripe clasificado por sus metadatos (pieza, plan y periodicidad).
+export interface PriceRef { id: string; kind: PriceKind; tier: Tier; interval: Interval; amount: number }
 export interface User {
   id: string;
   email: string;
-  professionalPremium?: {
-    entitled?: boolean; expiresAt?: Date | string | null; source?: string | null;
-  };
 }
+// Estado contratado con su capacidad e importe recurrente (sin IVA).
+export interface StateView extends PlanState { seats: number; amount: number }
 export interface Checkout {
-  key: string; priceId: string; startedAt: Date; sessionId?: string; url?: string | null;
+  key: string; target: PlanState; startedAt: Date; sessionId?: string; url?: string | null;
 }
-export interface PriceView { tier: Tier; interval: Interval; amount: number; clientLimit: number }
+export interface QuoteLine {
+  kind: "credit" | "charge" | "recurring"; item: PriceKind; tier: Tier; interval: Interval; quantity: number;
+  amount: number; periodStart: Date; periodEnd: Date;
+}
+// immediate: se cobra ahora y se aplica al pagar. deferred: se aplica ya y la prorrata va a la
+// siguiente factura (plazas adicionales mensuales). scheduled: se aplica en la renovación.
+export type ChangeKind = "immediate" | "deferred" | "scheduled";
 export interface ChangeQuote {
-  quoteId: string; expiresAt: Date; kind: "immediate" | "scheduled";
-  from: PriceView; to: PriceView; effectiveAt: Date; amountDueNow: number; currency: "eur";
-  nextRenewal: { at: Date; amount: number; estimated?: boolean; excludesTax?: boolean }; usage: { clients: number; limit: number };
+  quoteId: string; expiresAt: Date; kind: ChangeKind;
+  from: StateView; to: StateView; effectiveAt: Date; amountDueNow: number; currency: "eur";
+  // Prorrata que se suma a la próxima factura (solo deferred).
+  deferredAmount: number;
+  nextRenewal: { at: Date; amount: number; estimated?: boolean; excludesTax?: boolean };
+  seats: { occupied: number; reserved: number };
+  // Clientes que quedarían en solo lectura cuando se aplique (bajadas con más clientes que plazas).
+  readOnlyAfter: number;
   creditBalance?: number;
-  // IVA incluido en amountDueNow (Stripe Tax); 0 en el sandbox sin impuestos.
   taxAmount?: number;
   lines?: QuoteLine[];
-  subscriptionId: string; itemId: string; priceId: string; targetPriceId: string;
-  snapshot: string; prorationDate: number; periodEnd: number;
+  subscriptionId: string; snapshot: string; prorationDate: number; periodEnd: number;
   previousScheduleId?: string;
+  // Calculados al proponer y reutilizados al aplicar: los reintentos envían lo mismo a Stripe
+  // con la misma clave de idempotencia. fromItems/targetItems: elementos con cantidad > 0.
+  updates: ItemUpdate[]; fromItems: PhaseItem[]; targetItems: PhaseItem[];
 }
+// Cambio de un elemento de la suscripción (sin id: elemento nuevo).
+export interface ItemUpdate { id?: string; price?: string; quantity?: number; deleted?: boolean }
+export interface PhaseItem { price: string; quantity: number }
 export interface ChangeOperation {
   quote: ChangeQuote; startedAt: Date;
-  // reverted: subida deshecha (reembolso o disputa perdida); vuelve el plan anterior sin prorrateo.
+  // reverted: subida deshecha (reembolso o disputa perdida); vuelve el estado anterior sin prorrateo.
   status: "processing" | "payment_pending" | "scheduled" | "applied" | "discarded" | "reverted";
   invoiceId?: string; scheduleId?: string;
 }
@@ -69,7 +75,7 @@ export interface ControlOperation {
 export interface PaymentState { url?: string; expiresAt?: Date }
 // Next recurring charge as Stripe itself computes it (coupons, credit balance
 // and any scheduled phase included). Cached against the subscription fingerprint.
-export interface RenewalState { at: Date; amount: number; fingerprint: string; priceId?: string | null; subtotal?: number }
+export interface RenewalState { at: Date; amount: number; fingerprint: string; state?: PlanState | null; subtotal?: number }
 // Open renewal invoice while Stripe retries a failed recurring payment.
 export interface RenewalPaymentState { url?: string; amount: number; invoiceId: string }
 export interface Account {
@@ -80,8 +86,10 @@ export interface Account {
   checkout?: Checkout | null;
   subscriptionId?: string | null;
   status: string;
+  // Último estado pagado (plan, periodicidad y plazas adicionales).
   tier?: Tier | null;
   interval?: Interval | null;
+  extraSeats?: number | null;
   paidUntil?: Date | null;
   currentPeriodEnd?: Date | null;
   cancelAtPeriodEnd: boolean;
@@ -103,13 +111,14 @@ export interface Account {
   termsAcceptance?: TermsAcceptance | null;
 }
 // Qué compró un pago, deducido de las líneas de su factura (financing.ts).
+// upgrade: más capacidad a mitad de periodo (plan superior o más plazas), con el estado anterior.
 export type FinancedKind = "period" | "upgrade" | "interval_change" | "unknown";
 export interface Financed {
   kind: FinancedKind; invoiceId: string | null; subscriptionId: string | null; customerId: string | null;
-  // Plan financiado; en subidas y cambios de periodicidad, el plan de destino.
-  tier: Tier | null; interval: Interval | null; priceId: string | null;
-  // Plan anterior abonado en la misma factura (subidas y cambios de periodicidad).
-  fromTier: Tier | null; fromInterval: Interval | null; fromPriceId: string | null;
+  // Estado financiado; en subidas y cambios de periodicidad, el de destino.
+  state: PlanState | null;
+  // Estado anterior abonado en la misma factura (subidas y cambios de periodicidad).
+  fromState: PlanState | null;
   periodStart: number; periodEnd: number; amountPaid: number; currency: string;
 }
 // Relación del pago con el acceso de hoy.
@@ -117,10 +126,21 @@ export type FundingRole = "current_period" | "current_upgrade" | "past" | "unkno
 export interface RefundView {
   id: string; amount: number; status: string; reason: string | null; failureReason: string | null; createdAt: Date;
 }
+// Factura de un cobro con sus líneas de suscripción, para saber qué financiaba (financing.ts).
+export interface FinancingLine {
+  amount: number; price: PriceRef | null; quantity: number; proration: boolean;
+  subscriptionItem: string | null; periodStart: number; periodEnd: number;
+}
+export interface FinancingInvoice {
+  id: string; subscriptionId: string | null; customerId: string | null; billingReason: string | null;
+  amountPaid: number; currency: string; lines: FinancingLine[];
+}
 export interface PaymentContext {
   chargeId: string | null; paymentIntentId: string | null; customerId: string | null;
   amount: number; amountRefunded: number; refunded: boolean; currency: string;
-  refunds: RefundView[]; financed: Financed;
+  refunds: RefundView[];
+  // null si el cobro no corresponde a una factura legible (o tiene demasiadas líneas).
+  invoice: FinancingInvoice | null;
 }
 export interface DisputeView {
   id: string; status: string; amount: number; currency: string; reason: string | null;
@@ -162,7 +182,8 @@ export interface BillingHold {
 export interface RenewalReminders { periodEnd: Date; sent30At: Date | null; sent7At: Date | null }
 export interface TermsAcceptance { at: Date; sessionId: string; termsUrl: string | null }
 export interface AccessSnapshot {
-  status: string; tier: Tier | null; interval: Interval | null; paidUntil: Date | null; cancelAtPeriodEnd: boolean;
+  status: string; tier: Tier | null; interval: Interval | null; extraSeats: number; seats: number;
+  paidUntil: Date | null; cancelAtPeriodEnd: boolean;
   entitled: boolean; expiresAt: Date | null; collectionPaused: boolean;
 }
 // Registro de una intervención administrativa (solo se añade; nunca se edita salvo su resultado).
@@ -172,27 +193,34 @@ export interface Intervention {
   before: AccessSnapshot | null; after: AccessSnapshot | null; params: Record<string, unknown>;
 }
 export interface RenewalReminderInput {
-  email: string; stage: 30 | 7; at: Date; amount: number | null; tier: Tier; interval: Interval;
+  email: string; stage: 30 | 7; at: Date; amount: number | null; tier: Tier; seats: number;
   manageUrl: string; supportEmail: string | null;
 }
 export interface Notifier { renewalReminder(input: RenewalReminderInput): Promise<void> }
+// Lo que se proyecta en User.professionalPremium: de aquí leen el cupo de clientes y la biblioteca.
 export interface Projection {
-  entitled: boolean; source: "stripe"; tier: Tier | null; plan: Interval | null;
+  entitled: boolean; tier: Tier | null; interval: Interval | null; seats: number;
   expiresAt: Date | null; lastSyncAt: Date; stripeRevision: number; stripeMode: Mode;
 }
 export interface Session {
   id: string; customerId: string | null; subscriptionId: string | null;
   status: string | null; url: string | null; userId?: string; attempt?: string;
-  priceId?: string; scope?: string; livemode: boolean;
+  target?: string; scope?: string; livemode: boolean;
   // El comprador marcó la aceptación de las condiciones en Checkout.
   termsAccepted?: boolean;
 }
+export interface SubscriptionItemView { id: string; price: PriceRef; quantity: number }
 export interface Subscription {
-  id: string; customerId: string; status: string; priceId: string;
-  quantity: number; currentPeriodEnd: number; cancelAtPeriodEnd: boolean;
-  paid: boolean; paidPriceId: string | null; paidPeriodEnd: number;
+  id: string; customerId: string; status: string;
+  // Estado que describen los elementos (null si no encaja en el catálogo: revisión de soporte).
+  state: PlanState | null;
+  // Elementos de la suscripción; los de cantidad 0 no cuentan para el estado.
+  items: SubscriptionItemView[];
+  currentPeriodEnd: number; cancelAtPeriodEnd: boolean;
+  // La última factura está pagada y cubre los elementos actuales hasta paidPeriodEnd.
+  paid: boolean; paidPeriodEnd: number;
   livemode: boolean; userId?: string; scope?: string;
-  itemId?: string; currentPeriodStart?: number; scheduleId?: string | null;
+  currentPeriodStart?: number; scheduleId?: string | null;
   latestInvoiceId?: string | null; latestInvoiceStatus?: string | null;
   latestInvoiceUrl?: string; latestInvoiceAmountDue?: number;
   pendingUpdate?: boolean; pendingUpdateExpiresAt?: number;
@@ -218,8 +246,6 @@ export interface PaymentMethodView {
   brand: string; last4: string; expMonth: number; expYear: number; kind?: "card" | "link"; wallet?: string | null;
 }
 export interface BillingDetails { invoices: InvoiceView[]; paymentMethod: PaymentMethodView | null }
-// Proration lines of a change preview, labelled by us (Stripe's descriptions are English).
-export interface QuoteLine { kind: "credit" | "charge" | "recurring"; tier: Tier; interval: Interval; amount: number; periodStart: Date; periodEnd: Date }
 export interface EventRecord {
   eventId: string; type: string; customerId: string | null; mode: Mode;
   status: "pending" | "processed" | "failed"; attempts: number;
@@ -229,20 +255,28 @@ export interface EventRecord {
     refundId?: string; warningId?: string; sessionId?: string;
   } | null;
 }
+export interface ChangePreview {
+  amountDueNow: number; deferredAmount: number; renewalAmount: number; renewalAt?: number; creditBalance?: number;
+  lines?: QuoteLine[]; taxAmount?: number; renewalExcludesTax?: boolean;
+}
 export interface Gateway {
   createCustomer(user: User, idempotencyKey: string): Promise<string>;
-  validatePrice(price: PlanPrice): Promise<void>;
+  // Comprueba que Stripe tiene a la venta las piezas del estado con los importes del catálogo.
+  validateState(state: PlanState): Promise<void>;
   listSubscriptions(customerId: string): Promise<Subscription[]>;
   listSessions(customerId: string): Promise<Session[]>;
   getSession(id: string): Promise<Session>;
-  createCheckout(user: User, account: Account, price: PlanPrice, key: string): Promise<Session>;
+  createCheckout(user: User, account: Account, target: PlanState, key: string): Promise<Session>;
   createPortal(customerId: string): Promise<string>;
   cancelSubscription(id: string): Promise<void>;
   expireSession(id: string): Promise<void>;
-  previewChange(sub: Subscription, price: PlanPrice, kind: ChangeQuote["kind"], prorationDate: number): Promise<{ amountDueNow: number; renewalAmount: number; renewalAt?: number; creditBalance?: number; lines?: QuoteLine[]; taxAmount?: number; renewalExcludesTax?: boolean }>;
-  upcomingRenewal?(sub: Subscription): Promise<{ at: number; amount: number; priceId: string | null; subtotal: number } | null>;
+  previewChange(sub: Subscription, target: PlanState, kind: ChangeKind, prorationDate: number): Promise<ChangePreview>;
+  // Cambios de elementos para llegar al estado pedido, y los elementos (cantidad > 0) de origen y destino.
+  changeItems(sub: Subscription, target: PlanState): Promise<{ updates: ItemUpdate[]; fromItems: PhaseItem[]; targetItems: PhaseItem[] }>;
+  upcomingRenewal?(sub: Subscription): Promise<{ at: number; amount: number; state: PlanState | null; subtotal: number } | null>;
   billingDetails?(customerId: string, subscriptionId: string | null): Promise<BillingDetails>;
   applyUpgrade(quote: ChangeQuote, key: string): Promise<{ invoiceId: string }>;
+  applyDeferred(quote: ChangeQuote, key: string): Promise<void>;
   scheduleChange(quote: ChangeQuote, key: string): Promise<{ scheduleId: string }>;
   changePayment(account: Account, operation: ChangeOperation): Promise<ChangePayment>;
   releaseSchedule(id: string, key: string): Promise<void>;
@@ -257,11 +291,12 @@ export interface Gateway {
   // Pausa los cobros (borradores) y los reintentos de facturas abiertas; devuelve las que pausó.
   pauseCollection?(subscriptionId: string, key: string): Promise<{ pausedInvoiceIds: string[] }>;
   resumeCollection?(subscriptionId: string, pausedInvoiceIds: string[], key: string, now: number): Promise<void>;
-  // Vuelve al precio anterior sin prorrateo ni factura (deshacer una subida).
-  revertPrice?(subscriptionId: string, itemId: string, priceId: string, key: string): Promise<void>;
+  // Vuelve a un estado anterior sin prorrateo ni factura (deshacer una subida).
+  revertState?(sub: Subscription, state: PlanState, key: string): Promise<void>;
   // Eventos de dinero recientes, para recuperar webhooks perdidos.
   recentEvents?(types: string[], since: number): Promise<EventRecord[]>;
 }
+export interface SeatUsage { occupied: number; reserved: number }
 export interface Repository {
   get(userId: string): Promise<Account | null>;
   findCustomer(customerId: string): Promise<Account | null>;
@@ -273,7 +308,7 @@ export interface Repository {
   failEvent(id: string): Promise<void>;
   pendingEvents(limit: number): Promise<EventRecord[]>;
   accountsForReconciliation(limit: number): Promise<Account[]>;
-  clientUsage(userId: string): Promise<number>;
+  seatUsage(userId: string): Promise<SeatUsage>;
   getCase?(caseId: string): Promise<BillingCase | null>;
   saveCase?(entry: BillingCase): Promise<void>;
   listCases?(filter: { userId?: string; status?: "open" | "resolved"; limit: number }): Promise<BillingCase[]>;
