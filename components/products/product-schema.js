@@ -1,14 +1,17 @@
 const mongoose = require("mongoose");
+const { buildSearchFields } = require("../util/search-index");
 const Schema = mongoose.Schema;
 
 const ProductSchema = Schema({
   code: { type: String, trim: true, maxlength: 100 },
-  name: { type: String, trim: true, maxlength: 200 },
+  name: { type: String, trim: true, maxlength: 300 },
   brand: { type: String, trim: true, maxlength: 200 },
+  // Campos derivados para la búsqueda (components/util/search-index.js).
+  // `searchTokens` sustituye a los antiguos namePrefixes/brandPrefixes: ver
+  // ahí por qué guardar todos los prefijos no escalaba.
   nameNormalized: String,
   brandNormalized: String,
-  namePrefixes: [String],
-  brandPrefixes: [String],
+  searchTokens: [String],
 
   // Basic macronutrients (min/max: techo genérico de seguridad, no específico por nutriente)
   calcium100g: { type: Number, min: 0, max: 100000 },
@@ -62,7 +65,7 @@ const ProductSchema = Schema({
 
   // Product information
   servingUnit: String,
-  ingredients: { type: String, trim: true, maxlength: 2000 },
+  ingredients: { type: String, trim: true, maxlength: 5000 },
 
   // Allergens and dietary characteristics
   allergens: {
@@ -96,10 +99,79 @@ const ProductSchema = Schema({
 });
 
 // ─── INDEXES ───────────────────────────────────────────────────────────
-// All product indexes are managed by: scripts/rebuild-product-indexes.js
-// Run:  npm run rebuild:product-indexes
-// Do NOT define indexes here — the script is the single source of truth.
+// Los índices de products los gestiona scripts/rebuild-search-indexes.js.
+// Ejecutar:  npm run rebuild:search-indexes
+// NO declarar índices aquí — el script es la fuente única de verdad.
 // ───────────────────────────────────────────────────────────────────────
+
+// ─── Campos derivados de búsqueda ──────────────────────────────────────
+// Se calculan en el schema, no en el DAO, porque un producto se crea desde
+// varios sitios: /api/products, el alta en línea al añadir un alimento a una
+// comida (customProducts/custom-product-dao.js) y los scripts de semilla. Si
+// alguno se olvida de rellenarlos, ese producto no aparece NUNCA en la
+// búsqueda — y eso es exactamente lo que pasaba con los productos creados
+// desde la app y con cualquier producto al que se le editaran solo las
+// macros (el $unset genérico de updateProduct se los llevaba por delante).
+
+ProductSchema.pre("save", function syncSearchFieldsOnSave(next) {
+  if (this.isModified("name") || this.isModified("brand") || !this.nameNormalized) {
+    Object.assign(this, buildSearchFields({ name: this.name, brand: this.brand }));
+  }
+  next();
+});
+
+async function syncSearchFieldsOnUpdate() {
+  const update = this.getUpdate() || {};
+  if (Array.isArray(update)) return; // pipeline de agregación: no lo usamos
+
+  const set = update.$set || {};
+  const unset = update.$unset || {};
+  const touchesName =
+    Object.prototype.hasOwnProperty.call(set, "name") ||
+    Object.prototype.hasOwnProperty.call(update, "name") ||
+    Object.prototype.hasOwnProperty.call(unset, "name");
+  const touchesBrand =
+    Object.prototype.hasOwnProperty.call(set, "brand") ||
+    Object.prototype.hasOwnProperty.call(update, "brand") ||
+    Object.prototype.hasOwnProperty.call(unset, "brand");
+
+  if (!touchesName && !touchesBrand) return;
+
+  const pick = (field) => {
+    if (Object.prototype.hasOwnProperty.call(set, field)) return set[field];
+    if (Object.prototype.hasOwnProperty.call(update, field)) return update[field];
+    if (Object.prototype.hasOwnProperty.call(unset, field)) return "";
+    return undefined;
+  };
+
+  // `searchTokens` mezcla nombre y marca: si solo cambia uno, hace falta leer
+  // el otro del documento actual.
+  let name = pick("name");
+  let brand = pick("brand");
+
+  if (name === undefined || brand === undefined) {
+    const current = await this.model
+      .findOne(this.getQuery())
+      .select("name brand")
+      .lean();
+    if (name === undefined) name = current?.name;
+    if (brand === undefined) brand = current?.brand;
+  }
+
+  const derived = buildSearchFields({ name, brand });
+  const nextUpdate = { ...update, $set: { ...set, ...derived } };
+
+  if (nextUpdate.$unset) {
+    nextUpdate.$unset = { ...nextUpdate.$unset };
+    Object.keys(derived).forEach((field) => delete nextUpdate.$unset[field]);
+    if (!Object.keys(nextUpdate.$unset).length) delete nextUpdate.$unset;
+  }
+
+  this.setUpdate(nextUpdate);
+}
+
+ProductSchema.pre("findOneAndUpdate", syncSearchFieldsOnUpdate);
+ProductSchema.pre("updateOne", syncSearchFieldsOnUpdate);
 
 // ─── Shared cascade logic (single | bulk) ──────────────────────────────
 async function cascadeDeleteProducts(productIds) {

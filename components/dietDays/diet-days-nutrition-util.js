@@ -67,13 +67,81 @@ function scaleMacros(macros, ratio) {
   };
 }
 
-// Refleja recipe.service.ts#mergeRecipeIngredients: ingredientes base del
-// Recipe, menos los eliminados, con los modificados sustituidos por su
-// versión completa ya guardada. modifiedBaseCustomProducts NO es un diff
-// parcial en el backend — cada entrada es un CustomProduct nuevo y
-// completo con su propio baseCustomProductId apuntando al ingrediente que
-// reemplaza (ver custom-product-schema.js), así que un reemplazo íntegro
-// (no un overlay campo a campo) da el mismo resultado.
+// Campos que una entrada de modifiedBaseCustomProducts puede pisar del
+// ingrediente base. MISMA lista que
+// recipes/recipe-merge.service.js#CUSTOM_PRODUCT_OVERRIDE_FIELDS y que
+// shared-core/services/recipe/recipe.service.ts#CUSTOM_PRODUCT_COMPARISON_FIELDS
+// del front; está repetida aquí a propósito para que este módulo siga siendo
+// aritmética pura (sin mongoose detrás), y hay un test que compara las dos
+// listas del backend para que no se separen.
+const CUSTOM_PRODUCT_OVERRIDE_FIELDS = [
+  "quantity",
+  "energyKcal100g",
+  "protein100g",
+  "carbohydrates100g",
+  "fat100g",
+  "saturatedFat100g",
+  "sugars100g",
+  "fiber100g",
+  "salt100g",
+  "sodium100g",
+  "cholesterol100g",
+  "transFat100g",
+  "calcium100g",
+  "iron100g",
+  "magnesium100g",
+  "phosphorus100g",
+  "potassium100g",
+  "zinc100g",
+  "copper100g",
+  "manganese100g",
+  "selenium100g",
+  "iodine100g",
+  "vitaminA100g",
+  "vitaminC100g",
+  "vitaminD100g",
+  "vitaminE100g",
+  "vitaminK100g",
+  "vitaminB1100g",
+  "vitaminB2100g",
+  "vitaminB3100g",
+  "vitaminB5100g",
+  "vitaminB6100g",
+  "vitaminB9100g",
+  "vitaminB12100g",
+  "biotin100g",
+  "omega3100g",
+  "omega6100g",
+  "omega9100g",
+  "caffeine100g",
+  "taurine100g",
+  "alcohol100g",
+  "ingredients",
+  "allergens",
+  "traces",
+  "vegan",
+  "vegetarian",
+  "lactoseFree",
+  "glutenFree",
+];
+
+// Refleja recipe.service.ts#mergeRecipeIngredients del front: ingredientes
+// base del Recipe, menos los eliminados, con los modificados pisando CAMPO A
+// CAMPO sobre el ingrediente base.
+//
+// 2026-10 — antes sustituía el ingrediente base por la entrada modificada
+// ENTERA, dando por hecho que cada entrada era un CustomProduct completo. No
+// lo es: el front manda solo los campos que cambian
+// (recipe.service.ts#buildModifiedBaseCustomProduct), así que la cuenta más
+// corriente de todas —el cliente ajusta la cantidad de un ingrediente y nada
+// más— dejaba un ingrediente con `quantity` y sin un solo macro, y la receta
+// entera computaba 0 kcal en todo lo que cuelga de aquí: adherencia,
+// cumplimiento del plan, perfil de macros de las plantillas y alertas del
+// coach. El cliente veía sus kcal bien (las calcula el front) y su
+// profesional veía 0.
+//
+// recipes/recipe-merge.service.js#buildMergedIngredients ya lo hacía así; esto
+// alinea la tercera copia con las otras dos.
 function mergeRecipeIngredients(recipe, customRecipe) {
   const baseIngredients = recipe?.customProducts || [];
   if (!customRecipe) return baseIngredients;
@@ -89,7 +157,18 @@ function mergeRecipeIngredients(recipe, customRecipe) {
 
   const mergedBase = baseIngredients
     .filter((ingredient) => !removedIds.has(toId(ingredient)))
-    .map((ingredient) => modifiedByBaseId.get(toId(ingredient)) || ingredient);
+    .map((ingredient) => {
+      const modified = modifiedByBaseId.get(toId(ingredient));
+      if (!modified) return ingredient;
+
+      // Los documentos llegan poblados por mongoose: toObject() para no
+      // escribir sobre el documento real ni arrastrar sus getters.
+      const merged = ingredient?.toObject?.() || { ...ingredient };
+      CUSTOM_PRODUCT_OVERRIDE_FIELDS.forEach((field) => {
+        if (modified[field] !== undefined) merged[field] = modified[field];
+      });
+      return merged;
+    });
 
   return [...mergedBase, ...(customRecipe.addedCustomProducts || [])];
 }
@@ -265,6 +344,7 @@ function computeRangeAdherence(days, periodDays) {
 }
 
 module.exports = {
+  CUSTOM_PRODUCT_OVERRIDE_FIELDS,
   mergeRecipeIngredients,
   ingredientMacros,
   macrosForCustomRecipe,

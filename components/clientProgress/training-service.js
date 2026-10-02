@@ -37,6 +37,13 @@ function volumeOf(set) {
  * El volumen es reps × peso sumado: la definición estándar de volumen de
  * carga, y la única que se puede calcular con lo que el modelo guarda.
  */
+// Microciclos en los que el volumen baja a propósito (split-schema.js).
+const REDUCED_LOAD_PURPOSES = ["deload", "vacation"];
+
+function isReducedLoad(set) {
+  return REDUCED_LOAD_PURPOSES.includes(set.splitPurpose);
+}
+
 function buildWeeklyTraining(sets, weeks, now) {
   return buildWeekWindows(weeks, now).map((window) => {
     const inWeek = (sets || []).filter((set) => {
@@ -55,6 +62,8 @@ function buildWeeklyTraining(sets, weeks, now) {
       volume: inWeek.length ? Math.round(volume) : null,
       sets: inWeek.length,
       sessions,
+      // Toda la semana en descarga o vacaciones: bajar volumen es lo previsto.
+      reducedLoad: inWeek.length > 0 && inWeek.every(isReducedLoad),
     };
   });
 }
@@ -139,6 +148,7 @@ function buildVolumeComparison(weeklyTraining) {
     previous: previous.volume,
     absolute,
     percentage: Math.round((absolute / previous.volume) * 1000) / 10,
+    reducedLoad: Boolean(current.reducedLoad),
   };
 }
 
@@ -170,6 +180,7 @@ function buildBlockTraining(sets) {
       blocks.set(key, {
         splitId: key,
         name: set.splitName || "Microciclo",
+        purpose: set.splitPurpose || "regular",
         start: null,
         end: null,
         volume: 0,
@@ -192,6 +203,7 @@ function buildBlockTraining(sets) {
     .map((block) => ({
       splitId: block.splitId,
       name: block.name,
+      purpose: block.purpose,
       start: block.start,
       end: block.end,
       volume: Math.round(block.volume),
@@ -222,9 +234,10 @@ function buildBlockComparison(blockTraining) {
 
   const absolute = current.volumePerSession - previous.volumePerSession;
   return {
-    current: { name: current.name, start: current.start, end: current.end, volumePerSession: current.volumePerSession, sessions: current.sessions },
-    previous: { name: previous.name, start: previous.start, end: previous.end, volumePerSession: previous.volumePerSession, sessions: previous.sessions },
+    current: { name: current.name, purpose: current.purpose, start: current.start, end: current.end, volumePerSession: current.volumePerSession, sessions: current.sessions },
+    previous: { name: previous.name, purpose: previous.purpose, start: previous.start, end: previous.end, volumePerSession: previous.volumePerSession, sessions: previous.sessions },
     absolute,
+    reducedLoad: REDUCED_LOAD_PURPOSES.includes(current.purpose),
     percentage: Math.round((absolute / previous.volumePerSession) * 1000) / 10,
   };
 }

@@ -1,10 +1,26 @@
 const dietDaySchema = require("../dietDays/diet-days-schema");
 const userSchema = require("../users/schema");
 const mongoose = require("mongoose");
+const { buildHiddenRecentStages } = require("../hiddenRecentFoods/hidden-recent-food-match");
 
 function toObjectId(id) {
   if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
   return new mongoose.Types.ObjectId(id);
+}
+
+// Los recientes salen de recorrer los días de dieta del usuario: sin acotar,
+// el pipeline desplegaba TODAS sus comidas y TODOS sus alimentos de siempre
+// para quedarse con 15. Se limita a los días más recientes, que es de donde
+// pueden salir: `date` es "YYYY-MM-DD", así que el orden de cadena es el
+// cronológico y el índice {userId, date} sirve para el $sort.
+const RECENT_DAYS_SCANNED = 120;
+
+function recentDaysMatchStage(userObjectId) {
+  return [
+    { $match: { userId: userObjectId } },
+    { $sort: { date: -1 } },
+    { $limit: RECENT_DAYS_SCANNED },
+  ];
 }
 
 // Refactor nutrición (2026-09) — la colección `diets` ya no existe. Este
@@ -35,9 +51,11 @@ module.exports = {
     return this.getDietById(idDiet);
   },
 
+  // hidden = recientes que el cliente ocultó (hiddenRecentFoods), ya
+  // cargados por diet-model.js.
   async getRecentMealProducts(
     id,
-    { mealIndex, limit = 15 } = {}
+    { mealIndex, limit = 15, hidden = [] } = {}
   ) {
     const dietObjectId = toObjectId(id);
     if (!dietObjectId) return [];
@@ -57,7 +75,7 @@ module.exports = {
     // vez de en el wrapper Diet. $dietDay se conserva como nombre de campo
     // para no reescribir el resto del pipeline.
     const pipeline = [
-      { $match: { userId: dietObjectId } },
+      ...recentDaysMatchStage(dietObjectId),
       { $addFields: { dietDay: "$$ROOT" } },
       {
         $addFields: {
@@ -89,6 +107,10 @@ module.exports = {
         },
       },
       { $unwind: "$customProduct" },
+      ...buildHiddenRecentStages(hidden, {
+        refField: "customProduct.product",
+        entryIdField: "customProduct._id",
+      }),
       {
         $lookup: {
           from: "products",
@@ -129,7 +151,7 @@ module.exports = {
 
   async getRecentMealRecipes(
     id,
-    { mealIndex, limit = 15 } = {}
+    { mealIndex, limit = 15, hidden = [] } = {}
   ) {
     const dietObjectId = toObjectId(id);
     if (!dietObjectId) return [];
@@ -149,7 +171,7 @@ module.exports = {
     // vez de en el wrapper Diet. $dietDay se conserva como nombre de campo
     // para no reescribir el resto del pipeline.
     const pipeline = [
-      { $match: { userId: dietObjectId } },
+      ...recentDaysMatchStage(dietObjectId),
       { $addFields: { dietDay: "$$ROOT" } },
       {
         $addFields: {
@@ -181,6 +203,10 @@ module.exports = {
         },
       },
       { $unwind: "$customRecipe" },
+      ...buildHiddenRecentStages(hidden, {
+        refField: "customRecipe.recipe",
+        entryIdField: "customRecipe._id",
+      }),
       {
         $sort: {
           "dietDay.date": -1,

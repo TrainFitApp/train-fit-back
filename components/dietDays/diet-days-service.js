@@ -1,6 +1,4 @@
 const dietDayDao = require("./diet-days-dao");
-const dietDayUtil = require("./diet-days-util");
-const aggregateService = require("../util/aggregate-service");
 const anthropometryModel = require("../anthropometry/anthropometry-service");
 const dietTemplateDao = require("../dietTemplates/diet-template-dao");
 const { buildShoppingList } = require("./shopping-list-service");
@@ -88,74 +86,31 @@ module.exports = {
     return dietDayDao.countDaysWithoutChoice(userId, startDate, endDate);
   },
 
-  async createDietDay(dietDay) {
-    return dietDayDao.createDietDay(dietDay);
+  // Crear o recuperar el día de una fecha. Idempotente — ver
+  // diet-days-dao.js#ensureDietDay. Devuelve { dietDay, created }: `created`
+  // lo necesita el resolver para decidir si toca aplicar el plan activo.
+  async ensureDietDay(userId, date) {
+    return dietDayDao.ensureDietDay(userId, date);
   },
 
-  async createDayWeightOnNewDietDay(dayWeight, currentDate, userId) {
-    const standardDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    const dietDay = await dietDayDao.createDietDayOnNew(userId, standardDietDay);
-
-    if (dayWeight && userId) {
-      await anthropometryModel.upsertAnthropometry(userId, currentDate, { weight: dayWeight });
-      dietDay.weight = dayWeight;
-    }
-
-    return dietDay;
+  async setDayWeight(userId, date, dayWeight) {
+    return anthropometryModel.upsertAnthropometry(userId, date, { weight: dayWeight });
   },
 
-  async createCustomProductOnNewDietDay(
-    customProduct,
-    indexMeal,
-    currentDate,
-    idUser,
-  ) {
-    let standarDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    return dietDayDao.createCustomProductOnNewDietDay(
-      customProduct,
-      indexMeal,
-      null,
-      standarDietDay,
-      idUser,
-    );
+  async addCustomProductToMeal(dietDay, indexMeal, customProduct, userId) {
+    return dietDayDao.addCustomProductToMeal(dietDay, indexMeal, customProduct, userId);
   },
 
-  async createCustomRecipeOnNewDietDay(
-    customRecipe,
-    indexMeal,
-    userId,
-    currentDate,
-  ) {
-    let standarDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    return dietDayDao.createCustomRecipeOnNewDietDay(
-      customRecipe,
-      indexMeal,
-      userId,
-      standarDietDay,
-    );
-  },
-
-  async createOwnCustomRecipeOnNewDietDay(
-    idUser,
-    customRecipe,
-    currentDate,
-    indexMeal,
-  ) {
-    let standarDietDay = dietDayUtil.getStandardDietDay(currentDate);
-    return dietDayDao.createOwnCustomRecipeOnNewDietDay(
-      idUser,
-      customRecipe,
-      standarDietDay,
-      indexMeal,
-    );
+  async addCustomRecipeToMeal(dietDay, indexMeal, customRecipe) {
+    return dietDayDao.addCustomRecipeToMeal(dietDay, indexMeal, customRecipe);
   },
 
   async addDietDayMeal(idDietDay, idMeal) {
     return dietDayDao.addDietDayMeal(idDietDay, idMeal);
   },
 
-  async updateDietDay(id, { name, date, meals, notes }) {
-    return dietDayDao.updateDietDay(id, { name, date, meals, notes });
+  async setNotes(userId, date, notes) {
+    return dietDayDao.setNotes(userId, date, notes);
   },
 
   async setMenuName(dietDayId, menuName) {

@@ -44,6 +44,7 @@ Estado a **2026-09-25**. La parte del front está en `train-fit-front/docs/refac
 - **Pautado vs. consumido**: `assignedQuantity`, `assignedByTrainerId` y `consumed` en `CustomProduct`/`CustomRecipe`. Lo pautado es de solo lectura para el cliente.
 - **Alternativas de comida**: `Meal.alternatives` + `chosenAlternativeIndex`. La comida nace con la opción 1 aplicada. El cliente las usa por las rutas de `mealProposals/`.
 - **Saltar un día**: `DietDay.skipped` (`diet-skips.js`).
+- **Adición rápida** (2026-10): `CustomProduct.name` + `quickAdd` — una línea que el cliente apunta con sus macros a mano, sin `product` del catálogo detrás. Se guarda con `quantity` 100 y los macros en los campos "por 100 g", así que suma por la vía de siempre (`ingredientMacros`) sin ningún caso especial. Sin `product`, queda fuera de los recientes (`diet-dao.js#getRecentMealProducts`, `$unwind` del producto) y de la lista de la compra, que se calcula desde el plan.
 - `mealSnippets/` (comidas guardadas del entrenador), `nutritionPreferences/` (preferencias y restricciones del cliente) y la lista de la compra (`shopping-list-service.js`).
 - **Retirado dentro de la propia rama** (nunca llegó a main): intercambios de alimentos, `anthropometryRequests` y los modelos de "ciclos" y "revisiones".
 
@@ -97,7 +98,7 @@ Cobros (2026-09-27): nuevas `trainerpaymentprofiles` y `trainerpaymentsettings`;
 | `User` | `dietPinnedNote`, `dietEnabled`, `professionalPremium` | `dietInUse`, `archivedDiets`, `archivedTables` |
 | `DietDay` | `userId` (+ índice `{userId, date}`), `skipped`, `menuName` | `steps` ⚠️ |
 | `Meal` | `trainerId`, `assignedByTrainerId`, `completed`, `alternatives`, `chosenAlternativeIndex`, `alternativesTrainerId` | |
-| `CustomProduct` / `CustomRecipe` | `assignedQuantity`, `assignedByTrainerId`, `consumed` | |
+| `CustomProduct` / `CustomRecipe` | `assignedQuantity`, `assignedByTrainerId`, `consumed`; en `CustomProduct` además `name` y `quickAdd` (adición rápida, 2026-10) | |
 | `Anthropometry` | perímetros L/R, `shoulders`, masas, `checkinSources` | |
 | `NutritionalGoal` | `fiberGTotal`, `source`, `updatedByTrainerId` | |
 | `Recipe` | `tags` | |

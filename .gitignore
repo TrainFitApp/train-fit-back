@@ -10,3 +10,4 @@ scripts/backups/
 
 
 .env.stripe.prod
+.media-local/

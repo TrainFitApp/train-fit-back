@@ -50,6 +50,14 @@ module.exports = {
       return !!value;
     };
 
+    // Ids de 24 hex y como mucho 50: son los recientes que el frontend ya
+    // tiene cargados para esa comida y sirven solo para subirlos en el
+    // ranking (ver meal-dao.js#searchAllWithFilters).
+    const recentIds = (Array.isArray(req.body.recentIds) ? req.body.recentIds : [])
+      .map((value) => String(value || ""))
+      .filter((value) => /^[0-9a-fA-F]{24}$/.test(value))
+      .slice(0, 50);
+
     const page = parseInt((req.body.page || 0).toString(), 10);
     const limit = 7;
     const list = await mealService.searchAllWithFilters(
@@ -61,6 +69,12 @@ module.exports = {
       toBoolean(req.body.shieldFilter),
       toBoolean(req.body.favFilter),
       req.body.userId,
+      recentIds,
+      // Quién pregunta, además de a quién pertenece la dieta: cuando un
+      // entrenador pauta una comida, `body.userId` es el del CLIENTE, y sin
+      // esto los productos que el propio entrenador había creado no salían en
+      // la búsqueda (ver meal-dao.js#searchAllWithFilters).
+      req?.user?.id,
     );
     return res.send(list);
   },

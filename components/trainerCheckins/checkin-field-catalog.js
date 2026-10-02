@@ -236,6 +236,21 @@ const CHECKIN_FIELDS = [
   // junto a las medidas de composición corporal/perímetros de esa misma
   // respuesta). Un único campo genérico, no un mecanismo aparte.
   { key: "comment", label: "Comentario", type: "text", group: "bienestar", storage: "wellbeing" },
+
+  // --- Fotos de progreso (storage: media) — docs/plan-medidas-multimedia.md ---
+  // La respuesta es el _id del día de progreso (ProgressMediaDay) que el
+  // cliente rellena con el mismo flujo de captura guiada de Medidas › Fotos.
+  // Responder se lo envía al profesional: ese día lo ve siempre, aunque el
+  // cliente lo haya ocultado en su galería.
+  {
+    key: "progress_photos",
+    label: "Fotos de progreso",
+    type: "photos",
+    group: "fotos",
+    storage: "media",
+    poses: ["front", "side", "back"],
+    hint: "Mismo sitio, misma luz y a la misma hora. En ayunas y con la misma ropa. Móvil a la altura del ombligo, a unos 2 metros.",
+  },
 ];
 
 const CHECKIN_FIELD_KEYS = CHECKIN_FIELDS.map((f) => f.key);

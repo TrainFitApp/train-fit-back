@@ -8,28 +8,21 @@ const mealSchema = require("../meals/meal-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const mealModel = require("../meals/meal-service");
 const dietDayDao = require("../dietDays/diet-days-dao");
-const dietDayUtil = require("../dietDays/diet-days-util");
+const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
 const recipeMergeService = require("./recipe-merge.service");
 
 const customProductSchema = require("../customProducts/custom-product-schema");
 const mongoose = require("mongoose");
 const {
-  buildSearchFields,
-  normalizeSearchText,
-  splitSearchTokens,
-  hasEditDistanceOneOrLess,
-} = require("../util/search-index");
+  RECIPE_SEARCH_CONFIG,
+  parseSearchQuery,
+  searchByRelevance,
+  listByScope,
+} = require("../util/food-search");
 
 function toObjectId(id) {
   if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
   return new mongoose.Types.ObjectId(id);
-}
-
-function toComparableId(value) {
-  if (!value) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && value.toString) return value.toString();
-  return String(value);
 }
 
 module.exports = {
@@ -222,10 +215,7 @@ module.exports = {
       recipe.customProducts = await this.syncRecipeCustomProducts(
         recipe.customProducts || [],
       );
-      const searchFields = buildSearchFields(recipe);
-      recipe.nameNormalized = searchFields.nameNormalized;
-      recipe.namePrefixes = searchFields.namePrefixes;
-
+      // Los derivados de búsqueda los pone el schema (hook pre-save).
       return await recipeSchema.create(recipe);
     } catch (err) {
       throw err;
@@ -248,12 +238,6 @@ module.exports = {
           currentRecipe.customProducts || [],
         );
         await this.rebaseCustomRecipesForRecipe(id, recipe.customProducts);
-      }
-
-      if (Object.prototype.hasOwnProperty.call(recipe, "name")) {
-        const searchFields = buildSearchFields(recipe);
-        recipe.nameNormalized = searchFields.nameNormalized;
-        recipe.namePrefixes = searchFields.namePrefixes;
       }
 
       return await recipeSchema.findByIdAndUpdate(
@@ -301,6 +285,11 @@ module.exports = {
     return recipeSchema.findByIdAndDelete(id);
   },
 
+  /**
+   * Búsqueda de recetas (/api/recipes/search y las vistas de propias,
+   * verificadas y favoritas). Mismo motor que los productos:
+   * components/util/food-search.js. Aquí solo se decide la visibilidad.
+   */
   async searchRecipes(page, limit, search, userId, filters = {}) {
     const ownOnly = !!filters.ownOnly;
     const favoritesOnly = !!filters.favoritesOnly;
@@ -309,237 +298,70 @@ module.exports = {
       ? filters.tags.map((t) => String(t).trim()).filter(Boolean)
       : [];
     const userObjectId = toObjectId(userId);
-    const pageValue = Math.max(0, parseInt((page || 0).toString(), 10));
-    const limitValue = Math.max(1, parseInt((limit || 10).toString(), 10));
-    const skipValue = pageValue * limitValue;
-    const trimmedSearch = String(search || "").trim();
-    const normalizedSearchQuery = normalizeSearchText(trimmedSearch);
-    const searchTerms = splitSearchTokens(trimmedSearch);
-    const hasSearch = normalizedSearchQuery.length > 0;
-    const typoEnabled = normalizedSearchQuery.length > 2;
-    const queryUpperBound = `${normalizedSearchQuery}\uffff`;
-    const candidateLimitPerStage = 200;
+    const { hasSearch } = parseSearchQuery(search);
 
-    if ((ownOnly || favoritesOnly) && !userObjectId) {
-      return [];
-    }
+    if ((ownOnly || favoritesOnly) && !userObjectId) return [];
 
     let archivedRecipeIds = [];
     if (favoritesOnly) {
-      const userDoc = await userSchema.findById(userObjectId).select("archivedRecipes");
+      const userDoc = await userSchema
+        .findById(userObjectId)
+        .select("archivedRecipes")
+        .lean();
       archivedRecipeIds = userDoc?.archivedRecipes || [];
-      if (!archivedRecipeIds.length) {
-        return [];
-      }
+      if (!archivedRecipeIds.length) return [];
     }
 
-    const visibilityClauses = [];
+    const scope = {};
+
     if (ownOnly) {
-      const ownClause = { userId: userObjectId };
-      if (verifiedOnly) {
-        ownClause.verified = true;
-      }
-      visibilityClauses.push(ownClause);
+      scope.userId = userObjectId;
+      if (verifiedOnly) scope.verified = true;
+    } else if (verifiedOnly) {
+      scope.verified = true;
+    } else if (userObjectId) {
+      // Las verificadas las ve todo el mundo; las propias, solo su dueño.
+      scope.$or = [{ verified: true }, { userId: userObjectId }];
     } else {
-      if (verifiedOnly) {
-        visibilityClauses.push({ verified: true });
-      } else {
-        visibilityClauses.push({ verified: true });
-        if (userObjectId) {
-          visibilityClauses.push({ userId: userObjectId });
-        }
-      }
+      scope.verified = true;
     }
-
-    const baseQuery =
-      visibilityClauses.length === 1
-        ? { ...visibilityClauses[0] }
-        : { $or: visibilityClauses };
 
     if (favoritesOnly) {
-      baseQuery._id = { $in: archivedRecipeIds };
+      scope._id = { $in: archivedRecipeIds };
     }
 
-    // TASK-046 — se añade a baseQuery (no a una rama concreta) para que
-    // aplique de forma consistente tanto al camino sin búsqueda como a las 5
-    // etapas de búsqueda de abajo, todas las cuales parten de `...baseQuery`.
+    // TASK-046 — las etiquetas acotan igual con búsqueda y sin ella.
     if (tagsFilter.length) {
-      baseQuery.tags = { $in: tagsFilter };
+      scope.tags = { $in: tagsFilter };
     }
 
-    if (!hasSearch) {
-      return recipeSchema
-        .find(baseQuery)
-        .sort({ name: 1, _id: 1 })
-        .skip(skipValue)
-        .limit(limitValue)
-        .exec();
-    }
-
-    const candidatesById = new Map();
-    const upsertCandidate = (doc, score, stagePriority) => {
-      if (!doc?._id) return;
-      const key = toComparableId(doc._id);
-      const current = candidatesById.get(key);
-      if (
-        !current ||
-        score > current.score ||
-        (score === current.score && stagePriority > current.stagePriority)
-      ) {
-        candidatesById.set(key, { doc, score, stagePriority });
-      }
+    const config = {
+      ...RECIPE_SEARCH_CONFIG,
+      // Sin índice de texto no hay etapa de rescate por stemming, pero el
+      // motor lo detectaría solo al fallar la query; declararlo evita la
+      // llamada inútil si algún día se quita el índice de recetas.
+      hasTextIndex: true,
     };
 
-    const [exactDocs, startsWithDocs, prefixDocs, textDocs, missingDerivedDocs] =
-      await Promise.all([
-        recipeSchema
-          .find({ ...baseQuery, nameNormalized: normalizedSearchQuery })
-          .limit(candidateLimitPerStage)
-          .lean()
-          .exec(),
-        recipeSchema
-          .find({
-            ...baseQuery,
-            nameNormalized: {
-              $gte: normalizedSearchQuery,
-              $lte: queryUpperBound,
-            },
-          })
-          .sort({ nameNormalized: 1, _id: 1 })
-          .limit(candidateLimitPerStage)
-          .lean()
-          .exec(),
-        recipeSchema
-          .find({ ...baseQuery, namePrefixes: normalizedSearchQuery })
-          .limit(candidateLimitPerStage)
-          .lean()
-          .exec(),
-        recipeSchema
-          .find(
-            { ...baseQuery, $text: { $search: trimmedSearch } },
-            { score: { $meta: "textScore" } },
-          )
-          .sort({ score: { $meta: "textScore" } })
-          .limit(candidateLimitPerStage)
-          .lean()
-          .exec(),
-        recipeSchema
-          .find({
-            $and: [
-              baseQuery,
-              {
-                $or: [
-                  { nameNormalized: { $exists: false } },
-                  { namePrefixes: { $exists: false } },
-                ],
-              },
-            ],
-          })
-          .limit(300)
-          .lean()
-          .exec(),
-      ]);
-
-    for (const doc of exactDocs) upsertCandidate(doc, 100000, 3);
-    for (const doc of startsWithDocs) upsertCandidate(doc, 85000, 2);
-    for (const doc of prefixDocs) upsertCandidate(doc, 70000, 1);
-    for (const doc of textDocs) {
-      upsertCandidate(doc, 40000 + Number(doc.score || 0) * 1200, 0);
+    if (!hasSearch) {
+      return listByScope({
+        model: recipeSchema,
+        scope,
+        page,
+        limit,
+        config,
+      });
     }
 
-    for (const doc of missingDerivedDocs) {
-      const searchFields = buildSearchFields(doc);
-      const enrichedDoc = {
-        ...doc,
-        nameNormalized: searchFields.nameNormalized,
-        namePrefixes: searchFields.namePrefixes,
-      };
-
-      if (enrichedDoc.nameNormalized === normalizedSearchQuery) {
-        upsertCandidate(enrichedDoc, 95000, 2);
-        continue;
-      }
-
-      if (Array.isArray(enrichedDoc.namePrefixes)) {
-        if (enrichedDoc.namePrefixes.includes(normalizedSearchQuery)) {
-          upsertCandidate(enrichedDoc, 68000, 1);
-          continue;
-        }
-      }
-
-      if (enrichedDoc.nameNormalized?.includes(normalizedSearchQuery)) {
-        upsertCandidate(enrichedDoc, 30000, 0);
-      }
-    }
-
-    const scoredCandidates = Array.from(candidatesById.values()).map(
-      (candidate) => {
-        const nameNormalized = normalizeSearchText(
-          candidate.doc.nameNormalized || candidate.doc.name,
-        );
-        const nameTokens = splitSearchTokens(nameNormalized);
-        let score = candidate.score;
-        let matchPriority = 0;
-
-        if (nameNormalized === normalizedSearchQuery) matchPriority = 900;
-        else if (nameNormalized.startsWith(`${normalizedSearchQuery} `)) {
-          matchPriority = 850;
-        } else if (nameNormalized.startsWith(normalizedSearchQuery)) {
-          matchPriority = 820;
-        } else if (nameTokens.includes(normalizedSearchQuery)) {
-          matchPriority = 780;
-        } else if (
-          nameTokens.some((token) => token.startsWith(normalizedSearchQuery))
-        ) {
-          matchPriority = 740;
-        } else if (nameNormalized.includes(normalizedSearchQuery)) {
-          matchPriority = 700;
-        }
-
-        for (const term of searchTerms) {
-          if (nameTokens.includes(term)) score += 1800;
-          else if (nameTokens.some((token) => token.startsWith(term))) {
-            score += 650;
-          }
-
-          if (
-            typoEnabled &&
-            nameTokens.some((token) => hasEditDistanceOneOrLess(token, term))
-          ) {
-            score += 350;
-          }
-        }
-
-        return {
-          ...candidate,
-          score,
-          matchPriority,
-        };
-      },
-    );
-
-    scoredCandidates.sort((left, right) => {
-      if (left.matchPriority !== right.matchPriority) {
-        return right.matchPriority - left.matchPriority;
-      }
-      if (left.score !== right.score) return right.score - left.score;
-      if (left.stagePriority !== right.stagePriority) {
-        return right.stagePriority - left.stagePriority;
-      }
-      const nameOrder = (left.doc.name || "").localeCompare(right.doc.name || "");
-      if (nameOrder !== 0) return nameOrder;
-      return toComparableId(left.doc._id).localeCompare(toComparableId(right.doc._id));
+    return searchByRelevance({
+      model: recipeSchema,
+      scope,
+      search,
+      page,
+      limit,
+      context: { ownerId: userObjectId, favoriteIds: new Set(archivedRecipeIds.map(String)) },
+      config,
     });
-
-    // Las etapas anteriores usan .lean() (necesario para poder fusionar/puntuar
-    // candidatas de 5 queries distintas), lo que se salta el autopopulate de
-    // customProducts. Solo se puebla la página final que realmente se devuelve,
-    // no las ~1000 candidatas descartadas por las demás páginas.
-    const paginatedDocs = scoredCandidates
-      .slice(skipValue, skipValue + limitValue)
-      .map((candidate) => candidate.doc);
-
-    return recipeSchema.populate(paginatedDocs, { path: "customProducts" });
   },
 
   async composeRecipe(payload, userId, isAdmin = false) {
@@ -587,10 +409,10 @@ module.exports = {
       }
 
       const hasMealContext = !!context?.mealId;
+      // `context.dietInUseId` ya no se mira (el dueño del día es el usuario
+      // autenticado); las apps viejas lo siguen mandando y no estorba.
       const hasNewDietDayContext =
-        !!context?.dietInUseId &&
-        context?.indexMeal !== undefined &&
-        context?.currentDate;
+        context?.indexMeal !== undefined && !!context?.currentDate;
 
       if (!hasMealContext && !hasNewDietDayContext) {
         return { recipe: recipeDoc };
@@ -644,17 +466,24 @@ module.exports = {
         };
       }
 
-      const standardDietDay = dietDayUtil.getStandardDietDay(context.currentDate);
-      const dietDay = await dietDayDao.createCustomRecipeOnNewDietDay(
-        nextCustomRecipe,
+      // Crear la receta y pautársela en una fecha que todavía no tiene día,
+      // en una sola llamada. Dos arreglos aquí (2026-10):
+      //   · el dueño del día es el usuario autenticado. Antes se pasaba
+      //     `context.dietInUseId` (el id del wrapper Diet, que ya no existe)
+      //     en el hueco del userId: el día nacía con un dueño que no era
+      //     nadie, invisible para el cliente — y la siguiente lectura de esa
+      //     fecha creaba OTRO día, el solapamiento que se veía en BD.
+      //   · el día se asegura (resolveOwnedDietDay), no se crea a ciegas.
+      const dietDay = await resolveOwnedDietDay(userId, context.currentDate);
+      const updatedDietDay = await dietDayDao.addCustomRecipeToMeal(
+        dietDay,
         context.indexMeal,
-        context.dietInUseId,
-        standardDietDay,
+        nextCustomRecipe,
       );
 
       return {
         recipe: recipeDoc,
-        dietDay,
+        dietDay: updatedDietDay,
       };
     } catch (err) {
       throw err;

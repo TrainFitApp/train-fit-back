@@ -13,6 +13,7 @@ const { normalizeSetsOrder } = require("../sets/set-order-util");
 const userSchema = require("../users/schema");
 
 const { isSamePermutation } = require("../util/permutation-util");
+const { clearWorkoutExecutionState } = require("../workouts/workout-copy-util");
 
 function normalizeSetForTemplateCopy(setTemp) {
   delete setTemp.doned;
@@ -172,8 +173,7 @@ module.exports = {
       newSplit.workouts.forEach((workoutTemp) => {
         workoutTemp._id = new mongoose.Types.ObjectId();
         // Se mantienen las notes del workout al duplicar
-        delete workoutTemp.date;
-        delete workoutTemp.startedAt;
+        clearWorkoutExecutionState(workoutTemp);
         newWorkouts.push(workoutTemp);
         workoutTemp.exercises.forEach((exerciseTemp) => {
           exerciseTemp._id = new mongoose.Types.ObjectId();

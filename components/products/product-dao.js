@@ -1,13 +1,12 @@
 const productSchema = require("./product-schema");
 const userSchema = require("../users/schema");
-const aggregateService = require("../util/aggregate-service");
 const mongoose = require("mongoose");
 const {
-  buildSearchFields,
-  normalizeSearchText,
-  splitSearchTokens,
-  hasEditDistanceOneOrLess,
-} = require("../util/search-index");
+  PRODUCT_SEARCH_CONFIG,
+  parseSearchQuery,
+  searchByRelevance,
+  listByScope,
+} = require("../util/food-search");
 
 function toObjectId(id) {
   if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
@@ -148,36 +147,21 @@ function prepareProductUpdateQuery(data, options = {}) {
 }
 
 module.exports = {
+  // Catálogo global paginado (panel de admin). Antes era un $addFields +
+  // $sort por `name` sobre la colección entera: con millones de productos eso
+  // es un recorrido completo más una ordenación en memoria que revienta el
+  // límite de 100MB de $sort. Ahora va por el índice de `nameNormalized`.
   async getProducts(page, limit) {
-    try {
-      return await productSchema.aggregate([
-        { $match: { userId: null } }, // Solo productos globales (sin userId)
-        {
-          $addFields: {
-            isSpanish: {
-              $cond: {
-                if: {
-                  $eq: [
-                    {
-                      $substrCP: [{ $toString: { $ifNull: ["$code", ""] } }, 0, 2],
-                    },
-                    "84",
-                  ],
-                },
-                then: 1,
-                else: 0,
-              },
-            },
-          },
-        },
-        { $sort: { isSpanish: -1, name: 1 } },
-        { $skip: page * limit },
-        { $limit: limit },
-        { $project: { isSpanish: 0 } },
-      ]);
-    } catch (err) {
-      throw err;
-    }
+    const pageValue = Math.max(0, parseInt((page || 0).toString(), 10) || 0);
+    const limitValue = Math.max(1, parseInt((limit || 10).toString(), 10) || 10);
+
+    return productSchema
+      .find({ userId: null })
+      .sort({ nameNormalized: 1, _id: 1 })
+      .skip(pageValue * limitValue)
+      .limit(limitValue)
+      .lean()
+      .exec();
   },
 
   async getProduct(id) {
@@ -221,120 +205,41 @@ module.exports = {
     }
   },
 
-  async searchProduct(page, limit, search) {
-    try {
-      const trimmed = (typeof search === "string" ? search : "").trim();
-      if (!trimmed) return [];
-      const normalizedQuery = normalizeSearchText(trimmed);
-      if (!normalizedQuery) return [];
+  /**
+   * Búsqueda de productos de /api/products/search (modal de productos de
+   * trainers). Mismo motor que search-foods: ver components/util/food-search.js.
+   *
+   * Incluye los productos del propio usuario además de los globales. Antes
+   * filtraba por `userId: null` y un entrenador no podía volver a encontrar
+   * los productos que él mismo había creado.
+   */
+  async searchProduct(page, limit, search, userId = null) {
+    const userObjectId = toObjectId(userId);
+    const { hasSearch } = parseSearchQuery(search);
 
-      const skipValue = Math.max(0, parseInt((page || 0).toString(), 10)) * limit;
-      const queryTerms = splitSearchTokens(trimmed);
-      const typoEnabled = normalizedQuery.length > 2;
-      const candidateCap = 250;
+    const scope = {
+      userId: userObjectId ? { $in: [userObjectId, null] } : null,
+    };
 
-      const candidates = new Map();
-      const upsertCandidate = (doc, score) => {
-        if (!doc?._id) return;
-        const key = String(doc._id);
-        const current = candidates.get(key);
-        if (!current || score > current.score) {
-          candidates.set(key, { doc, score });
-        }
-      };
-
-      const [exactDocs, prefixDocs, textDocs] = await Promise.all([
-        productSchema
-          .find({
-            userId: null,
-            $or: [
-              { nameNormalized: normalizedQuery },
-              { brandNormalized: normalizedQuery },
-            ],
-          })
-          .limit(candidateCap)
-          .lean()
-          .exec(),
-        productSchema
-          .find({
-            userId: null,
-            $or: [{ namePrefixes: normalizedQuery }, { brandPrefixes: normalizedQuery }],
-          })
-          .limit(candidateCap)
-          .lean()
-          .exec(),
-        productSchema
-          .find(
-            { userId: null, $text: { $search: trimmed } },
-            { score: { $meta: "textScore" } },
-          )
-          .sort({ score: { $meta: "textScore" } })
-          .limit(candidateCap)
-          .lean()
-          .exec(),
-      ]);
-
-      for (const doc of exactDocs) {
-        const exactName = doc.nameNormalized === normalizedQuery;
-        const score = exactName ? 100000 : 90000;
-        upsertCandidate(doc, score);
-      }
-
-      for (const doc of prefixDocs) {
-        const prefixInName = Array.isArray(doc.namePrefixes)
-          ? doc.namePrefixes.includes(normalizedQuery)
-          : false;
-        const score = prefixInName ? 70000 : 60000;
-        upsertCandidate(doc, score);
-      }
-
-      for (const doc of textDocs) {
-        const textScore = Number(doc.score || 0);
-        upsertCandidate(doc, 40000 + textScore * 1000);
-      }
-
-      const scored = Array.from(candidates.values()).map(({ doc, score }) => {
-        let total = score;
-        const nameTokens = splitSearchTokens(doc.nameNormalized || doc.name);
-        const brandTokens = splitSearchTokens(doc.brandNormalized || doc.brand);
-
-        for (const term of queryTerms) {
-          if (nameTokens.includes(term)) total += 2000;
-          else if (nameTokens.some((token) => token.startsWith(term))) total += 800;
-
-          if (brandTokens.includes(term)) total += 1200;
-          else if (brandTokens.some((token) => token.startsWith(term))) total += 400;
-
-          if (typoEnabled) {
-            if (nameTokens.some((token) => hasEditDistanceOneOrLess(token, term))) {
-              total += 500;
-            }
-            if (brandTokens.some((token) => hasEditDistanceOneOrLess(token, term))) {
-              total += 250;
-            }
-          }
-        }
-
-        return { doc, score: total };
+    if (!hasSearch) {
+      return listByScope({
+        model: productSchema,
+        scope,
+        page,
+        limit,
+        config: PRODUCT_SEARCH_CONFIG,
       });
-
-      scored.sort((a, b) => {
-        if (a.score !== b.score) return b.score - a.score;
-        const isSpanishA = a.doc.code?.startsWith("84") ? 1 : 0;
-        const isSpanishB = b.doc.code?.startsWith("84") ? 1 : 0;
-        if (isSpanishA !== isSpanishB) return isSpanishB - isSpanishA;
-        const verifiedA = a.doc.verified ? 1 : 0;
-        const verifiedB = b.doc.verified ? 1 : 0;
-        if (verifiedA !== verifiedB) return verifiedB - verifiedA;
-        const nameOrder = (a.doc.name || "").localeCompare(b.doc.name || "");
-        if (nameOrder !== 0) return nameOrder;
-        return String(a.doc._id).localeCompare(String(b.doc._id));
-      });
-
-      return scored.slice(skipValue, skipValue + limit).map((item) => item.doc);
-    } catch (err) {
-      throw err;
     }
+
+    return searchByRelevance({
+      model: productSchema,
+      scope,
+      search,
+      page,
+      limit,
+      context: { ownerId: userObjectId },
+      config: PRODUCT_SEARCH_CONFIG,
+    });
   },
 
   /**
@@ -351,8 +256,7 @@ module.exports = {
       delete cleanedProduct.userId;
     }
 
-    Object.assign(cleanedProduct, buildSearchFields(cleanedProduct));
-
+    // Los derivados de búsqueda los pone el schema (hook pre-save).
     return await productSchema.create(cleanedProduct);
   },
 
@@ -371,15 +275,25 @@ module.exports = {
       }
     }
 
-    if (
-      Object.prototype.hasOwnProperty.call(productData, "name") ||
-      Object.prototype.hasOwnProperty.call(productData, "brand")
-    ) {
-      Object.assign(productData, buildSearchFields(productData));
-    }
+    // Los campos derivados de búsqueda los mantiene el schema (hooks de
+    // product-schema.js). Aquí solo hay que mantenerlos FUERA del juego
+    // genérico de $set/$unset: con `unsetMissingFields` y la lista completa
+    // de campos del schema, editar solo las kcal de un producto hacía
+    // $unset de nameNormalized y searchTokens y dejaba el producto
+    // invisible para la búsqueda.
+    const derivedSearchFields = [
+      "nameNormalized",
+      "brandNormalized",
+      "searchTokens",
+    ];
+
+    derivedSearchFields.forEach((field) => delete productData[field]);
 
     const allProductFields = Object.keys(productSchema.schema.paths).filter(
-      (field) => field !== "_id" && field !== "__v",
+      (field) =>
+        field !== "_id" &&
+        field !== "__v" &&
+        !derivedSearchFields.includes(field),
     );
 
     const options = {
@@ -397,9 +311,10 @@ module.exports = {
         "carbohydrates100g",
         "fat100g",
       ],
+      excludeFields: derivedSearchFields,
       unsetMissingFields: true,
       allFields: allProductFields,
-      protectedUnsetFields: ["userId", "verified"],
+      protectedUnsetFields: ["userId", "verified", ...derivedSearchFields],
     };
 
     const queryUpdate = prepareProductUpdateQuery(productData, options);

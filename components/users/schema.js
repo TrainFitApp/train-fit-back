@@ -146,6 +146,9 @@ const UserSchema = new Schema({
   },
   provider: String,
   lang: { type: String, default: 'es' },
+  // Consentimiento explícito para guardar fotos y vídeos corporales (RGPD).
+  // null = aún no lo ha dado y no puede subir (docs/plan-medidas-multimedia.md).
+  mediaConsentAt: { type: Date, default: null },
 });
 
 UserSchema.plugin(require("mongoose-autopopulate"));
@@ -269,6 +272,25 @@ UserSchema.pre("deleteOne", async function (next) {
       // conserva como histórico tras borrar la cuenta.
       await billingCustomerSchema.deleteMany({ userId: user._id });
       await billingEventSchema.deleteMany({ userId: user._id });
+
+      // Fotos y vídeos (docs/plan-medidas-multimedia.md). Cada deleteMany
+      // arrastra sus MediaAsset, y el hook de MediaAsset borra los archivos
+      // en R2/Bunny. Al final, los MediaAsset sueltos (subidas sin colgar de
+      // nada) de los que el usuario es dueño o protagonista.
+      await require("../progressMedia/progress-media-schema").deleteMany({ userId: user._id });
+      await require("../formChecks/form-check-schema").deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await require("../techniqueVideos/technique-video-schema").deleteMany({ trainerId: user._id });
+      await require("../techniqueVideos/technique-video-override-schema").deleteMany({
+        $or: [{ trainerId: user._id }, { clientId: user._id }],
+      });
+      await require("../media/media-schema").deleteMany({
+        $or: [{ ownerId: user._id }, { subjectId: user._id }],
+      });
+
+      // Recientes ocultos del buscador de alimentos.
+      await require("../hiddenRecentFoods/hidden-recent-food-schema").deleteMany({ userId: user._id });
     }
     next();
   } catch (e) {

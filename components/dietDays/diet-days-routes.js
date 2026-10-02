@@ -31,6 +31,9 @@ router.postAsync(
   auth(["admin", "user"]),
   controller.getDietDayByIdDietAndDate,
 );
+// Todas las rutas de "crear algo en un día" aseguran el día de esa fecha
+// dentro de la MISMA llamada (ver diet-days-controller.js): nunca crean un
+// día a ciegas, así que no pueden dejar dos DietDay con la misma fecha.
 router.postAsync("/", auth(["admin", "user"]), controller.createDietDay);
 router.postAsync(
   "/create/on/new/:dietInUseId",
@@ -38,20 +41,18 @@ router.postAsync(
   controller.createDayWeightOnNewDietDay,
 );
 router.postAsync(
-  "/:dietInUseId",
-  auth(["admin", "user"]),
-  controller.createCustomProductOnNewDietDay,
-);
-router.postAsync(
   "/create/recipe/new/:dietInUseId",
   auth(["admin", "user"]),
   controller.createCustomRecipeOnNewDietDay,
 );
 router.postAsync(
-  "/recipe/own/:idUser",
+  "/:dietInUseId",
   auth(["admin", "user"]),
-  controller.createOwnCustomRecipeOnNewDietDay,
+  controller.createCustomProductOnNewDietDay,
 );
+// La nota del día por fecha (el :id de la variante de abajo se ignora: el día
+// se resuelve por dueño + fecha). Lo específico primero.
+router.putAsync("/date/:date", auth(["admin", "user"]), controller.updateDietDay);
 router.putAsync("/:id", auth(["admin", "user"]), controller.updateDietDay);
 router.putAsync(
   "/:idDietDay/:idMeal",

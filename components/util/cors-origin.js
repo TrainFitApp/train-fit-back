@@ -15,6 +15,12 @@ const ALWAYS_ALLOWED = [
   "http://localhost",
   "http://localhost:8100",
   "http://localhost:8101",
+  // App de profesionales publicada como web (producción y PRE).
+  "https://trainers.trainfit.net",
+  "https://trainers-pre.trainfit.net",
+  // Dirección por defecto del Worker de PRE en Cloudflare, para probar sin
+  // el dominio propio.
+  "https://train-fit-trainers-pre.tf-config-and-deploy.workers.dev",
 ];
 
 // A partir de la TERCERA app del monorepo `ionic serve` ya reparte 8102,
