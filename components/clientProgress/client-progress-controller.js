@@ -34,7 +34,12 @@ const {
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const Table = require("../tables/table-schema");
 const User = require("../users/schema");
-const { buildRoster, ROSTER_WINDOW_DAYS } = require("./roster-service");
+const {
+  buildRoster,
+  parseRosterQuery,
+  paginateRoster,
+  ROSTER_WINDOW_DAYS,
+} = require("./roster-service");
 
 // Ventana de la foto fija del resumen. 28 días = 4 semanas, el mismo periodo
 // que analiza el evaluador de alertas — así el "62% de adherencia" que ve el
@@ -148,21 +153,21 @@ function buildAdherenceInput(data, periodDays, now = new Date(), activePlan = nu
 }
 
 module.exports = {
-  // GET /trainer/roster — Movimiento 1 Coach Pro: una fila por cliente con
-  // adherencia, punto débil, peso, último check-in y alertas abiertas.
+  // GET /trainer/roster?page=&limit=&search=&sort=&dir=&weakest=&alerts=&overdue=&pending=
+  // Movimiento 1 Coach Pro: una fila por cliente con adherencia, punto
+  // débil, peso, último check-in y alertas abiertas.
   //
-  // Sin paginación ni filtros de servidor a propósito: son las decenas de
-  // clientes de UN profesional, no un listado abierto, y la tabla se ordena
-  // y filtra en el cliente sin ida y vuelta. El día que un profesional tenga
-  // cientos de clientes, el cuello de botella será loadTrainerContext mucho
-  // antes que el tamaño de esta respuesta.
+  // Paginada: la tabla pide una página con su búsqueda, filtros y orden y
+  // solo viaja esa página (más el bloque "Pendientes", que va entero). El
+  // cálculo sigue siendo de la cartera entera — ver paginateRoster.
   //
   // Sin requireActiveClient porque no hay :clientId: el propio buildRoster
   // parte de listActiveClientsForTrainer, así que la respuesta no puede
   // contener a nadie que no lleve este profesional.
   async getRoster(req, res) {
-    const clients = await buildRoster(req.auth.userId);
-    return res.send({ periodDays: ROSTER_WINDOW_DAYS, clients });
+    const options = parseRosterQuery(req.query);
+    const rows = await buildRoster(req.auth.userId);
+    return res.send({ periodDays: ROSTER_WINDOW_DAYS, ...paginateRoster(rows, options) });
   },
 
   // GET /trainer/clients/:clientId/summary — la foto fija que responde

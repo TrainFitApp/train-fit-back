@@ -286,9 +286,214 @@ async function buildRoster(trainerId, now = new Date()) {
   });
 }
 
+// --- Paginación de la Cartera ---
+//
+// La tabla ya no recibe la cartera entera: el front pide una página con su
+// búsqueda, filtros y orden, y el servidor devuelve solo esas filas. Lo que
+// NO cambia es el cálculo: ordenar por adherencia, peso o alertas exige
+// tener las cifras de todos los clientes, y esas cifras salen del mismo
+// loadTrainerContext que evalúa las alertas (que se calcula entero igual).
+// Paginar ahorra la respuesta y el pintado, no la agregación.
+
+const ROSTER_DEFAULT_LIMIT = 25;
+const ROSTER_MAX_LIMIT = 100;
+const ROSTER_SEARCH_MAX_LENGTH = 100;
+const ROSTER_SORT_KEYS = ["name", "adherence", "weight", "checkin", "sessions", "review", "alerts"];
+const ROSTER_DIMENSIONS = ["nutrition", "training", "habits", "checkins"];
+
+// Días sin check-in a partir de los que el filtro lo da por vencido. Mismo
+// umbral que usaba la tabla cuando filtraba en el navegador.
+const OVERDUE_CHECKIN_DAYS = 7;
+
+const nameCollator = new Intl.Collator("es", { sensitivity: "base" });
+
+function parseFlag(value) {
+  return value === "1" || value === "true";
+}
+
+function parseIntInRange(value, fallback, min, max) {
+  const parsed = parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+// Al cambiar de columna se arranca por el extremo que interesa mirar: la
+// peor adherencia, el que lleva más sin reportar, el que más alertas tiene.
+function defaultDescending(sort) {
+  return sort !== "name" && sort !== "adherence";
+}
+
+/**
+ * Query string de GET /trainer/roster a opciones ya saneadas. Permisiva a
+ * propósito, como /trainer/clients/paginated: un valor desconocido vuelve a
+ * su valor por defecto en vez de dar 400, porque lo único que puede pasar
+ * es que la tabla salga en el orden de siempre.
+ *
+ *   page     0-based
+ *   limit    1..100 (25 por defecto)
+ *   search   nombre o correo
+ *   sort     name | adherence | weight | checkin | sessions | review | alerts
+ *   dir      asc | desc
+ *   weakest  nutrition | training | habits | checkins
+ *   alerts, overdue, pending   "1" para activar el filtro
+ */
+function parseRosterQuery(query = {}) {
+  const sort = ROSTER_SORT_KEYS.includes(query.sort) ? query.sort : "adherence";
+  const descending =
+    query.dir === "desc" ? true : query.dir === "asc" ? false : defaultDescending(sort);
+  return {
+    page: parseIntInRange(query.page, 0, 0, Number.MAX_SAFE_INTEGER),
+    limit: parseIntInRange(query.limit, ROSTER_DEFAULT_LIMIT, 1, ROSTER_MAX_LIMIT),
+    search: typeof query.search === "string" ? query.search.trim().slice(0, ROSTER_SEARCH_MAX_LENGTH) : "",
+    sort,
+    descending,
+    weakest: ROSTER_DIMENSIONS.includes(query.weakest) ? query.weakest : null,
+    onlyWithAlerts: parseFlag(query.alerts),
+    onlyOverdueCheckin: parseFlag(query.overdue),
+    onlyWithPending: parseFlag(query.pending),
+  };
+}
+
+// Sin tildes ni mayúsculas: "jose" encuentra a "José".
+function normalizeForSearch(text) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
+function pendingOf(row) {
+  return (row.pendingCheckins || 0) + (row.pendingFormChecks || 0);
+}
+
+// Intake sin enviar o por revisar: todavía no hay seguimiento. Esas filas
+// no entran en la tabla, van al bloque "Pendientes" de encima.
+function isGated(row) {
+  return row.intakeStatus === "pending" || row.intakeStatus === "submitted";
+}
+
+function sortValueFor(row, key) {
+  switch (key) {
+    case "adherence":
+      return row.adherence.overall;
+    case "weight":
+      return row.weightChange ? row.weightChange.absolute : null;
+    case "checkin":
+      return row.daysSinceCheckin;
+    case "sessions":
+      return row.sessions;
+    case "review":
+      return pendingOf(row);
+    case "alerts":
+      // Las urgentes desempatan: 1 urgente pesa más que 2 menores, y sin
+      // esto quedarían mezcladas en el mismo escalón.
+      return row.openAlerts + row.urgentAlerts * 0.5;
+    default:
+      return null;
+  }
+}
+
+function compareRows(sort, descending) {
+  const direction = descending ? -1 : 1;
+  const byName = (a, b) => nameCollator.compare(a.clientName, b.clientName);
+
+  return (a, b) => {
+    if (sort === "name") return byName(a, b) * direction;
+
+    const left = sortValueFor(a, sort);
+    const right = sortValueFor(b, sort);
+
+    // Los nulos van SIEMPRE al final, se ordene como se ordene — por eso se
+    // resuelven ANTES de aplicar la dirección. Un cliente sin datos no es
+    // "el mejor" ni "el peor": es el que todavía no se puede comparar.
+    if (left === null && right === null) return byName(a, b);
+    if (left === null) return 1;
+    if (right === null) return -1;
+
+    // Empate a número: por nombre, para que el orden sea estable y la tabla
+    // no baile entre páginas.
+    return (left - right) * direction || byName(a, b);
+  };
+}
+
+function matchesFilters(row, filters) {
+  if (filters.weakest && row.adherence.weakest !== filters.weakest) return false;
+  if (filters.onlyWithAlerts && !row.openAlerts) return false;
+  if (filters.onlyOverdueCheckin && (row.daysSinceCheckin ?? 0) <= OVERDUE_CHECKIN_DAYS) return false;
+  if (filters.onlyWithPending && !pendingOf(row)) return false;
+  return true;
+}
+
+/**
+ * De las filas de buildRoster a la respuesta paginada.
+ *
+ * - `pending`: el bloque "Pendientes" (intake sin enviar o por revisar),
+ *   COMPLETO y fuera de la paginación: es la lista de cosas por hacer, y
+ *   búsqueda y filtros nunca la han tocado.
+ * - `clients`: la página pedida, ya filtrada y ordenada.
+ * - `total`: filas que cumplen búsqueda + filtros (para el paginador).
+ * - `totalActive`: filas de la tabla sin búsqueda ni filtros, para
+ *   distinguir "no tienes clientes" de "ninguno coincide".
+ * - `counts`: cuántos quedarían al elegir cada opción del panel de filtros,
+ *   con la búsqueda y el resto de filtros como están. Antes los contaba el
+ *   navegador sobre la cartera entera; ahora ya no la tiene.
+ *
+ * Una página fuera de rango (se rechazó al último cliente de la última
+ * página, por ejemplo) devuelve la última que existe, y `page` dice cuál.
+ */
+function paginateRoster(rows, options) {
+  const pending = rows
+    .filter(isGated)
+    // Por revisar primero (te toca a ti), luego sin enviar (se espera al
+    // cliente).
+    .sort((a, b) => Number(b.intakeStatus === "submitted") - Number(a.intakeStatus === "submitted"));
+  const active = rows.filter((row) => !isGated(row));
+
+  const search = normalizeForSearch(options.search);
+  const searched = search
+    ? active.filter((row) => normalizeForSearch(`${row.clientName} ${row.clientEmail}`).includes(search))
+    : active;
+
+  const filters = {
+    weakest: options.weakest,
+    onlyWithAlerts: options.onlyWithAlerts,
+    onlyOverdueCheckin: options.onlyOverdueCheckin,
+    onlyWithPending: options.onlyWithPending,
+  };
+  const countWith = (override) => searched.filter((row) => matchesFilters(row, { ...filters, ...override })).length;
+
+  const matching = searched.filter((row) => matchesFilters(row, filters)).sort(compareRows(options.sort, options.descending));
+
+  const lastPage = Math.max(0, Math.ceil(matching.length / options.limit) - 1);
+  const page = Math.min(options.page, lastPage);
+  const start = page * options.limit;
+
+  return {
+    pending,
+    clients: matching.slice(start, start + options.limit),
+    total: matching.length,
+    totalActive: active.length,
+    page,
+    limit: options.limit,
+    sort: options.sort,
+    descending: options.descending,
+    counts: {
+      weakest: {
+        any: countWith({ weakest: null }),
+        ...Object.fromEntries(ROSTER_DIMENSIONS.map((key) => [key, countWith({ weakest: key })])),
+      },
+      alerts: countWith({ onlyWithAlerts: true }),
+      overdue: countWith({ onlyOverdueCheckin: true }),
+      pending: countWith({ onlyWithPending: true }),
+    },
+  };
+}
+
 module.exports = {
   ROSTER_WINDOW_DAYS,
   buildRoster,
+  parseRosterQuery,
+  paginateRoster,
   // Exportadas para test unitario — son las dos piezas con criterio propio.
   weightChangeFor,
   daysSince,
