@@ -128,16 +128,6 @@ module.exports = {
     return res.send(splits);
   },
 
-  async createWorkout(req, res) {
-    const workout = await workoutModel.createWorkout({
-      name: req.body.name,
-      date: req.body.date,
-      exercises: req.body.exercises,
-      isPlannedRestDay: req.body.isPlannedRestDay,
-    });
-    return res.send(workout);
-  },
-
   async addWorkoutsToSplits(req, res) {
     const tableForAccess = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!tableForAccess) return;

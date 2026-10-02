@@ -9,6 +9,17 @@ const CustomProductSchema = Schema({
     ref: "Product",
     autopopulate: true,
   },
+  // Adición rápida (2026-10) — línea suelta que el cliente apunta con sus
+  // macros a mano, sin crear un Product en el catálogo: `product` queda
+  // vacío y el nombre vive aquí. Cuando hay `product` manda el nombre del
+  // producto base, así que quien pinte un CustomProduct lee siempre
+  // `product?.name || name` (mismo orden que shopping-list-service.js).
+  name: { type: String, trim: true, maxlength: 100 },
+  // Marca explícita de esa adición rápida. Hoy es redundante con "no hay
+  // product", pero es lo que distingue una línea escrita a mano de un
+  // CustomProduct al que le falte la referencia por un dato corrupto, y lo
+  // que mira el cliente para abrir el editor correcto.
+  quickAdd: { type: Boolean, default: false },
 
   energyKcal100g: { type: Number, min: 0, max: 100000 },
   protein100g: { type: Number, min: 0, max: 100000 },

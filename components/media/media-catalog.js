@@ -76,8 +76,13 @@ const TRAINER_LIBRARY_BYTES_FREE = 2 * GB;
 
 const POSES = ["front", "side", "back", "extra"];
 
+// hasOwnProperty y no `PURPOSES[id]`: `purpose` llega del cuerpo de la
+// petición (media-service.js#createUpload), y con "__proto__" o "constructor"
+// el acceso directo devolvía algo heredado de Object.prototype — truthy, así
+// que se tomaba por un propósito válido y la validación reventaba al leer
+// `def.mimes` (500 en vez del 400 con MEDIA_INVALID_PURPOSE).
 function purposeOf(id) {
-  return PURPOSES[id] || null;
+  return Object.prototype.hasOwnProperty.call(PURPOSES, id) ? PURPOSES[id] : null;
 }
 
 function libraryBytesFor(user) {

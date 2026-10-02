@@ -30,8 +30,12 @@ test("actual app webhook receives signed raw bytes before JSON parsing and maint
     express, path, "cookie-parser": require("cookie-parser"), cors: require("cors"),
     "./routes": express.Router(), "./components/billing/billing-controller": { revenueCatWebhook(_req, res) { res.sendStatus(204); } },
     "./components/trainerBilling/adapter": adapter,
-    // Regla CORS real (PURA): el test protege el orden raw → JSON, no el origen.
-    "./components/util/cors-origin": require("../util/cors-origin"),
+    // app.js lo pide desde que el CORS se decide por origen (cors-origin.js).
+    // Esta prueba solo monta la ruta del webhook, que no pasa por CORS: con
+    // la política real la petición de fetch (sin cabecera Origin) se
+    // rechazaría, así que aquí se acepta todo y lo que comprueba el test
+    // sigue siendo el orden raw-body -> firma -> JSON -> mantenimiento.
+    "./components/util/cors-origin": { isOriginAllowed: () => true },
     "./middleware/logger": (_req, _res, next) => next(),
     "./middleware/maintenance": (_req, res) => res.status(503).json({ code: "MAINTENANCE_ACTIVE" }),
     "./middleware": { error404Handler: (_req, res) => res.sendStatus(404),

@@ -654,17 +654,6 @@ module.exports = {
     return doc;
   },
 
-  async addFavoriteRecipe(idUser, idRecipe, isOwn, recipeExist) {
-    let node = "archivedRecipes";
-    let query = recipeExist
-      ? { $pull: { [node]: idRecipe } }
-      : { $push: { [node]: idRecipe } };
-    const doc = await userSchema.findByIdAndUpdate(idUser, query, {
-      new: true,
-    });
-    return doc;
-  },
-
   async updatePassword(email, password) {
     const user = await userSchema.findOne({ email: email });
     if (!user) throw new Error("User not found.");
