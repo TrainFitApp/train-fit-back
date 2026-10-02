@@ -44,6 +44,14 @@ function assertMealPasteAllowed(meal, merge) {
   }
 }
 
+// Pegar un día entero sustituye TODAS sus comidas (diet-days-dao.js#
+// pasteDietDayByUser): mismo criterio que pegar una comida en modo
+// "reemplazar", aplicado a cada comida del día destino. Antes se llevaba por
+// delante lo pautado por el profesional sin avisar.
+function assertDayPasteAllowed(dietDay) {
+  for (const meal of dietDay?.meals || []) assertMealPasteAllowed(meal, false);
+}
+
 // Traduce MealProtectedError a 403 — antes duplicada byte a byte en
 // custom-product-controller.js y custom-recipe-controller.js (ninguno de
 // los dos pasa por meal-controller.js#handleMealError). Un solo sitio.
@@ -58,6 +66,7 @@ module.exports = {
   MealProtectedError,
   assertMealEditable,
   assertMealPasteAllowed,
+  assertDayPasteAllowed,
   handleProtectedError,
   async findAll(page, limit) {
     return mealDao.findAll(page, limit);
@@ -65,6 +74,14 @@ module.exports = {
 
   async findById(id) {
     return mealDao.findById(id);
+  },
+
+  async findMealIdContainingCustomProduct(customProductId) {
+    return mealDao.findMealIdContainingCustomProduct(customProductId);
+  },
+
+  async findMealIdContainingCustomRecipe(customRecipeId) {
+    return mealDao.findMealIdContainingCustomRecipe(customRecipeId);
   },
 
   async createMeal(meal) {
@@ -105,8 +122,8 @@ module.exports = {
     return mealDao.updateMeal({ id, name, products, notes });
   },
 
-  async modifyMeal(meal) {
-    return mealDao.modifyMeal(meal);
+  async modifyMeal(id, patch) {
+    return mealDao.modifyMeal(id, patch);
   },
 
   async pasteMeal(mealClipboard, mealToPaste, merge, trainerId = null) {

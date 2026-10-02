@@ -17,7 +17,8 @@ router.getAsync("/shopping-list", auth(["admin", "user"]), controller.getMyShopp
 // slider de días de su pantalla de dieta.
 router.getAsync("/timeline", auth(["admin", "user"]), controller.getMyDietTimeline);
 
-router.getAsync("/", auth(["admin", "user"]), controller.getDietDays);
+// Listado global (find({}) paginado, días de todos los usuarios): solo admin.
+router.getAsync("/", auth(["admin"]), controller.getDietDays);
 // Las rutas que llevaban el id de la Diet en la URL (:id / :dietInUseId /
 // :idDiet) lo conservan a propósito aunque ya no se use: así las apps ya
 // instaladas siguen funcionando tras el refactor. El dueño sale del token.
@@ -54,9 +55,11 @@ router.postAsync(
 // se resuelve por dueño + fecha). Lo específico primero.
 router.putAsync("/date/:date", auth(["admin", "user"]), controller.updateDietDay);
 router.putAsync("/:id", auth(["admin", "user"]), controller.updateDietDay);
+// Engancha una comida suelta a un día por ids, sin comprobar dueños. Ninguna
+// app la usa: solo admin (con "user" metía comidas en el día de cualquiera).
 router.putAsync(
   "/:idDietDay/:idMeal",
-  auth(["admin", "user"]),
+  auth(["admin"]),
   controller.addDietDayMeal,
 );
 router.putAsync(
@@ -68,11 +71,6 @@ router.deleteAsync(
   "/:idDiet/:idDietDay",
   auth(["admin", "user"]),
   controller.deleteDietDay,
-);
-router.deleteAsync(
-  "/:id",
-  auth(["admin", "user"]),
-  controller.deleteDietDayMeal,
 );
 
 // El cliente elige, para una fecha concreta, cuál de los menús del plan le

@@ -125,11 +125,7 @@ module.exports = {
     );
   },
 
-  async deleteDietDay(idDietDay) {
-    return dietDayDao.deleteDietDay(idDietDay);
-  },
-
-  async deleteDietDayMeal(id) {
-    return dietDayDao.deleteDietDayMeal(id);
+  async deleteDietDay(idDietDay, userId) {
+    return dietDayDao.deleteDietDay(idDietDay, userId);
   },
 };

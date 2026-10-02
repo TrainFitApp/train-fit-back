@@ -14,7 +14,10 @@ const controller = {
   },
 
   async getAnthropometryById(req, res) {
-    const anthropometry = await anthropometryModel.getAnthropometryById(req.params.id, { ownOnly: true });
+    const anthropometry = await anthropometryModel.getAnthropometryById(req.params.id, {
+      ownOnly: true,
+      ownerId: ownerFilter(req),
+    });
     if (!anthropometry) return res.sendStatus(404);
     return res.send(anthropometry);
   },
@@ -42,13 +45,16 @@ const controller = {
   },
 
   async updateAnthropometry(req, res) {
-    const anthropometry = await anthropometryModel.updateAnthropometry(req.params.id, pickMeasurements(req.body));
+    const anthropometry = await anthropometryModel.updateAnthropometry(req.params.id, pickMeasurements(req.body), {
+      ownerId: ownerFilter(req),
+    });
     if (!anthropometry) return res.sendStatus(404);
     return res.send(anthropometry);
   },
 
   async deleteAnthropometry(req, res) {
-    await anthropometryModel.deleteAnthropometry(req.params.id);
+    const deleted = await anthropometryModel.deleteAnthropometry(req.params.id, { ownerId: ownerFilter(req) });
+    if (!deleted) return res.sendStatus(404);
     return res.sendStatus(204);
   },
 
@@ -61,5 +67,8 @@ const controller = {
     return res.send(anthropometry);
   },
 };
+
+// Por id, solo las mediciones propias (el admin, cualquiera).
+const ownerFilter = (req) => (req.auth?.roles?.includes("admin") ? null : req.user.id);
 
 module.exports = controller;

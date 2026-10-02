@@ -10,8 +10,9 @@ const crypto = require("node:crypto");
 //
 // Por defecto usa mongodb://127.0.0.1:27017/trainfit_payments_test_<pid>_<ts>
 // y la borra al terminar. TRAINER_PAYMENTS_TEST_MONGO_URI permite otra, pero
-// solo en loopback y con nombre trainfit_payments_test*. Sin Mongo local, los
-// tests se marcan como omitidos (no fallan en falso ni tocan nada más).
+// solo en loopback y con nombre trainfit_payments_test*. Sin Mongo local
+// arranca un mongod efímero (mongodb-memory-server, como integration/); solo
+// si tampoco eso es posible se marcan como omitidos.
 
 const URI =
   process.env.TRAINER_PAYMENTS_TEST_MONGO_URI ||
@@ -41,13 +42,26 @@ let baseUrl = "";
 let C, TokenService, User, TrainerClient, Notification, TrainerPayment, TrainerPaymentProfile, TrainerPaymentSettings;
 let reminderService, migration, mapper;
 
+let memoryServer = null;
+
 test.before(async () => {
   try {
     await mongoose.connect(URI, { serverSelectionTimeoutMS: 2500 });
     available = true;
   } catch (error) {
-    console.warn(`[trainer-payments-db] Mongo local no disponible (${error.message}): tests omitidos.`);
-    return;
+    // Sin Mongo local, el mismo mongod efímero que usan los tests de
+    // integration/ (mongodb-memory-server): así estos tests también corren en
+    // el CI y en cualquier portátil, no solo con un Mongo instalado.
+    try {
+      await mongoose.disconnect().catch(() => {});
+      const { MongoMemoryServer } = require("mongodb-memory-server-core");
+      memoryServer = await MongoMemoryServer.create();
+      await mongoose.connect(memoryServer.getUri(new URL(URI).pathname.slice(1)), { serverSelectionTimeoutMS: 10000 });
+      available = true;
+    } catch (fallbackError) {
+      console.warn(`[trainer-payments-db] Sin Mongo (${error.message}; ${fallbackError.message}): tests omitidos.`);
+      return;
+    }
   }
   C = require("./core").load();
   TokenService = require("../../services/token.service");
@@ -76,6 +90,7 @@ test.after(async () => {
     await mongoose.connection.dropDatabase();
     await mongoose.disconnect();
   }
+  if (memoryServer) await memoryServer.stop();
 });
 
 // --- Helpers ------------------------------------------------------------------

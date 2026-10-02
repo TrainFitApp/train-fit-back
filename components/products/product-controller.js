@@ -19,9 +19,12 @@ module.exports = {
     return res.send(products);
   },
 
+  // Los productos propios que se buscan por código son los del usuario del
+  // token: el :userId de la URL se conserva por compatibilidad y se ignora
+  // (antes devolvía el producto privado de otro con ese código de barras).
   async getProductByCode(req, res) {
     const product = await productModel.getProductByCode(
-      req.params.userId,
+      req.user.id,
       req.params.barcode,
     );
     return res.send(product);
@@ -59,10 +62,13 @@ module.exports = {
   async createProduct(req, res) {
     const payload = { ...req.body };
 
-    if (
-      Object.prototype.hasOwnProperty.call(payload, "userId") &&
-      req?.user?.id
-    ) {
+    // Solo un admin crea productos globales (sin userId) o verificados. El
+    // resto, siempre a su nombre y sin verificar, diga lo que diga el cuerpo
+    // (antes, sin `userId` en el cuerpo, el producto nacía global).
+    if (!isAdmin(req)) {
+      payload.userId = req.user.id;
+      payload.verified = false;
+    } else if (Object.prototype.hasOwnProperty.call(payload, "userId")) {
       payload.userId = req.user.id;
     }
 
@@ -103,10 +109,13 @@ module.exports = {
    */
   async addFavoriteProduct(req, res) {
     if (!req.body.idProduct) return res.sendStatus(400);
-    if (!req.body.idUser) return res.sendStatus(400);
+    // Los favoritos son siempre del usuario del token: el idUser del cuerpo
+    // (que las apps siguen mandando) se ignora. Antes se marcaban o quitaban
+    // favoritos en nombre de cualquiera.
+    const userId = req.user.id;
 
     const userModel = require("../users/model");
-    const user = await userModel.getUserById(req.body.idUser);
+    const user = await userModel.getUserById(userId);
 
     const productExist = !!user.archivedProducts.find((apTemp) => {
       const id = apTemp.toString().match(/^[0-9a-fA-F]{24}$/);
@@ -114,7 +123,7 @@ module.exports = {
     });
 
     const updatedUser = await productModel.addFavouriteProduct(
-      req.body.idUser,
+      userId,
       req.body.idProduct,
       productExist,
     );

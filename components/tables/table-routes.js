@@ -28,25 +28,12 @@ router.postAsync("/copy/:idTable", auth(["admin", "user", "trainer"]), controlle
 // Duplicar tabla propia
 router.postAsync("/duplicate/:idTable", auth(["admin", "user", "trainer"]), controller.duplicateTable);
 
-// Copiar tabla compartida (genera link público)
-router.getAsync(
-  "/share/:idUser/:idTable",
-  auth(["admin", "user", "trainer"]),
-  controller.copySharedTable
-);
-
 // Actualizar nombre
 router.putAsync("/", auth(["admin", "user", "trainer"]), controller.updateTable);
 
-// Borrar tabla propia (filtra por userId en DAO)
+// Borrar una tabla: el acceso se comprueba contra su dueño real (el :idUser
+// de la URL se ignora, ver table-controller.js#deleteTable).
 router.deleteAsync("/:idUser/:idTable", auth(["admin", "user", "trainer"]), controller.deleteTable);
-
-// Split management
-router.deleteAsync(
-  "/:idTable/:idSplit",
-  auth(["admin", "user", "trainer"]),
-  controller.deleteTableSplit
-);
 
 // All-time exercise history stats
 router.getAsync(

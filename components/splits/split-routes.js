@@ -5,14 +5,12 @@ const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-router.getAsync("/", auth(["admin", "user", "trainer"]), controller.getSplits);
-router.getAsync(
-  "/code/:barcode",
-  auth(["admin", "user", "trainer"]),
-  controller.getSplitByCode,
-);
-router.getAsync("/count", auth(["admin", "user", "trainer"]), controller.getSplitsCount);
-router.getAsync("/:search", auth(["admin", "user", "trainer"]), controller.getSearchSplit);
+// Listados y búsquedas globales (sin filtro de dueño): solo admin. Ninguna
+// app los usa; con "user" devolvían los microciclos de todo el mundo.
+router.getAsync("/", auth(["admin"]), controller.getSplits);
+router.getAsync("/code/:barcode", auth(["admin"]), controller.getSplitByCode);
+router.getAsync("/count", auth(["admin"]), controller.getSplitsCount);
+router.getAsync("/:search", auth(["admin"]), controller.getSearchSplit);
 router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createSplit);
 router.postAsync(
   "/:tableInUseId",

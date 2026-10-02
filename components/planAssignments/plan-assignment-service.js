@@ -689,11 +689,20 @@ module.exports = {
       throw error;
     }
 
+    // Rango de fechas que deja de tener plan: el de la fase y, si es el head,
+    // también el de sus semanas (null = abierto). El controller vacía ahí lo
+    // pautado de los días ya abiertos.
+    const removedRange = { from: phase.startDate, to: phase.endDate || null };
+
     // Borrar el head de una fase se lleva sus semanas preparadas: sin head no
     // hay ventanas que calcular.
     if (phase.phaseId && String(phase.phaseId) === String(phase._id)) {
       const members = await dietTemplateDao.findPhaseMembers(phase._id);
-      for (const m of members) if (String(m._id) !== String(phase._id)) await dietTemplateDao.deleteById(m._id);
+      for (const m of members) {
+        if (String(m._id) === String(phase._id)) continue;
+        if (removedRange.to && (!m.endDate || m.endDate > removedRange.to)) removedRange.to = m.endDate || null;
+        await dietTemplateDao.deleteById(m._id);
+      }
     }
     await dietTemplateDao.deleteById(phase._id);
 
@@ -703,7 +712,7 @@ module.exports = {
       if (newTip) await dietTemplateDao.reactivate(newTip._id);
     }
 
-    return { cancelled: phase, newTip };
+    return { cancelled: phase, newTip, removedRange };
   },
 
   async findCoveringDate(clientId, date) {

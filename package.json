@@ -40,8 +40,10 @@
     "migrate:exercise-muscles:dry-run": "node scripts/migrate-exercise-muscles.js --dry-run --verbose",
     "migrate:exercise-isometric": "node scripts/migrate-exercise-isometric.js",
     "migrate:exercise-isometric:dry-run": "node scripts/migrate-exercise-isometric.js --dry-run",
-    "test": "node --test \"components/**/*.test.js\" \"services/**/*.test.js\" \"middleware/**/*.test.js\" \"scripts/**/*.test.js\"",
-    "test2": "node --test \"components/**/*.test.js\" \"services/**/*.test.js\" \"middleware/**/*.test.js\" \"scripts/**/*.test.js\"",
+    "test": "node --test \"components/**/*.test.js\" \"services/**/*.test.js\" \"middleware/**/*.test.js\" \"scripts/**/*.test.js\" \"integration/**/*.test.js\"",
+    "pretest:integration": "npm run build:ts",
+    "test:integration": "node --test \"integration/**/*.test.js\"",
+    "test2": "node --test \"components/**/*.test.js\" \"services/**/*.test.js\" \"middleware/**/*.test.js\" \"scripts/**/*.test.js\" \"integration/**/*.test.js\"",
     "reset:weeks": "node scripts/reset-weeks.js",
     "reset:weeks:dry-run": "node scripts/reset-weeks.js --dry-run",
     "delete:exercise": "node scripts/delete-exercise-by-name.js",
@@ -94,6 +96,7 @@
   },
   "devDependencies": {
     "debug": "~2.6.9",
-    "eslint": "^8.57.1"
+    "eslint": "^8.57.1",
+    "mongodb-memory-server-core": "^10.4.3"
   }
 }

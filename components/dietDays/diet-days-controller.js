@@ -1,5 +1,6 @@
 const anthropometryModel = require("../anthropometry/anthropometry-service");
 const dietDayModel = require("./diet-days-service");
+const mealService = require("../meals/meal-service");
 const { resolveOwnedDietDay, applyResolvedPlanToDietDay } = require("./diet-day-resolver");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const planResolver = require("../planAssignments/plan-resolver");
@@ -14,8 +15,10 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 // Toda escritura sobre "el día de tal fecha" necesita una fecha válida: sin
 // ella el día se crearía con una fecha basura y dejaría de encontrarse por
 // (userId, date), que es la clave del módulo. Devuelve null y responde 400.
+// En las rutas con :date en la URL manda la URL: una `date` del cuerpo no
+// puede desviar la escritura a otro día.
 const requireIsoDate = (req, res) => {
-  const date = req.body?.date || req.body?.currentDate || req.params?.date;
+  const date = req.params?.date || req.body?.date || req.body?.currentDate;
   if (ISO_DATE.test(date || "")) return date;
 
   res.status(400).send({ message: "Fecha inválida (YYYY-MM-DD)" });
@@ -213,6 +216,15 @@ const controller = {
   },
 
   async pasteDietDayByUser(req, res) {
+    const target = await dietDayModel.findByUserAndDate(req.user.id, req.body?.dietDayToPaste?.date);
+    try {
+      mealService.assertDayPasteAllowed(target);
+    } catch (e) {
+      const handled = mealService.handleProtectedError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
+
     const dietDay = await dietDayModel.pasteDietDayByUser(
       req.user.id,
       req.body.dietDayClipboard,
@@ -222,18 +234,11 @@ const controller = {
     return res.send(dietDay);
   },
 
+  // El :idDiet de la URL se ignora (como en el resto del módulo): el día solo
+  // se borra si es del usuario del token.
   async deleteDietDay(req, res) {
-    await dietDayModel.deleteDietDay(req.params.idDietDay);
+    await dietDayModel.deleteDietDay(req.params.idDietDay, req.user.id);
     res.sendStatus(204);
-  },
-
-  async deleteDietDayMeal(req, res) {
-    const dietDay = await dietDayModel.deleteDietDayMeal(
-      req.params.iddietday,
-      req.params.idmeal,
-    );
-
-    return res.send(dietDay);
   },
 
   // GET /dietdays/date/:date/menu. Sin plan activo para esta fecha (la
@@ -314,9 +319,12 @@ const controller = {
     const dietDayDoc = await resolveOwnedDietDay(userId, date);
     await dietDayModel.setMenuName(dietDayDoc._id, menuName);
 
+    // clearMissing: los huecos que el menú nuevo no tiene se vacían de lo
+    // pautado por el anterior (lo que el cliente añadió se queda). Sin esto
+    // conservaban la comida del menú viejo, que seguía sumando en la meta.
     const result = await planResolver.resolvePlanForDate(userId, date, { chosenMenuName: menuName });
     if (result) {
-      await applyResolvedPlanToDietDay(dietDayDoc, date, result.resolved, result.trainerId, userId);
+      await applyResolvedPlanToDietDay(dietDayDoc, date, result.resolved, result.trainerId, userId, { clearMissing: true });
     }
 
     const updatedDietDay = await dietDayModel.findByUserAndDate(userId, date);

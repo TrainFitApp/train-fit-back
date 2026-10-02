@@ -1,5 +1,5 @@
 const express = require("express");
-const path = require("path");
+const { sendYouTubeEmbed } = require("./components/util/youtube-embed");
 const cookieParser = require("cookie-parser");
 const routes = require("./routes");
 const billingController = require("./components/billing/billing-controller");
@@ -84,10 +84,8 @@ app.use(maintenanceCheck);
 app.post("/billing/webhooks/revenuecat", billingController.revenueCatWebhook);
 app.use("/api", routes);
 
-// Servir YouTube embed helper como archivo estático desde el servidor
-app.get("/youtube-embed.html", (req, res) => {
-  res.sendFile(path.join(__dirname, "youtube-embed.html"));
-});
+// Reproductor de YouTube para las apps (ver components/util/youtube-embed.js).
+app.get("/youtube-embed.html", sendYouTubeEmbed);
 
 app.use(error404Handler);
 app.use(errorHandler);

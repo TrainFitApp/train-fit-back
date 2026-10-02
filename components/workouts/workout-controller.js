@@ -73,6 +73,36 @@ async function assertCanAccessWorkoutId(req, res, idWorkout) {
   return table;
 }
 
+// Lo que el dueño de una rutina ASIGNADA puede escribir por modifyWorkout:
+// solo el estado de su sesión (fecha, cronómetro, readiness, agujetas, sus
+// notas…), nunca la estructura que pautó el entrenador (ejercicios, bloques,
+// nombre, orden, descanso pautado). current-workout.page.ts manda el
+// workout entero por esta ruta, así que lo demás se descarta en silencio.
+const ASSIGNED_OWNER_WORKOUT_FIELDS = new Set([
+  "_id",
+  "date",
+  "paused",
+  "startedAt",
+  "cronometer",
+  "rest",
+  "readinessPre",
+  "perceivedEffortPost",
+  "sorenessPre",
+  "clientNotes",
+]);
+
+function isAssignedTableOwner(req, table) {
+  return Boolean(table?.assignedByTrainerId)
+    && !tableAccess.isAdmin(req)
+    && String(req.user?.id) === String(table.userId);
+}
+
+function pickAssignedOwnerWorkoutFields(body) {
+  return Object.fromEntries(
+    Object.entries(body || {}).filter(([key]) => ASSIGNED_OWNER_WORKOUT_FIELDS.has(key)),
+  );
+}
+
 module.exports = {
   // Función pura exportada para test (workout-controller.test.js).
   sanitizeWorkoutBlocks,
@@ -193,7 +223,8 @@ module.exports = {
     return res.send(table);
   },
 
-  // 2026-09 — SIN rejectIfAssignedTableLockedForOwner, a propósito. Bug real
+  // 2026-09 — SIN rejectIfAssignedTableLockedForOwner, a propósito (pero con
+  // lista blanca para el dueño de una tabla asignada, 2026-10). Bug real
   // encontrado al probar: modifyWorkout escribe CUALQUIER campo que venga en
   // el body ($set literal, sin lista blanca — workout-dao.js#modifyWorkout,
   // "for (const key in workout) update.$set[key] = workout[key]"), y
@@ -202,11 +233,9 @@ module.exports = {
   // sesión EN CURSO del propio cliente. Bloquearlo le impedía puntuar cómo
   // se sentía o arrancar el cronómetro en una rutina asignada: peor que el
   // problema original. Mismo criterio que set-controller.js#updateSet — un
-  // cliente con rutina asignada tiene que poder seguir entrenándola. Queda
-  // como riesgo aceptado y menor (puede seguir editando notas/nombre del
-  // WORKOUT vía este mismo endpoint) frente a romper la ejecución en vivo;
-  // añadir/quitar ejercicios, entrenamientos y microciclos sigue bloqueado
-  // en el resto de este archivo.
+  // cliente con rutina asignada tiene que poder seguir entrenándola. Desde
+  // 2026-10 ese cliente solo escribe ASSIGNED_OWNER_WORKOUT_FIELDS: antes
+  // podía vaciar los ejercicios de un entreno asignado por esta ruta.
   async modifyWorkout(req, res) {
     const table = await assertCanAccessWorkoutId(req, res, req.body?._id);
     if (!table) return;
@@ -216,7 +245,8 @@ module.exports = {
     // saneen aquí mismo. modifyWorkout escribe con $set y sin
     // runValidators, de modo que los min/max del esquema no llegarían a
     // ejecutarse: mismo motivo por el que ya existe sanitizeWorkoutBlocks.
-    const body = stripForeignNotes(req, table, req.body);
+    let body = stripForeignNotes(req, table, req.body);
+    if (isAssignedTableOwner(req, table)) body = pickAssignedOwnerWorkoutFields(body);
     if (Object.prototype.hasOwnProperty.call(body, "sorenessPre")) {
       body.sorenessPre = sanitizeSoreness(body.sorenessPre);
     }
@@ -286,6 +316,7 @@ module.exports = {
   },
 
   async finishWorkout(req, res) {
+    if (!(await assertCanAccessWorkoutId(req, res, req.body?.workoutId))) return;
     const result = await workoutModel.finishWorkout(
       req.body.workoutId,
       req.user?.id,
@@ -298,6 +329,7 @@ module.exports = {
   },
 
   async skipWorkout(req, res) {
+    if (!(await assertCanAccessWorkoutId(req, res, req.body?.workoutId))) return;
     const result = await workoutModel.skipWorkout(
       req.body.workoutId,
       req.user?.id,

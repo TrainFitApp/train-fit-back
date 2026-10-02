@@ -1,5 +1,7 @@
 const userModel = require("./model");
 const userDto = require("./dto");
+const recipeModel = require("../recipes/recipe-model");
+const tableService = require("../tables/table-service");
 const userSchema = require("../users/schema");
 const bcrypt = require("../util/bcrypt");
 const mail = require("./../util/mail");
@@ -119,10 +121,17 @@ module.exports = {
     }
   },
 
+  // Las apps solo lo usan para cargar el usuario PROPIO (user-loader,
+  // sign-in, onboarding-status): el perfil de otra cuenta responde 404, como
+  // si no existiera (antes devolvía el de cualquiera, código de activación
+  // incluido).
   async getUserByEmail(req, res) {
-    const user = await userDto.single(
-      await userModel.getUserByEmail(normalizeEmail(req.params.email)),
-    );
+    const email = normalizeEmail(req.params.email);
+    if (!isAdmin(req) && email !== normalizeEmail(req.user?.email)) {
+      return res.status(404).send({ message: "Usuario no encontrado" });
+    }
+    if (email === normalizeEmail(req.user?.email)) await userModel.syncScheduledRoutine(req.user.id);
+    const user = await userDto.single(await userModel.getUserByEmail(email));
     return res.send(user);
   },
 
@@ -708,6 +717,7 @@ module.exports = {
 
   async searchArchivedsByFilter(req, res) {
     const user = await userModel.searchArchivedsByFilter(
+      req.user.id,
       req.body.node,
       req.body.nodeArchived,
       req.body.search,
@@ -733,6 +743,9 @@ module.exports = {
     if (!canActOnUser(req, req.params.idUser)) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
+    // Solo se pone en uso una rutina del propio usuario (antes, cualquier id).
+    const table = await tableService.getTableForClient(req.params.idTable, req.params.idUser);
+    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
 
     const user = await userModel.addUserTable(
       req.params.idUser,
@@ -841,16 +854,21 @@ module.exports = {
 
     let user = await userModel.getUserById(req.body.idUser);
 
-    let recipeExist;
-    // Check in archivedRecipes
-    recipeExist = !!user.archivedRecipes.find((apTemp) => {
+    const recipeExist = !!user.archivedRecipes.find((apTemp) => {
       const id = apTemp.toString().match(/^[0-9a-fA-F]{24}$/);
-      return id[0] === req.body.idRecipe;
+      return id && id[0] === req.body.idRecipe;
     });
-    recipeExist = !!user.archivedRecipes.find((apTemp) => {
-      const id = apTemp.toString().match(/^[0-9a-fA-F]{24}$/);
-      return id[0] === req.body.idRecipe;
-    });
+
+    // Mismo criterio que POST /recipes/:id/archive: solo se marca como
+    // favorita una receta que el usuario puede leer (las favoritas se listan
+    // por id, así que si no, servían para leer recetas privadas ajenas).
+    // Quitarla siempre se puede.
+    if (!recipeExist && !isAdmin(req)) {
+      const recipe = await recipeModel.getRecipeById(req.body.idRecipe);
+      if (!recipe || !(await recipeModel.canUserReadRecipe(recipe, req.body.idUser))) {
+        return res.status(404).send({ message: "Receta no encontrada" });
+      }
+    }
 
     user = await userModel.addFavouriteRecipe(
       req.body.idUser,
@@ -907,6 +925,8 @@ module.exports = {
     }
   },
 
+  // Responde solo { ok: true }: restore-password.page.ts no usa el cuerpo, y
+  // antes salía el User entero (contraseña cifrada, sesión, refreshTokenHash…).
   async checkRestoreCode(req, res) {
     try {
       const response = await userModel.checkRestoreCode(
@@ -917,7 +937,7 @@ module.exports = {
       if (response?._id) {
         await clearUserAuth(response._id);
       }
-      return res.send(response);
+      return res.send({ ok: true });
     } catch (error) {
       console.warn("[AUTH] password_reset_code_rejected", {
         reason: error?.message || "unknown",

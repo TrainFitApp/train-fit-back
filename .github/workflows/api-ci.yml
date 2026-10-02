@@ -5,9 +5,10 @@ name: API CI
 #   develop -> PRE: Render despliega solo con cada push (auto-deploy).
 #   main    -> PRO: PM2 en el servidor, a mano (ver README de esta carpeta).
 #
-# Sin secretos y sin base de datos: los tests que necesitan Mongo
-# (trainer-payments-db, stripe-local) se marcan como omitidos si no hay uno
-# local, así que nunca se tocan las bases de PRE ni de PRO.
+# Sin secretos y sin base de datos real: los tests que necesitan Mongo
+# (integration/, trainer-payments-db) arrancan un mongod efímero con
+# mongodb-memory-server (el binario se cachea entre ejecuciones), así que
+# nunca se tocan las bases de PRE ni de PRO.
 
 on:
   push:
@@ -41,6 +42,14 @@ jobs:
 
       - run: npm ci --no-audit --fund=false
 
+      # Binario de mongod para los tests de integración (mongodb-memory-server):
+      # unos 100 MB que no hace falta bajar en cada ejecución.
+      - name: Cache mongod (tests de integración)
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Lint
         run: npm run lint
 
@@ -51,3 +60,5 @@ jobs:
 
       - name: Tests
         run: npm test
+        env:
+          MONGOMS_DOWNLOAD_DIR: /home/runner/.cache/mongodb-binaries

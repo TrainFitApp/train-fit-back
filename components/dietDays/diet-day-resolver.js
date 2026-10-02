@@ -16,8 +16,8 @@ const { daysInRange, addDaysToIsoDate } = require("../util/date-util");
 // crear el día por primera vez como al elegir/cambiar el tipo de día
 // explícitamente (ver diet-days-controller.js#chooseDayType).
 // `clearMissing`: un slot que el plan ya no menciona se trata como vacío
-// (solo al resincronizar un día ya creado — al crear/elegir menú se deja
-// como estaba, que es lo de siempre).
+// (al resincronizar un día ya creado y al cambiar de menú — al crear el día
+// se deja como estaba, que es lo de siempre).
 async function applyResolvedPlanToDietDay(dietDayDoc, date, resolved, trainerId, clientId, { clearMissing = false } = {}) {
   // dietDaysUtil.MEALS es la fuente de verdad del hueco (índice -> nombre de
   // slot): el mismo mapa que usó getStandardDietDay al construir las comidas
@@ -155,26 +155,34 @@ async function resolveOwnedMealById(userId, mealId) {
 //     elegido).
 // Lo que el cliente añadió por su cuenta se conserva (applyAlternative).
 // Nunca lanza: un fallo aquí no debe tumbar la edición del plan.
-async function resyncPlannedDays(clientId, from, to = null) {
-  if (!from) return 0;
+// Un día en el que el cliente ya marcó como tomado algo pautado: ya lo está
+// siguiendo tal como estaba, así que ni se resincroniza ni se vacía.
+function hasConsumedPlanned(day) {
+  return (day.meals || []).some(
+    (meal) =>
+      (meal?.customProducts || []).some((cp) => cp?.assignedByTrainerId && cp?.consumed) ||
+      (meal?.customRecipes || []).some((cr) => cr?.assignedByTrainerId && cr?.consumed)
+  );
+}
+
+function findClientDaysInRange(clientId, from, to) {
   const dateFilter = { $gte: from };
   if (to) dateFilter.$lte = to;
+  return dietDaySchema
+    .find({ userId: clientId, date: dateFilter })
+    .select("_id date meals menuName")
+    .sort({ date: 1 });
+}
+
+async function resyncPlannedDays(clientId, from, to = null) {
+  if (!from) return 0;
 
   let resynced = 0;
   try {
-    const days = await dietDaySchema
-      .find({ userId: clientId, date: dateFilter })
-      .select("_id date meals menuName")
-      .sort({ date: 1 });
+    const days = await findClientDaysInRange(clientId, from, to);
 
     for (const day of days) {
-      const meals = day.meals || [];
-      const hasConsumedPlanned = meals.some(
-        (meal) =>
-          (meal?.customProducts || []).some((cp) => cp?.assignedByTrainerId && cp?.consumed) ||
-          (meal?.customRecipes || []).some((cr) => cr?.assignedByTrainerId && cr?.consumed)
-      );
-      if (hasConsumedPlanned) continue;
+      if (hasConsumedPlanned(day)) continue;
 
       const result = await planResolver.resolvePlanForDate(clientId, day.date, {
         chosenMenuName: day.menuName || undefined,
@@ -190,6 +198,29 @@ async function resyncPlannedDays(clientId, from, to = null) {
     console.error("[resyncPlannedDays] Error resincronizando días con el plan:", e.message);
   }
   return resynced;
+}
+
+// Quitar una fase: los días que el cliente ya había abierto con ella se
+// vacían de lo pautado (y del menú elegido), salvo los que ya estaba
+// siguiendo, y se vuelven a resolver con lo que rija ahora (la fase que se
+// reactiva, si la hay). resyncPlannedDays solo no basta: cuando el plan ya
+// no resuelve nada para un día, se lo salta y lo pautado se quedaba, con su
+// meta. Nunca lanza, como resyncPlannedDays.
+async function clearAndResyncPlannedDays(clientId, from, to = null) {
+  if (!from) return 0;
+  // Import diferido: diet-skips no depende de este módulo, pero así se evita
+  // cualquier ciclo al cargar.
+  const { clearPlannedDay } = require("./diet-skips");
+  try {
+    const days = await findClientDaysInRange(clientId, from, to);
+    for (const day of days) {
+      if (hasConsumedPlanned(day)) continue;
+      await clearPlannedDay(clientId, day.date, day);
+    }
+  } catch (e) {
+    console.error("[clearAndResyncPlannedDays] Error vaciando días de la fase quitada:", e.message);
+  }
+  return resyncPlannedDays(clientId, from, to);
 }
 
 // F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
@@ -261,5 +292,6 @@ module.exports = {
   resolveOwnedMealById,
   applyResolvedPlanToDietDay,
   resyncPlannedDays,
+  clearAndResyncPlannedDays,
   getTrackingDaysForClient,
 };

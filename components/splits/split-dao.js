@@ -48,6 +48,10 @@ module.exports = {
     );
   },
 
+  async getSplit(id) {
+    return splitSchema.findById(id).exec();
+  },
+
   async getSplitByCode(barcode) {
     return new Promise((resolve, reject) =>
       splitSchema.findOne({ code: barcode }, (err, doc) => {

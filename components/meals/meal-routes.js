@@ -5,7 +5,8 @@ const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-router.getAsync("/", auth(["admin", "user"]), controller.getMeals);
+// Listado global (find({}) paginado, comidas de todos): solo admin.
+router.getAsync("/", auth(["admin"]), controller.getMeals);
 router.getAsync("/:id", auth(["admin", "user"]), controller.getMeal);
 router.postAsync("/", auth(["admin", "user"]), controller.createMeal);
 // TAREA5 — el entrenador necesita buscar productos/recetas reales para

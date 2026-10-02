@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>TrainFit · vídeo</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; }
+    iframe { border: 0; width: 100%; height: 100%; display: block; }
+    p { color: #aaa; font: 14px/1.4 system-ui, sans-serif; text-align: center; padding: 24px; }
+  </style>
+</head>
+<body>
+  <!--
+    Reproductor de YouTube servido desde nuestro dominio: dentro de las apps
+    (WebView de Capacitor) el embed directo de YouTube falla sin un origen
+    https; aquí el iframe sale con el origen de la API.
+
+    Plantilla de respaldo versionada: si el servidor tiene un
+    youtube-embed.html suelto en la raíz del proyecto, se sirve ese
+    (components/util/youtube-embed.js).
+
+    ?v=ID (11 caracteres [A-Za-z0-9_-], cualquier otra cosa se descarta)
+    &autoplay=1 (opcional)
+  -->
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var id = params.get("v") || "";
+      if (!/^[A-Za-z0-9_-]{11}$/.test(id)) {
+        var p = document.createElement("p");
+        p.textContent = "Vídeo no disponible";
+        document.body.appendChild(p);
+        return;
+      }
+      var autoplay = params.get("autoplay") === "1" ? "1" : "0";
+      var iframe = document.createElement("iframe");
+      iframe.src = "https://www.youtube.com/embed/" + id +
+        "?autoplay=" + autoplay + "&playsinline=1&rel=0&modestbranding=1";
+      iframe.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      iframe.title = "YouTube";
+      document.body.appendChild(iframe);
+    })();
+  </script>
+</body>
+</html>

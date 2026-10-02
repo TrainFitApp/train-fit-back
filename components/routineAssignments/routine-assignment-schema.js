@@ -23,6 +23,10 @@ const RoutineAssignmentSchema = new Schema(
     // Encadena con la asignación que la sustituyó — reconstruye el
     // historial de fases sin perder rastro de lo que regía antes.
     supersededBy: { type: Schema.Types.ObjectId, ref: "RoutineAssignment", default: null },
+    // Cuándo se puso en uso de forma perezosa (fase programada que ya llegó,
+    // ver routine-assignment-service.js#syncTableInUseIfDue). Una vez puesta,
+    // no se vuelve a imponer: si el cliente cambia de rutina a mano, manda él.
+    activatedAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now },
   },
   { collection: "routineassignments" }

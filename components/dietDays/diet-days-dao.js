@@ -289,31 +289,6 @@ module.exports = {
     );
   },
 
-  async deleteDietDayMeal(idDietDay, idMeal) {
-    const deleteMeal = {
-      $pull: { meals: idMeal },
-    };
-
-    return new Promise((resolve, reject) =>
-      dietDaySchema.findByIdAndUpdate(
-        idDietDay,
-        deleteMeal,
-        { new: true },
-        async (err, docs) => {
-          if (err) return reject(err);
-
-          try {
-            // Delete the Meal document to trigger cascade cleanup
-            await mealSchema.deleteOne({ _id: idMeal });
-            return resolve(docs);
-          } catch (deleteErr) {
-            return reject(deleteErr);
-          }
-        },
-      ),
-    );
-  },
-
   // Nota del día. Angosto a propósito (2026-10): antes aceptaba `date` y
   // `meals` del body, así que una llamada podía mover un día a una fecha que
   // YA tenía día (duplicado) o reescribir su array de comidas desde el
@@ -354,9 +329,14 @@ module.exports = {
     const normalizeId = (value) => value?._id || value;
     const toPlainObject = (value) =>
       value?.toObject ? value.toObject() : { ...value };
+    // Lo que pega el cliente es suyo: nunca hereda del portapapeles la marca
+    // de pautado ni el "tomado" (ver meal-dao.js#pasteMeal).
     const cloneCustomProductPayload = (value) => {
       const payload = toPlainObject(value);
       delete payload._id;
+      delete payload.assignedByTrainerId;
+      delete payload.assignedQuantity;
+      delete payload.consumed;
       return payload;
     };
     const buildCustomRecipeClonePayload = (customRecipeObj) => ({
@@ -399,13 +379,7 @@ module.exports = {
     for (const mealRef of dietDayClipboard.meals || []) {
       const mealObj = toPlainObject(mealRef);
 
-      const customProductsToCreate = (mealObj.customProducts || []).map(
-        (customProductRef) => {
-          const customProduct = toPlainObject(customProductRef);
-          delete customProduct._id;
-          return customProduct;
-        },
-      );
+      const customProductsToCreate = (mealObj.customProducts || []).map(cloneCustomProductPayload);
 
       const createdCustomProducts = customProductsToCreate.length
         ? await customProductSchema.insertMany(customProductsToCreate)
@@ -463,9 +437,9 @@ module.exports = {
   // Sin wrapper no hay que desenganchar de ningún array: borrar el día ES
   // quitarlo de la dieta del usuario. El hook deleteOne de DietDay sigue
   // arrastrando sus Meals (y estas su contenido).
-  async deleteDietDay(idDietDay) {
+  async deleteDietDay(idDietDay, userId) {
     try {
-      return await dietDaySchema.deleteOne({ _id: idDietDay });
+      return await dietDaySchema.deleteOne({ _id: idDietDay, userId });
     } catch (err) {
       throw err;
     }

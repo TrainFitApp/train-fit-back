@@ -40,10 +40,6 @@ module.exports = {
     return tableDao.duplicateTable(idUser, idTable);
   },
 
-  async copySharedTable(idUser, idTable) {
-    return tableDao.copySharedTable(idUser, idTable);
-  },
-
   async getSearchTables(page, limit, search, isOwn, idUser, defaultOnly = false) {
     return tableDao.getSearchTables(page, limit, search, isOwn, idUser, defaultOnly);
   },
@@ -76,13 +72,16 @@ module.exports = {
   // flujo del entrenador (routine-assignment-controller.js#applyRoutine),
   // así que findByTableAndClient siempre devuelve [] para un idUser sin
   // entrenador de por medio.
+  //
+  // En autoservicio no hay RoutineAssignment que limpiar: si la rutina
+  // borrada era la que el usuario tenía en uso, se vacía el puntero aquí.
   async deleteTable(idUser, idTable, adminMode = false) {
     await routineAssignmentService.removeAssignmentsForTable(idUser, idTable);
-    return tableDao.deleteTable(idUser, idTable, adminMode);
-  },
-
-  async deleteTableSplit(idSplit, idTable) {
-    return tableDao.deleteTableSplit(idSplit, idTable);
+    const result = await tableDao.deleteTable(idUser, idTable, adminMode);
+    if (result.deletedCount > 0 && idUser) {
+      await tableDao.clearTableInUseIfMatches(idUser, idTable);
+    }
+    return result;
   },
 
   async countUserTables(userId) {

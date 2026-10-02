@@ -487,8 +487,11 @@ module.exports = {
   },
 
   async me(req, res) {
+    const user = (await userModel.syncScheduledRoutine(req.user.id))
+      ? await userSchema.findById(req.user.id)
+      : req.user;
     return res.send({
-      user: await userDto.single(req.user),
+      user: await userDto.single(user),
       is_impersonating: !!req.user?.auth?.impersonatedByUserId,
     });
   },

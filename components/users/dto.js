@@ -51,7 +51,8 @@ const single = async (resource, authUser) => ({
   archivedExercises: resource.archivedExercises,
   archivedRecipes: resource.archivedRecipes,
   birth: resource.birth,
-  hash: resource.hash,
+  // `hash` (código de activación pendiente) no sale nunca: ninguna pantalla
+  // lo necesita y es justo el secreto que activa la cuenta.
   personalAds: resource.personalAds,
   lastLogin: resource.lastLogin,
   premium: resolvePremium(resource),

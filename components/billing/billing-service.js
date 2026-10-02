@@ -800,8 +800,13 @@ module.exports = {
   runExpiredPremiumReconciliation,
 
   validateWebhookAuth(req) {
+    // Sin secreto configurado se falla CERRADO (antes cualquiera podía
+    // mandar un evento falso y darse premium). Solo en desarrollo local se
+    // deja pasar, para probar webhooks sin configurar nada.
     if (!WEBHOOK_AUTH) {
-      return true;
+      if (process.env.NODE_ENV === "development") return true;
+      console.error("[billing] Webhook de RevenueCat rechazado: falta REVENUECAT_WEBHOOK_AUTH");
+      return false;
     }
 
     const authHeader = (req.headers?.authorization || "").trim();

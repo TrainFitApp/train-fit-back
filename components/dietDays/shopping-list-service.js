@@ -89,7 +89,12 @@ function coveringPlan(plans, date) {
   for (const plan of plans) {
     if (!plan?.startDate || plan.startDate > date) continue;
     if (plan.endDate && plan.endDate < date) continue;
-    if (!best || plan.startDate > best.startDate) best = plan;
+    // Mismo desempate que findCoveringDate: a igual inicio, la más reciente.
+    if (
+      !best ||
+      plan.startDate > best.startDate ||
+      (plan.startDate === best.startDate && new Date(plan.createdAt || 0) > new Date(best.createdAt || 0))
+    ) best = plan;
   }
   return best;
 }

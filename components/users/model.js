@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const userDao = require("./dao");
 const userDto = require("./dto");
 const dietModel = require("../diets/diet-model");
@@ -27,6 +28,18 @@ const GOOGLE_ALLOWED_CLIENT_IDS = (
   .filter(Boolean);
 
 module.exports = {
+  // Pone en uso la rutina de la fase programada que ya ha empezado (sin cron:
+  // se resuelve al leer). Nunca lanza: un fallo aquí no puede tumbar la
+  // lectura del perfil. Import diferido para no crear un ciclo de módulos.
+  async syncScheduledRoutine(userId) {
+    try {
+      return await require("../routineAssignments/routine-assignment-service").syncTableInUseIfDue(userId);
+    } catch (e) {
+      console.error("[users] No se pudo sincronizar la rutina programada:", e.message);
+      return false;
+    }
+  },
+
   async getUserById(id) {
     return userDao.getUserById(id);
   },
@@ -55,8 +68,8 @@ module.exports = {
     return userDao.createUser(user, date);
   },
 
-  async searchArchivedsByFilter(node, archivedNode, search) {
-    return userDao.searchArchivedsByFilter(node, archivedNode, search);
+  async searchArchivedsByFilter(userId, node, archivedNode, search) {
+    return userDao.searchArchivedsByFilter(userId, node, archivedNode, search);
   },
 
   async addUserDiet(idUser, idDiet) {
@@ -171,7 +184,9 @@ module.exports = {
   },
 
   async sendMailCode(email) {
-    const code = Math.random().toString(36).substring(2, 10);
+    // 8 caracteres [0-9a-z] (mismo formato que antes), con crypto en vez de
+    // Math.random: este código restablece la contraseña.
+    const code = Array.from({ length: 8 }, () => crypto.randomInt(36).toString(36)).join("");
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     return userDao.sendMailCode(email, code, expiresAt);

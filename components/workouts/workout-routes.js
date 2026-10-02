@@ -5,7 +5,8 @@ const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-router.getAsync("/", auth(["admin", "user", "trainer"]), controller.getWorkouts);
+// Listado global (find({}) paginado): solo admin, devuelve entrenos de todos.
+router.getAsync("/", auth(["admin"]), controller.getWorkouts);
 router.getAsync("/:id", auth(["admin", "user", "trainer"]), controller.getWorkoutById);
 router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createWorkout);
 router.postAsync(

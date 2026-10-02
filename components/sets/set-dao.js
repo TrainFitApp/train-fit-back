@@ -91,7 +91,9 @@ module.exports = {
         return await setSchema.findById(set._id);
       }
 
-      return await setSchema.findByIdAndUpdate(set._id, update, { new: true });
+      // runValidators: los min/max del schema valen también al editar (un
+      // ValidationError acaba en 400 en errorHandler).
+      return await setSchema.findByIdAndUpdate(set._id, update, { new: true, runValidators: true });
     } catch (err) {
       throw err;
     }

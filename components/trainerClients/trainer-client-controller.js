@@ -21,7 +21,7 @@ const coachAlertService = require("../coachAlerts/coach-alert-service");
 const LEGACY_ATTENTION_TYPES = ["pending_review", "plan_ending_soon", "checkin_overdue"];
 
 function handleKnownError(res, e) {
-  if (e.code === "OVERLAP" || e.code === "DUPLICATE_INVITE" || e.code === "NOT_A_USER_ACCOUNT") {
+  if (["OVERLAP", "DUPLICATE_INVITE", "NOT_A_USER_ACCOUNT", "SELF_INVITE", "INVALID_SCOPE"].includes(e.code)) {
     return res.status(400).send({ message: e.message, code: e.code });
   }
   if (e.code === "TRAINER_LIMIT_REACHED") {

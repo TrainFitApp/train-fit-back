@@ -653,6 +653,14 @@ module.exports = {
       req.auth.userId
     );
 
+    // La app del cliente ya sabe pintar y abrir este aviso; faltaba emitirlo.
+    // Un fallo al notificar no deshace la petición.
+    try {
+      await notificationDao.create(req.params.clientId, req.auth.userId, "nutrition_preferences_requested", {});
+    } catch (e) {
+      console.error("[requestNutritionPreferences] No se pudo notificar al cliente:", e.message);
+    }
+
     return res.send(preferences);
   },
 

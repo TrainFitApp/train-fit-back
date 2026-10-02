@@ -7,7 +7,6 @@ const customExerciseSchema = require("../customExercises/custom-exercise-schema"
 const workoutSchema = require("../workouts/workout-schema");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
 const { stripExecutionForTemplate } = require("./table-template-copy");
-const serverDomain = process.env.SERVER_DOMAIN;
 
 // 2026-09, revertido 2026-09 bis — "Mis rutinas" enseñaba TODO lo que un
 // entrenador hubiera creado alguna vez para el cliente (borradores nunca
@@ -214,48 +213,6 @@ module.exports = {
     }
   },
 
-  async copySharedTable(idUser, idTable) {
-    try {
-      const splits = [];
-      const workouts = [];
-      const customExercises = [];
-      const sets = [];
-
-      let sharedTable = await tableSchema.findById(idTable);
-      sharedTable = sharedTable.toObject();
-
-      sharedTable.splits.forEach((sTemp) => {
-        sTemp._id = new mongoose.Types.ObjectId();
-        splits.push(sTemp);
-        sTemp.workouts.forEach((wTemp) => {
-          wTemp._id = new mongoose.Types.ObjectId();
-          workouts.push(wTemp);
-          wTemp.exercises.forEach((ceTemp) => {
-            wTemp._id = new mongoose.Types.ObjectId();
-            customExercises.push(ceTemp);
-            ceTemp.sets.forEach((sTemp) => {
-              sTemp._id = new mongoose.Types.ObjectId();
-              sets.push(sTemp);
-            });
-          });
-        });
-      });
-
-      await setSchema.insertMany(sets);
-      await customExerciseSchema.insertMany(customExercises);
-      await workoutSchema.insertMany(workouts);
-      await splitSchema.insertMany(splits);
-
-      delete sharedTable._id;
-      delete sharedTable.userId;
-      sharedTable = await tableSchema.create(sharedTable);
-
-      return `${serverDomain}/api/tables/share/${idUser}/${idTable}`;
-    } catch (e) {
-      throw e;
-    }
-  },
-
   async getSearchTables(page, limit, search, isOwn, idUser, defaultOnly = false) {
     try {
       const normalizedSearch = (search || "").trim();
@@ -377,6 +334,15 @@ module.exports = {
     });
   },
 
+  // Solo si el puntero sigue apuntando a esa tabla: borrar una rutina que no
+  // está en uso no toca la que sí lo está.
+  async clearTableInUseIfMatches(userId, tableId) {
+    await userSchema.updateOne(
+      { _id: userId, tableInUse: tableId },
+      { $unset: { tableInUse: "", workoutInUse: "" } },
+    );
+  },
+
   // MVP-trainers F11: crea una rutina NUEVA directamente para un cliente,
   // asignada por su profesional. A diferencia de createTableToUser, NO
   // activa la rutina (no toca tableInUse/workoutInUse) — ver F11 punto 7.7.
@@ -441,14 +407,6 @@ module.exports = {
     } catch (e) {
       throw e;
     }
-  },
-
-  async deleteTableSplit(idTable, idSplit) {
-    const deleteSplit = {
-      $pull: { splits: idSplit },
-    };
-
-    return tableSchema.findByIdAndUpdate(idTable, deleteSplit, {}).exec();
   },
 
   async countUserTables(userId) {

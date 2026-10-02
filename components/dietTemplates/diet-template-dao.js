@@ -399,8 +399,11 @@ module.exports = {
   // deleteOne (no deleteMany) dispara el hook en cascada de
   // diet-template-schema.js que borra los CustomProduct/CustomRecipe de la
   // plantilla.
+  // Solo plantillas de BIBLIOTECA: la copia asignada a un cliente (clientId
+  // puesto) se quita por plan-assignment-service#cancelPhase, que encadena y
+  // reactiva la anterior. Por aquí desaparecía sin nada de eso.
   async delete(trainerId, id) {
-    return DietTemplate.deleteOne({ _id: id, trainerId });
+    return DietTemplate.deleteOne({ _id: id, trainerId, clientId: null });
   },
 
   // A partir de aquí: consultas sobre copias (clientId puesto) — la copia ES
@@ -420,15 +423,18 @@ module.exports = {
       clientId,
       startDate: { $lte: to },
       $or: [{ endDate: null }, { endDate: { $gte: from } }],
-    }).sort({ startDate: 1 });
+    }).sort({ startDate: 1, createdAt: 1 });
   },
 
+  // Con dos fases que empiezan el mismo día (el profesional sustituye una
+  // fase el día en que empezó: la vieja no puede acabar antes de empezar, así
+  // que se queda cubriendo ese día), manda la más reciente.
   async findCoveringDate(clientId, date) {
     return DietTemplate.findOne({
       clientId,
       startDate: { $lte: date },
       $or: [{ endDate: null }, { endDate: { $gte: date } }],
-    }).sort({ startDate: -1 });
+    }).sort({ startDate: -1, createdAt: -1 });
   },
 
   /**

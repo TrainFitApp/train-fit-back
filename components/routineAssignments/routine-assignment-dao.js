@@ -108,6 +108,10 @@ module.exports = {
     return RoutineAssignment.findByIdAndDelete(id);
   },
 
+  async markActivated(id) {
+    return RoutineAssignment.updateOne({ _id: id }, { $set: { activatedAt: new Date() } });
+  },
+
   async updateStartDate(id, startDate) {
     return RoutineAssignment.findByIdAndUpdate(id, { $set: { startDate } }, { new: true });
   },

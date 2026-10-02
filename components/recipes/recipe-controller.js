@@ -22,11 +22,28 @@ function parseTags(raw) {
   return list.map((t) => String(t).trim()).filter(Boolean);
 }
 
+// Los ingredientes de una receta solo los cambia su dueño (o un admin), como
+// en updateRecipe. Antes cualquiera tocaba recetas ajenas o verificadas.
+async function rejectIfNotRecipeOwner(req, res, recipeId) {
+  const recipe = await recipeModel.getRecipeById(recipeId);
+  if (!recipe) {
+    res.status(404).json({ message: "Recipe not found" });
+    return true;
+  }
+  if (!isAdmin(req) && recipe.userId?.toString() !== req.user.id) {
+    res.status(403).json({ message: "Cannot edit recipes you don't own" });
+    return true;
+  }
+  return false;
+}
+
 const controller = {
   async getRecipeById(req, res, next) {
     try {
       const recipe = await recipeModel.getRecipeById(req.params.id);
-      if (!recipe) {
+      // Una receta privada que no puede ver responde igual que una que no
+      // existe: no confirma ni su existencia.
+      if (!recipe || !(isAdmin(req) || (await recipeModel.canUserReadRecipe(recipe, req.user.id)))) {
         return res.status(404).json({ message: "Recipe not found" });
       }
       return res.json(recipe);
@@ -169,6 +186,14 @@ const controller = {
       const result = await recipeModel.composeRecipe(req.body, req.user.id, isAdmin(req));
       return res.status(201).json(result);
     } catch (error) {
+      // La comida destino no es suya o está pautada (recipe-dao.js#
+      // assertComposeMealContext): mismas respuestas que meal-controller.
+      if (error.code === "MEAL_NOT_FOUND") {
+        return res.status(400).json({ message: error.message, code: error.code });
+      }
+      if (error.code === "MEAL_PROTECTED") {
+        return res.status(403).json({ message: error.message, code: error.code });
+      }
       next(error);
     }
   },
@@ -228,6 +253,16 @@ const controller = {
       const userId = req.user.id;
       const recipeId = req.params.id;
 
+      // Solo se marca como favorita una receta que el usuario puede leer
+      // (las favoritas se listan por id, sin más filtro). Quitarla siempre se
+      // puede: una favorita ya cuenta como legible.
+      if (!isAdmin(req)) {
+        const recipe = await recipeModel.getRecipeById(recipeId);
+        if (!recipe || !(await recipeModel.canUserReadRecipe(recipe, userId))) {
+          return res.status(404).json({ message: "Recipe not found" });
+        }
+      }
+
       const result = await recipeModel.toggleArchivedRecipe(userId, recipeId);
       return res.json({
         isArchived: result.isArchived,
@@ -241,6 +276,7 @@ const controller = {
 
   async addRecipeCustomProduct(req, res, next) {
     try {
+      if (await rejectIfNotRecipeOwner(req, res, req.params.idRecipe)) return;
       const recipe = await recipeModel.addRecipeCustomProduct(
         req.params.idRecipe,
         req.params.idCustomProduct,
@@ -253,6 +289,7 @@ const controller = {
 
   async removeRecipeCustomProduct(req, res, next) {
     try {
+      if (await rejectIfNotRecipeOwner(req, res, req.params.idRecipe)) return;
       const recipe = await recipeModel.removeRecipeCustomProduct(
         req.params.idRecipe,
         req.params.idCustomProduct,

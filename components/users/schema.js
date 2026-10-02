@@ -186,6 +186,10 @@ UserSchema.pre("deleteOne", async function (next) {
 
     if (user) {
       await require("../trainerBilling/adapter").assertDeletionAllowed([user._id]);
+      // Antes de cualquier cascada: lo que esta cuenta deja en las de otros
+      // (alimentos en el diario de sus clientes, fases y rutinas asignadas)
+      // se conserva para ellos. Ver account-deletion-keep.js.
+      await require("./account-deletion-keep").keepOtherUsersData(user._id);
       // Antes: deleteOne sobre el wrapper Diet, que arrastraba sus DietDay en
       // cascada. Sin wrapper, se borran directos por dueño — y el hook
       // deleteMany de DietDay sigue arrastrando Meals y su contenido.
@@ -291,6 +295,30 @@ UserSchema.pre("deleteOne", async function (next) {
 
       // Recientes ocultos del buscador de alimentos.
       await require("../hiddenRecentFoods/hidden-recent-food-schema").deleteMany({ userId: user._id });
+
+      // Datos de salud del cliente (dolor, suplementación, alergias y
+      // preferencias) y el seguimiento del profesional sobre él, por los dos
+      // lados. Sobrevivían al borrado de la cuenta.
+      const bothSides = { $or: [{ trainerId: user._id }, { clientId: user._id }] };
+      const { PainEntry, PainThreshold } = require("../painLog/pain-schema");
+      await PainEntry.deleteMany({ userId: user._id });
+      await PainThreshold.deleteMany(bothSides);
+      await require("../supplements/supplement-schema").Supplement.deleteMany(bothSides);
+      await require("../nutritionPreferences/nutrition-preferences-schema").deleteMany({ clientId: user._id });
+      await require("../routineAssignments/routine-assignment-schema").deleteMany(bothSides);
+      await require("../planChanges/plan-change-schema").deleteMany(bothSides);
+      const CoachAlert = require("../coachAlerts/coach-alert-schema");
+      await CoachAlert.deleteMany(bothSides);
+      await CoachAlert.updateMany({ resolvedBy: user._id }, { $unset: { resolvedBy: "" } });
+      await require("../coachTasks/coach-task-schema").deleteMany(bothSides);
+      await require("../clientNotes/trainer-note-read-schema").deleteMany(bothSides);
+      // Biblioteca del profesional (reglas, protocolos, puntuaciones de
+      // ejercicios), y el cliente borrado fuera de las reglas de otros.
+      const CoachRule = require("../coachRules/coach-rule-schema");
+      await CoachRule.deleteMany({ trainerId: user._id });
+      await CoachRule.updateMany({ clientIds: user._id }, { $pull: { clientIds: user._id } });
+      await require("../coachProtocols/coach-protocol-schema").deleteMany({ trainerId: user._id });
+      await require("../exerciseScores/exercise-score-schema").deleteMany({ trainerId: user._id });
     }
     next();
   } catch (e) {

@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const userSchema = require("./schema");
 const dietDayUtil = require("../dietDays/diet-days-util");
 const dietDayModel = require("../dietDays/diet-days-service");
@@ -374,10 +375,19 @@ module.exports = {
     }
   },
 
-  async searchArchivedsByFilter(node, archivedNode, search) {
+  // Busca entre los favoritos del usuario `userId`. `node`/`archivedNode`
+  // vienen del cliente: solo valen las parejas conocidas (antes el $lookup
+  // aceptaba cualquier colección), el texto se escapa antes de ir a $regex y
+  // el $match empieza por el propio usuario (antes devolvía los favoritos del
+  // primero que encontraba).
+  async searchArchivedsByFilter(userId, node, archivedNode, search) {
+    const ALLOWED = { products: "archivedProducts", recipes: "archivedRecipes", exercises: "archivedExercises" };
+    if (!userId || ALLOWED[node] !== archivedNode) return [];
+    const escaped = String(search ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const agg = [
       {
         $match: {
+          _id: new mongoose.Types.ObjectId(String(userId)),
           [`${archivedNode}`]: { $exists: true, $ne: [] },
         },
       },
@@ -394,7 +404,7 @@ module.exports = {
       },
       {
         $match: {
-          [`${archivedNode}.name`]: { $regex: search, $options: "i" },
+          [`${archivedNode}.name`]: { $regex: escaped, $options: "i" },
         },
       },
       {
@@ -468,6 +478,27 @@ module.exports = {
         "hash",
         "appleId",
         "goalInUse",
+        // Seguridad de la cuenta: cada uno tiene su flujo propio (registro,
+        // cambio y restablecimiento de contraseña, verificación, consentimiento
+        // de media, plazas de Stripe). Antes `password` se guardaba aquí en
+        // claro y el usuario ya no podía entrar.
+        "password",
+        "passwordVersion",
+        "lastPasswordChangeAt",
+        "email",
+        "hashExpiresAt",
+        "hashFailedAttempts",
+        "lastHashSentAt",
+        "restoreCode",
+        "restoreCodeExpiresAt",
+        "restoreFailedAttempts",
+        "lastRestoreCodeSentAt",
+        "restoreCodeDate",
+        "restoreCodeDailyCount",
+        "trainerSeats",
+        "mediaConsentAt",
+        "status",
+        "lastLogin",
       ]);
 
       const safeInput = {};

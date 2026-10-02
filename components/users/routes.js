@@ -19,7 +19,8 @@ function legacyAuthGone(req, res) {
   });
 }
 
-router.getAsync("/", auth(["admin", "user"]), controller.countUsers);
+// Recuento, listado y búsqueda global de cuentas: solo admin (management).
+router.getAsync("/", auth(["admin"]), controller.countUsers);
 // Público: comprobar si existe un email sin requerir auth
 router.getAsync("/check/:email", controller.checkEmail);
 router.getAsync("/:email", auth(["admin", "user", "trainer"]), controller.getUserByEmail);
@@ -32,7 +33,7 @@ router.postAsync("/professional", controller.createProfessionalUser);
 router.postAsync("/social", legacyAuthGone);
 // router.postAsync("/google", controller.createSocialUser); // Mantener por compatibilidad si es necesario, o eliminar
 // router.postAsync("/apple", controller.createSocialUser); // Unificando también Apple si es posible, o mantener separado si lógica difiere mucho
-router.postAsync("/search", auth(["admin", "user"]), controller.searchUsers);
+router.postAsync("/search", auth(["admin"]), controller.searchUsers);
 router.postAsync("/sign-in", legacyAuthGone);
 router.postAsync(
   "/suggestions",
@@ -47,7 +48,9 @@ router.postAsync(
   controller.searchArchivedsByFilter,
 );
 router.getAsync("/hash/:id/:hash", controller.checkHash);
-router.deleteAsync("/hash/:id", auth(["admin", "user"]), controller.clearUserHash);
+// Activar a mano una cuenta (borrar su código pendiente): solo admin. Con
+// "user", cualquiera activaba cuentas ajenas sin el código.
+router.deleteAsync("/hash/:id", auth(["admin"]), controller.clearUserHash);
 router.getAsync("/send/mail/code/:email", rateLimiter, controller.sendMailCode);
 router.postAsync("/send/mail/code", controller.checkRestoreCode);
 router.postAsync("/activate", legacyAuthGone);
@@ -86,12 +89,15 @@ router.putAsync(
   controller.addFavoriteRecipe,
 );
 
+// Borrar la propia cuenta (verificar contraseña + borrar) también desde
+// Trainers: el entrenador recibía 403 y no podía eliminar su cuenta. Los dos
+// controllers ya exigen que sea la cuenta propia (o admin).
 router.postAsync(
   "/verify-password",
-  auth(["admin", "user"]),
+  auth(["admin", "user", "trainer"]),
   controller.verifyPassword,
 );
-router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteUser);
+router.deleteAsync("/:id", auth(["admin", "user", "trainer"]), controller.deleteUser);
 router.putAsync("/roles/:id", auth(["admin"]), controller.updateRoles);
 
 module.exports = router;

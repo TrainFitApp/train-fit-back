@@ -1,5 +1,6 @@
 const mealService = require("./meal-service");
 const { resolveOwnedMealById } = require("../dietDays/diet-day-resolver");
+const { canActOnSubject } = require("../trainerClients/subject-access");
 
 // Auditoría de seguridad — respuesta uniforme para los dos rechazos posibles
 // al operar sobre una comida: no pertenece al usuario autenticado (IDOR, ver
@@ -60,6 +61,14 @@ module.exports = {
 
     const page = parseInt((req.body.page || 0).toString(), 10);
     const limit = 7;
+    // `body.userId` es de quién son los productos propios, favoritos y
+    // recientes que entran en la búsqueda: el propio usuario, o el cliente
+    // al que su profesional de nutrición le está pautando. Cualquier otro id
+    // se sustituye por el del token (antes se listaban los productos
+    // privados y favoritos de cualquiera).
+    const subjectId = req.body.userId && !(await canActOnSubject(req, req.body.userId, { trainerScope: "nutrition" }))
+      ? req.user.id
+      : req.body.userId;
     const list = await mealService.searchAllWithFilters(
       page,
       limit,
@@ -68,7 +77,7 @@ module.exports = {
       toBoolean(req.body.recipeFilter),
       toBoolean(req.body.shieldFilter),
       toBoolean(req.body.favFilter),
-      req.body.userId,
+      subjectId,
       recentIds,
       // Quién pregunta, además de a quién pertenece la dieta: cuando un
       // entrenador pauta una comida, `body.userId` es el del CLIENTE, y sin
@@ -156,10 +165,29 @@ module.exports = {
     }
   },
 
+  // Solo nombre y notas, y solo de una comida del usuario. Antes hacía $set
+  // del cuerpo entero sobre cualquier _id: cualquiera editaba comidas ajenas
+  // y el cliente podía quitarle assignedByTrainerId a una comida pautada. Las
+  // apps mandan el Meal completo (meal.component, notes.component,
+  // diets.page) pero por aquí solo cambian el nombre o la nota.
   async modifyMeal(req, res) {
-    const meal = await mealService.modifyMeal(req.body);
+    try {
+      const existing = await resolveOwnedMealById(req.auth.userId, req.body?._id);
+      const patch = {};
+      const has = (key) => Object.prototype.hasOwnProperty.call(req.body, key);
+      if (has("name") && req.body.name !== existing.name) {
+        mealService.assertMealEditable(existing);
+        patch.name = req.body.name;
+      }
+      if (has("notes")) patch.notes = req.body.notes;
 
-    return res.send(meal);
+      const meal = await mealService.modifyMeal(existing._id, patch);
+      return res.send(meal);
+    } catch (e) {
+      const handled = handleMealError(res, e);
+      if (handled) return handled;
+      throw e;
+    }
   },
 
   // Auditoría de seguridad — corrige dos bugs a la vez: `req.param.id` (sin

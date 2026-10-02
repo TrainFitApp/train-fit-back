@@ -33,6 +33,18 @@ module.exports = {
     );
   },
 
+  // Comida que contiene ese CustomProduct (sin poblar): para comprobar el
+  // dueño de un alimento del diario a partir de su id.
+  async findMealIdContainingCustomProduct(customProductId) {
+    const meal = await mealSchema.findOne({ customProducts: customProductId }).select("_id").lean();
+    return meal?._id || null;
+  },
+
+  async findMealIdContainingCustomRecipe(customRecipeId) {
+    const meal = await mealSchema.findOne({ customRecipes: customRecipeId }).select("_id").lean();
+    return meal?._id || null;
+  },
+
   async findById(id) {
     return new Promise((resolve, reject) =>
       mealSchema.findOne({ _id: id }).exec((err, docs) => {
@@ -238,17 +250,27 @@ module.exports = {
       const normalizeId = (value) => value?._id || value;
       const toPlainObject = (value) =>
         value?.toObject ? value.toObject() : { ...value };
+      // Quién firma la copia: pegado por el profesional, queda pautado con
+      // la cantidad de ahora como referencia (CustomProduct.assignedQuantity
+      // — la cantidad con la que se pauta es, en este instante, también la
+      // "consumida"). Pegado por el cliente, la copia es SUYA: nunca hereda
+      // del portapapeles la marca de pautado ni el "tomado" (antes salía
+      // bloqueada y alteraba la meta del día y la adherencia).
+      const stampProvenance = (payload) => {
+        if (trainerId) {
+          payload.assignedByTrainerId = trainerId;
+          payload.assignedQuantity = payload.quantity ?? null;
+        } else {
+          delete payload.assignedByTrainerId;
+          delete payload.assignedQuantity;
+          delete payload.consumed;
+        }
+        return payload;
+      };
       const cloneCustomProductPayload = (value) => {
         const payload = toPlainObject(value);
         delete payload._id;
-        if (trainerId) {
-          payload.assignedByTrainerId = trainerId;
-          // Referencia para el delta que ve el cliente (ver
-          // CustomProduct.assignedQuantity) — la cantidad con la que se
-          // pauta es, en este instante, también la cantidad "consumida".
-          payload.assignedQuantity = payload.quantity ?? null;
-        }
-        return payload;
+        return stampProvenance(payload);
       };
       const buildCustomRecipeClonePayload = (customRecipeObj) => ({
         recipe: normalizeId(customRecipeObj.recipe),
@@ -294,15 +316,7 @@ module.exports = {
       const targetCustomProducts = mealToPaste.customProducts || [];
       const targetCustomRecipes = mealToPaste.customRecipes || [];
 
-      const customProductsToCreate = clipboardCustomProducts.map((cp) => {
-        const cpObj = toPlainObject(cp);
-        delete cpObj._id;
-        if (trainerId) {
-          cpObj.assignedByTrainerId = trainerId;
-          cpObj.assignedQuantity = cpObj.quantity ?? null;
-        }
-        return cpObj;
-      });
+      const customProductsToCreate = clipboardCustomProducts.map(cloneCustomProductPayload);
 
       const newCustomProducts = customProductsToCreate.length
         ? await customProductSchema.insertMany(customProductsToCreate)
@@ -459,19 +473,18 @@ module.exports = {
     );
   },
 
-  async modifyMeal(meal) {
-    const update = { $set: meal };
-    return new Promise((resolve, reject) =>
-      mealSchema.findByIdAndUpdate(
-        meal._id,
-        update,
-        { new: true },
-        (err, doc) => {
-          if (err) return reject(err);
-          return resolve(doc);
-        },
-      ),
-    );
+  // `patch` ya viene filtrado por el controller (nombre y notas). Una nota
+  // vacía se quita en vez de guardarse en blanco.
+  async modifyMeal(id, { name, notes } = {}) {
+    const update = {};
+    if (name !== undefined) update.$set = { name };
+    if (notes !== undefined) {
+      const text = (notes ?? "").toString().trim();
+      if (text) update.$set = { ...(update.$set || {}), notes: text };
+      else update.$unset = { notes: 1 };
+    }
+    if (!update.$set && !update.$unset) return mealSchema.findById(id);
+    return mealSchema.findByIdAndUpdate(id, update, { new: true, runValidators: true });
   },
 
   async deleteMeal(id) {

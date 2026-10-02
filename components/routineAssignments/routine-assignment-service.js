@@ -101,6 +101,7 @@ module.exports = {
     // perezosa (ver syncTableInUseIfDue).
     if (startDate <= isoToday()) {
       await tableDao.setTableInUseForClient(clientId, tableId);
+      await routineAssignmentDao.markActivated(created._id);
     }
 
     return created;
@@ -125,14 +126,24 @@ module.exports = {
   // sincroniza aquí — nunca se sobreescribe una activación manual más
   // reciente porque siempre se compara contra la asignación que de verdad
   // rige HOY, no contra "la última creada".
+  //
+  // También se llama al leer el propio perfil del cliente (/auth/me y
+  // GET /users/:email): sin eso, la fase que empezaba hoy no le aparecía
+  // hasta que su entrenador abría la ficha. Como eso pasa en cada arranque de
+  // la app, solo se activa UNA vez cada fase (activatedAt): si después el
+  // cliente cambia de rutina a mano, no se le vuelve a imponer. Las que
+  // empiezan el día en que se aplican nacen ya activadas (applyRoutine).
+  // Devuelve si cambió algo.
   async syncTableInUseIfDue(clientId) {
     const covering = await routineAssignmentDao.findCoveringDate(clientId, isoToday());
-    if (!covering) return;
+    if (!covering || covering.activatedAt) return false;
 
+    await routineAssignmentDao.markActivated(covering._id);
     const client = await userSchema.findById(clientId).select("tableInUse").lean();
-    if (String(client?.tableInUse || "") === String(covering.tableId)) return;
+    if (String(client?.tableInUse || "") === String(covering.tableId)) return false;
 
     await tableDao.setTableInUseForClient(clientId, covering.tableId);
+    return true;
   },
 
   // Tarea 4bis (2026-09, generalizada — borrado coherente de fases/rutinas)

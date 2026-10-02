@@ -5,7 +5,7 @@ const { markDaySkipped } = require("../dietDays/diet-skips");
 const dietDaysService = require("../dietDays/diet-days-service");
 const userSchema = require("../users/schema");
 const planChangeService = require("../planChanges/plan-change-service");
-const { resyncPlannedDays } = require("../dietDays/diet-day-resolver");
+const { resyncPlannedDays, clearAndResyncPlannedDays } = require("../dietDays/diet-day-resolver");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -279,6 +279,10 @@ module.exports = {
       }
       throw error;
     }
+
+    // Los días que el cliente ya había resuelto con esa fase no pueden
+    // quedarse con su comida pautada ni con su meta.
+    await clearAndResyncPlannedDays(clientId, result.removedRange.from, result.removedRange.to);
 
     await planChangeService.recordPlanAssignment({
       trainerId,

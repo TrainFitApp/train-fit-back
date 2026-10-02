@@ -3,13 +3,23 @@ const { ownView, ownViews } = require("./anthropometry-origin");
 
 // `ownOnly`: pantallas del cliente, sin lo que vino de check-ins. El
 // entrenador lee sin filtrar.
+// Antes GET/PUT/DELETE /anthropometry/:id servían la medición de cualquiera.
+async function findOwned(id, ownerId) {
+  const doc = await anthropometryDao.getAnthropometryById(id);
+  if (!doc) return null;
+  if (ownerId && String(doc.userId) !== String(ownerId)) return null;
+  return doc;
+}
+
 module.exports = {
   async createAnthropometry(userId, date, data) {
     return ownView(await anthropometryDao.upsertOwnFields(userId, date, data));
   },
 
-  async getAnthropometryById(id, { ownOnly = false } = {}) {
-    const doc = await anthropometryDao.getAnthropometryById(id);
+  // `ownerId`: la medición tiene que ser de ese usuario; si no, como si no
+  // existiera (null). Sin él (admin), cualquiera.
+  async getAnthropometryById(id, { ownOnly = false, ownerId = null } = {}) {
+    const doc = await findOwned(id, ownerId);
     return ownOnly ? ownView(doc) : doc;
   },
 
@@ -28,13 +38,15 @@ module.exports = {
     return ownOnly ? ownViews(docs) : docs;
   },
 
-  async updateAnthropometry(id, data) {
-    const existing = await anthropometryDao.getAnthropometryById(id);
+  async updateAnthropometry(id, data, { ownerId = null } = {}) {
+    const existing = await findOwned(id, ownerId);
     if (!existing) return null;
     return ownView(await anthropometryDao.upsertOwnFields(existing.userId, existing.date, data));
   },
 
-  async deleteAnthropometry(id) {
+  async deleteAnthropometry(id, { ownerId = null } = {}) {
+    const existing = await findOwned(id, ownerId);
+    if (!existing) return null;
     return anthropometryDao.deleteAnthropometry(id);
   },
 

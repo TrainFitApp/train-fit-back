@@ -8,10 +8,11 @@ const mealSchema = require("../meals/meal-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const mealModel = require("../meals/meal-service");
 const dietDayDao = require("../dietDays/diet-days-dao");
-const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
+const { resolveOwnedDietDay, resolveOwnedMealById } = require("../dietDays/diet-day-resolver");
 const recipeMergeService = require("./recipe-merge.service");
 
 const customProductSchema = require("../customProducts/custom-product-schema");
+const dietDaySchema = require("../dietDays/diet-days-schema");
 const mongoose = require("mongoose");
 const {
   RECIPE_SEARCH_CONFIG,
@@ -201,6 +202,21 @@ module.exports = {
     return recipeSchema.countDocuments({ userId });
   },
 
+  // ¿Está la receta en el diario del usuario (alguna CustomRecipe suya que la
+  // use)? Para que siga pudiendo abrir una receta privada que tiene anotada
+  // aunque ya no la vea por otra vía.
+  async isRecipeInUserDiary(recipeId, userId) {
+    const customRecipeIds = await customRecipeSchema.find({ recipe: recipeId }).distinct("_id");
+    if (!customRecipeIds.length) return false;
+    const mealIds = await mealSchema.find({ customRecipes: { $in: customRecipeIds } }).distinct("_id");
+    if (!mealIds.length) return false;
+    return Boolean(await dietDaySchema.exists({ userId, meals: { $in: mealIds } }));
+  },
+
+  async isRecipeArchivedByUser(recipeId, userId) {
+    return Boolean(await userSchema.exists({ _id: userId, archivedRecipes: recipeId }));
+  },
+
   async getRecipeById(id) {
     return new Promise((resolve, reject) =>
       recipeSchema.findById(id, (err, doc) => {
@@ -270,6 +286,13 @@ module.exports = {
         { customRecipes: { $in: customRecipeIds } },
         { $pull: { customRecipes: { $in: customRecipeIds } } },
       );
+      // Las plantillas de dieta también las referencian (alternativas de
+      // cada comida de cada menú): mismo $pull que product-schema.js hace con
+      // los alimentos, para no dejar en el constructor una receta vacía.
+      await mongoose.model("DietTemplate").updateMany(
+        { "menus.meals.alternatives.customRecipes": { $in: customRecipeIds } },
+        { $pull: { "menus.$[].meals.$[].alternatives.$[].customRecipes": { $in: customRecipeIds } } },
+      );
       await customRecipeSchema.deleteMany({
         _id: { $in: customRecipeIds },
       });
@@ -326,7 +349,13 @@ module.exports = {
       scope.verified = true;
     }
 
+    // Con favoritos, el conjunto de ids basta (como hace meal-dao con los
+    // productos): una receta que el usuario pudo marcar como favorita (p. ej.
+    // la que le pautó su entrenador, que no es verificada ni suya) tiene que
+    // salir en sus favoritas. toggleArchivedRecipe solo deja marcar recetas
+    // que el usuario puede leer.
     if (favoritesOnly) {
+      delete scope.$or;
       scope._id = { $in: archivedRecipeIds };
     }
 
@@ -364,12 +393,38 @@ module.exports = {
     });
   },
 
+  // La comida destino de compose: tiene que ser del usuario, al editar la
+  // receta-instancia tiene que estar en ella, y nada de eso puede estar
+  // pautado por su profesional (mismo criterio que meal-controller). Antes se
+  // enganchaba una receta a la comida de cualquiera, o se editaba la
+  // CustomRecipe de otro. Lanza MEAL_NOT_FOUND / MEAL_PROTECTED.
+  async assertComposeMealContext(userId, context, isEditMode) {
+    const meal = await resolveOwnedMealById(userId, context.mealId);
+    mealModel.assertMealEditable(meal);
+    if (!isEditMode || !context.customRecipeId) return;
+    const target = (meal.customRecipes || []).find(
+      (cr) => String(cr?._id || cr) === String(context.customRecipeId),
+    );
+    if (!target) {
+      const err = new Error("La receta indicada no está en esa comida");
+      err.code = "MEAL_NOT_FOUND";
+      throw err;
+    }
+    mealModel.assertMealEditable(target);
+  },
+
   async composeRecipe(payload, userId, isAdmin = false) {
     try {
       const { recipe, recipeId, customRecipe, context, mode } = payload || {};
 
       let recipeDoc = null;
       let isEditMode = mode === "edit";
+
+      // Antes de crear o editar la receta: si la comida no vale, no se toca
+      // nada (si no, quedaba una receta suelta contando para el límite Free).
+      if (context?.mealId) {
+        await this.assertComposeMealContext(userId, context, isEditMode);
+      }
 
       if (recipeId) {
         recipeDoc = await this.getRecipeById(recipeId);

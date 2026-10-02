@@ -170,7 +170,13 @@ module.exports = {
     }
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
-    await splitService.updateSplit(req.params.id, req.body);
+    // Solo los datos del microciclo: sus entrenos se gestionan por sus rutas
+    // (un $set del cuerpo entero dejaba enganchar workouts de cualquiera).
+    const patch = {};
+    for (const key of ["name", "objective", "purpose"]) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) patch[key] = req.body[key];
+    }
+    await splitService.updateSplit(req.params.id, patch);
 
     return res.sendStatus(204);
   },

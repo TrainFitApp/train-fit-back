@@ -1,5 +1,5 @@
 const express = require("@awaitjs/express");
-const path = require("path");
+const { sendYouTubeEmbed } = require("../util/youtube-embed");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./exercise-controller");
 const ROLES = require("../users/util/roles");
@@ -42,11 +42,8 @@ router.putAsync(
   controller.addExerciseToFavorites
 );
 
-// Servir helper de YouTube embed protegido (requiere admin o user)
-router.getAsync("/youtube-embed", auth(["admin", "user"]), async (req, res) => {
-  const filePath = path.join(__dirname, "../../youtube-embed.html");
-  res.sendFile(filePath);
-});
+// Reproductor de YouTube (ver components/util/youtube-embed.js).
+router.getAsync("/youtube-embed", auth(["admin", "user"]), sendYouTubeEmbed);
 router.deleteAsync("/:id", auth(["admin", "user", "trainer"]), controller.deleteExercise);
 
 module.exports = router;

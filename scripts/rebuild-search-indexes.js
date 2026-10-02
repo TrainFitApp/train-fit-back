@@ -29,8 +29,6 @@
 
 const path = require("path");
 
-require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
-
 const mongoose = require("mongoose");
 const Product = require("../components/products/product-schema");
 const Recipe = require("../components/recipes/recipe-schema");
@@ -303,6 +301,9 @@ async function backfill(model, label, { withBrand }) {
 }
 
 async function main() {
+  // Solo al ejecutarlo como script: los tests importan las definiciones y
+  // syncIndexes() sin cargar el .env real.
+  require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
   const mongoUri = buildMongoUri();
   log(`conectando ${redactMongoUri(mongoUri)}`);
   log(
@@ -330,12 +331,16 @@ async function main() {
   ok("listo");
 }
 
-main().catch(async (error) => {
-  console.error(LOG_PREFIX, "fatal", error);
-  try {
-    await mongoose.disconnect();
-  } catch (_) {
-    // da igual: ya estamos saliendo
-  }
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(async (error) => {
+    console.error(LOG_PREFIX, "fatal", error);
+    try {
+      await mongoose.disconnect();
+    } catch (_) {
+      // da igual: ya estamos saliendo
+    }
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { PRODUCT_INDEXES, RECIPE_INDEXES, syncIndexes, backfill };

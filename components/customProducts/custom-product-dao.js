@@ -178,17 +178,26 @@ module.exports = {
 
   async createCustomProductAndAddToMeal(idMeal, customProduct, idUser) {
     try {
-      // Limpiar datos del custom product
+      // Limpiar datos del custom product. Esta vía es siempre la del propio
+      // usuario añadiendo comida: nunca nace pautada (eso solo lo estampa
+      // meal-dao.js#pasteMeal con el trainerId), aunque lo diga el cuerpo.
       const cleanedCustomProduct = cleanForCreate(customProduct);
+      delete cleanedCustomProduct.assignedByTrainerId;
+      delete cleanedCustomProduct.assignedQuantity;
 
       // Si viene un producto inline unificado (product), lo guardamos en Product.
+      // Un string es el id de un producto que ya existe (antes se trataba como
+      // producto inline y creaba un Product con las letras del id como campos).
+      const inlineProduct = cleanedCustomProduct.product;
       if (
         idUser &&
-        cleanedCustomProduct.product &&
-        !cleanedCustomProduct.product._id
+        inlineProduct &&
+        typeof inlineProduct === "object" &&
+        !inlineProduct._id
       ) {
+        const { verified, ...productData } = inlineProduct;
         const productDoc = await productSchema.create({
-          ...cleanedCustomProduct.product,
+          ...productData,
           userId: idUser,
         });
         cleanedCustomProduct.product = productDoc._id;

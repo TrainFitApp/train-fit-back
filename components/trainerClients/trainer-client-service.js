@@ -82,6 +82,12 @@ class TrainerLimitReachedError extends Error {
   }
 }
 
+function codedError(message, code) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -138,8 +144,14 @@ module.exports = {
   async inviteClient(trainerId, trainerUser, clientEmailRaw, scopes) {
     const clientEmail = normalizeEmail(clientEmailRaw);
 
+    // Errores de la petición, con code: el controller los devuelve como 400
+    // (antes eran Error genéricos y acababan en 500).
     if (normalizeEmail(trainerUser.email) === clientEmail) {
-      throw new Error("No puedes invitarte a ti mismo");
+      throw codedError("No puedes invitarte a ti mismo", "SELF_INVITE");
+    }
+    const uniqueScopes = [...new Set(scopes)].filter((s) => VALID_SCOPES.includes(s));
+    if (!uniqueScopes.length) {
+      throw codedError("Debes indicar al menos un scope válido (training/nutrition)", "INVALID_SCOPE");
     }
 
     const createInvites = async (clientLimit) => {
@@ -151,11 +163,6 @@ module.exports = {
         (existingUser && distinctClients.has(`id:${existingUser._id}`));
       if (!alreadyCounted && distinctClients.size >= clientLimit) {
         throw new TrainerLimitReachedError();
-      }
-
-      const uniqueScopes = [...new Set(scopes)].filter((s) => VALID_SCOPES.includes(s));
-      if (!uniqueScopes.length) {
-        throw new Error("Debes indicar al menos un scope válido (training/nutrition)");
       }
 
       // Los clientes nuevos pueden aceptar la invitación al registrarse.

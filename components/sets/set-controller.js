@@ -19,6 +19,28 @@ async function assertCanAccessSetId(req, res, idSet) {
   return table;
 }
 
+// Lo prescrito de una serie. En una rutina asignada, el cliente no lo
+// reescribe: se descarta del payload (no se bloquea la petición, porque el
+// front manda la serie completa también al registrar lo ejecutado).
+const PRESCRIBED_SET_FIELDS = [
+  "expectedReps",
+  "expectedRir",
+  "expectedTime",
+  "expectedDistance",
+  "expectedMin",
+  "expectedSec",
+];
+
+function stripPrescribedFieldsForAssignedOwner(req, table, body) {
+  const isAssignedOwner = Boolean(table?.assignedByTrainerId)
+    && !tableAccess.isAdmin(req)
+    && String(req.user?.id) === String(table.userId);
+  if (!isAssignedOwner) return body;
+  const clean = { ...body };
+  for (const key of PRESCRIBED_SET_FIELDS) delete clean[key];
+  return clean;
+}
+
 module.exports = {
   // NOTA: setModel.getSetById no existe (ni en set-service.js ni en
   // set-dao.js) — este endpoint ya fallaba con 500 antes de este cambio,
@@ -56,9 +78,14 @@ module.exports = {
   // presentes (con su valor sin tocar) — un `hasOwnProperty` las habría
   // pillado también, bloqueando marcar series hechas en rutinas asignadas.
   // El fix real va en el frontend: configSet ya no pasa por aquí.
+  //
+  // 2026-10 — en vez de bloquear, se DESCARTAN los campos prescritos cuando
+  // quien escribe es el dueño de una rutina asignada: el guardado de logging
+  // sigue funcionando y lo pautado no cambia.
   async updateSet(req, res) {
-    if (!(await assertCanAccessSetId(req, res, req.body?._id))) return;
-    const set = await setModel.updateSet(req.body);
+    const table = await assertCanAccessSetId(req, res, req.body?._id);
+    if (!table) return;
+    const set = await setModel.updateSet(stripPrescribedFieldsForAssignedOwner(req, table, req.body));
     return res.send(set);
   },
 
