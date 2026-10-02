@@ -9,12 +9,13 @@ const prices = {
   STRIPE_TRAINER_GROWTH_MONTHLY_PRICE_ID: "price_growthmonthly", STRIPE_TRAINER_GROWTH_ANNUAL_PRICE_ID: "price_growthannual",
   STRIPE_TRAINER_SCALE_MONTHLY_PRICE_ID: "price_scalemonthly", STRIPE_TRAINER_SCALE_ANNUAL_PRICE_ID: "price_scaleannual",
 };
-function gateway(mode) {
+function gateway(mode, overrides = {}) {
   const config = loadConfig({ ...prices, TRAINER_BILLING_ENABLED: "1", TRAINER_BILLING_MODE: mode,
     STRIPE_KEY: [mode === "live" ? "rk_live" : "rk_test", "fakeForUnitTests"].join("_"),
     STRIPE_WEBHOOK_SECRET: ["whsec", "fakeForUnitTests"].join("_"), STRIPE_TRAINER_PORTAL_CONFIGURATION_ID: "bpc_unit",
-    TRAINER_BILLING_TAX_POLICY: "stripe_tax",
-    TRAINER_BILLING_FRONTEND_URL: mode === "live" ? "https://trainers.example.test" : "http://localhost:8100" });
+    TRAINER_BILLING_TAX_POLICY: "stripe_tax", STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID: "pmc_unit",
+    TRAINER_BILLING_TERMS_URL: "https://trainfit.example.test/condiciones", TRAINER_BILLING_SUPPORT_EMAIL: "facturacion@example.test",
+    TRAINER_BILLING_FRONTEND_URL: mode === "live" ? "https://trainers.example.test" : "http://localhost:8100", ...overrides });
   assert.deepEqual(config.errors, []);
   return { config, gateway: new StripeGateway(config) };
 }
@@ -63,6 +64,12 @@ test("with Stripe Tax, Checkout collects address and tax ID, and prices must exc
   assert.equal(params.tax_id_collection.enabled, true);
   assert.deepEqual(params.customer_update, { address: "auto", name: "auto" });
   assert.ok(params.success_url.startsWith("https://trainers.example.test/"));
+  // Decisiones 2026-09-28: métodos aprobados, condiciones aceptadas y aviso de renovación junto al pago.
+  assert.equal(params.payment_method_configuration, "pmc_unit");
+  assert.deepEqual(params.consent_collection, { terms_of_service: "required" });
+  assert.match(params.custom_text.submit.message, /se renueva automáticamente cada mes/);
+  assert.match(params.custom_text.submit.message, /facturacion@example\.test/);
+  assert.match(params.custom_text.terms_of_service_acceptance.message, /\(https:\/\/trainfit\.example\.test\/condiciones\)/);
 
   const price = (tax_behavior) => ({ livemode: true, active: true, type: "recurring", currency: "eur", unit_amount: 2900,
     recurring: { interval: "month", interval_count: 1, usage_type: "licensed" }, tax_behavior });
@@ -70,6 +77,28 @@ test("with Stripe Tax, Checkout collects address and tax ID, and prices must exc
   await assert.rejects(g.validatePrice({ id: "price_promonthly", amount: 2900, interval: "monthly" }), { code: "PRICE_MISMATCH" });
   g.stripe.prices.retrieve.mock.mockImplementation(async () => price("exclusive"));
   await g.validatePrice({ id: "price_promonthly", amount: 2900, interval: "monthly" });
+});
+
+test("with Managed Payments, Stripe sells: Checkout enables it and drops what Stripe controls", async (t) => {
+  const { gateway: g } = gateway("live", { TRAINER_BILLING_TAX_POLICY: "managed_payments" });
+  let params;
+  t.mock.method(g.stripe.checkout.sessions, "create", async (p) => { params = p;
+    return { id: "cs_live_2", customer: "cus_1", subscription: null, status: "open", url: "https://checkout.stripe.com/c/pay/y",
+      livemode: true, metadata: p.metadata }; });
+  await g.createCheckout({ id: "u1", email: "t@example.test" }, { customerId: "cus_1", checkout: { startedAt: new Date() } },
+    { id: "price_promonthly", amount: 2900, interval: "monthly" }, "trainers-checkout-ab12cd34");
+  assert.deepEqual(params.managed_payments, { enabled: true });
+  assert.equal(params.billing_address_collection, "required");
+  // Comprobado en el sandbox (2026-10-01): Stripe calcula el impuesto, elige los métodos y rechaza custom_text.
+  for (const key of ["automatic_tax", "tax_id_collection", "customer_update", "payment_method_configuration", "custom_text"]) {
+    assert.equal(key in params, false, `${key} lo controla Stripe con Managed Payments`);
+  }
+  assert.deepEqual(params.consent_collection, { terms_of_service: "required" }, "las condiciones se siguen aceptando al pagar");
+
+  // Los precios siguen siendo sin IVA: Stripe lo añade como vendedor.
+  t.mock.method(g.stripe.prices, "retrieve", async () => ({ livemode: true, active: true, type: "recurring", currency: "eur",
+    unit_amount: 2900, recurring: { interval: "month", interval_count: 1, usage_type: "licensed" }, tax_behavior: "inclusive" }));
+  await assert.rejects(g.validatePrice({ id: "price_promonthly", amount: 2900, interval: "monthly" }), { code: "PRICE_MISMATCH" });
 });
 
 test("a change quote reports the VAT that Stripe adds to the amount due now", async (t) => {

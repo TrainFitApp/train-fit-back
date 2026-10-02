@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { isOriginAllowed } = require("./cors-origin");
+const { isOriginAllowed, parseExtraOrigins } = require("./cors-origin");
 
 // `dev` = arrancado con npm run serve (NODE_ENV=development).
 // `serv` = el servidor real: `./bin/www` a secas, sin NODE_ENV.
@@ -62,5 +62,15 @@ test("isOriginAllowed", async (t) => {
     assert.equal(isOriginAllowed("https://evil.example.com", dev), false);
     assert.equal(isOriginAllowed("http://localhost.evil.com", dev), false);
     assert.equal(isOriginAllowed("http://192.168.1.40:8100", dev), false);
+  });
+
+  // La web de Trainers en producción: se declara en CORS_EXTRA_ORIGINS y pasa aunque no sea desarrollo.
+  await t.test("CORS_EXTRA_ORIGINS abre solo los orígenes https exactos declarados", () => {
+    const extraOrigins = parseExtraOrigins(" https://trainers.example.com , http://inseguro.example.com, https://x.example.com/ruta, basura,");
+    assert.deepEqual(extraOrigins, ["https://trainers.example.com"]);
+    assert.equal(isOriginAllowed("https://trainers.example.com", { ...serv, extraOrigins }), true);
+    assert.equal(isOriginAllowed("https://trainers.example.com.evil.com", { ...serv, extraOrigins }), false);
+    assert.equal(isOriginAllowed("https://evil.example.com", { ...serv, extraOrigins }), false);
+    assert.deepEqual(parseExtraOrigins(undefined), []);
   });
 });

@@ -7,7 +7,5 @@ file.log
 .stripe-local/
 bash.exe.stackdump
 scripts/backups/
-
-
 .env.stripe.prod
 .media-local/
