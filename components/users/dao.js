@@ -606,7 +606,7 @@ module.exports = {
       const description =
         "Introduce el siguiente código en la aplicación para finalizar el registro.";
       const htmlMail = mail.generateHashMail(header1, description, hash);
-      await mail.sendMailSES(
+      await mail.sendTransactionalMail(
         updatedUser.email,
         "Verificación de cuenta - TrainFit",
         htmlMail,
@@ -765,7 +765,7 @@ module.exports = {
         "Este es tu código de verificación. Copia y pégalo en la app.",
         hash,
       );
-      await mail.sendMailSES(user.email, "Código de verificación", html);
+      await mail.sendTransactionalMail(user.email, "Código de verificación", html);
       return updatedUser;
     } catch (e) {
       throw e;

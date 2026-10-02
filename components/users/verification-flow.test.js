@@ -69,7 +69,7 @@ function installFakeUserStore(initialDoc) {
   const originalFindOneAndUpdate = userSchema.findOneAndUpdate;
   const originalFindByIdAndUpdate = userSchema.findByIdAndUpdate;
   const originalValidateEmailExists = mail.validateEmailExists;
-  const originalSendMailSES = mail.sendMailSES;
+  const originalSendMailSES = mail.sendTransactionalMail;
   const originalGenerateHashMail = mail.generateHashMail;
 
   const sentEmails = [];
@@ -89,7 +89,7 @@ function installFakeUserStore(initialDoc) {
   };
 
   mail.validateEmailExists = async () => true;
-  mail.sendMailSES = async (email, subject, html) => {
+  mail.sendTransactionalMail = async (email, subject, html) => {
     sentEmails.push({ email, subject, html });
   };
   mail.generateHashMail = (header1, description, hash) => `<html>${hash}</html>`;
@@ -106,7 +106,7 @@ function installFakeUserStore(initialDoc) {
       userSchema.findOneAndUpdate = originalFindOneAndUpdate;
       userSchema.findByIdAndUpdate = originalFindByIdAndUpdate;
       mail.validateEmailExists = originalValidateEmailExists;
-      mail.sendMailSES = originalSendMailSES;
+      mail.sendTransactionalMail = originalSendMailSES;
       mail.generateHashMail = originalGenerateHashMail;
     },
   };

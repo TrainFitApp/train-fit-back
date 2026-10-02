@@ -36,7 +36,7 @@ function fixture({ currentLimit = 50, admissionLimit = 20, clients = [], enabled
     },
     '../util/mail': {
       generateMail: () => '',
-      async sendMailSES() { calls.emails++; },
+      async sendTransactionalMail() { calls.emails++; },
     },
     '../util/date-util': { todayIsoDate: () => '2026-09-18' },
   };

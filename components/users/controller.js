@@ -63,7 +63,7 @@ const htmlFinalContent2 = `
 const htmlFinalResponse2 = `
             <hr style="border-top-width:1px;border-color:rgb(209,213,219);margin-top:24px;margin-bottom:24px;width:100%;border:none;border-top:1px solid #eaeaea" />
             <p style="font-size:12px;line-height:16px;color:rgb(107,114,128);margin-bottom:4px;margin-top:16px">
-              Si tienes alguna pregunta, por favor contacta con nuestro equipo de soporte en suggestions@trainfit.net
+              Si tienes alguna pregunta, por favor contacta con nuestro equipo de soporte en soporte@trainfit.net
             </p>
             <p style="font-size:12px;line-height:16px;color:rgb(107,114,128);margin:0">
               © ${new Date().getFullYear()} TrainFit. Todos los derechos reservados.
@@ -203,7 +203,7 @@ module.exports = {
       // Generar HTML con el nuevo template de hash
       const htmlMail = mail.generateHashMail(header1, description, hashTemp);
 
-      await mail.sendMailSES(
+      await mail.sendTransactionalMail(
         user.email,
         "Verificación de cuenta - TrainFit",
         htmlMail,
@@ -273,7 +273,7 @@ module.exports = {
       const header1 = `Hola ${name}, verifica tu cuenta`;
       const description = "Introduce el siguiente código en la aplicación para finalizar el registro.";
       const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-      await mail.sendMailSES(user.email, "Verificación de cuenta - TrainFit Entrenadores", htmlMail);
+      await mail.sendTransactionalMail(user.email, "Verificación de cuenta - TrainFit Entrenadores", htmlMail);
 
       return res.status(201).send(await userDto.single(user, req.user));
     } catch (err) {
@@ -427,7 +427,7 @@ module.exports = {
         const description =
           "Introduce el siguiente código en la aplicación para finalizar el registro.";
         const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendMailSES(
+        await mail.sendTransactionalMail(
           user.email,
           "Verificación de cuenta - TrainFit",
           htmlMail,

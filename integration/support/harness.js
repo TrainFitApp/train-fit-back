@@ -41,7 +41,7 @@ delete process.env.TRAINER_BILLING_ENABLED;
 // Sin credenciales de R2/Bunny: el almacenamiento de media cae al disco local
 // solo si se pide explícitamente. Cada test de media lo activa por su cuenta.
 for (const name of Object.keys(process.env)) {
-  if (/^(R2_|BUNNY_|STRIPE_|REVENUECAT_|SES_|REGISTER_MAIL_|SUGGESTIONS_MAIL_|MONGODB_)/.test(name)) {
+  if (/^(R2_|BUNNY_|STRIPE_|REVENUECAT_|SES_|REGISTER_MAIL_|SUGGESTIONS_MAIL_|RESEND_|MAIL_PROVIDER|MONGODB_)/.test(name)) {
     delete process.env[name];
   }
 }
@@ -59,7 +59,7 @@ require.cache[loggerPath] = {
 // Correo: nada sale del proceso. Se graba cada envío para poder comprobarlo.
 const sentMail = [];
 const mail = require(path.join(ROOT, "components/util/mail.js"));
-for (const name of ["sendMail", "sendRegisterMail", "sendMailSES", "sendRegistrationNotification", "notifyUserRegistered"]) {
+for (const name of ["sendSuggestionMail", "sendRegisterMail", "sendTransactionalMail", "sendRegistrationNotification", "notifyUserRegistered"]) {
   mail[name] = async (...args) => {
     sentMail.push({ fn: name, args });
     return { accepted: [args[0]] };

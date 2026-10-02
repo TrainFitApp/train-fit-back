@@ -14,7 +14,7 @@
 > - **Gestión (auth `admin`):** `GET /admin/trainers/cases`, `GET /admin/trainers/lookup?email=`, `GET /admin/trainers/:userId` y `POST /admin/trainers/:userId/interventions`. Acciones: `resolve_case`, `end_service_now`, `cancel_renewal`, `resume_renewal`, `revert_upgrade`, `grant_access`, `end_grant`, `restore_period_access`, `pause_collection`, `resume_collection`. Cada intervención queda en `trainerbillinginterventions` con motivo obligatorio, autor, estado antes y después, y resultado.
 > - **Acceso efectivo** (`effectiveAccess`): lo pagado según Stripe, menos los periodos retirados, más las excepciones hasta una fecha. Nunca se finge un cobro.
 > - **Checkout:** `payment_method_configuration` (tarjeta, Apple Pay, Google Pay y Link), aceptación de condiciones (`consent_collection`, guardada en la cuenta) y texto de renovación y cancelación. En live son obligatorios `STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID`, `TRAINER_BILLING_TERMS_URL` y `TRAINER_BILLING_SUPPORT_EMAIL`.
-> - **Aviso de renovación anual** a 30 y 7 días: por email (SES, sin duplicados: se marca antes de enviar) desde el ciclo de reconciliación existente, sin cron nuevo, y en la app (`billing.renewalNotice`).
+> - **Aviso de renovación anual** a 30 y 7 días: por email (Resend, sin duplicados: se marca antes de enviar) desde el ciclo de reconciliación existente, sin cron nuevo, y en la app (`billing.renewalNotice`).
 > - **Hecho también:**
 >   - `billing.review` ya no se envía al entrenador;
 >   - en la app se muestran Link, las carteras y los importes reembolsados;

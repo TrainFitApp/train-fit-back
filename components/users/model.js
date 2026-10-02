@@ -7,8 +7,6 @@ const dietDayUtil = require("../dietDays/diet-days-util");
 const mail = require("../util/mail");
 const userSchema = require("./schema");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
-const suggestionsEmailUser = process.env.SUGGESTIONS_MAIL_SENDER_USER;
-const restorePassEmail = process.env.REGISTER_MAIL_SENDER_USER;
 const jwt = require("jsonwebtoken");
 const { generateVerificationCode } = require("../util/verification-code");
 
@@ -197,12 +195,7 @@ module.exports = {
   },
 
   async sendSuggestions(email, suggestions) {
-    return mail.sendMail(
-      suggestionsEmailUser,
-      suggestionsEmailUser,
-      "Sugerencia de: " + email,
-      suggestions,
-    );
+    return mail.sendSuggestionMail(email, suggestions);
   },
 
   async deleteUser(id) {

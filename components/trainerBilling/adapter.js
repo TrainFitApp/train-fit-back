@@ -1,12 +1,12 @@
 // Adaptador CommonJS del backend existente. La lógica de negocio vive en TS strict.
 let runtime;
-// Aviso de renovación anual (30 y 7 días antes) por el canal transaccional existente (SES).
+// Aviso de renovación anual (30 y 7 días antes) por el canal transaccional existente (util/mail).
 const notifier = {
   async renewalReminder(input) {
-    const { sendMailSES, generateMail } = require("../util/mail");
+    const { sendTransactionalMail, generateMail } = require("../util/mail");
     const mail = require("./renewal-reminder-mail").buildRenewalReminder(input);
     const html = generateMail(mail.title, mail.description, mail.linkHref, mail.linkContent);
-    await sendMailSES(input.email, mail.subject, html, input.supportEmail ? { replyTo: input.supportEmail } : {});
+    await sendTransactionalMail(input.email, mail.subject, html, input.supportEmail ? { replyTo: input.supportEmail } : {});
   },
 };
 function getRuntime() {

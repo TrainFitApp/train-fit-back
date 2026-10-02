@@ -336,7 +336,7 @@ test("registro de cliente: alta sin verificar, correo con código, activación y
   const stored = await ctx.model("User").findOne({ email }).lean();
   assert.match(stored.hash, /^\d{6}$/);
   assert.notEqual(stored.password, PASSWORD, "contraseña cifrada");
-  assert.ok(ctx.sentMail.some((m) => m.fn === "sendMailSES" && m.args[0] === email));
+  assert.ok(ctx.sentMail.some((m) => m.fn === "sendTransactionalMail" && m.args[0] === email));
 
   // Duplicado: 409 aunque cambien mayúsculas.
   const dup = await ctx.raw("POST", "/users", { user: { name: "Otra", email: email.toUpperCase(), password: "x" } });

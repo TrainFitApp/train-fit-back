@@ -313,7 +313,7 @@ module.exports = {
         const description =
           "Introduce el siguiente código en la aplicación para finalizar el registro.";
         const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendMailSES(
+        await mail.sendTransactionalMail(
           user.email,
           "Verificación de cuenta - TrainFit",
           htmlMail
@@ -607,7 +607,7 @@ module.exports = {
         const description =
           "Introduce el siguiente código en la aplicación para finalizar el registro.";
         const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendMailSES(
+        await mail.sendTransactionalMail(
           user.email,
           "Verificación de cuenta - TrainFit",
           htmlMail
@@ -684,7 +684,7 @@ module.exports = {
         const description =
           "Introduce el siguiente código en la aplicación para finalizar el registro.";
         const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendMailSES(
+        await mail.sendTransactionalMail(
           user.email,
           "Verificación de cuenta - TrainFit",
           htmlMail

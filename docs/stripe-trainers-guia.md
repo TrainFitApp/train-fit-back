@@ -194,7 +194,7 @@ Las rutas del Dashboard pueden cambiar de nombre. Si no encuentras una opción, 
      - En «Actualizaciones de los métodos de pago», elige **«Enlace a una página alojada por Stripe»**. La opción heredada mandaba a `trainfit.net`, la web de clientes, donde un entrenador no puede cambiar la tarjeta. Stripe avisa de que el cambio no se puede revertir.
      - Live (01/10/2026): hecho.
 3. **Recordatorio de renovación:**
-   - Deja **desactivado** «Enviar correos sobre próximas renovaciones» de Stripe. TrainFit ya envía el aviso anual a 30 y 7 días, por email (SES) y en la app. Stripe solo admite un plazo global para todas las suscripciones y lo mandaría también a las mensuales: habría duplicados.
+   - Deja **desactivado** «Enviar correos sobre próximas renovaciones» de Stripe. TrainFit ya envía el aviso anual a 30 y 7 días, por email (Resend) y en la app. Stripe solo admite un plazo global para todas las suscripciones y lo mandaría también a las mensuales: habría duplicados.
    - Si decidís usarlo en lugar del de TrainFit, avisad para desactivar el nuestro.
 4. **Reintentos de pago** (misma página de suscripciones):
    - reintentos inteligentes con el plazo recomendado por Stripe (del orden de 2 semanas);
@@ -334,7 +334,7 @@ Cada intervención guarda la acción, el motivo (obligatorio), la nota, el autor
    - dominio de Trainers confirmado con HTTPS;
    - validación de la asesoría.
 5. **Build de la web de Trainers:** resuelto el 01/10/2026 (sin commit). Se quitó el panel `history` de `client-detail.page.html`, que había resucitado el merge `01846e9c`; el build compila sin errores.
-6. Correo SES configurado en el servidor (`SES_SMTP_USER`, `SES_SMTP_PASS`, `SES_REGION`, `FROM_EMAIL`) para los avisos anuales.
+6. Correo configurado en el servidor (`RESEND_API_KEY`, `FROM_EMAIL`) para los avisos anuales.
 7. Prueba real controlada (C7) superada.
 
 ### C2. Variables del servidor (sin valores secretos aquí)

@@ -102,7 +102,7 @@ async function sendInviteMail(trainerUser, clientEmail, scopes) {
     "Abrir TrainFit"
   );
   try {
-    await mail.sendMailSES(clientEmail, `${trainerName} te ha invitado en TrainFit`, html);
+    await mail.sendTransactionalMail(clientEmail, `${trainerName} te ha invitado en TrainFit`, html);
   } catch (e) {
     // No bloquear la creación de la invitación por un fallo de envío de email —
     // la invitación ya existe en BBDD y es visible igualmente al abrir la app.

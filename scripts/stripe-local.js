@@ -113,7 +113,7 @@ async function main() {
     const mailStub = new Module(mailPath);
     mailStub.loaded = true;
     mailStub.exports = {
-      sendMail: async () => {}, sendRegisterMail: async () => {}, sendMailSES: async () => {},
+      sendSuggestionMail: async () => {}, sendRegisterMail: async () => {}, sendTransactionalMail: async () => {},
       sendRegistrationNotification: async () => {}, notifyUserRegistered: async () => {},
       generateMail: () => "", generateHashMail: () => "", generateRegistrationNotificationMail: () => "",
       validateEmailExists: async () => false,
