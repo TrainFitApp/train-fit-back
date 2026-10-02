@@ -16,7 +16,6 @@ Estado a **2026-09-25**. La parte del front está en `train-fit-front/docs/refac
 
 ### Relación entrenador ↔ cliente
 - `trainerClients/`: invitaciones, estados de la relación por ámbito (entrenamiento y nutrición), paginación de la cartera, cancelación e historial de relaciones revocadas, y conteo de clientes activos históricos.
-  - Cron `invite-reminder-cron.js` a las **09:15** (`DISABLE_INVITE_REMINDER_CRON=true` lo apaga).
 - **Intake**:
   - `trainerIntakeConfig/`: qué campos pide cada entrenador, más sus preguntas propias.
   - `clientIntake/`: el cuestionario del cliente. Confirma el perfil (peso, pasos, actividad, frecuencia), el objetivo y los `dietaryFlags`, y lo guarda en `User`, `Anthropometry` y `ClientNutritionPreferences`.
@@ -118,8 +117,8 @@ Rutas nuevas registradas en `routes/index.js`:
 
 | Cron | Hora | Se apaga con |
 |---|---|---|
-| Recordatorio de invitaciones | 09:15 | `DISABLE_INVITE_REMINDER_CRON=true` |
-| Conciliación de facturación | (ya estaba) | |
+| Conciliación de facturación RevenueCat | 04:00 (ya estaba) | `BILLING_RECONCILIATION_CRON` cambia la hora |
+| Conciliación de Stripe de trainers | cada 15 min | `TRAINER_BILLING_ENABLED` distinto de `1` |
 
 Cuotas y avisos de cobro (`trainerPayments/`) **no tienen cron**: se ponen al día en la primera lectura de cada usuario (sus avisos, el contador, el Coach o Cobros) y quedan en memoria hasta el siguiente hito o medianoche. Ver `components/trainerPayments/README.md`.
 

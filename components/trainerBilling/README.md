@@ -118,7 +118,7 @@ Una bajada programada limita también nuevas invitaciones al cupo futuro. La com
 ## Consistencia y acceso
 
 - Colecciones propias `trainerbillingaccounts` y `trainerbillingevents`. Un customer por usuario/modo; índice único y lease persistente por usuario; claves de idempotencia guardadas antes de las llamadas externas.
-- Un evento queda procesado solo después de guardar estado y proyección. Fallos conservan trabajo reintentable. Un cron cada minuto reintenta eventos y reconcilia hasta 100 cuentas por ronda, empezando por las más antiguas.
+- Un evento queda procesado solo después de guardar estado y proyección. Fallos conservan trabajo reintentable. Una reconciliación cada 15 minutos reintenta eventos y reconcilia hasta 100 cuentas por ronda, empezando por las más antiguas.
 - Se consulta el estado actual de Stripe dentro del lease; no se aplican ciegamente payloads antiguos. Revisión incremental en User impide que una proyección anterior sobrescriba otra nueva.
 - Solo una factura pagada correspondiente al precio y periodo concede/amplía acceso. Pago inicial incompleto no lo concede. Una actualización pendiente no concede el tier nuevo; conserva el periodo/tier ya pagado. Caducidad local limita el acceso aunque se pierda un webhook.
 - `professionalPremium.source` permanece stripe tras expirar/cancelar. RC no puede sobrescribirlo; `premium` consumidor es independiente. Restaurar RC profesional usa únicamente identidad autenticada y consulta del servidor.

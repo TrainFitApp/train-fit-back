@@ -4,6 +4,10 @@ import { LegacyUsers, MongoRepository } from "./mongo-repository";
 import { TrainerBillingService, accessUntil, annualRenewalWindow, effectiveAccess } from "./service";
 import { StripeGateway } from "./stripe-gateway";
 
+// Webhooks are the primary path; this is only a safety net (retries, deletions, renewal reminders).
+// Each round calls Stripe once per open account, so it runs every 15 minutes instead of every minute.
+const RECONCILE_INTERVAL_MS = 15 * 60000;
+
 export function createRuntime(users: LegacyUsers, notifier?: Notifier) {
   const config = loadConfig();
   const repository = new MongoRepository(users, config.mode);
@@ -28,7 +32,7 @@ export function createRuntime(users: LegacyUsers, notifier?: Notifier) {
         void service.reconcile().catch(() => {
           console.error("[TrainerBilling] Reconciliation failed; pending work will be retried.");
         }).finally(() => { reconciling = false; });
-      }, 60000);
+      }, RECONCILE_INTERVAL_MS);
       timer.unref();
     },
     stopReconciliation() { if (timer) clearInterval(timer); timer = undefined; },

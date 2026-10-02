@@ -155,12 +155,12 @@ export class MongoRepository implements Repository {
     await EventModel.updateOne({ eventId, mode: this.mode, status: { $ne: "processed" } }, { $set: { status: "failed" } });
   }
   async pendingEvents(limit: number): Promise<EventRecord[]> {
-    // Tras ~8 h de reintentos (500 rondas) el evento deja de reintentarse solo: queda "failed" para revisión.
-    return EventModel.find({ mode: this.mode, status: { $ne: "processed" }, attempts: { $lt: 500 } })
+    // Tras ~8 h de reintentos (32 rondas de 15 min) el evento deja de reintentarse solo: queda "failed" para revisión.
+    return EventModel.find({ mode: this.mode, status: { $ne: "processed" }, attempts: { $lt: 32 } })
       .sort({ lastAttemptAt: 1 }).limit(limit).lean().exec();
   }
   async accountsForReconciliation(limit: number): Promise<Account[]> {
-    // Finished accounts are left to webhooks: re-reading them every minute only
+    // Finished accounts are left to webhooks: re-reading them every round only
     // burns Stripe rate limit. Deletions in progress are always retried.
     return AccountModel.find({ mode: this.mode, customerId: { $exists: true }, $or: [
       { status: { $nin: ["canceled", "incomplete_expired", "none"] } }, { deletedAt: { $ne: null } },

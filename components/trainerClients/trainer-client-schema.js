@@ -40,10 +40,6 @@ const TrainerClientSchema = new Schema(
     invitedAt: { type: Date, default: Date.now },
     respondedAt: { type: Date, default: null },
     revokedAt: { type: Date, default: null },
-    // TASK-065 (MASTER_BACKLOG.md) — recordatorio único si la invitación
-    // sigue en "pending" (nunca aceptada) pasados unos días. Ver
-    // invite-reminder-service.js. No aplica a otros estados.
-    lastReminderSentAt: { type: Date, default: null },
     // `null` debe estar en la lista del enum explícitamente — Mongoose no
     // exime automáticamente el default:null de la validación de enum.
     revokedBy: { type: String, enum: ["trainer", "client", null], default: null },
