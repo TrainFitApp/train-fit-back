@@ -17,10 +17,7 @@ const ALWAYS_ALLOWED = [
   "http://localhost:8101",
   // App de profesionales publicada como web (producción y PRE).
   "https://trainers.trainfit.net",
-  "https://trainers-pre.trainfit.net",
-  // Dirección por defecto del Worker de PRE en Cloudflare, para probar sin
-  // el dominio propio.
-  "https://train-fit-trainers-pre.tf-config-and-deploy.workers.dev",
+  "https://trainers-dev.trainfit.net",
 ];
 
 // A partir de la TERCERA app del monorepo `ionic serve` ya reparte 8102,
@@ -43,7 +40,10 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
  *   origen, para cuando es una IP de la red local (simulador o dispositivo
  *   físico con livereload). Sin isDevelopment no hace nada.
  */
-function isOriginAllowed(origin, { isDevelopment = false, fullyOpen = false } = {}) {
+function isOriginAllowed(
+  origin,
+  { isDevelopment = false, fullyOpen = false } = {},
+) {
   if (!origin) return true;
   if (ALWAYS_ALLOWED.includes(origin)) return true;
   if (!isDevelopment) return false;
