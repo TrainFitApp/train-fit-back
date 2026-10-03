@@ -25,7 +25,6 @@
 > - **Hecho también:**
 >   - `billing.review` ya no se envía al entrenador;
 >   - en la app se muestran Link, las carteras y los importes reembolsados;
->   - `CORS_EXTRA_ORIGINS` existe de verdad (`components/util/cors-origin.js`);
 >   - el test del webhook está arreglado y los tests de pagos entran en `npm test`;
 >   - el preflight revisa permisos, métodos de pago, portal completo, webhook y registro de IVA de España.
 > - Lo que sigue por debajo de este bloque es historia (21/09 y 18/09). Donde contradiga lo anterior, manda lo anterior.

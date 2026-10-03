@@ -347,7 +347,6 @@ STRIPE_WEBHOOK_SECRET=whsec_…
 STRIPE_RETURN_URL=https://<dominio de Trainers>
 STRIPE_TERMS_URL=https://<URL de las condiciones>
 STRIPE_SUPPORT_EMAIL=facturacion@trainfit.net
-CORS_EXTRA_ORIGINS=https://<dominio de Trainers>
 ```
 
 El código se niega a arrancar los pagos en live si:
@@ -357,7 +356,7 @@ El código se niega a arrancar los pagos en live si:
 
 El IVA lo gestiona siempre Managed Payments; el portal es la configuración predeterminada de la cuenta.
 
-`CORS_EXTRA_ORIGINS` admite solo orígenes `https` exactos (sin ruta) y se implementó el 28/09/2026. Antes estaba en la documentación pero no en el código.
+La web de Trainers (`https://trainers.trainfit.net` en PRO, `https://trainers-dev.trainfit.net` en PRE) ya está permitida en CORS desde el código (`components/util/cors-origin.js#ALWAYS_ALLOWED`). Si cambia de dominio, se añade ahí.
 
 La app de Gestión puede editar el `.env` del servidor. Si la usáis para esto, recordad que la clave y el secreto del webhook son secretos.
 

@@ -35,7 +35,7 @@ test("actual app webhook receives signed raw bytes before JSON parsing and maint
     // la política real la petición de fetch (sin cabecera Origin) se
     // rechazaría, así que aquí se acepta todo y lo que comprueba el test
     // sigue siendo el orden raw-body -> firma -> JSON -> mantenimiento.
-    "./components/util/cors-origin": { isOriginAllowed: () => true, parseExtraOrigins: () => [] },
+    "./components/util/cors-origin": { isOriginAllowed: () => true },
     "./components/util/youtube-embed": { sendYouTubeEmbed: (_req, res) => res.sendStatus(200) },
     "./middleware/logger": (_req, _res, next) => next(),
     "./middleware/maintenance": (_req, res) => res.status(503).json({ code: "MAINTENANCE_ACTIVE" }),

@@ -29,7 +29,7 @@ app.use(express.urlencoded({ extended: false, limit: "50mb" }));
 app.use(cookieParser()); // Parse cookies for refresh token
 
 const cors = require("cors");
-const { isOriginAllowed, parseExtraOrigins } = require("./components/util/cors-origin");
+const { isOriginAllowed } = require("./components/util/cors-origin");
 
 const useCredentials = true;
 
@@ -44,15 +44,13 @@ const isDevelopment = process.env.NODE_ENV === "development";
 // dispositivo físico con livereload). Para otro puerto de `ionic serve` ya no
 // hace falta: cualquier puerto local vale con `npm run serve`.
 const corsFullyOpen = process.env.CORS_OPEN === "1";
-// Webs propias en producción (p. ej. Trainers): CORS_EXTRA_ORIGINS, solo https exactos.
-const corsExtraOrigins = parseExtraOrigins(process.env.CORS_EXTRA_ORIGINS);
 if (corsFullyOpen && isDevelopment) {
   console.warn("[CORS] CORS_OPEN=1 — cualquier origen aceptado. Modo dev, no usar en produccion.");
 }
 
 const corsOptions = {
   origin(origin, callback) {
-    if (isOriginAllowed(origin, { isDevelopment, fullyOpen: corsFullyOpen, extraOrigins: corsExtraOrigins })) {
+    if (isOriginAllowed(origin, { isDevelopment, fullyOpen: corsFullyOpen })) {
       return callback(null, true);
     }
     console.error("[CORS] Rechazado origin:", JSON.stringify(origin));

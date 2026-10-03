@@ -40,35 +40,12 @@ const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
  *   origen, para cuando es una IP de la red local (simulador o dispositivo
  *   físico con livereload). Sin isDevelopment no hace nada.
  */
-function isOriginAllowed(
-  origin,
-  { isDevelopment = false, fullyOpen = false, extraOrigins = [] } = {},
-) {
+function isOriginAllowed(origin, { isDevelopment = false, fullyOpen = false } = {}) {
   if (!origin) return true;
   if (ALWAYS_ALLOWED.includes(origin)) return true;
-  // Orígenes web de producción declarados en el entorno (p. ej. la web de Trainers).
-  if (extraOrigins.includes(origin)) return true;
   if (!isDevelopment) return false;
   if (fullyOpen) return true;
   return LOCAL_ORIGIN.test(origin);
 }
 
-/**
- * CORS_EXTRA_ORIGINS=https://trainers.ejemplo.com,https://otra.ejemplo.com
- * Solo orígenes https exactos (esquema + host [+ puerto], sin ruta): cualquier
- * otra cosa se descarta en silencio para no abrir de más por un error de tecleo.
- * @param {string|undefined} value
- * @returns {string[]}
- */
-function parseExtraOrigins(value) {
-  return String(value || "").split(",").map((entry) => entry.trim()).filter((entry) => {
-    try {
-      const url = new URL(entry);
-      return url.protocol === "https:" && url.origin === entry;
-    } catch {
-      return false;
-    }
-  });
-}
-
-module.exports = { isOriginAllowed, parseExtraOrigins, ALWAYS_ALLOWED, LOCAL_ORIGIN };
+module.exports = { isOriginAllowed, ALWAYS_ALLOWED, LOCAL_ORIGIN };
