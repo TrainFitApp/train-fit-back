@@ -339,7 +339,7 @@ Cada intervención guarda la acción, el motivo (obligatorio), la nota, el autor
 
 ### C2. Variables del servidor (sin valores secretos aquí)
 
-Van en el entorno del backend (el `.env` de PM2 en PRO, las variables de Render en PRE), **nunca** en el repositorio ni en el front. Plantilla: `.env.example`.
+Van en el entorno del backend (el `.env` de PM2 en PRO, las variables de Render en PRE), **nunca** en el repositorio ni en el front. Plantilla con sandbox y real separados: `components/trainerBilling/stripe.env.example`.
 
 ```
 STRIPE_KEY=rk_live_…                            # vacía = facturación apagada; rk_test_/sk_test_ en PRE

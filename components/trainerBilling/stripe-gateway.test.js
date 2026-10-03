@@ -11,7 +11,12 @@ const END = START + 30 * 86400;
 function fixture(t, { prices = catalogStripePrices(), config = sandboxConfig() } = {}) {
   const gateway = new StripeGateway(config);
   const priceLists = [];
-  t.mock.method(gateway.stripe.prices, "list", async (params) => { priceLists.push(params); return { data: structuredClone(prices) }; });
+  t.mock.method(gateway.stripe.prices, "list", async (params) => {
+    priceLists.push(params);
+    // Como Stripe: como mucho 10 lookup keys por consulta.
+    if (params.lookup_keys.length > 10) throw new Error("lookup_keys admite como mucho 10");
+    return { data: structuredClone(prices.filter((price) => params.lookup_keys.includes(price.lookup_key))) };
+  });
   t.mock.method(gateway.stripe.prices, "retrieve", async (id) => {
     const found = prices.find((price) => price.id === id);
     if (!found) throw new Error(`unexpected price ${id}`);
@@ -66,9 +71,9 @@ test("los precios se buscan por lookup key, se comprueban contra el catálogo y 
   const { gateway, priceLists } = fixture(t);
   await gateway.validateState(state("starter", "annual", 5));
   await gateway.validateState(state("free", "monthly", 2));
-  assert.equal(priceLists.length, 1, "una sola consulta para varias propuestas");
-  assert.equal(priceLists[0].lookup_keys.length, 11);
-  assert.equal(priceLists[0].active, true);
+  // 11 precios en tandas de 10 (límite de Stripe), una sola vez para varias propuestas.
+  assert.deepEqual(priceLists.map((params) => params.lookup_keys.length), [10, 1]);
+  assert.ok(priceLists.every((params) => params.active === true));
 
   const wrongAmount = catalogStripePrices().map((price) => price.id === priceId("base", "starter", "monthly") ? { ...price, unit_amount: 2500 } : price);
   await assert.rejects(fixture(t, { prices: wrongAmount }).gateway.validateState(state("starter")), errorCode("PRICE_MISMATCH"));
@@ -109,10 +114,10 @@ test("prueba de pago: última factura pagada, sin actualización pendiente y cub
   const { gateway } = fixture(t);
   assert.equal((await view(t, gateway, stripeSub(state("starter"), { invoice: { status: "open" } }))).paid, false);
   assert.equal((await view(t, gateway, stripeSub(state("starter"), { extra: { pending_update: { expires_at: END } } }))).paid, false);
-  // Una plaza añadida sin factura (prorrata a la siguiente) sigue cubierta por el periodo de la cuota.
-  const deferred = stripeSub(state("starter", "monthly", 3), { invoice: { status: "paid", lines: [{ id: "si_base",
+  // Un elemento que no sale en la última factura sigue cubierto por el periodo de la cuota.
+  const uncovered = stripeSub(state("starter", "monthly", 3), { invoice: { status: "paid", lines: [{ id: "si_base",
     price: stripePrice("base", "starter", "monthly") }] } });
-  const sub = await view(t, gateway, deferred);
+  const sub = await view(t, gateway, uncovered);
   assert.equal(sub.paid, true);
   assert.equal(sub.paidPeriodEnd, END);
   const unrelated = stripeSub(state("starter"), { invoice: { status: "paid", lines: [{ id: "si_gone", price: stripePrice("base", "scale", "monthly") }] } });
@@ -209,29 +214,6 @@ const previewLine = (kind, tier, interval, amount, { proration = true, quantity 
   amount, quantity, period: { start, end }, pricing: { price_details: { price: priceId(kind, tier, interval) } },
   parent: { type: "subscription_item_details", subscription_item_details: { proration, subscription_item: "si_x" } } });
 
-test("plazas mensuales: la prorrata no se cobra hoy y la previsualización de la renovación ya la incluye", async (t) => {
-  const { gateway } = fixture(t);
-  const requests = [];
-  t.mock.method(gateway.stripe.invoices, "createPreview", async (params) => {
-    requests.push(params);
-    return { livemode: false, currency: "eur", amount_due: 3900 + 250, ending_balance: 0, total_taxes: [], lines: { has_more: false, data: [
-      previewLine("seat", "starter", "monthly", -250, { quantity: 5 }), previewLine("seat", "starter", "monthly", 500, { quantity: 10 }),
-      previewLine("base", "starter", "monthly", 2900, { proration: false, start: END, end: END + 30 * 86400 }),
-      previewLine("seat", "starter", "monthly", 1000, { proration: false, quantity: 10, start: END, end: END + 30 * 86400 })] } };
-  });
-  const sub = subscription(state("starter", "monthly", 5), { id: "sub_trainers", currentPeriodEnd: END });
-  const preview = await gateway.previewChange(sub, state("starter", "monthly", 10), "deferred", START + 15 * 86400);
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].subscription_details.proration_behavior, "create_prorations");
-  assert.equal(requests[0].subscription_details.proration_date, START + 15 * 86400);
-  assert.deepEqual(requests[0].subscription_details.items, [{ id: "si_seat", price: priceId("seat", "starter", "monthly"), quantity: 10 }]);
-  assert.equal(preview.amountDueNow, 0);
-  assert.equal(preview.deferredAmount, 250);
-  assert.equal(preview.renewalAmount, 4150);
-  assert.deepEqual(preview.lines.map((entry) => [entry.kind, entry.item, entry.quantity, entry.amount]),
-    [["credit", "seat", 5, -250], ["charge", "seat", 10, 500]]);
-});
-
 test("una subida inmediata cobra la diferencia de Stripe, con IVA y saldo, y la renovación se previsualiza aparte", async (t) => {
   const { gateway } = fixture(t);
   const requests = [];
@@ -259,10 +241,10 @@ test("una bajada a mensual desde anual no simula ningún cobro: la renovación e
   t.mock.method(gateway.stripe.invoices, "createPreview", async () => assert.fail("no se previsualiza un cobro de hoy"));
   const sub = subscription(state("starter", "annual", 5), { currentPeriodEnd: END });
   assert.deepEqual(await gateway.previewChange(sub, state("starter", "monthly", 2), "scheduled", START),
-    { amountDueNow: 0, deferredAmount: 0, renewalAmount: 2900 + 200, renewalAt: END, creditBalance: 0, renewalExcludesTax: true });
+    { amountDueNow: 0, renewalAmount: 2900 + 200, renewalAt: END, creditBalance: 0, renewalExcludesTax: true });
 });
 
-test("aplicar: la subida queda pendiente del pago; las plazas mensuales se aplican con prorrata para la siguiente factura", async (t) => {
+test("aplicar: la subida queda pendiente del pago", async (t) => {
   const { gateway } = fixture(t);
   const calls = [];
   t.mock.method(gateway.stripe.subscriptions, "update", async (...args) => { calls.push(args); return { livemode: false, latest_invoice: "in_change" }; });
@@ -274,10 +256,6 @@ test("aplicar: la subida queda pendiente del pago; las plazas mensuales se aplic
   assert.deepEqual(calls[0][1], { items: quote.updates, payment_behavior: "pending_if_incomplete", proration_behavior: "always_invoice",
     proration_date: START + 100 });
   assert.equal(calls[0][2].idempotencyKey, "change-one");
-  await gateway.applyDeferred({ ...quote, updates: [{ id: "si_seat", price: priceId("seat", "starter", "monthly"), quantity: 9 }] }, "seats-one");
-  assert.deepEqual(calls[2][1], { items: [{ id: "si_seat", price: priceId("seat", "starter", "monthly"), quantity: 9 }],
-    proration_behavior: "create_prorations", proration_date: START + 100 });
-  assert.equal(calls[2][1].payment_behavior, undefined, "sin cobro, no hay pago pendiente");
 });
 
 test("una bajada se programa con dos fases: los elementos actuales hasta el fin del periodo y los del destino después", async (t) => {

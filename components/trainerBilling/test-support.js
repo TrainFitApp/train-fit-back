@@ -203,13 +203,9 @@ class FakeStripe {
     this.call("previewChange", { subId: sub.id, target, kind, prorationDate });
     const from = recurringAmount(sub.state);
     const to = recurringAmount(target);
-    if (kind === "scheduled") return { amountDueNow: 0, deferredAmount: 0, renewalAmount: to, renewalAt: sub.currentPeriodEnd, creditBalance: 0 };
-    if (kind === "deferred") {
-      const proration = Math.round((to - from) / 2);
-      return { amountDueNow: 0, deferredAmount: proration, renewalAmount: to + proration, renewalAt: sub.currentPeriodEnd, creditBalance: 0, lines: [] };
-    }
+    if (kind === "scheduled") return { amountDueNow: 0, renewalAmount: to, renewalAt: sub.currentPeriodEnd, creditBalance: 0 };
     const intervalChanges = sub.state.interval !== target.interval;
-    return { amountDueNow: intervalChanges ? to - Math.round(from / 2) : Math.round((to - from) / 2), deferredAmount: 0,
+    return { amountDueNow: intervalChanges ? to - Math.round(from / 2) : Math.round((to - from) / 2),
       renewalAmount: to, renewalAt: intervalChanges ? prorationDate + 365 * DAY : sub.currentPeriodEnd, creditBalance: 0, lines: [],
       renewalExcludesTax: intervalChanges };
   }
@@ -242,11 +238,6 @@ class FakeStripe {
     sub.paidPeriodEnd = invoice.periodEnd;
     sub.pendingUpdate = false;
     sub.latestInvoiceStatus = "paid";
-  }
-  async applyDeferred(quote, key) {
-    this.call("applyDeferred", { quoteId: quote.quoteId, key, to: quote.to });
-    this.setState(this.sub(quote.subscriptionId), { tier: quote.to.tier, interval: quote.to.interval, extraSeats: quote.to.extraSeats });
-    this.answered("applyDeferred");
   }
   async scheduleChange(quote, key) {
     this.call("scheduleChange", { quoteId: quote.quoteId, key, to: quote.to });

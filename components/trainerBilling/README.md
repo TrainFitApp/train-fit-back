@@ -1,7 +1,7 @@
 # Facturación Trainers
 
 > **02/10/2026 — Facturación por plazas.** Catálogo Free (3 plazas, +3 €/plaza/mes, hasta 12), Inicio (29 €, 20, +1 €, hasta 40), Profesional (49 €, 50, +0,80 €, hasta 125) y Escala (109 €, 150); anual = 10 mensualidades, también en las plazas. Sustituye a Pro/Growth/Scale. Los entrenadores solo se suscriben por Stripe (fuera RevenueCat de entrenadores y `trainer_unlimited`).
-> - **Cuándo se aplica:** subir de plan, pasar a anual o añadir plazas anuales se cobra al momento (`always_invoice` + `pending_if_incomplete`); añadir plazas mensuales se aplica ya y la prorrata va a la siguiente factura (`create_prorations`, propuesta `deferred`); bajar de plan, quitar plazas o pasar a mensual espera a la renovación (calendario).
+> - **Cuándo se aplica:** subir de plan, pasar a anual o añadir plazas (mensuales o anuales) se cobra al momento y se da al pagar (`always_invoice` + `pending_if_incomplete`; decisión 2026-10-03: aplazar la prorrata de las plazas mensuales dejaba sin cobrar a quien cancelaba antes de renovar); bajar de plan, quitar plazas o pasar a mensual espera a la renovación (calendario).
 > - **Reducir nunca se bloquea** por tener más clientes que plazas: la propuesta dice cuántos quedarán en solo lectura y, al aplicarse, el entrenador elige quién sigue activo (`trainer-seat-service`). Las invitaciones pendientes reservan plaza; si no cabe, no se cancelan pero no se pueden aceptar (`SEAT_UNAVAILABLE`). Altas y aceptaciones van bajo el bloqueo por entrenador.
 > - **Reembolso de una subida** (plan o plazas): vuelve el estado anterior sin prorrateo; reembolsar plazas no toca la cuota.
 > - **Condiciones:** al contratar las acepta Checkout (`consent_collection`); al confirmar un cambio en la app, el diálogo lo dice con el enlace y la API exige recibir la URL vigente (`TERMS_CHANGED` si cambió). Cada aceptación queda en `termsHistory` (via `checkout`/`change`, sesión o propuesta, URL). Publicar cada versión en su propia URL para saber qué texto aceptó cada entrenador.
@@ -72,7 +72,7 @@ Todas las rutas salvo webhook requieren `auth(["trainer"])`. No se acepta custom
 | POST `/trainer/checkout` | `{tier,interval,extraSeats}` | `{url,sessionId,reused}` |
 | POST `/trainer/portal` | `{}` | `{url}` |
 | GET `/trainer/billing-details` | — | `{invoices, paymentMethod}` leídos de Stripe |
-| POST `/trainer/change-preview` | `{tier,interval,extraSeats}` | Propuesta con `kind` (immediate, deferred, scheduled), importes, `readOnlyAfter` y renovación |
+| POST `/trainer/change-preview` | `{tier,interval,extraSeats}` | Propuesta con `kind` (immediate, scheduled), importes, `readOnlyAfter` y renovación |
 | POST `/trainer/change-plan` | `{quoteId}` | `status`, posible `paymentActionUrl` y `entitlements` |
 | POST `/trainer/cancel` · `/resume` · `/discard-change` · `/sync` | `{}` / `{sessionId?}` | entitlements |
 | GET `/trainer/entitlements/me` | — | plan, `seats` (capacidad, ocupadas, reservadas, libres, admisión) y estado de la facturación |

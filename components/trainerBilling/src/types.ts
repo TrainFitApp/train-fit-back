@@ -38,14 +38,11 @@ export interface QuoteLine {
   kind: "credit" | "charge" | "recurring"; item: PriceKind; tier: Tier; interval: Interval; quantity: number;
   amount: number; periodStart: Date; periodEnd: Date;
 }
-// immediate: se cobra ahora y se aplica al pagar. deferred: se aplica ya y la prorrata va a la
-// siguiente factura (plazas adicionales mensuales). scheduled: se aplica en la renovación.
-export type ChangeKind = "immediate" | "deferred" | "scheduled";
+// immediate: se cobra ahora y se aplica al pagar. scheduled: se aplica en la renovación.
+export type ChangeKind = "immediate" | "scheduled";
 export interface ChangeQuote {
   quoteId: string; expiresAt: Date; kind: ChangeKind;
   from: StateView; to: StateView; effectiveAt: Date; amountDueNow: number; currency: "eur";
-  // Prorrata que se suma a la próxima factura (solo deferred).
-  deferredAmount: number;
   nextRenewal: { at: Date; amount: number; estimated?: boolean; excludesTax?: boolean };
   seats: { occupied: number; reserved: number };
   // Clientes que quedarían en solo lectura cuando se aplique (bajadas con más clientes que plazas).
@@ -263,7 +260,7 @@ export interface EventRecord {
   } | null;
 }
 export interface ChangePreview {
-  amountDueNow: number; deferredAmount: number; renewalAmount: number; renewalAt?: number; creditBalance?: number;
+  amountDueNow: number; renewalAmount: number; renewalAt?: number; creditBalance?: number;
   lines?: QuoteLine[]; taxAmount?: number; renewalExcludesTax?: boolean;
 }
 export interface Gateway {
@@ -283,7 +280,6 @@ export interface Gateway {
   upcomingRenewal?(sub: Subscription): Promise<{ at: number; amount: number; state: PlanState | null; subtotal: number } | null>;
   billingDetails?(customerId: string, subscriptionId: string | null): Promise<BillingDetails>;
   applyUpgrade(quote: ChangeQuote, key: string): Promise<{ invoiceId: string }>;
-  applyDeferred(quote: ChangeQuote, key: string): Promise<void>;
   scheduleChange(quote: ChangeQuote, key: string): Promise<{ scheduleId: string }>;
   changePayment(account: Account, operation: ChangeOperation): Promise<ChangePayment>;
   releaseSchedule(id: string, key: string): Promise<void>;

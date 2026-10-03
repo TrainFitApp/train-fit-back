@@ -68,8 +68,11 @@ async function main() {
   const entries = catalog.catalogPrices();
   const lookupKeys = entries.map((entry) => catalog.lookupKey(entry.kind, entry.tier, entry.interval));
   const current = new Map();
-  for (const price of (await stripe.prices.list({ lookup_keys: lookupKeys, active: true, limit: 100 })).data) {
-    current.set(price.lookup_key, price);
+  // Stripe admite como mucho 10 lookup keys por consulta y el catálogo tiene más.
+  for (let i = 0; i < lookupKeys.length; i += 10) {
+    for (const price of (await stripe.prices.list({ lookup_keys: lookupKeys.slice(i, i + 10), active: true, limit: 100 })).data) {
+      current.set(price.lookup_key, price);
+    }
   }
   let changes = 0;
   for (const entry of entries) {

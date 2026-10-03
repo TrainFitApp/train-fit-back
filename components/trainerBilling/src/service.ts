@@ -11,15 +11,14 @@ const OPEN_DISPUTE = new Set(["warning_needs_response", "warning_under_review", 
 const ADMIN_ACTIONS: AdminAction[] = ["resolve_case", "end_service_now", "cancel_renewal", "resume_renewal", "revert_upgrade",
   "grant_access", "end_grant", "restore_period_access", "pause_collection", "resume_collection"];
 const DAY_MS = 86400000;
-// Cuándo se aplica un cambio (decisión 2026-10-02): lo que sube capacidad a mitad de periodo se cobra
-// al momento salvo las plazas adicionales mensuales, cuya prorrata va a la siguiente factura; lo que
-// baja capacidad, y el paso de anual a mensual, espera a la renovación.
+// Cuándo se aplica un cambio: lo que sube capacidad a mitad de periodo (también las plazas
+// adicionales mensuales, decisión 2026-10-03) se cobra al momento y se da al pagar; lo que baja
+// capacidad, y el paso de anual a mensual, espera a la renovación.
 export function changeKind(from: PlanState, to: PlanState): ChangeKind {
   if (from.interval !== to.interval) return from.interval === "annual" ? "scheduled" : "immediate";
   const rank = tierRank(to.tier) - tierRank(from.tier);
   if (rank !== 0) return rank > 0 ? "immediate" : "scheduled";
-  if (to.extraSeats > from.extraSeats) return to.interval === "monthly" ? "deferred" : "immediate";
-  return "scheduled";
+  return to.extraSeats > from.extraSeats ? "immediate" : "scheduled";
 }
 function subscriptionSnapshot(sub: Subscription): string {
   return sub.fingerprint || JSON.stringify([sub.id, sub.items, sub.currentPeriodEnd,
@@ -239,9 +238,6 @@ export class TrainerBillingService {
     if (change.quote.kind === "immediate") {
       change.invoiceId = (await this.gateway.applyUpgrade(change.quote, key)).invoiceId;
       change.status = "payment_pending";
-    } else if (change.quote.kind === "deferred") {
-      await this.gateway.applyDeferred(change.quote, key);
-      change.status = "applied";
     } else {
       change.scheduleId = (await this.gateway.scheduleChange(change.quote, key)).scheduleId;
       change.status = "scheduled";
@@ -319,11 +315,12 @@ export class TrainerBillingService {
       const quote: ChangeQuote = { quoteId: checkoutKey(), expiresAt: new Date(Date.now() + 5 * 60000), kind,
         from: stateView(current), to: stateView(target),
         effectiveAt: new Date((kind === "scheduled" ? sub.currentPeriodEnd : prorationDate) * 1000),
-        amountDueNow: preview.amountDueNow, deferredAmount: preview.deferredAmount, currency: "eur",
+        amountDueNow: preview.amountDueNow, currency: "eur",
         creditBalance: preview.creditBalance || 0, lines: preview.lines || [], taxAmount: preview.taxAmount || 0,
         nextRenewal: { at: new Date((preview.renewalAt || sub.currentPeriodEnd) * 1000), amount: preview.renewalAmount, estimated: true,
           excludesTax: Boolean(preview.renewalExcludesTax) },
-        seats, readOnlyAfter: kind === "scheduled" ? Math.max(0, seats.occupied - seatsOf(target)) : 0,
+        // También en cambios inmediatos: pasar de mensual a anual puede bajar plazas al momento.
+        seats, readOnlyAfter: Math.max(0, seats.occupied - seatsOf(target)),
         termsUrl: this.config.termsUrl || null,
         subscriptionId: sub.id, snapshot: subscriptionSnapshot(sub), prorationDate, periodEnd: sub.currentPeriodEnd,
         previousScheduleId: sub.scheduleId || undefined, ...items };
@@ -358,7 +355,7 @@ export class TrainerBillingService {
       await this.gateway.validateState(target);
       const preview = await this.gateway.previewChange(sub, target, quote.kind, quote.prorationDate);
       if (preview.amountDueNow !== quote.amountDueNow || preview.renewalAmount !== quote.nextRenewal.amount ||
-          preview.deferredAmount !== quote.deferredAmount || (preview.creditBalance || 0) !== (quote.creditBalance || 0)) {
+          (preview.creditBalance || 0) !== (quote.creditBalance || 0)) {
         throw new BillingError("QUOTE_STALE", "El importe ha cambiado. Revisa una nueva propuesta antes de confirmar.");
       }
       // Persist intent before any mutation. All retries retain the same quote,

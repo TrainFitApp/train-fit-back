@@ -12,12 +12,12 @@ const stored = (repository) => repository.accounts.get(USER_ID);
 
 // ---------- Reglas puras ----------
 
-test("cuándo se aplica cada cambio: subir se cobra ya, las plazas mensuales van a la siguiente factura y bajar espera", () => {
+test("cuándo se aplica cada cambio: subir (también plazas mensuales) se cobra ya y bajar espera", () => {
   const cases = [
     [state("starter"), state("professional"), "immediate"],
     [state("free", "monthly", 9), state("starter"), "immediate"],
-    [state("starter", "monthly", 5), state("starter", "monthly", 8), "deferred"],
-    [state("free", "monthly", 1), state("free", "monthly", 4), "deferred"],
+    [state("starter", "monthly", 5), state("starter", "monthly", 8), "immediate"],
+    [state("free", "monthly", 1), state("free", "monthly", 4), "immediate"],
     [state("starter", "annual", 5), state("starter", "annual", 8), "immediate"],
     [state("starter", "monthly", 8), state("starter", "monthly", 2), "scheduled"],
     [state("professional"), state("starter", "monthly", 20), "scheduled"],
@@ -155,15 +155,19 @@ test("reducir nunca se bloquea por tener más clientes: la propuesta dice cuánt
   assert.equal(new Date(quote.effectiveAt).getTime(), new Date(quote.nextRenewal.at).getTime());
   const toFree = await quoteFor(service, state("free", "monthly", 9));
   assert.equal(toFree.readOnlyAfter, 16);
+  // Mensual → anual es inmediato aunque baje plazas: la propuesta también avisa.
+  const annual = paidSetup(state("professional"), { seats: { occupied: 28, reserved: 1 } });
+  const toAnnual = await quoteFor(annual.service, state("starter", "annual"));
+  assert.equal(toAnnual.kind, "immediate");
+  assert.equal(toAnnual.readOnlyAfter, 8);
 });
 
-test("plazas mensuales: hoy no se cobra nada y la prorrata se suma a la próxima factura", async () => {
+test("plazas mensuales: la prorrata se cobra hoy", async () => {
   const { service } = paidSetup(state("starter", "monthly", 5));
   const quote = await quoteFor(service, state("starter", "monthly", 9));
-  assert.equal(quote.kind, "deferred");
-  assert.equal(quote.amountDueNow, 0);
-  assert.equal(quote.deferredAmount, 200);
-  assert.equal(quote.nextRenewal.amount, 3800 + 200);
+  assert.equal(quote.kind, "immediate");
+  assert.equal(quote.amountDueNow, 200);
+  assert.equal(quote.nextRenewal.amount, 3800);
 });
 
 test("la propuesta rechaza lo ya contratado o programado y estados que no se pueden cambiar", async () => {
@@ -210,14 +214,15 @@ test("una subida queda pendiente hasta pagar su factura: mientras tanto se conse
   assert.equal(args.key, `trainers-change-${stored(repository).change.quote.quoteId}`);
 });
 
-test("las plazas mensuales se aplican al confirmar, sin factura ni pago pendiente", async () => {
+test("las plazas mensuales se dan al pagar su factura, como cualquier subida", async () => {
   const { stripe, repository, service } = paidSetup(state("free", "monthly", 2));
   const { result } = await confirm(service, state("free", "monthly", 6));
-  assert.equal(result.status, "applied");
-  assert.equal(stripe.named("applyUpgrade").length, 0);
-  assert.equal(stripe.named("applyDeferred").length, 1);
+  assert.equal(result.status, "payment_pending");
+  assert.equal(stripe.named("applyUpgrade").length, 1);
+  assert.equal(repository.lastProjection.seats, 5, "hasta pagar se conservan las plazas pagadas");
+  stripe.pay(stripe.sub().latestInvoiceId);
+  await service.event(event({ eventId: "evt_seats_paid" }));
   assert.deepEqual([repository.lastProjection.tier, repository.lastProjection.seats], ["free", 9]);
-  assert.equal(stored(repository).pendingPayment, null);
 });
 
 test("una bajada se programa para la renovación y se aplica cuando se cobra el periodo nuevo", async () => {
@@ -452,10 +457,12 @@ test("un cambio en la app registra la aceptación de las condiciones vigentes; s
   assert.equal(quote.termsUrl, terms);
   await assert.rejects(service.changePlan(USER_ID, quote.quoteId), errorCode("TERMS_CHANGED"), "sin las condiciones mostradas no se confirma");
   await assert.rejects(service.changePlan(USER_ID, quote.quoteId, "https://trainfit.net/condiciones/2025-01"), errorCode("TERMS_CHANGED"));
-  assert.equal(stripe.named("applyDeferred").length, 0);
+  assert.equal(stripe.named("applyUpgrade").length, 0);
   await service.changePlan(USER_ID, quote.quoteId, terms);
   const row = stored(repository);
   assert.deepEqual([row.termsAcceptance.via, row.termsAcceptance.ref, row.termsAcceptance.termsUrl], ["change", quote.quoteId, terms]);
+  stripe.pay(stripe.sub().latestInvoiceId);
+  await service.event(event({ eventId: "evt_terms_paid" }));
   const second = await quoteFor(service, state("starter", "monthly", 12));
   await service.changePlan(USER_ID, second.quoteId, terms);
   assert.equal(stored(repository).termsHistory.length, 2, "cada aceptación queda en el historial");

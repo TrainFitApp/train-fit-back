@@ -24,6 +24,7 @@ export const SUPPORTED_EVENT_TYPES = ["checkout.session.completed", "checkout.se
 // reconocen también los precios archivados que sigan en suscripciones antiguas.
 export const PRICE_METADATA = "trainfit_catalog";
 const PRICE_CACHE_MS = 10 * 60000;
+const LOOKUP_KEYS_PER_LIST = 10;
 
 function id(value: string | { id: string } | null | undefined): string | null {
   return typeof value === "string" ? value : value?.id || null;
@@ -144,11 +145,14 @@ export class StripeGateway implements Gateway {
   // moneda, IVA aparte). Se cachean unos minutos: cada propuesta los necesita.
   private async priceBook(): Promise<Map<string, PriceRef>> {
     if (this.book && Date.now() - this.book.at < PRICE_CACHE_MS) return this.book.byKey;
-    const wanted = catalogPrices();
-    const list = await this.stripe.prices.list({ lookup_keys: wanted.map((entry) => lookupKey(entry.kind, entry.tier, entry.interval)),
-      active: true, limit: 100 });
+    // Stripe admite como mucho 10 lookup keys por consulta y el catálogo tiene más.
+    const keys = catalogPrices().map((entry) => lookupKey(entry.kind, entry.tier, entry.interval));
+    const prices: Stripe.Price[] = [];
+    for (let i = 0; i < keys.length; i += LOOKUP_KEYS_PER_LIST) {
+      prices.push(...(await this.stripe.prices.list({ lookup_keys: keys.slice(i, i + LOOKUP_KEYS_PER_LIST), active: true, limit: 100 })).data);
+    }
     const byKey = new Map<string, PriceRef>();
-    for (const price of list.data) {
+    for (const price of prices) {
       this.check(price.livemode);
       const ref = priceRef(price);
       if (!ref || !price.lookup_key) continue;
@@ -341,7 +345,7 @@ export class StripeGateway implements Gateway {
     // No invoice is generated today for a scheduled change. With an interval change (or a schedule
     // already attached, whose next phase Stripe would preview instead) the renewal is the catalog
     // tariff: an explicit estimate without VAT; coupons and credit may change before that date.
-    const tariff = { amountDueNow: 0, deferredAmount: 0, renewalAmount: recurringAmount(target), renewalAt: sub.currentPeriodEnd,
+    const tariff = { amountDueNow: 0, renewalAmount: recurringAmount(target), renewalAt: sub.currentPeriodEnd,
       creditBalance: 0, renewalExcludesTax: true };
     if (kind === "scheduled" && (intervalChanges || sub.scheduleId)) return tariff;
     const items = await this.itemUpdates(sub, target);
@@ -349,20 +353,12 @@ export class StripeGateway implements Gateway {
       const renewal = await this.preview(sub.id, items, "none");
       return { ...tariff, renewalAmount: Math.max(0, renewal.amount_due), renewalExcludesTax: false };
     }
-    if (kind === "deferred") {
-      // La prorrata no se cobra hoy: Stripe la suma a la próxima factura, que la previsualización ya incluye.
-      const upcoming = await this.preview(sub.id, items, "create_prorations", prorationDate);
-      const prorations = upcoming.lines.data.filter((line) => subscriptionItemLine(line) && prorationLine(line));
-      return { amountDueNow: 0, deferredAmount: prorations.reduce((sum, line) => sum + line.amount, 0),
-        renewalAmount: Math.max(0, upcoming.amount_due), renewalAt: sub.currentPeriodEnd, creditBalance: 0,
-        lines: await this.quoteLines(prorations), renewalExcludesTax: false };
-    }
     const invoice = await this.preview(sub.id, items, "always_invoice", prorationDate);
     const targetPrices = new Set((await this.phaseItems(target)).map((item) => item.price));
     const targetLine = invoice.lines.data.find((line) => targetPrices.has(id(line.pricing?.price_details?.price) || "") && line.amount >= 0);
     let renewalAmount = recurringAmount(target);
     if (!intervalChanges && !sub.scheduleId) renewalAmount = Math.max(0, (await this.preview(sub.id, items, "none")).amount_due);
-    return { amountDueNow: Math.max(0, invoice.amount_due), deferredAmount: 0, renewalAmount,
+    return { amountDueNow: Math.max(0, invoice.amount_due), renewalAmount,
       renewalAt: intervalChanges ? targetLine?.period.end : sub.currentPeriodEnd,
       creditBalance: Math.max(0, -(invoice.ending_balance || 0)),
       lines: await this.quoteLines(invoice.lines.data), taxAmount: this.taxOf(invoice),
@@ -456,14 +452,6 @@ export class StripeGateway implements Gateway {
     const invoiceId = id(changed.latest_invoice);
     if (!invoiceId) throw new BillingError("BILLING_REVIEW_REQUIRED", "El cambio necesita revisión de soporte.");
     return { invoiceId };
-  }
-  // Plazas adicionales mensuales: se aplican ya y la prorrata queda pendiente para la próxima factura.
-  async applyDeferred(quote: ChangeQuote, key: string): Promise<void> {
-    const changed = await this.stripe.subscriptions.update(quote.subscriptionId, {
-      items: quote.updates as Stripe.SubscriptionUpdateParams.Item[],
-      proration_behavior: "create_prorations", proration_date: quote.prorationDate,
-    }, { idempotencyKey: key });
-    this.check(changed.livemode);
   }
   async scheduleChange(quote: ChangeQuote, key: string): Promise<{ scheduleId: string }> {
     // Stable create/update keys recover a response lost between the two calls.
