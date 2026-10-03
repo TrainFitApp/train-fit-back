@@ -140,55 +140,19 @@ function buildEntitlements(user, usage, hasActiveTrainerRelation = false) {
   };
 }
 
-// MVP-trainers F02 — límites de clientes del PROFESIONAL (no confundir con
-// los límites de arriba, que son del CLIENTE). Independiente de isPremiumUser
-// (que lee User.premium, el entitlement de consumidor) — lee
-// User.professionalPremium en su lugar.
-const TRAINER_CLIENT_LIMITS = {
-  free: 3,
-  trainer_pro: 15,
-  trainer_unlimited: Number.MAX_SAFE_INTEGER,
-};
-
-function isPremiumTrainer(user) {
+// Plan del PROFESIONAL (no confundir con los límites de arriba, que son del CLIENTE): lo proyecta
+// la facturación de Trainers en User.professionalPremium (plazas contratadas, plan y periodicidad).
+// Sin proyección vigente, Free con sus plazas gratis. Solo vale una proyección del mismo entorno
+// que la clave de Stripe del servidor: una compra de prueba nunca da plazas en real.
+function trainerPlan(user) {
+  const catalog = require("../../.build/trainer-billing/catalog");
   const premium = user?.professionalPremium;
-  // Stripe nunca concede acceso indefinido si falta la fecha de pago confirmado.
-  if (premium?.source === "stripe" && !premium.expiresAt) return false;
-  return isEffectivelyEntitled(premium);
-}
-
-function getTrainerLimits(user) {
-  if (!isPremiumTrainer(user)) return { clients: TRAINER_CLIENT_LIMITS.free, tier: "free" };
-  const tier = user?.professionalPremium?.tier;
-  if (user?.professionalPremium?.source === "stripe") {
-    const stripeLimits = { trainer_pro: 20, trainer_growth: 50, trainer_scale: 150 };
-    return stripeLimits[tier] ? { clients: stripeLimits[tier], tier } : { clients: 3, tier: "free" };
-  }
-  if (tier === "trainer_unlimited") {
-    return { clients: TRAINER_CLIENT_LIMITS.trainer_unlimited, tier };
-  }
-  // Cualquier entitlement de profesional activo sin tier UNLIMITED reconocido
-  // se trata como PRO — evita bloquear al profesional por un valor de tier
-  // inesperado mientras sí paga.
-  return { clients: TRAINER_CLIENT_LIMITS.trainer_pro, tier: tier || "trainer_pro" };
-}
-
-function canInviteClient(user, activeClientCount) {
-  const { clients } = getTrainerLimits(user);
-  return activeClientCount < clients;
-}
-
-function buildTrainerEntitlements(user, activeClientCount) {
-  const { clients, tier } = getTrainerLimits(user);
-  return {
-    isPremium: isPremiumTrainer(user),
-    tier,
-    plan: user?.professionalPremium?.plan || null,
-    expiresAt: user?.professionalPremium?.expiresAt || null,
-    limits: { clients: clients === Number.MAX_SAFE_INTEGER ? null : clients },
-    usage: { clients: activeClientCount || 0 },
-    remaining: { clients: getRemaining(clients, activeClientCount || 0) },
-  };
+  const mode = catalog.billingModeFromKey(process.env.STRIPE_KEY);
+  const valid = Boolean(premium?.entitled && premium.expiresAt && new Date(premium.expiresAt).getTime() > Date.now() &&
+    Number.isSafeInteger(premium.seats) && premium.seats > 0 && (!mode || premium.stripeMode === mode));
+  return valid
+    ? { paid: true, tier: premium.tier, interval: premium.interval || null, seats: premium.seats, expiresAt: premium.expiresAt }
+    : { paid: false, tier: "free", interval: null, seats: catalog.FREE_SEATS, expiresAt: null };
 }
 
 module.exports = {
@@ -205,8 +169,5 @@ module.exports = {
   canSeeAds,
   canUploadMedia,
   buildEntitlements,
-  isPremiumTrainer,
-  getTrainerLimits,
-  canInviteClient,
-  buildTrainerEntitlements,
+  trainerPlan,
 };

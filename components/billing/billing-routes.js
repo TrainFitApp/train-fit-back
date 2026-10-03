@@ -27,7 +27,6 @@ router.postAsync("/trainer/cancel", auth(["trainer"]), trainerStripe.cancel);
 router.postAsync("/trainer/resume", auth(["trainer"]), trainerStripe.resume);
 router.postAsync("/trainer/discard-change", auth(["trainer"]), trainerStripe.discardChange);
 router.postAsync("/trainer/sync", auth(["trainer"]), trainerStripe.sync);
-router.postAsync("/trainer/restore", auth(["trainer"]), controller.restoreTrainer);
 // Gestión de la facturación de Trainers (solo administradores): casos, ficha e intervenciones registradas.
 router.getAsync("/admin/trainers/cases", auth(["admin"]), trainerStripe.adminCases);
 router.getAsync("/admin/trainers/lookup", auth(["admin"]), trainerStripe.adminLookup);

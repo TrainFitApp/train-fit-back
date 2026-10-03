@@ -8,6 +8,13 @@ module.exports = {
     }).select("clientId clientEmail").lean();
     return require("../../.build/trainer-billing/usage").billableClientKeys(relations);
   },
+  // Plazas ocupadas (ya aceptaron) y reservadas (invitaciones pendientes); una persona cuenta una vez.
+  async getSeatUsage(trainerId) {
+    const relations = await TrainerClient.find({ trainerId,
+      status: { $in: ["pending", "cuestionario_pendiente", "en_revision", "active"] },
+    }).select("clientId clientEmail status").lean();
+    return require("../../.build/trainer-billing/usage").seatUsage(relations);
+  },
   async create({ trainerId, clientEmail, scope }) {
     return TrainerClient.create({ trainerId, clientEmail, scope });
   },

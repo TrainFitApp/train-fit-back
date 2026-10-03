@@ -50,6 +50,8 @@ export interface ChangeQuote {
   seats: { occupied: number; reserved: number };
   // Clientes que quedarían en solo lectura cuando se aplique (bajadas con más clientes que plazas).
   readOnlyAfter: number;
+  // Condiciones vigentes que se aceptan al confirmar (null si no hay condiciones publicadas).
+  termsUrl: string | null;
   creditBalance?: number;
   taxAmount?: number;
   lines?: QuoteLine[];
@@ -108,7 +110,9 @@ export interface Account {
   // Ajustes de acceso registrados (retirada de un periodo, excepción hasta una fecha).
   adjustments?: AccessAdjustment[] | null;
   reminders?: RenewalReminders | null;
+  // Última aceptación de las condiciones y el historial de todas (la URL identifica la versión).
   termsAcceptance?: TermsAcceptance | null;
+  termsHistory?: TermsAcceptance[] | null;
 }
 // Qué compró un pago, deducido de las líneas de su factura (financing.ts).
 // upgrade: más capacidad a mitad de periodo (plan superior o más plazas), con el estado anterior.
@@ -180,7 +184,10 @@ export interface BillingHold {
   kind: "dispute" | "admin"; since: Date; caseIds: string[]; pausedInvoiceIds: string[]; subscriptionId: string;
 }
 export interface RenewalReminders { periodEnd: Date; sent30At: Date | null; sent7At: Date | null }
-export interface TermsAcceptance { at: Date; sessionId: string; termsUrl: string | null }
+// via checkout: al contratar (Stripe guarda la casilla en la sesión); via change: al confirmar un cambio
+// en la app. ref: la sesión de Checkout o la propuesta aceptada. Publicar cada versión de las
+// condiciones en su propia URL permite saber qué texto aceptó cada entrenador.
+export interface TermsAcceptance { at: Date; via: "checkout" | "change"; ref: string; termsUrl: string | null }
 export interface AccessSnapshot {
   status: string; tier: Tier | null; interval: Interval | null; extraSeats: number; seats: number;
   paidUntil: Date | null; cancelAtPeriodEnd: boolean;

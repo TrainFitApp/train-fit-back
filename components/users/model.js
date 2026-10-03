@@ -9,6 +9,7 @@ const userSchema = require("./schema");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const jwt = require("jsonwebtoken");
 const { generateVerificationCode } = require("../util/verification-code");
+const { assertMinAge } = require("./age-policy");
 
 const HASH_CODE_TTL_MS = 15 * 60 * 1000;
 const axios = require("axios");
@@ -63,6 +64,7 @@ module.exports = {
   },
 
   async createUser(user, date) {
+    assertMinAge(user?.birth);
     return userDao.createUser(user, date);
   },
 
@@ -79,6 +81,7 @@ module.exports = {
   },
 
   async updateUser(user) {
+    assertMinAge(user?.birth);
     return await userDao.updateUser(user);
   },
 
@@ -98,6 +101,7 @@ module.exports = {
   },
 
   async updateGoogleUser(user, date) {
+    assertMinAge(user?.birth);
       // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
       // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
       // primer acceso, y además le aplica el plan activo si lo hay (cosa que
@@ -130,6 +134,7 @@ module.exports = {
   },
 
   async updateAppleUser(user, date) {
+    assertMinAge(user?.birth);
       // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
       // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
       // primer acceso, y además le aplica el plan activo si lo hay (cosa que

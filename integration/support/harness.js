@@ -37,7 +37,6 @@ process.env.PUBLIC_KEY = keys.publicKey;
 process.env.PRIVATE_KEY = keys.privateKey;
 process.env.NODE_ENV = "test";
 delete process.env.CORS_OPEN;
-delete process.env.TRAINER_BILLING_ENABLED;
 // Sin credenciales de R2/Bunny: el almacenamiento de media cae al disco local
 // solo si se pide explícitamente. Cada test de media lo activa por su cuenta.
 for (const name of Object.keys(process.env)) {

@@ -1,17 +1,43 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { loadConfig } = require("../../.build/trainer-billing/config");
-const { StripeGateway } = require("../../.build/trainer-billing/stripe-gateway");
+const { StripeGateway, priceRef } = require("../../.build/trainer-billing/stripe-gateway");
+const { stateView } = require("../../.build/trainer-billing/config");
+const { catalogStripePrices, errorCode, itemsFor, priceId, sandboxConfig, state, stripePrice, subscription } = require("./test-support");
 
-function fixture() {
-  const config = loadConfig({ STRIPE_KEY: ["rk", "test", "fakeForUnitTests"].join("_"),
-    STRIPE_WEBHOOK_SECRET: ["whsec", "fakeForUnitTests"].join("_"),
-    STRIPE_TRAINER_PORTAL_CONFIGURATION_ID: "bpc_unit", TRAINER_BILLING_TAX_POLICY: "test_no_tax" });
-  return { config, gateway: new StripeGateway(config) };
+const START = 1800000000;
+const END = START + 30 * 86400;
+
+// Gateway con el catálogo publicado en Stripe (prices.list por lookup key).
+function fixture(t, { prices = catalogStripePrices(), config = sandboxConfig() } = {}) {
+  const gateway = new StripeGateway(config);
+  const priceLists = [];
+  t.mock.method(gateway.stripe.prices, "list", async (params) => { priceLists.push(params); return { data: structuredClone(prices) }; });
+  t.mock.method(gateway.stripe.prices, "retrieve", async (id) => {
+    const found = prices.find((price) => price.id === id);
+    if (!found) throw new Error(`unexpected price ${id}`);
+    return structuredClone(found);
+  });
+  return { gateway, config, priceLists };
+}
+// Suscripción de Stripe (objeto del SDK) con sus elementos y su última factura.
+function stripeSub(value, { invoice = { status: "paid" }, items, extra = {} } = {}) {
+  const data = (items || itemsFor(value)).map((item) => ({ id: item.id, quantity: item.quantity, current_period_start: START,
+    current_period_end: END, price: stripePrice(item.price.kind, item.price.tier, item.price.interval), discounts: [], tax_rates: [] }));
+  const latest = { id: "in_latest", livemode: false, status: invoice.status, amount_due: 0, hosted_invoice_url: null,
+    lines: { has_more: false, data: (invoice.lines || data).map((item) => ({ amount: 100, period: { start: START, end: END },
+      pricing: { price_details: { price: item.price?.id } },
+      parent: { type: "subscription_item_details", subscription_item_details: { subscription_item: item.id, proration: false } } })) } };
+  return { id: "sub_trainers", customer: "cus_trainerone", livemode: false, status: "active", cancel_at_period_end: false, cancel_at: null,
+    metadata: { trainfitUserId: "trainer-one", scope: "trainers" }, items: { has_more: false, data }, latest_invoice: latest,
+    schedule: null, pending_update: null, collection_method: "charge_automatically", discounts: [], default_tax_rates: [], ...extra };
+}
+async function view(t, gateway, sub) {
+  t.mock.method(gateway.stripe.subscriptions, "list", async () => ({ has_more: false, data: [sub] }));
+  return (await gateway.listSubscriptions("cus_trainerone"))[0];
 }
 
-test("gateway verifies signed raw bytes, rejects tampering and live events", () => {
-  const { gateway, config } = fixture();
+test("gateway verifies signed raw bytes, rejects tampering and live events", (t) => {
+  const { gateway, config } = fixture(t);
   const payload = JSON.stringify({ id: "evt_unit", type: "invoice.paid", livemode: false, data: { object: { customer: "cus_unit" } } });
   const signature = gateway.stripe.webhooks.generateTestHeaderString({ payload, secret: config.webhookSecret });
   assert.equal(gateway.verifyEvent(Buffer.from(payload), signature).customerId, "cus_unit");
@@ -20,87 +46,316 @@ test("gateway verifies signed raw bytes, rejects tampering and live events", () 
   const live = payload.replace('"livemode":false', '"livemode":true');
   const liveSignature = gateway.stripe.webhooks.generateTestHeaderString({ payload: live, secret: config.webhookSecret });
   assert.throws(() => gateway.verifyEvent(Buffer.from(live), liveSignature), { code: "MODE_MISMATCH" });
+  const ignored = JSON.stringify({ id: "evt_other", type: "product.created", livemode: false, data: { object: {} } });
+  assert.equal(gateway.verifyEvent(Buffer.from(ignored), gateway.stripe.webhooks.generateTestHeaderString({ payload: ignored,
+    secret: config.webhookSecret })), null, "eventos que no se procesan");
 });
 
-test("hosted Checkout has stable idempotent parameters and an expiration margin above 30 minutes", async (t) => {
-  const { gateway } = fixture();
-  const requests = [];
-  t.mock.method(gateway.stripe.checkout.sessions, "create", async (params, options) => {
-    requests.push({ params, options });
-    return { id: "cs_test_unit", customer: "cus_unit", subscription: null, status: "open",
-      url: "https://checkout.stripe.com/c/pay/unit", livemode: false, metadata: params.metadata };
-  });
-  const user = { id: "user1", email: "trainer@example.test" };
-  const account = { customerId: "cus_unit", checkout: { startedAt: new Date(Date.now() - 5000) } };
-  const price = { id: "price_unit", amount: 2900, interval: "monthly" };
-  const key = "trainers-checkout-ab12cd34";
-  await gateway.createCheckout(user, account, price, key);
-  await gateway.createCheckout(user, account, price, key);
-  assert.deepEqual(requests[0], requests[1]);
-  const { params, options } = requests[0];
-  assert.equal(options.idempotencyKey, key);
-  assert.equal(params.mode, "subscription");
-  assert.equal(params.automatic_tax.enabled, false);
-  assert.equal(params.payment_method_types, undefined);
-  assert.equal(params.line_items[0].price, "price_unit");
-  assert.match(params.integration_identifier, /^trainfit_trainers_[a-z]{8}$/);
-  assert.ok(params.expires_at > Math.floor(Date.now() / 1000) + 1800);
-  assert.equal(params.success_url, "http://localhost:8100/tabs/subscription?session_id={CHECKOUT_SESSION_ID}");
-});
-
-test("configured price must match test mode, amount, currency and recurrence", async (t) => {
-  const { gateway } = fixture();
-  const price = { id: "price_unit", amount: 2900, interval: "monthly" };
-  const valid = { active: true, livemode: false, type: "recurring", currency: "eur", unit_amount: 2900,
-    recurring: { interval: "month", interval_count: 1, usage_type: "licensed" } };
-  for (const change of [{ currency: "usd" }, { unit_amount: 290 }, { active: false },
-    { recurring: { ...valid.recurring, interval_count: 3 } }, { livemode: true }]) {
-    const mock = t.mock.method(gateway.stripe.prices, "retrieve", async () => ({ ...valid, ...change }));
-    await assert.rejects(gateway.validatePrice(price));
-    mock.mock.restore();
+test("un precio es del catálogo solo con sus metadatos y una recurrencia de un mes o un año", () => {
+  assert.deepEqual(priceRef(stripePrice("seat", "starter", "annual")), { id: priceId("seat", "starter", "annual"), kind: "seat",
+    tier: "starter", interval: "annual", amount: 1000 });
+  for (const broken of [{ metadata: {} }, { metadata: { ...stripePrice("base", "starter", "monthly").metadata, trainfit_catalog: "other" } },
+    { recurring: { interval: "week", interval_count: 1, usage_type: "licensed" } }, { currency: "usd" }, { type: "one_time" },
+    { recurring: { interval: "month", interval_count: 1, usage_type: "metered" } }, { billing_scheme: "tiered" },
+    { metadata: { ...stripePrice("base", "starter", "monthly").metadata, trainfit_tier: "gold" } }]) {
+    assert.equal(priceRef(stripePrice("base", "starter", "monthly", broken)), null, JSON.stringify(broken));
   }
-  t.mock.method(gateway.stripe.prices, "retrieve", async () => valid);
-  await gateway.validatePrice(price);
 });
 
-test("portal cannot enable unpaid upgrades or immediate cancellation", async (t) => {
-  const { gateway } = fixture();
-  const configuration = { id: "bpc_unit", active: true, livemode: false, features: {
-    invoice_history: { enabled: true }, payment_method_update: { enabled: true },
-    subscription_update: { enabled: false }, subscription_cancel: { enabled: true, mode: "at_period_end" },
-  } };
-  t.mock.method(gateway.stripe.billingPortal.configurations, "retrieve", async () => configuration);
-  let created = 0;
-  t.mock.method(gateway.stripe.billingPortal.sessions, "create", async (params) => {
-    created++;
-    assert.equal(params.customer, "cus_unit");
-    assert.equal(params.configuration, "bpc_unit");
-    return { url: "https://billing.stripe.com/p/session/unit" };
+test("los precios se buscan por lookup key, se comprueban contra el catálogo y se cachean", async (t) => {
+  const { gateway, priceLists } = fixture(t);
+  await gateway.validateState(state("starter", "annual", 5));
+  await gateway.validateState(state("free", "monthly", 2));
+  assert.equal(priceLists.length, 1, "una sola consulta para varias propuestas");
+  assert.equal(priceLists[0].lookup_keys.length, 11);
+  assert.equal(priceLists[0].active, true);
+
+  const wrongAmount = catalogStripePrices().map((price) => price.id === priceId("base", "starter", "monthly") ? { ...price, unit_amount: 2500 } : price);
+  await assert.rejects(fixture(t, { prices: wrongAmount }).gateway.validateState(state("starter")), errorCode("PRICE_MISMATCH"));
+  const vatIncluded = catalogStripePrices().map((price) => ({ ...price, tax_behavior: "inclusive" }));
+  await assert.rejects(fixture(t, { prices: vatIncluded }).gateway.validateState(state("starter")), errorCode("PRICE_MISMATCH"));
+  const missingSeat = catalogStripePrices().filter((price) => price.id !== priceId("seat", "professional", "monthly"));
+  const partial = fixture(t, { prices: missingSeat }).gateway;
+  await partial.validateState(state("professional", "monthly", 0));
+  await assert.rejects(partial.validateState(state("professional", "monthly", 3)), errorCode("PRICE_CATALOG_REQUIRED"));
+  const live = catalogStripePrices().map((price) => ({ ...price, livemode: true }));
+  await assert.rejects(fixture(t, { prices: live }).gateway.validateState(state("starter")), errorCode("MODE_MISMATCH"));
+});
+
+test("la suscripción se lee como cuota + plazas; la plaza con cantidad 0 no cuenta y un precio ajeno pide revisión", async (t) => {
+  const { gateway } = fixture(t);
+  const sub = await view(t, gateway, stripeSub(state("starter", "monthly", 5)));
+  assert.deepEqual(sub.state, state("starter", "monthly", 5));
+  assert.deepEqual(sub.items.map((item) => [item.id, item.price.kind, item.quantity]), [["si_base", "base", 1], ["si_seat", "seat", 5]]);
+  assert.equal(sub.paid, true);
+  assert.equal(sub.paidPeriodEnd, END);
+
+  const free = await view(t, gateway, stripeSub(state("free", "monthly", 3)));
+  assert.deepEqual(free.state, state("free", "monthly", 3));
+
+  const zeroSeat = [...itemsFor(state("professional")), { id: "si_seat", price: priceRef(stripePrice("seat", "starter", "monthly")), quantity: 0 }];
+  assert.deepEqual((await view(t, gateway, stripeSub(state("professional"), { items: zeroSeat }))).state, state("professional", "monthly", 0));
+
+  const foreign = stripeSub(state("starter"));
+  foreign.items.data.push({ id: "si_foreign", quantity: 1, current_period_start: START, current_period_end: END,
+    price: { ...stripePrice("base", "starter", "monthly"), id: "price_other", metadata: {} } });
+  assert.equal((await view(t, gateway, foreign)).state, null);
+  const twoBases = stripeSub(state("starter"), { items: [...itemsFor(state("starter")),
+    { id: "si_base2", price: priceRef(stripePrice("base", "professional", "monthly")), quantity: 1 }] });
+  assert.equal((await view(t, gateway, twoBases)).state, null);
+});
+
+test("prueba de pago: última factura pagada, sin actualización pendiente y cubriendo los elementos vigentes", async (t) => {
+  const { gateway } = fixture(t);
+  assert.equal((await view(t, gateway, stripeSub(state("starter"), { invoice: { status: "open" } }))).paid, false);
+  assert.equal((await view(t, gateway, stripeSub(state("starter"), { extra: { pending_update: { expires_at: END } } }))).paid, false);
+  // Una plaza añadida sin factura (prorrata a la siguiente) sigue cubierta por el periodo de la cuota.
+  const deferred = stripeSub(state("starter", "monthly", 3), { invoice: { status: "paid", lines: [{ id: "si_base",
+    price: stripePrice("base", "starter", "monthly") }] } });
+  const sub = await view(t, gateway, deferred);
+  assert.equal(sub.paid, true);
+  assert.equal(sub.paidPeriodEnd, END);
+  const unrelated = stripeSub(state("starter"), { invoice: { status: "paid", lines: [{ id: "si_gone", price: stripePrice("base", "scale", "monthly") }] } });
+  assert.equal((await view(t, gateway, unrelated)).paidPeriodEnd, 0);
+});
+
+test("los cambios reutilizan la plaza adicional y solo la borran si el destino no vende plazas", async (t) => {
+  const { gateway } = fixture(t);
+  const sub = (value, items) => subscription(value, { items: items || itemsFor(value) });
+  const price = (kind, tier, interval = "monthly") => priceId(kind, tier, interval);
+
+  // Más plazas en el mismo plan: solo cambia la cantidad.
+  assert.deepEqual((await gateway.changeItems(sub(state("starter", "monthly", 5)), state("starter", "monthly", 8))).updates,
+    [{ id: "si_seat", price: price("seat", "starter"), quantity: 8 }]);
+  // Primera plaza adicional: elemento nuevo.
+  assert.deepEqual((await gateway.changeItems(sub(state("starter")), state("starter", "monthly", 3))).updates,
+    [{ price: price("seat", "starter"), quantity: 3 }]);
+  // Free con plazas → Inicio: se añade la cuota y la plaza pasa al precio de Inicio con cantidad 0.
+  const fromFree = await gateway.changeItems(sub(state("free", "monthly", 9)), state("starter"));
+  assert.deepEqual(fromFree.updates, [{ price: price("base", "starter"), quantity: 1 }, { id: "si_seat", price: price("seat", "starter"), quantity: 0 }]);
+  assert.deepEqual(fromFree.fromItems, [{ price: price("seat", "free"), quantity: 9 }]);
+  assert.deepEqual(fromFree.targetItems, [{ price: price("base", "starter"), quantity: 1 }]);
+  // Inicio con plazas → Profesional: cuota nueva y plazas a 0.
+  assert.deepEqual((await gateway.changeItems(sub(state("starter", "monthly", 5)), state("professional"))).updates,
+    [{ id: "si_base", price: price("base", "professional"), quantity: 1 }, { id: "si_seat", price: price("seat", "professional"), quantity: 0 }]);
+  // Profesional con plazas → Escala anual: Escala no vende plazas, se borra el elemento.
+  assert.deepEqual((await gateway.changeItems(sub(state("professional", "monthly", 10)), state("scale", "annual"))).updates,
+    [{ id: "si_base", price: price("base", "scale", "annual"), quantity: 1 }, { id: "si_seat", deleted: true }]);
+  // Mismo estado con una plaza a 0 en otra periodicidad: se alinea para que todos los elementos compartan intervalo.
+  const zero = [...itemsFor(state("starter")), { id: "si_seat", price: priceRef(stripePrice("seat", "starter", "monthly")), quantity: 0 }];
+  assert.deepEqual((await gateway.changeItems(sub(state("starter"), zero), state("starter", "annual"))).updates,
+    [{ id: "si_base", price: price("base", "starter", "annual"), quantity: 1 }, { id: "si_seat", price: price("seat", "starter", "annual"), quantity: 0 }]);
+});
+
+test("Checkout vende con Managed Payments la cuota y las plazas pedidas, con parámetros estables para reintentar", async (t) => {
+  const { gateway, config } = fixture(t, { config: sandboxConfig({ STRIPE_TERMS_URL: "https://trainfit.net/condiciones" }) });
+  const calls = [];
+  t.mock.method(gateway.stripe.checkout.sessions, "create", async (params, options) => {
+    calls.push({ params, options });
+    return { id: "cs_test_one", livemode: false, customer: "cus_trainerone", subscription: null, status: "open",
+      url: "https://checkout.stripe.com/c/pay/one", metadata: params.metadata };
   });
-  configuration.features.subscription_update.enabled = true;
-  await assert.rejects(gateway.createPortal("cus_unit"), { code: "PORTAL_NOT_READY" });
-  configuration.features.subscription_update.enabled = false;
-  configuration.features.subscription_cancel.mode = "immediately";
-  await assert.rejects(gateway.createPortal("cus_unit"), { code: "PORTAL_NOT_READY" });
-  assert.equal(created, 0);
-  configuration.features.subscription_cancel.mode = "at_period_end";
-  assert.equal(await gateway.createPortal("cus_unit"), "https://billing.stripe.com/p/session/unit");
+  const row = { customerId: "cus_trainerone", checkout: { startedAt: new Date() } };
+  const user = { id: "trainer-one", email: "trainer@example.test" };
+  const created = await gateway.createCheckout(user, row, state("starter", "annual", 4), "trainers-checkout-key01234567");
+  await gateway.createCheckout(user, row, state("starter", "annual", 4), "trainers-checkout-key01234567");
+  assert.deepEqual(calls[0], calls[1]);
+  const { params, options } = calls[0];
+  assert.equal(options.idempotencyKey, "trainers-checkout-key01234567");
+  assert.deepEqual(params.line_items, [{ price: priceId("base", "starter", "annual"), quantity: 1 },
+    { price: priceId("seat", "starter", "annual"), quantity: 4 }]);
+  assert.deepEqual(params.managed_payments, { enabled: true });
+  assert.equal(params.billing_address_collection, "required");
+  for (const forbidden of ["automatic_tax", "custom_text", "payment_method_configuration", "tax_id_collection", "customer_update"]) {
+    assert.equal(params[forbidden], undefined, `${forbidden} no se admite con Managed Payments`);
+  }
+  assert.deepEqual(params.consent_collection, { terms_of_service: "required" });
+  assert.deepEqual(params.metadata, { trainfitUserId: "trainer-one", scope: "trainers", attempt: "trainers-checkout-key01234567",
+    target: "starter:annual:4" });
+  assert.deepEqual(params.subscription_data.metadata, params.metadata);
+  assert.equal(params.success_url, `${config.returnUrl}/tabs/subscription?session_id={CHECKOUT_SESSION_ID}`);
+  assert.ok(params.expires_at - Math.floor(Date.now() / 1000) > 30 * 60);
+  assert.equal(created.target, "starter:annual:4");
+
+  calls.length = 0;
+  await gateway.createCheckout(user, row, state("free", "monthly", 2), "trainers-checkout-free01234567");
+  assert.deepEqual(calls[0].params.line_items, [{ price: priceId("seat", "free", "monthly"), quantity: 2 }], "Free solo paga sus plazas");
 });
 
-test("paid invoice must contain a non-prorated matching subscription item", async (t) => {
-  const { gateway } = fixture();
-  const line = { pricing: { price_details: { price: { id: "price_unit" } } }, period: { end: 2000000000 },
-    parent: { type: "subscription_item_details", subscription_item_details: { subscription_item: "si_unit", proration: false } } };
-  t.mock.method(gateway.stripe.subscriptions, "list", async () => ({ has_more: false, data: [{
-    id: "sub_unit", customer: "cus_unit", livemode: false, status: "active", cancel_at_period_end: false,
-    metadata: { scope: "trainers", trainfitUserId: "user1" },
-    items: { has_more: false, data: [{ id: "si_unit", price: { id: "price_unit" }, quantity: 1, current_period_end: 2000000000 }] },
-    latest_invoice: { id: "in_unit", livemode: false, status: "paid", lines: { has_more: false, data: [line] } },
-  }] }));
-  assert.equal((await gateway.listSubscriptions("cus_unit"))[0].paidPriceId, "price_unit");
-  line.parent.subscription_item_details.proration = true;
-  assert.equal((await gateway.listSubscriptions("cus_unit"))[0].paidPriceId, null);
-  line.parent.subscription_item_details.proration = false;
-  line.parent.subscription_item_details.subscription_item = "si_other";
-  assert.equal((await gateway.listSubscriptions("cus_unit"))[0].paidPriceId, null);
+test("el portal usa la configuración predeterminada solo si no permite cambios de plan ni cancelar al momento", async (t) => {
+  const { gateway } = fixture(t);
+  const portal = { id: "bpc_default", livemode: false, active: true, features: { subscription_update: { enabled: false },
+    invoice_history: { enabled: true }, payment_method_update: { enabled: true }, subscription_cancel: { enabled: true, mode: "at_period_end" } } };
+  let listed;
+  t.mock.method(gateway.stripe.billingPortal.configurations, "list", async (params) => { listed = params; return { data: [structuredClone(portal)] }; });
+  let created;
+  t.mock.method(gateway.stripe.billingPortal.sessions, "create", async (params) => { created = params; return { url: "https://billing.stripe.com/p/session/x" }; });
+  assert.equal(await gateway.createPortal("cus_trainerone"), "https://billing.stripe.com/p/session/x");
+  assert.deepEqual(listed, { is_default: true, active: true, limit: 1 });
+  assert.equal(created.configuration, "bpc_default");
+  assert.match(created.return_url, /\/tabs\/subscription\?from=portal$/);
+  for (const unsafe of [{ subscription_update: { enabled: true } }, { subscription_cancel: { enabled: true, mode: "immediately" } },
+    { invoice_history: { enabled: false } }]) {
+    portal.features = { ...portal.features, ...unsafe };
+    await assert.rejects(gateway.createPortal("cus_trainerone"), errorCode("PORTAL_NOT_READY"));
+    portal.features = { subscription_update: { enabled: false }, invoice_history: { enabled: true }, payment_method_update: { enabled: true },
+      subscription_cancel: { enabled: true, mode: "at_period_end" } };
+  }
+  t.mock.method(gateway.stripe.billingPortal.configurations, "list", async () => ({ data: [] }));
+  await assert.rejects(gateway.createPortal("cus_trainerone"), errorCode("PORTAL_NOT_READY"));
+});
+
+const previewLine = (kind, tier, interval, amount, { proration = true, quantity = 1, start = START + 15 * 86400, end = END } = {}) => ({
+  amount, quantity, period: { start, end }, pricing: { price_details: { price: priceId(kind, tier, interval) } },
+  parent: { type: "subscription_item_details", subscription_item_details: { proration, subscription_item: "si_x" } } });
+
+test("plazas mensuales: la prorrata no se cobra hoy y la previsualización de la renovación ya la incluye", async (t) => {
+  const { gateway } = fixture(t);
+  const requests = [];
+  t.mock.method(gateway.stripe.invoices, "createPreview", async (params) => {
+    requests.push(params);
+    return { livemode: false, currency: "eur", amount_due: 3900 + 250, ending_balance: 0, total_taxes: [], lines: { has_more: false, data: [
+      previewLine("seat", "starter", "monthly", -250, { quantity: 5 }), previewLine("seat", "starter", "monthly", 500, { quantity: 10 }),
+      previewLine("base", "starter", "monthly", 2900, { proration: false, start: END, end: END + 30 * 86400 }),
+      previewLine("seat", "starter", "monthly", 1000, { proration: false, quantity: 10, start: END, end: END + 30 * 86400 })] } };
+  });
+  const sub = subscription(state("starter", "monthly", 5), { id: "sub_trainers", currentPeriodEnd: END });
+  const preview = await gateway.previewChange(sub, state("starter", "monthly", 10), "deferred", START + 15 * 86400);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].subscription_details.proration_behavior, "create_prorations");
+  assert.equal(requests[0].subscription_details.proration_date, START + 15 * 86400);
+  assert.deepEqual(requests[0].subscription_details.items, [{ id: "si_seat", price: priceId("seat", "starter", "monthly"), quantity: 10 }]);
+  assert.equal(preview.amountDueNow, 0);
+  assert.equal(preview.deferredAmount, 250);
+  assert.equal(preview.renewalAmount, 4150);
+  assert.deepEqual(preview.lines.map((entry) => [entry.kind, entry.item, entry.quantity, entry.amount]),
+    [["credit", "seat", 5, -250], ["charge", "seat", 10, 500]]);
+});
+
+test("una subida inmediata cobra la diferencia de Stripe, con IVA y saldo, y la renovación se previsualiza aparte", async (t) => {
+  const { gateway } = fixture(t);
+  const requests = [];
+  t.mock.method(gateway.stripe.invoices, "createPreview", async (params) => {
+    requests.push(params);
+    if (params.subscription_details.proration_behavior === "none") {
+      return { livemode: false, currency: "eur", amount_due: 5929, lines: { has_more: false, data: [] } };
+    }
+    return { livemode: false, currency: "eur", amount_due: 1210, ending_balance: -50, total_taxes: [{ amount: 210 }], lines: { has_more: false,
+      data: [previewLine("base", "starter", "monthly", -1450), previewLine("base", "professional", "monthly", 2450)] } };
+  });
+  const sub = subscription(state("starter"), { currentPeriodEnd: END });
+  const preview = await gateway.previewChange(sub, state("professional"), "immediate", START + 15 * 86400);
+  assert.deepEqual(requests.map((entry) => entry.subscription_details.proration_behavior), ["always_invoice", "none"]);
+  assert.equal(preview.amountDueNow, 1210);
+  assert.equal(preview.taxAmount, 210);
+  assert.equal(preview.creditBalance, 50);
+  assert.equal(preview.renewalAmount, 5929);
+  assert.equal(preview.renewalAt, END);
+  assert.deepEqual(preview.lines.map((entry) => [entry.kind, entry.tier]), [["credit", "starter"], ["charge", "professional"]]);
+});
+
+test("una bajada a mensual desde anual no simula ningún cobro: la renovación es la tarifa sin IVA", async (t) => {
+  const { gateway } = fixture(t);
+  t.mock.method(gateway.stripe.invoices, "createPreview", async () => assert.fail("no se previsualiza un cobro de hoy"));
+  const sub = subscription(state("starter", "annual", 5), { currentPeriodEnd: END });
+  assert.deepEqual(await gateway.previewChange(sub, state("starter", "monthly", 2), "scheduled", START),
+    { amountDueNow: 0, deferredAmount: 0, renewalAmount: 2900 + 200, renewalAt: END, creditBalance: 0, renewalExcludesTax: true });
+});
+
+test("aplicar: la subida queda pendiente del pago; las plazas mensuales se aplican con prorrata para la siguiente factura", async (t) => {
+  const { gateway } = fixture(t);
+  const calls = [];
+  t.mock.method(gateway.stripe.subscriptions, "update", async (...args) => { calls.push(args); return { livemode: false, latest_invoice: "in_change" }; });
+  const quote = { quoteId: "q1", subscriptionId: "sub_trainers", prorationDate: START + 100, to: stateView(state("professional")),
+    updates: [{ id: "si_base", price: priceId("base", "professional", "monthly"), quantity: 1 }] };
+  assert.deepEqual(await gateway.applyUpgrade(quote, "change-one"), { invoiceId: "in_change" });
+  await gateway.applyUpgrade(quote, "change-one");
+  assert.deepEqual(calls[0], calls[1], "mismos parámetros y clave al reintentar");
+  assert.deepEqual(calls[0][1], { items: quote.updates, payment_behavior: "pending_if_incomplete", proration_behavior: "always_invoice",
+    proration_date: START + 100 });
+  assert.equal(calls[0][2].idempotencyKey, "change-one");
+  await gateway.applyDeferred({ ...quote, updates: [{ id: "si_seat", price: priceId("seat", "starter", "monthly"), quantity: 9 }] }, "seats-one");
+  assert.deepEqual(calls[2][1], { items: [{ id: "si_seat", price: priceId("seat", "starter", "monthly"), quantity: 9 }],
+    proration_behavior: "create_prorations", proration_date: START + 100 });
+  assert.equal(calls[2][1].payment_behavior, undefined, "sin cobro, no hay pago pendiente");
+});
+
+test("una bajada se programa con dos fases: los elementos actuales hasta el fin del periodo y los del destino después", async (t) => {
+  const { gateway } = fixture(t);
+  const phase = { start_date: START, end_date: END, currency: "eur", collection_method: "charge_automatically", billing_cycle_anchor: null,
+    default_payment_method: "pm_saved", default_tax_rates: [{ id: "txr_existing" }], description: null, metadata: {}, add_invoice_items: [],
+    discounts: [{ discount: "di_existing", coupon: null, promotion_code: null }], invoice_settings: null, automatic_tax: null,
+    items: [{ price: priceId("base", "starter", "monthly"), quantity: 1, discounts: [], tax_rates: [], metadata: {} },
+      { price: priceId("seat", "starter", "monthly"), quantity: 8, discounts: [{ discount: "di_item", coupon: null, promotion_code: null }],
+        tax_rates: [], metadata: { kept: "yes" } }] };
+  const createKeys = [];
+  t.mock.method(gateway.stripe.subscriptionSchedules, "create", async (params, options) => {
+    assert.deepEqual(params, { from_subscription: "sub_trainers" });
+    createKeys.push(options.idempotencyKey);
+    return { id: "sub_sched", livemode: false, phases: [structuredClone(phase)] };
+  });
+  const updates = [];
+  t.mock.method(gateway.stripe.subscriptionSchedules, "update", async (...args) => { updates.push(args); return {}; });
+  const quote = { quoteId: "q-down", subscriptionId: "sub_trainers", prorationDate: START + 100, periodEnd: END,
+    to: stateView(state("free", "monthly", 4)),
+    fromItems: [{ price: priceId("seat", "starter", "monthly"), quantity: 8 }, { price: priceId("base", "starter", "monthly"), quantity: 1 }],
+    targetItems: [{ price: priceId("seat", "free", "monthly"), quantity: 4 }] };
+  assert.deepEqual(await gateway.scheduleChange(quote, "down-one"), { scheduleId: "sub_sched" });
+  const [, params, options] = updates[0];
+  assert.deepEqual(createKeys, ["down-one-create"]);
+  assert.equal(options.idempotencyKey, "down-one-update");
+  assert.equal(params.end_behavior, "release");
+  assert.equal(params.phases[0].end_date, END);
+  assert.deepEqual(params.phases[0].items.map((item) => [item.price, item.quantity]), [[priceId("base", "starter", "monthly"), 1],
+    [priceId("seat", "starter", "monthly"), 8]]);
+  assert.deepEqual(params.phases[0].items[1].discounts, [{ discount: "di_item" }]);
+  assert.deepEqual(params.phases[1].items, [{ price: priceId("seat", "free", "monthly"), quantity: 4 }]);
+  assert.equal(params.phases[1].start_date, END);
+  assert.equal(params.phases[1].billing_cycle_anchor, "phase_start");
+  assert.deepEqual(params.phases[1].discounts, [{ discount: "di_existing" }]);
+  assert.equal(params.phases[1].default_payment_method, "pm_saved");
+  // Si la fase actual no es la que se propuso, no se programa nada.
+  await assert.rejects(gateway.scheduleChange({ ...quote, fromItems: [{ price: priceId("base", "professional", "monthly"), quantity: 1 }] }, "down-two"),
+    errorCode("BILLING_REVIEW_REQUIRED"));
+});
+
+test("el pago de un cambio solo cuenta si su factura cobra el precio de destino; los enlaces quedan en Stripe", async (t) => {
+  const { gateway } = fixture(t);
+  const invoice = { livemode: false, customer: "cus_trainerone", billing_reason: "subscription_update", currency: "eur", status: "paid",
+    parent: { subscription_details: { subscription: "sub_trainers" } }, hosted_invoice_url: "https://invoice.stripe.com/i/acct/in_change",
+    lines: { has_more: false, data: [previewLine("base", "professional", "monthly", 2000, { end: END })] } };
+  t.mock.method(gateway.stripe.invoices, "retrieve", async () => structuredClone(invoice));
+  const operation = { invoiceId: "in_change", quote: { subscriptionId: "sub_trainers", targetItems: [{ price: priceId("base", "professional", "monthly"), quantity: 1 }] } };
+  assert.deepEqual(await gateway.changePayment({ customerId: "cus_trainerone" }, operation),
+    { paid: true, voided: false, periodEnd: END, url: "https://invoice.stripe.com/i/acct/in_change" });
+  const other = { ...operation, quote: { ...operation.quote, targetItems: [{ price: priceId("base", "scale", "monthly"), quantity: 1 }] } };
+  assert.equal((await gateway.changePayment({ customerId: "cus_trainerone" }, other)).paid, false);
+  await assert.rejects(gateway.changePayment({ customerId: "cus_someone" }, operation), errorCode("PAYMENT_NOT_OWNED"));
+  for (const url of ["https://evil.test/i/one", "http://invoice.stripe.com/i/one", "https://user@invoice.stripe.com/i/one"]) {
+    invoice.hosted_invoice_url = url;
+    assert.equal((await gateway.changePayment({ customerId: "cus_trainerone" }, operation)).url, undefined);
+  }
+});
+
+test("deshacer una subida vuelve al estado anterior sin prorrateo: ni factura ni cobro", async (t) => {
+  const { gateway } = fixture(t);
+  let call;
+  t.mock.method(gateway.stripe.subscriptions, "update", async (...args) => { call = args; return { livemode: false }; });
+  await gateway.revertState(subscription(state("starter", "annual", 9)), state("starter", "annual", 4), "revert-one");
+  assert.deepEqual(call[1], { items: [{ id: "si_seat", price: priceId("seat", "starter", "annual"), quantity: 4 }], proration_behavior: "none" });
+  assert.equal(call[2].idempotencyKey, "revert-one");
+});
+
+test("sandbox test clocks use expanded simulated time and normal subscriptions need no extra clock request", async (t) => {
+  const { gateway } = fixture(t);
+  const sub = stripeSub(state("starter"));
+  t.mock.method(gateway.stripe.subscriptions, "list", async (params) => {
+    assert.ok(params.expand.includes("data.test_clock"));
+    return { has_more: false, data: [sub] };
+  });
+  assert.equal((await gateway.listSubscriptions("cus_trainerone"))[0].billingNow, undefined);
+  sub.test_clock = { id: "clock_test", frozen_time: START + 1000, status: "ready", livemode: false };
+  assert.equal((await gateway.listSubscriptions("cus_trainerone"))[0].billingNow, START + 1000);
+  sub.test_clock.status = "advancing";
+  await assert.rejects(gateway.listSubscriptions("cus_trainerone"), errorCode("TEST_CLOCK_NOT_READY"));
 });

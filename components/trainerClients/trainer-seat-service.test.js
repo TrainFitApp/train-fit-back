@@ -70,9 +70,23 @@ test("read-only clients can be read but not modified; the trainer's own id is ne
   assert.equal(await seats.rejectIfReadOnly({ method: "PUT", auth: { userId: TRAINER } }, fakeRes(), TRAINER), false);
 });
 
-test("paying trainers above Free keep every client active", async () => {
-  reset(5, { professionalPremium: { entitled: true, source: "stripe", tier: "trainer_pro", expiresAt: new Date(Date.now() + 86400000) } });
+test("las plazas contratadas mandan: con 5 clientes y 4 plazas uno queda en solo lectura", async () => {
+  const paid = (seatCount) => ({ professionalPremium: { entitled: true, tier: "free", interval: "monthly", seats: seatCount,
+    expiresAt: new Date(Date.now() + 86400000) } });
+  reset(5, paid(25));
   assert.equal((await seats.seatState(TRAINER)).overLimit, false);
+  reset(5, paid(4));
+  const state = await seats.seatState(TRAINER);
+  assert.equal(state.limit, 4);
+  assert.deepEqual([...state.active], [id(1), id(2), id(3), id(4)]);
+  assert.equal(await seats.isReadOnly(TRAINER, id(5)), true);
+});
+
+test("aceptar una invitación necesita una plaza libre entre los que ya aceptaron, salvo que ya ocupe una", async () => {
+  reset(3);
+  await assert.doesNotReject(seats.assertSeatForAcceptance(TRAINER, id(9), 4));
+  await assert.rejects(seats.assertSeatForAcceptance(TRAINER, id(9), 3), (e) => e.code === "SEAT_UNAVAILABLE" && e.status === 409);
+  await assert.doesNotReject(seats.assertSeatForAcceptance(TRAINER, id(2), 3), "el otro scope de quien ya ocupa plaza");
 });
 
 test("choosing seats validates ownership and the plan quota", async () => {

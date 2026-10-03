@@ -17,7 +17,7 @@ const {
   libraryBytesFor,
   FORM_CHECKS_PER_WEEK,
 } = require("./media-catalog");
-const { canUploadMedia, uploadBlockReason } = require("./media-access");
+const { MEDIA_CONSENT_VERSION, canUploadMedia, hasMediaConsent, uploadBlockReason } = require("./media-access");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 const READ_TTL_SEC = 3600;
@@ -125,7 +125,8 @@ module.exports = {
       hasActiveTrainer,
       // Las revisiones de técnica solo existen con un entrenador de entrenamiento.
       hasTrainingTrainer,
-      consentAt: user.mediaConsentAt || null,
+      // Solo cuenta el consentimiento al texto vigente; si no, la app lo vuelve a pedir.
+      consentAt: hasMediaConsent(user) ? user.mediaConsentAt : null,
       formChecksPerWeek: FORM_CHECKS_PER_WEEK,
       libraryBytes: hasRole(user, "trainer") ? libraryBytesFor(user) : null,
       libraryUsedBytes: hasRole(user, "trainer") ? await mediaDao.sumLibraryBytes(user._id) : null,
@@ -133,7 +134,7 @@ module.exports = {
   },
 
   async giveConsent(user) {
-    const at = await mediaDao.setConsent(user._id);
+    const at = await mediaDao.setConsent(user._id, MEDIA_CONSENT_VERSION);
     return { consentAt: at };
   },
 
@@ -153,7 +154,7 @@ module.exports = {
     if (def.uploader === "client") {
       const { canUpload } = await access(user);
       if (!canUpload) return fail(403, "MEDIA_PREMIUM_REQUIRED", "Hazte Premium para subir fotos y vídeos");
-      if (!user.mediaConsentAt) {
+      if (!hasMediaConsent(user)) {
         return fail(403, "MEDIA_CONSENT_REQUIRED", "Antes de subir fotos tienes que aceptar cómo se guardan");
       }
     }

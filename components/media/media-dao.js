@@ -56,9 +56,9 @@ module.exports = {
   },
 };
 
-// Consentimiento explícito de fotos y vídeos (RGPD), con fecha.
-module.exports.setConsent = async function setConsent(userId, at = new Date()) {
+// Consentimiento explícito de fotos y vídeos (RGPD), con fecha y versión del texto.
+module.exports.setConsent = async function setConsent(userId, version, at = new Date()) {
   const User = require("../users/schema");
-  await User.updateOne({ _id: userId }, { $set: { mediaConsentAt: at } });
+  await User.updateOne({ _id: userId }, { $set: { mediaConsentAt: at, mediaConsentVersion: version } });
   return at;
 };

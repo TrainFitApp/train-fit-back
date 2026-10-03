@@ -65,14 +65,6 @@ const FORM_CHECKS_PER_WEEK = 5;
 // Cuándo empieza a avisarse de que una revisión va a borrarse.
 const EXPIRY_WARNING_DAYS = 7;
 
-// Cupo de la biblioteca de vídeos del entrenador, por plan. Está para frenar
-// abusos, no para cobrar: el coste real es de céntimos.
-const TRAINER_LIBRARY_BYTES = {
-  trainer_pro: 10 * GB,
-  trainer_growth: 25 * GB,
-  trainer_scale: 75 * GB,
-};
-const TRAINER_LIBRARY_BYTES_FREE = 2 * GB;
 
 const POSES = ["front", "side", "back", "extra"];
 
@@ -85,9 +77,12 @@ function purposeOf(id) {
   return Object.prototype.hasOwnProperty.call(PURPOSES, id) ? PURPOSES[id] : null;
 }
 
+// Cupo de la biblioteca de vídeos del entrenador según su plan vigente (trainerBilling/src/catalog.ts).
+// Está para frenar abusos, no para cobrar: comprar plazas no amplía la biblioteca. Al bajar de plan
+// no se borra nada: solo se bloquean las subidas nuevas por encima del cupo.
 function libraryBytesFor(user) {
-  const tier = user?.professionalPremium?.entitled ? user.professionalPremium.tier : null;
-  return TRAINER_LIBRARY_BYTES[tier] || TRAINER_LIBRARY_BYTES_FREE;
+  const { tier } = require("../billing/feature-access-service").trainerPlan(user);
+  return require("../../.build/trainer-billing/catalog").libraryBytes(tier);
 }
 
 /**
@@ -147,8 +142,6 @@ module.exports = {
   MAX_THUMB_BYTES,
   FORM_CHECKS_PER_WEEK,
   EXPIRY_WARNING_DAYS,
-  TRAINER_LIBRARY_BYTES,
-  TRAINER_LIBRARY_BYTES_FREE,
   purposeOf,
   libraryBytesFor,
   validateUploadRequest,

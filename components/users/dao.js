@@ -497,6 +497,7 @@ module.exports = {
         "restoreCodeDailyCount",
         "trainerSeats",
         "mediaConsentAt",
+        "mediaConsentVersion",
         "status",
         "lastLogin",
       ]);

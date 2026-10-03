@@ -2,16 +2,19 @@ const TrainerClient = require("./trainer-client-schema");
 const User = require("../users/schema");
 const featureAccess = require("../billing/feature-access-service");
 
-// Plazas activas cuando el entrenador supera el cupo de su plan (típicamente al
-// volver a Free con más de 3 clientes). Decisión de negocio 2026-09-18: nada se
-// borra ni se archiva; el entrenador elige qué clientes siguen activos y el
-// resto queda en solo lectura (puede consultarlos, no modificarlos). Mientras
-// no elija, se mantienen activos sus clientes más antiguos.
+// Plazas activas cuando el entrenador tiene más clientes que plazas contratadas:
+// al volver a Free, al aplicarse una bajada o una reducción de plazas, tras un
+// impago o al retirarse una subida. Decisiones de negocio 2026-09-18 y 2026-10-02:
+// reducir nunca se bloquea y nada se borra ni se archiva; el entrenador elige qué
+// clientes siguen activos y el resto queda en solo lectura (puede consultarlos,
+// no modificarlos). Mientras no elija, se mantienen activos sus clientes más antiguos.
 //
 // Solo cuentan como plaza los clientes con cuenta (clientId). Las invitaciones
 // pendientes por email ocupan cupo para nuevas altas pero no tienen datos que
 // congelar: se resuelven cancelándolas.
 const BILLABLE_STATUSES = ["pending", "cuestionario_pendiente", "en_revision", "active"];
+// Ocupan plaza quienes ya aceptaron; una invitación pendiente solo la reserva.
+const OCCUPYING_STATUSES = ["cuestionario_pendiente", "en_revision", "active"];
 // Decisión 2026-09-18: la elección se puede cambiar una vez cada 30 días (la
 // primera es libre); sin límite, rotar clientes a diario convertiría Free en un plan de pago.
 const SEAT_CHANGE_COOLDOWN_MS = 30 * 86400000;
@@ -23,14 +26,14 @@ function billableKeys(relations) {
 
 async function seatState(trainerId) {
   const user = await User.findById(trainerId).select("professionalPremium trainerSeats").lean();
-  const { clients: limit } = featureAccess.getTrainerLimits(user);
+  const { seats: limit } = featureAccess.trainerPlan(user);
   const relations = await TrainerClient.find({ trainerId, status: { $in: BILLABLE_STATUSES } })
     .select("clientId clientEmail invitedAt").sort({ invitedAt: 1, _id: 1 }).lean();
   const usage = billableKeys(relations).size;
   const candidates = [...new Set(relations.filter((r) => r.clientId).map((r) => String(r.clientId)))];
   const locked = user?.trainerSeats?.lockedUntil && new Date(user.trainerSeats.lockedUntil) > new Date()
     ? new Date(user.trainerSeats.lockedUntil) : null;
-  if (limit >= Number.MAX_SAFE_INTEGER || candidates.length <= limit) {
+  if (candidates.length <= limit) {
     return { overLimit: false, limit, usage, candidates, active: new Set(candidates), autoSelected: false, lockedUntil: locked };
   }
   const chosen = (user?.trainerSeats?.clientIds || []).map(String)
@@ -74,7 +77,7 @@ async function listSeats(trainerId) {
   const byId = new Map(users.map((u) => [String(u._id), u]));
   return {
     overLimit: state.overLimit,
-    limit: state.limit >= Number.MAX_SAFE_INTEGER ? null : state.limit,
+    limit: state.limit,
     usage: state.usage,
     autoSelected: state.autoSelected,
     lockedUntil: state.lockedUntil,
@@ -121,4 +124,20 @@ async function setSeats(trainerId, clientIds) {
   return listSeats(trainerId);
 }
 
-module.exports = { seatState, isReadOnly, rejectIfReadOnly, listSeats, setSeats, READ_METHODS };
+// Al aceptar una invitación: la persona pasa de reservar plaza a ocuparla. Si el entrenador ya
+// redujo sus plazas y no queda ninguna libre, la invitación sigue pendiente (no se cancela) hasta
+// que haya sitio. Quien ya ocupa plaza con otro scope no necesita otra. Se llama dentro del
+// bloqueo de admisión del entrenador (trainerBilling/adapter.js#withClientAdmission).
+async function assertSeatForAcceptance(trainerId, clientId, capacity) {
+  const relations = await TrainerClient.find({ trainerId, status: { $in: OCCUPYING_STATUSES } })
+    .select("clientId clientEmail").lean();
+  const keys = billableKeys(relations);
+  if (keys.has(`id:${clientId}`) || keys.size < capacity) return;
+  const error = new Error("Tu profesional no tiene ahora mismo una plaza libre. Pídele que amplíe sus plazas o vuelve a intentarlo más tarde.");
+  error.status = 409;
+  error.code = "SEAT_UNAVAILABLE";
+  throw error;
+}
+
+module.exports = { seatState, isReadOnly, rejectIfReadOnly, listSeats, setSeats, assertSeatForAcceptance, READ_METHODS,
+  BILLABLE_STATUSES };

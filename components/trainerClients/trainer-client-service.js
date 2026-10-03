@@ -1,7 +1,6 @@
 const trainerClientDao = require("./trainer-client-dao");
 const userSchema = require("../users/schema");
 const mail = require("../util/mail");
-const featureAccessService = require("../billing/feature-access-service");
 const clientIntakeDao = require("../clientIntake/client-intake-dao");
 const trainerIntakeConfigService = require("../trainerIntakeConfig/trainer-intake-config-service");
 const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-preferences-dao");
@@ -10,6 +9,7 @@ const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-ser
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { todayIsoDate } = require("../util/date-util");
 const { intakePendingOnAccept, intakeStatusFor } = require("./intake-pending");
+const { isOldEnough } = require("../users/age-policy");
 
 // Datos de perfil que el intake confirma y reescribe en `User` (los metió el
 // cliente al registrarse). Rangos = los mismos que valida el schema / sign-up.
@@ -19,7 +19,7 @@ function extractUserProfilePatch(data) {
   if (num(data.weight) >= 30 && num(data.weight) <= 300) patch.weight = num(data.weight);
   if (num(data.height) >= 70 && num(data.height) <= 300) patch.height = num(data.height);
   if (data.sex === 0 || data.sex === 1) patch.sex = data.sex;
-  if (data.birth && !Number.isNaN(new Date(data.birth).getTime())) patch.birth = new Date(data.birth);
+  if (data.birth && isOldEnough(data.birth)) patch.birth = new Date(data.birth);
   // steps/activity/training llegan ya resueltos al `.value` numérico del
   // enum (mismo criterio que sign-up: el front tiene las constantes).
   // Rangos de los .value de los enums: STEPS 1-1.86, ACTIVITY 1.15-1.75,
@@ -196,11 +196,8 @@ module.exports = {
       return results;
     };
 
-    const usesStripe = process.env.TRAINER_BILLING_ENABLED === "1" &&
-      trainerUser.professionalPremium?.source === "stripe";
-    const results = usesStripe
-      ? await require("../trainerBilling/adapter").withClientAdmission(String(trainerId), createInvites)
-      : await createInvites(featureAccessService.getTrainerLimits(trainerUser).clients);
+    // Invitar nunca compra plazas: sin plaza libre se rechaza y la app lleva a Suscripción.
+    const results = await require("../trainerBilling/adapter").withClientAdmission(String(trainerId), createInvites);
 
     // El correo se envía después de soltar el lease; no retrasa otras operaciones.
     const created = results.filter((r) => r.success);
@@ -291,17 +288,20 @@ module.exports = {
     // 2026-09 — aceptar formaliza la relación al momento: "active" y el
     // cliente ya sale en Clientes. El cuestionario inicial queda pendiente
     // aparte (intakePending), sin bloquear la app del cliente ni esperar a
-    // que el profesional confirme nada.
-    const activeWithTrainer = await trainerClientDao.findByTrainerAndClientInStatuses(
-      invitation.trainerId,
-      clientUser._id,
-      ["active"]
-    );
-
-    const updated = await trainerClientDao.updateStatus(invitation._id, "active", {
-      clientId: clientUser._id,
-      respondedAt: new Date(),
-      intakePending: intakePendingOnAccept(activeWithTrainer),
+    // que el profesional confirme nada. La plaza se comprueba y se ocupa bajo
+    // el mismo bloqueo que las altas del entrenador.
+    const updated = await require("../trainerBilling/adapter").withClientAdmission(String(invitation.trainerId), async (_admission, capacity) => {
+      await require("./trainer-seat-service").assertSeatForAcceptance(invitation.trainerId, clientUser._id, capacity);
+      const activeWithTrainer = await trainerClientDao.findByTrainerAndClientInStatuses(
+        invitation.trainerId,
+        clientUser._id,
+        ["active"]
+      );
+      return trainerClientDao.updateStatus(invitation._id, "active", {
+        clientId: clientUser._id,
+        respondedAt: new Date(),
+        intakePending: intakePendingOnAccept(activeWithTrainer),
+      });
     });
     await notificationDao.createForTrainer(invitation.trainerId, clientUser._id, "invite_accepted", {
       scope: invitation.scope,

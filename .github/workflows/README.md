@@ -39,7 +39,7 @@ Lo que obligatoriamente difiere entre PRE y PRO:
   no valga en PRO.
 - `STRIPE_*`: claves de test en PRE, live en PRO.
 - `R2_*` / `BUNNY_*`: buckets y librerías distintas.
-- `TRAINER_BILLING_FRONTEND_URL`, `VERIFY_BASE_URL`, `SERVER_DOMAIN`: apuntan a
+- `STRIPE_RETURN_URL`, `VERIFY_BASE_URL`, `SERVER_DOMAIN`: apuntan a
   `trainers-pre.trainfit.net` / `trainers.trainfit.net`.
 
 ## Despliegue de PRO

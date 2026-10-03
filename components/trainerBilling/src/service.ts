@@ -3,7 +3,7 @@ import { CATALOG, FREE_SEATS, PlanState, isTier, sameState, seatsOf, tierRank } 
 import { parseTarget, publicPlans, requireReady, stateView } from "./config";
 import { classifyInvoice, fundingRole } from "./financing";
 import { MONEY_EVENT_TYPES, checkoutKey, encodeTarget } from "./stripe-gateway";
-import { AccessAdjustment, AccessSnapshot, Account, Actor, AdminAction, BillingCase, BillingDetails, BillingError, CaseSuggestion, ChangeKind, ChangeQuote, Config, DisputeView, EventRecord, Financed, FraudWarningView, FundingRole, Gateway, Intervention, Interval, Notifier, PaymentContext, Projection, Repository, Session, Subscription, Tier, User } from "./types";
+import { AccessAdjustment, AccessSnapshot, Account, Actor, AdminAction, BillingCase, BillingDetails, BillingError, CaseSuggestion, ChangeKind, ChangeQuote, Config, DisputeView, EventRecord, Financed, FraudWarningView, FundingRole, Gateway, Intervention, Interval, Notifier, PaymentContext, Projection, Repository, Session, Subscription, TermsAcceptance, Tier, User } from "./types";
 
 const TERMINAL = new Set(["canceled", "incomplete_expired"]);
 // Disputa abierta (incluidas las consultas previas); el resto de estados son cierres.
@@ -324,6 +324,7 @@ export class TrainerBillingService {
         nextRenewal: { at: new Date((preview.renewalAt || sub.currentPeriodEnd) * 1000), amount: preview.renewalAmount, estimated: true,
           excludesTax: Boolean(preview.renewalExcludesTax) },
         seats, readOnlyAfter: kind === "scheduled" ? Math.max(0, seats.occupied - seatsOf(target)) : 0,
+        termsUrl: this.config.termsUrl || null,
         subscriptionId: sub.id, snapshot: subscriptionSnapshot(sub), prorationDate, periodEnd: sub.currentPeriodEnd,
         previousScheduleId: sub.scheduleId || undefined, ...items };
       account.quote = quote;
@@ -331,9 +332,15 @@ export class TrainerBillingService {
       return publicQuote(quote);
     });
   }
-  async changePlan(userId: string, quoteId: unknown) {
+  // termsUrl: las condiciones que el entrenador tenía delante al confirmar. Si ya no son las vigentes,
+  // se le pide revisar de nuevo: nunca se registra la aceptación de un texto que no ha visto.
+  async changePlan(userId: string, quoteId: unknown, termsUrl?: unknown) {
     requireReady(this.config);
     if (typeof quoteId !== "string" || !/^trainers-checkout-[a-f0-9]{40}$/.test(quoteId)) throw new BillingError("INVALID_QUOTE", "La propuesta no es válida.", 400);
+    const terms = this.config.termsUrl || null;
+    if (terms && termsUrl !== terms) {
+      throw new BillingError("TERMS_CHANGED", "Las condiciones de contratación han cambiado. Revísalas y vuelve a confirmar.");
+    }
     return this.repository.withLock(userId, async (account, save) => {
       this.ensureOpen(account);
       if (account.change?.quote.quoteId === quoteId) {
@@ -357,6 +364,7 @@ export class TrainerBillingService {
       // Persist intent before any mutation. All retries retain the same quote,
       // proration timestamp and Stripe idempotency key, including lost responses.
       account.change = { quote, startedAt: new Date(), status: "processing" };
+      if (terms) this.acceptTerms(account, { at: new Date(), via: "change", ref: quote.quoteId, termsUrl: terms });
       await save();
       await this.refresh(account, save);
       return { status: account.change.status, paymentActionUrl: account.pendingPayment?.url };
@@ -471,9 +479,14 @@ export class TrainerBillingService {
   }
   // Aceptación de las condiciones en Checkout: queda registrada con la sesión y la URL vigente.
   private async recordConsent(account: Account, save: () => Promise<void>, session: Session): Promise<void> {
-    if (!session.termsAccepted || account.termsAcceptance?.sessionId === session.id || !this.sessionOwned(session, account)) return;
-    account.termsAcceptance = { at: new Date(), sessionId: session.id, termsUrl: this.config.termsUrl || null };
+    if (!session.termsAccepted || account.termsAcceptance?.ref === session.id || !this.sessionOwned(session, account)) return;
+    this.acceptTerms(account, { at: new Date(), via: "checkout", ref: session.id, termsUrl: this.config.termsUrl || null });
     await save();
+  }
+  // Se añade al historial (los últimos 50) sin borrar nunca una aceptación anterior.
+  private acceptTerms(account: Account, acceptance: TermsAcceptance): void {
+    account.termsAcceptance = acceptance;
+    account.termsHistory = [...(account.termsHistory || []), acceptance].slice(-50);
   }
   // Facturas y método de pago de la propia cuenta, leídos de Stripe (solo lectura).
   async billingDetails(userId: string): Promise<BillingDetails> {
@@ -781,7 +794,8 @@ export class TrainerBillingService {
         adjustments: account.adjustments || [], renewal: account.renewal || null, renewalPayment: account.renewalPayment || null,
         change: account.change ? { status: account.change.status, from: account.change.quote.from, to: account.change.quote.to,
           effectiveAt: account.change.quote.effectiveAt } : null,
-        termsAcceptance: account.termsAcceptance || null, deletedAt: account.deletedAt || null,
+        termsAcceptance: account.termsAcceptance || null, termsHistory: (account.termsHistory || []).slice(-10).reverse(),
+        deletedAt: account.deletedAt || null,
       } : null,
       access: access ? { entitled: access.entitled, tier: access.tier, interval: access.interval, seats: access.seats,
         expiresAt: access.expiresAt, basis: access.basis, revokedUntil: access.revokedUntil } : null,

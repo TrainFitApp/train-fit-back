@@ -179,13 +179,40 @@ test("las invitaciones canceladas o rechazadas liberan plaza", async () => {
   assert.equal((await invite(trainer, await ctx.makeClient(), ["training"])).status, 201);
 });
 
-test("plan Pro: 15 clientes; un premium caducado vuelve a 3", async () => {
-  const pro = await ctx.makeTrainer({ fields: { professionalPremium: { entitled: true, tier: "trainer_pro", expiresAt: new Date(Date.now() + 86400000) } } });
-  for (let i = 0; i < 5; i += 1) assert.equal((await invite(pro, await ctx.makeClient(), ["training"])).status, 201);
+test("las plazas contratadas mandan: Free con 2 plazas adicionales admite 5; un plan caducado vuelve a 3", async () => {
+  const paid = (expiresAt) => ({ professionalPremium: { entitled: true, tier: "free", interval: "monthly", seats: 5, expiresAt,
+    stripeMode: "test" } });
+  const trainer = await ctx.makeTrainer({ fields: paid(new Date(Date.now() + 86400000)) });
+  for (let i = 0; i < 5; i += 1) assert.equal((await invite(trainer, await ctx.makeClient(), ["training"])).status, 201);
+  const sixth = await invite(trainer, await ctx.makeClient(), ["training"]);
+  assert.equal(sixth.status, 403, "invitar nunca compra plazas");
+  assert.equal(sixth.body.code, "TRAINER_LIMIT_REACHED");
 
-  const lapsed = await ctx.makeTrainer({ fields: { professionalPremium: { entitled: true, tier: "trainer_pro", expiresAt: new Date(Date.now() - 1000) } } });
+  const lapsed = await ctx.makeTrainer({ fields: paid(new Date(Date.now() - 1000)) });
   for (let i = 0; i < 3; i += 1) await invite(lapsed, await ctx.makeClient(), ["training"]);
   assert.equal((await invite(lapsed, await ctx.makeClient(), ["training"])).status, 403);
+});
+
+test("si las plazas bajan, una invitación pendiente no se cancela pero no se puede aceptar hasta que haya sitio", async () => {
+  const trainer = await ctx.makeTrainer({ fields: { professionalPremium: { entitled: true, tier: "free", interval: "monthly", seats: 4,
+    expiresAt: new Date(Date.now() + 86400000), stripeMode: "test" } } });
+  const clients = [];
+  for (let i = 0; i < 4; i += 1) clients.push(await ctx.makeClient());
+  const relations = [];
+  for (const c of clients) relations.push((await invite(trainer, c, ["training"])).body.results[0].relation);
+  // Termina el periodo pagado: vuelve a Free con 3 plazas y 4 invitaciones reservadas.
+  await trainer.doc.constructor.updateOne({ _id: trainer._id }, { $set: { "professionalPremium.expiresAt": new Date(Date.now() - 1000) } });
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await ctx.call(clients[i], "POST", `/trainer/invites/${relations[i]._id}/accept`)).status, 200);
+  }
+  const late = await ctx.call(clients[3], "POST", `/trainer/invites/${relations[3]._id}/accept`);
+  assert.equal(late.status, 409);
+  assert.equal(late.body.code, "SEAT_UNAVAILABLE");
+  const pending = await ctx.get(clients[3], "/trainer/invites/mine");
+  assert.equal(pending.length, 1, "la invitación sigue pendiente");
+  // Al liberar una plaza (el entrenador termina con un cliente), ya se puede aceptar.
+  assert.equal((await ctx.call(trainer, "DELETE", `/trainer/clients/${clients[0].id}?scope=training`)).status, 200);
+  assert.equal((await ctx.call(clients[3], "POST", `/trainer/invites/${relations[3]._id}/accept`)).status, 200);
 });
 
 test("por encima del plan: los clientes más recientes quedan en SOLO LECTURA (leer sí, escribir CLIENT_READ_ONLY)", async () => {

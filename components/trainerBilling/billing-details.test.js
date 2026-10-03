@@ -1,28 +1,25 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { loadConfig } = require("../../.build/trainer-billing/config");
 const { StripeGateway } = require("../../.build/trainer-billing/stripe-gateway");
 const { TrainerBillingService } = require("../../.build/trainer-billing/service");
+const { admissionSeats, billingMetadata } = require("../../.build/trainer-billing/runtime");
+const { stateView } = require("../../.build/trainer-billing/config");
+const { catalogStripePrices, priceId, sandboxConfig, state, subscription } = require("./test-support");
 
 // Facturas, método de pago y desglose del prorrateo: todo sale de Stripe; aquí
 // solo se comprueba el filtrado de seguridad y el etiquetado, sin red.
 function fixture() {
-  const config = loadConfig({ NODE_ENV: "test", TRAINER_BILLING_ENABLED: "1",
-    STRIPE_KEY: ["rk", "test", "fakeForUnitTests"].join("_"), STRIPE_WEBHOOK_SECRET: ["whsec", "fakeForUnitTests"].join("_"),
-    STRIPE_TRAINER_PORTAL_CONFIGURATION_ID: "bpc_unit", TRAINER_BILLING_TAX_POLICY: "test_no_tax",
-    STRIPE_TRAINER_PRO_MONTHLY_PRICE_ID: "price_promonthly", STRIPE_TRAINER_PRO_ANNUAL_PRICE_ID: "price_proannual",
-    STRIPE_TRAINER_GROWTH_MONTHLY_PRICE_ID: "price_growthmonthly", STRIPE_TRAINER_GROWTH_ANNUAL_PRICE_ID: "price_growthannual",
-    STRIPE_TRAINER_SCALE_MONTHLY_PRICE_ID: "price_scalemonthly", STRIPE_TRAINER_SCALE_ANNUAL_PRICE_ID: "price_scaleannual" });
+  const config = sandboxConfig();
   return { config, gateway: new StripeGateway(config) };
 }
-const line = (price, amount, proration, start = 1000, end = 2000) => ({ amount,
+const line = (price, amount, proration, start = 1000, end = 2000, quantity = 1) => ({ amount, quantity,
   pricing: { price_details: { price } }, period: { start, end },
   parent: { type: "subscription_item_details", subscription_item_details: { proration, subscription_item: "si_1" } } });
 
 test("invoice history keeps only this customer's finalized invoices and Stripe-hosted links", async (t) => {
   const { gateway } = fixture();
   const base = { livemode: false, customer: "cus_me", currency: "eur", total: 2900, amount_paid: 2900, amount_due: 0,
-    created: 1790000000, lines: { data: [line("price_promonthly", 2900, false)] } };
+    created: 1790000000, lines: { data: [line(priceId("base", "starter", "monthly"), 2900, false)] } };
   t.mock.method(gateway.stripe.invoices, "list", async (params) => {
     assert.equal(params.customer, "cus_me");
     return { data: [
@@ -65,39 +62,43 @@ test("the payment method is optional: a permission error hides it instead of fai
   assert.deepEqual(await gateway.billingDetails("cus_me", "sub_me"), { invoices: [], paymentMethod: null });
 });
 
-test("an immediate change quote itemises Stripe's credit and charge lines by plan", async (t) => {
-  const { gateway, config } = fixture();
+test("el desglose de la propuesta etiqueta cuota y plazas por plan y nunca muestra líneas ajenas al catálogo", async (t) => {
+  const { gateway } = fixture();
+  const prices = catalogStripePrices();
+  t.mock.method(gateway.stripe.prices, "list", async () => ({ data: structuredClone(prices) }));
+  t.mock.method(gateway.stripe.prices, "retrieve", async (id) => ({ id, livemode: false, metadata: {}, type: "one_time" }));
   t.mock.method(gateway.stripe.invoices, "createPreview", async (params) => ({ livemode: false, currency: "eur",
     amount_due: 2000, ending_balance: 0, lines: { has_more: false, data: params.subscription_details.proration_behavior === "none"
-      ? [line("price_growthmonthly", 4900, false)]
-      : [line("price_promonthly", -2900, true), line("price_growthmonthly", 4900, true), line("price_unknown", 100, true)] } }));
-  const sub = { id: "sub_me", itemId: "si_1", priceId: "price_promonthly", currentPeriodEnd: 2000 };
-  const price = config.plans.find((plan) => plan.tier === "trainer_growth").prices.monthly;
-  const preview = await gateway.previewChange(sub, price, "immediate", 1000);
+      ? [line(priceId("base", "professional", "monthly"), 4900, false)]
+      : [line(priceId("base", "starter", "monthly"), -1450, true), line(priceId("seat", "starter", "monthly"), -250, true, 1000, 2000, 5),
+        line(priceId("base", "professional", "monthly"), 2450, true), line("price_unknown", 100, true)] } }));
+  const preview = await gateway.previewChange(subscription(state("starter", "monthly", 5)), state("professional"), "immediate", 1000);
   assert.equal(preview.amountDueNow, 2000);
-  assert.deepEqual(preview.lines.map((entry) => [entry.kind, entry.tier, entry.amount]), [
-    ["credit", "trainer_pro", -2900], ["charge", "trainer_growth", 4900],
+  assert.deepEqual(preview.lines.map((entry) => [entry.kind, entry.item, entry.tier, entry.quantity, entry.amount]), [
+    ["credit", "base", "starter", 1, -1450], ["credit", "seat", "starter", 5, -250], ["charge", "base", "professional", 1, 2450],
   ], "lines outside the catalog are never shown");
-  const scheduled = await gateway.previewChange({ ...sub, priceId: "price_growthmonthly" },
-    config.plans.find((plan) => plan.tier === "trainer_pro").prices.monthly, "scheduled", 1000);
-  assert.deepEqual(scheduled.lines, [], "nothing is charged today for a scheduled change");
 });
 
-test("the renewal exposes which plan Stripe will charge and whether it is discounted", () => {
-  const { billingMetadata } = require("../../.build/trainer-billing/runtime");
-  const { config } = fixture();
-  const account = { userId: "u1", mode: "test", status: "active", tier: "trainer_scale", interval: "monthly",
+test("la ficha expone lo contratado, el cambio programado y el plan que cobrará Stripe en la renovación", () => {
+  const config = sandboxConfig();
+  const account = { userId: "u1", mode: "test", status: "active", tier: "starter", interval: "monthly", extraSeats: 10,
     subscriptionId: "sub_1", customerId: "cus_1", paidUntil: new Date(Date.now() + 86400000), cancelAtPeriodEnd: false,
-    renewal: { at: new Date("2026-10-18T00:00:00Z"), amount: 4410, subtotal: 4900, priceId: "price_growthmonthly", fingerprint: "x" } };
-  const { billing } = billingMetadata({ ...config, enabled: true, errors: [] }, account, "stripe");
-  assert.equal(billing.renewal.tier, "trainer_growth", "a scheduled phase is reported, not the current plan");
-  assert.equal(billing.renewal.interval, "monthly");
+    provider: { latestInvoiceStatus: "paid" },
+    change: { status: "scheduled", quote: { to: stateView(state("starter", "monthly", 2)), effectiveAt: new Date("2026-10-18T00:00:00Z") } },
+    renewal: { at: new Date("2026-10-18T00:00:00Z"), amount: 2790, subtotal: 3100, state: state("starter", "monthly", 2), fingerprint: "x" } };
+  const { billing } = billingMetadata(config, account);
+  assert.deepEqual(billing.current, { tier: "starter", interval: "monthly", extraSeats: 10, seats: 30, amount: 3900 });
+  assert.equal(billing.pendingChange.seats, 22);
+  assert.equal(billing.renewal.state.seats, 22, "a scheduled phase is reported, not the current plan");
   assert.equal(billing.renewal.discounted, true);
-  const plain = billingMetadata({ ...config, enabled: true, errors: [] },
-    { ...account, renewal: { ...account.renewal, amount: 4900 } }, "stripe").billing.renewal;
-  assert.equal(plain.discounted, false);
-  const cancelling = billingMetadata({ ...config, enabled: true, errors: [] }, { ...account, cancelAtPeriodEnd: true }, "stripe");
-  assert.equal(cancelling.billing.renewal, null, "no renewal is announced once cancelled");
+  assert.equal(billingMetadata(config, { ...account, renewal: { ...account.renewal, amount: 3100 } }).billing.renewal.discounted, false);
+  assert.equal(billingMetadata(config, { ...account, cancelAtPeriodEnd: true }).billing.renewal, null, "no renewal is announced once cancelled");
+  // Con la bajada programada, las altas nuevas ya cuentan con las plazas del destino.
+  assert.equal(admissionSeats(30, account), 22);
+  assert.equal(admissionSeats(30, { ...account, change: { ...account.change, status: "applied" } }), 30);
+  assert.equal(admissionSeats(3, null), 3);
+  // Free sin suscripción: nada contratado que gestionar.
+  assert.equal(billingMetadata(config, null).billing.current, null);
 });
 
 test("billing details are empty for accounts without a Stripe customer or pending deletion", async () => {

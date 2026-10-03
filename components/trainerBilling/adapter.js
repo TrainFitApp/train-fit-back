@@ -14,13 +14,10 @@ function getRuntime() {
   const { createRuntime } = require("../../.build/trainer-billing/runtime");
   const User = require("../users/schema");
   runtime = createRuntime({
-    async clientUsage(id) {
-      const keys = await require("../trainerClients/trainer-client-dao").getBillableClientKeys(id);
-      return keys.size;
-    },
+    seatUsage: (id) => require("../trainerClients/trainer-client-dao").getSeatUsage(id),
     async getUser(id) {
-      const user = await User.findById(id).select("email professionalPremium").lean();
-      return user ? { id: String(user._id), email: user.email, professionalPremium: user.professionalPremium } : null;
+      const user = await User.findById(id).select("email").lean();
+      return user ? { id: String(user._id), email: user.email } : null;
     },
     async project(account, value) {
       // Fencing: una escritura antigua nunca puede sobrescribir una proyección nueva.
@@ -39,21 +36,23 @@ function adminUserId(value) {
   throw new BillingError("INVALID_USER", "Entrenador no válido.", 400);
 }
 
+// Plan, plazas (contratadas, ocupadas, reservadas y libres) y estado de la facturación.
 async function getEntitlements(userId) {
   const User = require("../users/schema");
   const featureAccess = require("../billing/feature-access-service");
   const trainerClientDao = require("../trainerClients/trainer-client-dao");
-  const { billingMetadata } = require("../../.build/trainer-billing/runtime");
-  const user = await User.findById(userId);
-  const usage = await trainerClientDao.getBillableClientKeys(userId);
+  const { billingMetadata, admissionSeats } = require("../../.build/trainer-billing/runtime");
+  const user = await User.findById(userId).select("professionalPremium").lean();
+  const usage = await trainerClientDao.getSeatUsage(userId);
   const current = getRuntime();
   const account = await current.repository.get(String(userId));
-  const source = user?.professionalPremium?.source || null;
-  const entitlements = featureAccess.buildTrainerEntitlements(user, usage.size);
-  return { ...entitlements,
-    // Plan de pago que no gestiona Stripe (RevenueCat Pro 15, Unlimited): la UI no ofrece cambios.
-    legacy: Boolean(entitlements.isPremium && source !== "stripe"),
-    ...billingMetadata(current.config, account, source) };
+  const plan = featureAccess.trainerPlan(user);
+  // Con una bajada programada, las altas nuevas ya cuentan con las plazas del destino.
+  const admission = admissionSeats(plan.seats, account);
+  return { isPremium: plan.paid, tier: plan.tier, interval: plan.interval, expiresAt: plan.expiresAt,
+    seats: { capacity: plan.seats, occupied: usage.occupied, reserved: usage.reserved, admission,
+      available: Math.max(0, admission - usage.occupied - usage.reserved) },
+    ...billingMetadata(current.config, account) };
 }
 
 function sendError(res, error) {
@@ -74,12 +73,12 @@ function handler(action) {
 const controller = {
   plans: handler(() => getRuntime().service.plans()),
   entitlements: handler((req) => getEntitlements(String(req.user._id))),
-  checkout: handler((req) => getRuntime().service.checkout(String(req.user._id), req.body?.tier, req.body?.interval)),
+  checkout: handler((req) => getRuntime().service.checkout(String(req.user._id), req.body)),
   portal: handler((req) => getRuntime().service.portal(String(req.user._id))),
   billingDetails: handler((req) => getRuntime().service.billingDetails(String(req.user._id))),
-  changePreview: handler((req) => getRuntime().service.previewChange(String(req.user._id), req.body?.tier, req.body?.interval)),
+  changePreview: handler((req) => getRuntime().service.previewChange(String(req.user._id), req.body)),
   changePlan: handler(async (req) => {
-    const result = await getRuntime().service.changePlan(String(req.user._id), req.body?.quoteId);
+    const result = await getRuntime().service.changePlan(String(req.user._id), req.body?.quoteId, req.body?.termsUrl);
     return { ...result, entitlements: await getEntitlements(String(req.user._id)) };
   }),
   cancel: handler(async (req) => {
@@ -118,19 +117,21 @@ const controller = {
 
 module.exports = {
   controller, getRuntime, getEntitlements,
+  // Altas y aceptaciones bajo el mismo bloqueo por entrenador que los cambios de suscripción: dos
+  // invitaciones a la vez nunca ocupan la misma última plaza. No necesita Stripe (vale con Free).
+  // action(admission, capacity): plazas para altas nuevas (con una bajada programada, las del
+  // destino) y plazas contratadas hoy (las que puede ocupar una invitación ya reservada).
   async withClientAdmission(userId, action) {
     const current = getRuntime();
-    const { requireReady } = require("../../.build/trainer-billing/config");
-    requireReady(current.config);
+    const { admissionSeats } = require("../../.build/trainer-billing/runtime");
     return current.repository.withLock(String(userId), async (account) => {
       const user = await require("../users/schema").findById(userId).select("professionalPremium").lean();
-      const limit = require("../billing/feature-access-service").getTrainerLimits(user).clients;
-      const target = account.change && ["processing", "scheduled", "payment_pending"].includes(account.change.status)
-        ? account.change.quote.to.clientLimit : limit;
-      return action(Math.min(limit, target));
+      const { seats } = require("../billing/feature-access-service").trainerPlan(user);
+      return action(admissionSeats(seats, account), seats);
     });
   },
-  start: () => { if (process.env.TRAINER_BILLING_ENABLED === "1") getRuntime().startReconciliation(); },
+  // Sin STRIPE_KEY la facturación está apagada y no hace falta cargar nada.
+  start: () => { if (process.env.STRIPE_KEY) getRuntime().startReconciliation(); },
   async prepareDeletion(id) {
     try { await getRuntime().service.prepareDeletion(String(id)); }
     catch (error) {

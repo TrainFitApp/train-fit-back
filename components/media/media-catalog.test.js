@@ -181,17 +181,24 @@ test("extensionFor no distingue mayúsculas y tiene salida para lo desconocido",
 
 // --- cupo de biblioteca del entrenador --------------------------------------
 
-test("el cupo de biblioteca sube con el plan del profesional", () => {
-  const quotaOf = (tier) => libraryBytesFor({ professionalPremium: { entitled: true, tier } });
-  assert.ok(quotaOf("trainer_pro") < quotaOf("trainer_growth"));
-  assert.ok(quotaOf("trainer_growth") < quotaOf("trainer_scale"));
+// El cupo sale del plan vigente (feature-access-service#trainerPlan) y del catálogo de facturación.
+const plan = (tier, extra = {}) => ({ professionalPremium: { entitled: true, tier, interval: "monthly", seats: 20,
+  expiresAt: new Date(Date.now() + 60000), stripeMode: "test", ...extra } });
+
+test("el cupo de biblioteca sube con el plan del profesional, no con sus plazas", () => {
+  const GB = 1024 ** 3;
+  assert.equal(libraryBytesFor(plan("starter")), 10 * GB);
+  assert.equal(libraryBytesFor(plan("professional")), 25 * GB);
+  assert.equal(libraryBytesFor(plan("scale")), 75 * GB);
+  assert.equal(libraryBytesFor(plan("starter", { seats: 40 })), 10 * GB);
 });
 
-test("sin plan activo se aplica el cupo gratuito", () => {
+test("sin plan vigente se aplica el cupo gratuito", () => {
   const free = libraryBytesFor({});
+  assert.equal(free, 2 * 1024 ** 3);
   assert.equal(libraryBytesFor(null), free);
-  assert.equal(libraryBytesFor({ professionalPremium: { entitled: false, tier: "trainer_scale" } }), free);
+  assert.equal(libraryBytesFor(plan("scale", { entitled: false })), free);
+  assert.equal(libraryBytesFor(plan("scale", { expiresAt: new Date(Date.now() - 1000) })), free, "un plan caducado no conserva el cupo");
   // Un tier desconocido no abre la mano: cae al gratuito.
-  assert.equal(libraryBytesFor({ professionalPremium: { entitled: true, tier: "inventado" } }), free);
-  assert.ok(free < libraryBytesFor({ professionalPremium: { entitled: true, tier: "trainer_pro" } }));
+  assert.equal(libraryBytesFor(plan("inventado")), free);
 });

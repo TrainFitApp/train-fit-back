@@ -1,6 +1,6 @@
 # Stripe en TrainFit Trainers — guía definitiva
 
-Actualizada: 01/10/2026 (Managed Payments). Alcance: la suscripción que los entrenadores pagan a TrainFit (Pro, Growth y Scale). No trata los cobros que los clientes pagan a sus entrenadores (`trainerPayments`), que son otra cosa.
+Actualizada: 02/10/2026 (facturación por plazas). Alcance: la suscripción que los entrenadores pagan a TrainFit (Free, Inicio, Profesional y Escala, con plazas adicionales). No trata los cobros que los clientes pagan a sus entrenadores (`trainerPayments`), que son otra cosa.
 
 Esta guía sustituye a `docs/TRAINERS_PAGOS_COMO_FUNCIONA.md`, `docs/TRAINERS_PAGOS_PRODUCCION.md` y `docs/TRAINERS_STRIPE_SANDBOX.md` de la carpeta raíz, que no están versionados. La referencia técnica está en [`components/trainerBilling/README.md`](../components/trainerBilling/README.md).
 
@@ -47,7 +47,7 @@ Esta guía sustituye a `docs/TRAINERS_PAGOS_COMO_FUNCIONA.md`, `docs/TRAINERS_PA
    - **01/10/2026: Managed Payments.** Stripe vende como comerciante registrado, a través de Link, y calcula, cobra, declara y paga el IVA. Motivo: todavía no hay alta fiscal.
    - Cuesta un 3,5 % adicional por cada transacción. Detalle en A0.
    - No resuelve el IRPF ni el alta en Hacienda por los ingresos que paga Stripe: eso lo decide la gestoría.
-   - Stripe Tax (`TRAINER_BILLING_TAX_POLICY=stripe_tax`) queda como alternativa para cuando haya NIF con IVA. Esa opción exige el registro de España (A4).
+   - Stripe Tax queda como alternativa para cuando haya NIF con IVA; desde el 02/10/2026 el código solo soporta Managed Payments y habría que volver a añadirlo (exige el registro de España, A4).
 8. **Soporte de facturación.** `facturacion@trainfit.net` (propuesto: hay que crearlo y comprobarlo). Primera respuesta humana en un día laborable; los cobros erróneos y los bloqueos de acceso tienen prioridad.
 9. **Dominios.**
    - Web de Trainers: `trainers.trainfit.net` (propuesto, pendiente de configurar).
@@ -90,7 +90,7 @@ Las rutas del Dashboard pueden cambiar de nombre. Si no encuentras una opción, 
   - **A6:** los recibos y las facturas de estas ventas los envía Link. El aviso anual de TrainFit (30 y 7 días antes) sigue saliendo igual.
   - **A9:** Stripe gestiona las disputas de estas ventas y presenta las pruebas. TrainFit sigue abriendo el caso y pausando los cobros según la decisión 4. Stripe puede reembolsar por su cuenta en los 60 días siguientes a la compra para evitar contracargos, y aplica el desistimiento de los consumidores de la UE.
 - **Código:**
-  - `TRAINER_BILLING_TAX_POLICY=managed_payments`.
+  - Siempre activo: no hay variable (02/10/2026).
   - El Checkout envía `managed_payments.enabled` y no envía `automatic_tax`, `tax_id_collection`, `customer_update`, `payment_method_configuration` ni `custom_text`.
   - Las bajadas programadas dejan que el calendario herede el emisor y el impuesto de Stripe.
 - **Verificado en el sandbox (01/10/2026)** con `node .stripe-local/claude/verify-managed.cjs start|finish|resume|clean`: 12/12 comprobaciones.
@@ -107,21 +107,21 @@ Las rutas del Dashboard pueden cambiar de nombre. Si no encuentras una opción, 
 - **Comprobación:** no quedan requisitos pendientes y los cobros y las transferencias figuran como activos.
   - `npm run billing:preflight` también lo comprueba si la clave puede leer la cuenta. Si no puede, muestra un aviso (!) y lo miras a mano.
 
-### A2. Productos, precios y periodicidades (sandbox: hechos; live: pendientes)
+### A2. Productos, precios y periodicidades (02/10/2026: pendientes en sandbox y en live)
 
-- **Dónde:** Catálogo de productos.
-- **Qué:** 3 productos con el código fiscal `txcd_10103001` (SaaS de uso empresarial). Cada uno lleva 2 precios **recurrentes en EUR, con el impuesto no incluido («exclusive»)**:
+- **Cómo:** `npm run stripe:catalog:dry-run` y después `npm run stripe:catalog`, una vez en cada cuenta. Crea 4 productos con el código fiscal `txcd_10103001` (SaaS de uso empresarial) y 11 precios **recurrentes en EUR, con el impuesto no incluido («exclusive»)**, cada uno con su lookup key y metadatos `trainfit_*`. Si la clave restringida no puede escribir precios, se ejecuta con `STRIPE_CATALOG_KEY`.
 
-  | Producto | Mensual | Anual |
-  | --- | ---: | ---: |
-  | TrainFit Trainers Pro (20 clientes) | 29,00 € | 297,00 € |
-  | TrainFit Trainers Growth (50 clientes) | 49,00 € | 509,00 € |
-  | TrainFit Trainers Scale (150 clientes) | 119,00 € | 1.209,00 € |
+  | Producto | Cuota mensual | Cuota anual | Plaza adicional | Plazas |
+  | --- | ---: | ---: | ---: | --- |
+  | Free (sin producto propio) | — | — | 3,00 €/mes | 3 incluidas, hasta 12 |
+  | TrainFit Trainers Inicio | 29,00 € | 290,00 € | 1,00 €/mes · 10,00 €/año | 20 incluidas, hasta 40 |
+  | TrainFit Trainers Profesional | 49,00 € | 490,00 € | 0,80 €/mes · 8,00 €/año | 50 incluidas, hasta 125 |
+  | TrainFit Trainers Escala | 109,00 € | 1.090,00 € | — | 150 (más: oferta a medida) |
 
-- **Origen de los valores:** catálogo confirmado (`components/trainerBilling/src/config.ts`).
-- **Después:** apunta los 6 identificadores `price_…` en las variables `STRIPE_TRAINER_{PRO|GROWTH|SCALE}_{MONTHLY|ANNUAL}_PRICE_ID`.
-- **Comprobación:** el preflight da ✔ en los 6 precios. El backend rechaza cualquier precio con otro importe, moneda, intervalo, modo o tratamiento del IVA.
-- **Sandbox (comprobado el 28/09/2026):** los 6 precios existen, son `exclusive` y llevan `txcd_10103001`.
+  Las plazas adicionales de todos los planes son precios del producto «TrainFit Trainers · Plaza adicional de cliente».
+- **Origen de los valores:** `components/trainerBilling/src/catalog.ts`. No hay IDs de precio en la configuración: el backend los busca por lookup key.
+- **Después:** archivar en el Dashboard los 3 productos y 6 precios del catálogo anterior (Pro, Growth, Scale).
+- **Comprobación:** el preflight da ✔ en las 11 piezas. El backend rechaza cualquier precio con otro importe, moneda, intervalo, modo o tratamiento del IVA.
 
 ### A3. Métodos de pago
 
@@ -129,7 +129,7 @@ Las rutas del Dashboard pueden cambiar de nombre. Si no encuentras una opción, 
 - **Qué:** crea una configuración propia de métodos de pago llamada, por ejemplo, «TrainFit Trainers».
   - **Activados:** tarjeta, Apple Pay, Google Pay y Link.
   - **Desactivado:** todo lo demás, SEPA incluido (fase 2). El sandbox tiene hoy activados además Klarna, Amazon Pay, Bancontact, BLIK y otros en su configuración predeterminada.
-- **Después:** apunta su identificador `pmc_…` en `STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID`. Checkout la usa en cada pago y el portal debe usar la misma (A5).
+- **02/10/2026:** con Managed Payments (A0) no se usa: los métodos los elige Stripe y ya no hay variable para esta configuración.
 - **Comprobación:** el preflight da ✔ en «Métodos de pago» y lista los activos.
   - Necesita permiso de lectura de configuraciones de métodos de pago. La clave del sandbox **no lo tiene** hoy: da aviso (!).
   - En live es obligatorio (✘ si falta).
@@ -163,7 +163,7 @@ Las rutas del Dashboard pueden cambiar de nombre. Si no encuentras una opción, 
    - web;
    - **email de soporte** `facturacion@trainfit.net` (cuando exista);
    - **URL de las condiciones de contratación** y **URL de privacidad**.
-   - Checkout exige que la URL de condiciones esté aquí para pedir su aceptación. La misma URL va en `TRAINER_BILLING_TERMS_URL`.
+   - Checkout exige que la URL de condiciones esté aquí para pedir su aceptación. La misma URL va en `STRIPE_TERMS_URL`.
 2. **Ajustes de Checkout** (`dashboard.stripe.com/settings/checkout`): activa mostrar el contacto de soporte y las políticas legales. No actives la devolución automática.
 3. **Portal de clientes** (Configuración → Facturación → Portal de clientes, `dashboard.stripe.com/settings/billing/portal`):
    - **Activado:**
@@ -174,7 +174,7 @@ Las rutas del Dashboard pueden cambiar de nombre. Si no encuentras una opción, 
    - **Desactivado:** cambiar de plan (TrainFit gestiona los cambios).
    - Enlaces a las condiciones y a la privacidad.
    - URL de vuelta: `https://<dominio de Trainers>/tabs/subscription`.
-   - Apunta el `bpc_…` en `STRIPE_TRAINER_PORTAL_CONFIGURATION_ID`.
+   - Debe ser la configuración **predeterminada** de la cuenta: el backend la busca sola (02/10/2026, ya no hay variable).
    - Comprobación: el preflight da ✔ en «Portal de clientes». Si falta algo, lista lo que falta.
 
 ### A6. Emails, recordatorios, descriptor y soporte
@@ -202,7 +202,7 @@ Las rutas del Dashboard pueden cambiar de nombre. Si no encuentras una opción, 
    - TrainFit mantiene el plan pagado 7 días más y después pasa a Free, aunque Stripe siga reintentando. Si el cobro entra más tarde, el acceso vuelve solo.
 5. **Soporte:**
    - crea y prueba `facturacion@trainfit.net`;
-   - ponlo en los datos públicos (paso 1) y en `TRAINER_BILLING_SUPPORT_EMAIL`;
+   - ponlo en los datos públicos (paso 1) y en `STRIPE_SUPPORT_EMAIL`;
    - la app lo muestra en la página de suscripción y los avisos por email responden a esa dirección.
 
 ### A7. Webhooks, credenciales y permisos
@@ -282,7 +282,7 @@ Entrenador (web de Trainers) ──► API TrainFit ──► Stripe Checkout / 
                                           trainerbillingevents (cada evento, una vez)
                                           trainerbillingcases (reembolsos, disputas, avisos de fraude)
                                           trainerbillinginterventions (decisiones de Gestión, con autor)
-Cada minuto (solo con TRAINER_BILLING_ENABLED=1): reintenta eventos, relee suscripciones, envía los
+Cada 15 minutos (solo con `STRIPE_KEY`): reintenta eventos, relee suscripciones, envía los
 avisos anuales y, cada 10 minutos, recupera de Stripe los eventos de dinero de las últimas 72 horas.
 ```
 
@@ -339,31 +339,23 @@ Cada intervención guarda la acción, el motivo (obligatorio), la nota, el autor
 
 ### C2. Variables del servidor (sin valores secretos aquí)
 
-Van en el entorno del backend de producción (el `.env` que usa PM2), **nunca** en el repositorio ni en el front. Plantilla comentada: `components/trainerBilling/production.env.example`.
+Van en el entorno del backend (el `.env` de PM2 en PRO, las variables de Render en PRE), **nunca** en el repositorio ni en el front. Plantilla: `.env.example`.
 
 ```
-TRAINER_BILLING_ENABLED=0                       # 1 solo tras el preflight en verde
-TRAINER_BILLING_MODE=live
-TRAINER_BILLING_TAX_POLICY=managed_payments    # o stripe_tax cuando haya NIF con IVA (A4)
-TRAINER_BILLING_FRONTEND_URL=https://<dominio de Trainers>
-TRAINER_BILLING_TERMS_URL=https://<URL de las condiciones>
-TRAINER_BILLING_SUPPORT_EMAIL=facturacion@trainfit.net
-STRIPE_KEY=rk_live_…
+STRIPE_KEY=rk_live_…                            # vacía = facturación apagada; rk_test_/sk_test_ en PRE
 STRIPE_WEBHOOK_SECRET=whsec_…
-STRIPE_TRAINER_PORTAL_CONFIGURATION_ID=bpc_…
-STRIPE_TRAINER_PAYMENT_METHOD_CONFIGURATION_ID=pmc_…  # solo con stripe_tax
-STRIPE_TRAINER_PRO_MONTHLY_PRICE_ID=price_…     # y los otros 5 precios
+STRIPE_RETURN_URL=https://<dominio de Trainers>
+STRIPE_TERMS_URL=https://<URL de las condiciones>
+STRIPE_SUPPORT_EMAIL=facturacion@trainfit.net
 CORS_EXTRA_ORIGINS=https://<dominio de Trainers>
 ```
 
 El código se niega a arrancar los pagos en live si:
-- la clave no es `rk_live_`;
-- la política fiscal no es `stripe_tax` ni `managed_payments`;
-- el frontend no es https;
-- faltan las condiciones o el buzón;
-- falta la configuración de métodos de pago (solo con `stripe_tax`; con Managed Payments los elige Stripe).
+- la clave no es `rk_live_` (en real solo claves restringidas);
+- la web de vuelta no es https;
+- faltan las condiciones o el buzón.
 
-El modo de pruebas no funciona con `NODE_ENV=production`.
+El IVA lo gestiona siempre Managed Payments; el portal es la configuración predeterminada de la cuenta.
 
 `CORS_EXTRA_ORIGINS` admite solo orígenes `https` exactos (sin ruta) y se implementó el 28/09/2026. Antes estaba en la documentación pero no en el código.
 
@@ -383,11 +375,11 @@ No hay entrenadores con planes antiguos. No hay que importar nada.
 1. Configura la parte A en **live** (1–2 horas). No actives nada todavía.
 2. Backend (Hetzner, compartido con la app de cliente):
    - `npm ci` con devDependencies (hace falta TypeScript) y `npm run build:ts`. PM2 arranca `bin/www` sin compilar: sin `.build` fallan los borrados de cuentas y las rutas de entrenador.
-   - Añade las variables de C2 **con `TRAINER_BILLING_ENABLED=0`** y ejecuta `pm2 reload train-fit-back`. La app de cliente no cambia.
+   - Añade las variables de C2 **sin `STRIPE_KEY` todavía** y ejecuta `npm run migrate:trainer-seats:dry-run`, `npm run migrate:trainer-seats` y `pm2 reload train-fit-back`. La app de cliente no cambia.
 3. Web de Trainers: corrige antes el bloqueo C1.5, ejecuta `npm run build:pro:t`, sírvela en `https://<dominio de Trainers>` y comprueba que llama a la API de producción.
 4. App de Gestión: despliégala como hoy (trae la pantalla «Facturación Trainers»).
-5. En el servidor, ejecuta `npm run billing:preflight`. Todo debe salir en ✔; cada aviso (!) se comprueba a mano en el Dashboard.
-6. Pon `TRAINER_BILLING_ENABLED=1` y ejecuta `pm2 reload train-fit-back`.
+5. En el servidor, con `STRIPE_KEY` en el entorno de la shell, ejecuta `npm run stripe:catalog` (si falta) y `npm run billing:preflight`. Todo debe salir en ✔; cada aviso (!) se comprueba a mano en el Dashboard.
+6. Añade `STRIPE_KEY` al `.env` y ejecuta `pm2 reload train-fit-back`.
 7. Prueba real controlada (C7) antes de anunciar nada.
 
 ### C5. Comprobaciones antes y después
@@ -404,7 +396,7 @@ No hay entrenadores con planes antiguos. No hay que importar nada.
 
 ### C6. Reversión
 
-- **Freno de emergencia** (siempre la primera opción): `TRAINER_BILLING_ENABLED=0` y `pm2 reload train-fit-back`.
+- **Freno de emergencia** (siempre la primera opción): quita `STRIPE_KEY` del `.env` y ejecuta `pm2 reload train-fit-back`.
   - Se detienen las altas, los cambios y las intervenciones. El acceso ya pagado se mantiene hasta su fecha.
   - Los webhooks devuelven 503 y Stripe los reintenta hasta 3 días.
   - Al reactivar: la reconciliación relee las suscripciones y la recuperación trae los eventos de dinero de las últimas 72 horas.

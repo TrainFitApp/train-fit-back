@@ -2,10 +2,7 @@ node_modules
 .vscode
 file.log
 .env
-.env.stripe.local
 .build/
-.stripe-local/
 bash.exe.stackdump
 scripts/backups/
-.env.stripe.prod
 .media-local/

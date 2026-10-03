@@ -27,6 +27,13 @@ function handleKnownError(res, e) {
   if (e.code === "TRAINER_LIMIT_REACHED") {
     return res.status(403).send({ message: e.message, code: e.code });
   }
+  if (e.code === "SEAT_UNAVAILABLE") {
+    return res.status(409).send({ message: e.message, code: e.code });
+  }
+  // Bloqueo de admisión ocupado (otra alta o un cambio de suscripción a la vez): reintentable.
+  if (e.name === "BillingError" && e.status < 500) {
+    return res.status(e.status).send({ message: e.message, code: e.code });
+  }
   if (e.code === "FORBIDDEN") {
     return res.status(403).send({ message: e.message });
   }

@@ -104,28 +104,6 @@ module.exports = {
     );
   },
 
-  // MVP-trainers F02 — equivalentes de getEntitlements/restore para el
-  // profesional, leyendo User.professionalPremium y el nº de clientes
-  // ACTIVOS (no invitaciones pendientes) en vez de los límites de consumidor.
-  async getTrainerEntitlements(req, res) {
-    disableCache(res);
-    const user = req.user;
-    const activeClients = await trainerClientDao.findAllByTrainer(user._id, { status: "active" });
-    const distinctClientIds = new Set(activeClients.map((r) => String(r.clientId)));
-    return res.send(featureAccessService.buildTrainerEntitlements(user, distinctClientIds.size));
-  },
-
-  async restoreTrainer(req, res) {
-    const user = req.user;
-    if (user.professionalPremium?.source === "stripe") {
-      return res.status(409).send({ code: "STRIPE_MANAGED", message: "Actualiza esta suscripción desde la facturación de Trainers." });
-    }
-    // Solo el proveedor y la identidad autenticada pueden restaurar acceso profesional.
-    await billingService.restoreTrainerFromRevenueCat(user, String(user._id));
-
-    return res.send(await require("../trainerBilling/adapter").getEntitlements(String(user._id)));
-  },
-
   async revenueCatWebhook(req, res) {
     const isAuthorized = billingService.validateWebhookAuth(req);
     if (!isAuthorized) {

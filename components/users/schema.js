@@ -103,18 +103,19 @@ const UserSchema = new Schema({
     source: String,
     lastSyncAt: Date,
   },
-  // MVP-trainers F02: entitlement de `TrainFit: Entrenadores`, separado de
-  // `premium` (consumidor) a propósito — un mismo User puede en teoría ser
-  // profesional Y cliente (ver F27), y cada suscripción es independiente.
-  // Misma forma que `premium` para reutilizar la misma lógica de sync.
+  // Suscripción del entrenador a TrainFit, separada de `premium` (consumidor,
+  // RevenueCat). Solo la escribe la facturación de Trainers (Stripe) como
+  // proyección de su cuenta: plan, periodicidad y plazas de clientes contratadas
+  // (ver feature-access-service.js#trainerPlan).
   professionalPremium: {
     entitled: { type: Boolean, default: false },
-    plan: String,
-    // "trainer_pro" | "trainer_unlimited" — determina el límite de clientes
-    // aplicable (ver feature-access-service.js#getTrainerLimits).
+    // "free" | "starter" | "professional" | "scale" (trainerBilling/src/catalog.ts)
     tier: String,
+    // "monthly" | "annual"
+    interval: String,
+    // Plazas contratadas: las incluidas en el plan más las adicionales.
+    seats: Number,
     expiresAt: Date,
-    source: String,
     lastSyncAt: Date,
     stripeRevision: Number,
     stripeMode: String,
@@ -146,9 +147,11 @@ const UserSchema = new Schema({
   },
   provider: String,
   lang: { type: String, default: 'es' },
-  // Consentimiento explícito para guardar fotos y vídeos corporales (RGPD).
-  // null = aún no lo ha dado y no puede subir (docs/plan-medidas-multimedia.md).
+  // Consentimiento explícito para guardar fotos y vídeos corporales (RGPD),
+  // con la versión del texto aceptado. Sin él, o con una versión anterior a
+  // media-access#MEDIA_CONSENT_VERSION, no puede subir.
   mediaConsentAt: { type: Date, default: null },
+  mediaConsentVersion: { type: String, default: null },
 });
 
 UserSchema.plugin(require("mongoose-autopopulate"));

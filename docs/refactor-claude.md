@@ -118,7 +118,7 @@ Rutas nuevas registradas en `routes/index.js`:
 | Cron | Hora | Se apaga con |
 |---|---|---|
 | Conciliación de facturación RevenueCat | 04:00 (ya estaba) | `BILLING_RECONCILIATION_CRON` cambia la hora |
-| Conciliación de Stripe de trainers | cada 15 min | `TRAINER_BILLING_ENABLED` distinto de `1` |
+| Conciliación de Stripe de trainers | cada 15 min | sin `STRIPE_KEY` |
 
 Cuotas y avisos de cobro (`trainerPayments/`) **no tienen cron**: se ponen al día en la primera lectura de cada usuario (sus avisos, el contador, el Coach o Cobros) y quedan en memoria hasta el siguiente hito o medianoche. Ver `components/trainerPayments/README.md`.
 

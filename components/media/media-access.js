@@ -9,6 +9,16 @@ const { isoDate } = require("../util/date-util");
 // La regla de quién sube vive con el resto de límites de plan.
 const { canUploadMedia } = require("../billing/feature-access-service");
 
+// Versión del texto del consentimiento de fotos y vídeos que enseña la app
+// (MediaConsentSheetComponent). Si cambia lo que se le cuenta al usuario, se
+// sube la versión y la app vuelve a pedirlo antes de la siguiente subida.
+const MEDIA_CONSENT_VERSION = "2026-10";
+
+/** ¿Ha dado el consentimiento explícito vigente? */
+function hasMediaConsent(user) {
+  return Boolean(user?.mediaConsentAt) && user.mediaConsentVersion === MEDIA_CONSENT_VERSION;
+}
+
 /** Motivo por el que no puede subir, para que la app enseñe la card correcta. */
 function uploadBlockReason(user, hasActiveTrainerRelation = false) {
   if (canUploadMedia(user, hasActiveTrainerRelation)) return null;
@@ -54,6 +64,8 @@ function adminCanSeeContent() {
 }
 
 module.exports = {
+  MEDIA_CONSENT_VERSION,
+  hasMediaConsent,
   canUploadMedia,
   uploadBlockReason,
   relationStartOf,

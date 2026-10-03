@@ -1,5 +1,12 @@
 # Facturación Trainers
 
+> **02/10/2026 — Facturación por plazas.** Catálogo Free (3 plazas, +3 €/plaza/mes, hasta 12), Inicio (29 €, 20, +1 €, hasta 40), Profesional (49 €, 50, +0,80 €, hasta 125) y Escala (109 €, 150); anual = 10 mensualidades, también en las plazas. Sustituye a Pro/Growth/Scale. Los entrenadores solo se suscriben por Stripe (fuera RevenueCat de entrenadores y `trainer_unlimited`).
+> - **Cuándo se aplica:** subir de plan, pasar a anual o añadir plazas anuales se cobra al momento (`always_invoice` + `pending_if_incomplete`); añadir plazas mensuales se aplica ya y la prorrata va a la siguiente factura (`create_prorations`, propuesta `deferred`); bajar de plan, quitar plazas o pasar a mensual espera a la renovación (calendario).
+> - **Reducir nunca se bloquea** por tener más clientes que plazas: la propuesta dice cuántos quedarán en solo lectura y, al aplicarse, el entrenador elige quién sigue activo (`trainer-seat-service`). Las invitaciones pendientes reservan plaza; si no cabe, no se cancelan pero no se pueden aceptar (`SEAT_UNAVAILABLE`). Altas y aceptaciones van bajo el bloqueo por entrenador.
+> - **Reembolso de una subida** (plan o plazas): vuelve el estado anterior sin prorrateo; reembolsar plazas no toca la cuota.
+> - **Condiciones:** al contratar las acepta Checkout (`consent_collection`); al confirmar un cambio en la app, el diálogo lo dice con el enlace y la API exige recibir la URL vigente (`TERMS_CHANGED` si cambió). Cada aceptación queda en `termsHistory` (via `checkout`/`change`, sesión o propuesta, URL). Publicar cada versión en su propia URL para saber qué texto aceptó cada entrenador.
+> - **Configuración:** cinco variables y precios por lookup key; solo Managed Payments; portal predeterminado. Lo que sigue por debajo es historia: donde contradiga a esto, manda esto.
+
 > **01/10/2026 — Managed Payments** (`TRAINER_BILLING_TAX_POLICY=managed_payments`). Stripe vende como comerciante registrado, a través de Link: calcula, cobra, declara y paga el IVA y emite la factura. Cobra un 3,5 % más por transacción. Motivo: todavía no hay alta fiscal; detalle en la guía, A0.
 > - **Checkout:** `managed_payments: { enabled: true }`, sin `automatic_tax`, `tax_id_collection`, `customer_update`, `payment_method_configuration` ni `custom_text` (Stripe rechaza `custom_text`). `consent_collection` sigue funcionando si la URL de condiciones está también en los datos públicos de la cuenta.
 > - **Precios:** `exclusive` también aquí (IVA aparte). Previsualizaciones y renovación salen con el IVA de Stripe sin pasar `automatic_tax`.
@@ -34,56 +41,44 @@
 > - `npm run billing:preflight` valida en el servidor configuración, precios, portal y Stripe Tax sin imprimir secretos.
 > - Guía de salida: `docs/TRAINERS_PAGOS_PRODUCCION.md`. Lo que sigue documenta el sandbox local.
 
-## Sandbox local
+## Entorno local y sandbox
 
-Estado: implementación local desactivada por defecto, revisada el 18/09/2026. SDK `stripe@22.6.2`, API `2026-08-26.dahlia`. LIVE está bloqueado. La configuración del plugin Stripe/CLI no proporciona credenciales al proceso Express.
+Un solo `.env` (plantilla en `.env.example`). Cinco variables:
 
-## Preparar el entorno
+| Variable | Qué es |
+| --- | --- |
+| `STRIPE_KEY` | Sin ella la facturación está apagada (todos en Free). `rk_test_` / `sk_test_` = sandbox (local y PRE); `rk_live_` = real (solo PRO, solo restringida). |
+| `STRIPE_WEBHOOK_SECRET` | Secreto del destino de webhook, o el que imprime `stripe listen` en local. |
+| `STRIPE_RETURN_URL` | Web de Trainers (vuelta de Checkout y del portal). |
+| `STRIPE_TERMS_URL`, `STRIPE_SUPPORT_EMAIL` | Condiciones y buzón de facturación; obligatorios en real. |
 
-1. `npm ci` y `npm run build:trainer-billing`. Node >=18 (recomendado Node 22). El código nuevo TypeScript estricto se compila en `.build/trainer-billing`; los adaptadores mantienen el backend CommonJS.
-2. Copiar `components/trainerBilling/local.env.example` a `.env.stripe.local`. No sobrescribir ni reutilizar `.env`.
-3. Iniciar una instancia MongoDB local dedicada. Se admite exclusivamente `mongodb://127.0.0.1:27017/trainfit_stripe_local` (también localhost y otro puerto local). No importar usuarios/datos de producción.
-4. Provisionar una clave **restringida de prueba** en `STRIPE_KEY`, fuera del chat. Permisos runtime necesarios: Customers lectura/escritura, Checkout Sessions lectura/escritura, Prices lectura, Subscriptions lectura/escritura (incluidos sus calendarios), Invoices lectura/escritura, Customer Portal Sessions escritura y Configurations lectura. La escritura de facturas permite anular la factura de un cambio pendiente que el entrenador decide descartar. Validar permisos concretos con una compra de prueba; no conceder acceso a todo para solucionar un 403.
-5. `stripe listen --all-snapshot --events-from "@self" --forward-to "http://localhost:3000/api/billing/webhooks/stripe"`. Stripe CLI 1.51 requiere seleccionar los eventos explícitamente; esta integración procesa eventos snapshot de la propia cuenta. Guardar el secreto que muestra la CLI en `STRIPE_WEBHOOK_SECRET` local, sin compartirlo. Si cambia al reiniciar, actualizarlo y reiniciar API.
-6. Configurar un Portal **test** y guardar su `bpc_...` en `STRIPE_TRAINER_PORTAL_CONFIGURATION_ID`: facturas y métodos de pago habilitados, cancelación al fin del periodo, cambios de suscripción deshabilitados. El backend comprueba estas restricciones antes de abrirlo. No es necesario Portal para probar Checkout.
-7. Revisar las seis referencias de precio y elegir explícitamente `TRAINER_BILLING_TAX_POLICY=test_no_tax`. Esta política solo sirve para pruebas sin impuestos; los precios `tax_behavior=unspecified` no se convierten automáticamente en una política fiscal válida para producción.
-8. Para una cuenta local, usar `TRAINER_BILLING_SEED_USER=1` y una contraseña de prueba de al menos 12 caracteres en `TRAINER_TEST_PASSWORD`. Crea `trainer@example.test` con roles trainer y user, solo si no existe; no cambia contraseñas de cuentas existentes. Su autenticación usa los flujos normales, con claves RSA efímeras del lanzador.
-9. Establecer `TRAINER_BILLING_ENABLED=1` y ejecutar `npm run stripe:local`. El lanzador escucha solo en loopback, carga únicamente el archivo local, desactiva el correo y no arranca ningún cron legacy. Arranca únicamente la reconciliación Stripe. Las sesiones locales se invalidan al reiniciar porque cambian las claves RSA.
-10. Desde `train-fit-front`, iniciar explícitamente el workspace Trainers en el puerto 8100: `npm run start --workspace @trainfit/train-fit-trainers -- --port 8100`. El proyecto usa `ionic serve` sin un puerto fijado; 8100 es la elección explícita de este entorno. Abrir `http://localhost:8100`.
+Pasos:
 
-El repositorio Stripe comprueba además la conexión Mongo real: host loopback y nombre `trainfit_stripe_local` antes de mutar o crear índices. Activar accidentalmente el flag en el arranque habitual no autoriza escribir acceso de sandbox en otra base.
+1. `npm run stripe:catalog:dry-run` y `npm run stripe:catalog`: crea en la cuenta de la clave los productos (Inicio, Profesional, Escala y «Plaza adicional», código fiscal SaaS para Managed Payments) y los precios con su lookup key y metadatos `trainfit_*`. Si la clave restringida no puede escribir precios, `STRIPE_CATALOG_KEY` con una que pueda. Los precios del catálogo anterior (Pro, Growth, Scale) se archivan a mano.
+2. `stripe listen --forward-to http://localhost:3000/api/billing/webhooks/stripe` y su `whsec_…` en `STRIPE_WEBHOOK_SECRET`.
+3. Portal: la configuración **predeterminada** de la cuenta, con facturas, método de pago y cancelación a fin de periodo, y sin cambios de plan (el backend lo comprueba).
+4. `npm run billing:preflight` comprueba configuración, precios, portal y webhook sin imprimir secretos.
+5. `npm run migrate:trainer-seats:dry-run` y `npm run migrate:trainer-seats` (una vez por base): borra las proyecciones de RevenueCat de entrenadores y convierte las de Stripe al modelo de plazas.
 
-### Si falla `npm run stripe:local`
-
-- Si está activado `TRAINER_BILLING_SEED_USER=1`, `TRAINER_TEST_PASSWORD` debe tener al menos 12 caracteres. Elegir una contraseña local propia en `.env.stripe.local`, guardarla y repetir el arranque. No compartirla en el chat. `npm ci` no corrige esta configuración.
-- El backend habitual y el lanzador aislado no pueden escuchar a la vez en el puerto 3000. Detener el backend habitual con `Ctrl+C` en su terminal antes de iniciar `npm run stripe:local`. Mantener abierta la terminal de `stripe listen`, que reenvía eventos y no ocupa ese puerto. Cambiar el puerto de la API exigiría actualizar también el frontend y el destino del listener.
-- Si el diagnóstico indica conexión Mongo, comprobar que la instancia local está iniciada y que la URI apunta exclusivamente a `trainfit_stripe_local`. El lanzador no admite credenciales, parámetros ni conexiones remotas; no reutilizar la URI de producción.
-- Los avisos de vulnerabilidades de `npm ci` requieren una revisión de dependencias aparte. No ejecutar `npm audit fix --force` como solución a un error de configuración o a un puerto ocupado.
-
-El lanzador muestra diagnósticos controlados sin imprimir contraseñas, claves, URI ni mensajes arbitrarios de los SDK.
+Sandbox y real conviven en la misma base sin mezclarse: cuentas, eventos y casos van por `mode`, y el cupo solo acepta proyecciones del modo de la clave del servidor. Ya no hay lanzador `stripe:local` ni base de datos aislada.
 
 ## API autenticada
 
-Todas las rutas salvo webhook requieren el middleware existente `auth(["trainer"])`. No se acepta customerId, importe ni Price ID del navegador.
+Todas las rutas salvo webhook requieren `auth(["trainer"])`. No se acepta customerId, importe ni Price ID del navegador.
 
 | Método y ruta bajo `/api/billing` | Entrada | Resultado |
 |---|---|---|
-| GET `/trainer/plans` | — | enabled, mode, currency EUR, taxPolicy, plans, capabilities |
-| POST `/trainer/checkout` | `{tier,interval}` | `{url,sessionId,reused}` |
+| GET `/trainer/plans` | — | catálogo: planes con plazas incluidas y máximas, cuota y precio de plaza por periodicidad |
+| POST `/trainer/checkout` | `{tier,interval,extraSeats}` | `{url,sessionId,reused}` |
 | POST `/trainer/portal` | `{}` | `{url}` |
 | GET `/trainer/billing-details` | — | `{invoices, paymentMethod}` leídos de Stripe |
-| POST `/trainer/change-preview` | `{tier,interval}` | Propuesta con `quoteId`, importe de hoy, fecha efectiva y renovación estimada |
+| POST `/trainer/change-preview` | `{tier,interval,extraSeats}` | Propuesta con `kind` (immediate, deferred, scheduled), importes, `readOnlyAfter` y renovación |
 | POST `/trainer/change-plan` | `{quoteId}` | `status`, posible `paymentActionUrl` y `entitlements` |
-| POST `/trainer/cancel` | `{}` | Cancelación al vencimiento y entitlements |
-| POST `/trainer/resume` | `{}` | Reactivación de la renovación y entitlements |
-| POST `/trainer/discard-change` | `{}` | Retira el cambio programado o pendiente y devuelve entitlements |
-| POST `/trainer/sync` | `{sessionId?}` | Entitlements actualizados desde Stripe |
-| GET `/trainer/entitlements/me` | — | Contrato previo + provider,status,cancelAtPeriodEnd,currentPeriodEnd,billing |
+| POST `/trainer/cancel` · `/resume` · `/discard-change` · `/sync` | `{}` / `{sessionId?}` | entitlements |
+| GET `/trainer/entitlements/me` | — | plan, `seats` (capacidad, ocupadas, reservadas, libres, admisión) y estado de la facturación |
 | POST `/webhooks/stripe` | Bytes originales + Stripe-Signature | `{received:true}` |
 
-Tiers: `trainer_pro`, `trainer_growth`, `trainer_scale`; intervalos: `monthly`, `annual`. Importes en céntimos: 2900/29700, 4900/50900, 11900/120900. Cupos Stripe 20/50/150; Free 3. RC Pro conserva 15 y legacy Unlimited se conserva. Los IDs están en configuración, nunca en el módulo de negocio. En Checkout se comprueban importe, moneda, modo test y recurrencia contra Stripe.
-
-Errores públicos `{code,message}`:400 entrada/firma inválida,403 sesión ajena,409 operación concurrente/suscripción existente,503 deshabilitado o configuración pendiente. Retorno en `/tabs/subscription?session_id=...`; cancelar vuelve con `checkout=cancelled`. La URL de retorno no prueba que haya pago.
+Planes `free`, `starter`, `professional`, `scale`; catálogo en `src/catalog.ts`. Una suscripción tiene una cuota (salvo Free) y un elemento de plazas adicionales con cantidad; Free con plazas es una suscripción solo con ese elemento. Una plaza con cantidad 0 se conserva y no cuenta.
 
 ## Política de cambios y cancelación
 

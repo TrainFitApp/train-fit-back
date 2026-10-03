@@ -221,6 +221,8 @@ module.exports = {
           .status(409)
           .send({ message: "Este usuario ya está registrado" });
       }
+      // Errores de validación con mensaje público (p. ej. edad mínima): al errorHandler.
+      if (err?.status >= 400 && err.status < 500) throw err;
       console.error("Error al crear usuario:", err);
       return res.status(500).send({ message: "No se pudo crear el usuario" });
     }
@@ -708,6 +710,7 @@ module.exports = {
         user: user,
       });
     } catch (err) {
+      if (err?.status >= 400 && err.status < 500) throw err;
       console.error("Error al actualizar usuario con Apple:", err);
       return res
         .status(500)

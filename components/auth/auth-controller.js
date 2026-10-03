@@ -813,6 +813,8 @@ module.exports = {
         user: await userDto.single(updatedUser),
       });
     } catch (error) {
+      // Errores de validación con mensaje público (p. ej. edad mínima): al errorHandler.
+      if (error?.status >= 400 && error.status < 500) throw error;
       console.error("Error en auth/social/complete:", error);
       return res
         .status(500)

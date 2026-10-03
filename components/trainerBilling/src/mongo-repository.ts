@@ -21,6 +21,7 @@ const accountSchema = new Schema<AccountDocument>({
   control: Schema.Types.Mixed, pendingPayment: Schema.Types.Mixed,
   renewal: Schema.Types.Mixed, renewalPayment: Schema.Types.Mixed,
   hold: Schema.Types.Mixed, adjustments: Schema.Types.Mixed, reminders: Schema.Types.Mixed, termsAcceptance: Schema.Types.Mixed,
+  termsHistory: Schema.Types.Mixed,
   leaseUntil: { type: Date, default: () => new Date(0) },
 }, { timestamps: true, collection: "trainerbillingaccounts", autoCreate: false, autoIndex: false });
 accountSchema.index({ userId: 1, mode: 1 }, { unique: true });
@@ -117,7 +118,7 @@ export class MongoRepository implements Repository {
         control: account.control || null, pendingPayment: account.pendingPayment || null,
         renewal: account.renewal || null, renewalPayment: account.renewalPayment || null,
         hold: account.hold || null, adjustments: account.adjustments || [], reminders: account.reminders || null,
-        termsAcceptance: account.termsAcceptance || null,
+        termsAcceptance: account.termsAcceptance || null, termsHistory: account.termsHistory || [],
       } });
       if (!result.matchedCount) throw new BillingError("BILLING_BUSY", "La operación necesita reintentarse.");
       account.revision = revision;
