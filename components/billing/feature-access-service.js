@@ -23,6 +23,15 @@ function isEffectivelyEntitled(premium) {
   return new Date(premium.expiresAt).getTime() > Date.now();
 }
 
+// Misma regla que isEffectivelyEntitled, como filtro de MongoDB (listados y
+// recuentos de "solo premium" en management).
+function activePremiumFilter(now = new Date()) {
+  return {
+    "premium.entitled": true,
+    $or: [{ "premium.expiresAt": null }, { "premium.expiresAt": { $gt: now } }],
+  };
+}
+
 function isPremiumUser(user) {
   return isEffectivelyEntitled(user?.premium);
 }
@@ -159,6 +168,7 @@ module.exports = {
   FREE_LIMITS,
   PREMIUM_LIMITS,
   isEffectivelyEntitled,
+  activePremiumFilter,
   isPremiumUser,
   getLimits,
   canCreateRoutine,

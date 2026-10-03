@@ -142,7 +142,12 @@ module.exports = {
     const filters = req.body.filters || {};
 
     const result = await userModel.searchUsers(page, limit, search, filters);
-    return res.send(result);
+    // El listado sale de un aggregate (sin DTO): el premium caducado tiene que
+    // salir como no premium igual que en el resto de respuestas.
+    return res.send({
+      ...result,
+      users: (result.users || []).map((user) => ({ ...user, premium: userDto.resolvePremium(user) })),
+    });
   },
 
   async createUser(req, res) {

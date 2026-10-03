@@ -8,6 +8,7 @@ const mail = require("../util/mail");
 const recipeSchema = require("../recipes/recipe-schema");
 const recipeModel = require("../recipes/recipe-model");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
+const { activePremiumFilter } = require("../billing/feature-access-service");
 
 module.exports = {
   async getUserById(id) {
@@ -69,9 +70,12 @@ module.exports = {
     try {
       const normalizedSearch = searchTerm?.trim() || "";
       const query = {};
+      const conditions = [];
 
       if (filters?.premiumOnly) {
-        query["premium.entitled"] = true;
+        // Solo premium VIGENTE: un entitled=true con la fecha pasada (webhook
+        // de EXPIRATION perdido) ya no es premium.
+        conditions.push(activePremiumFilter());
       }
 
       if (filters?.withHashOnly) {
@@ -79,12 +83,15 @@ module.exports = {
       }
 
       if (normalizedSearch) {
-        query.$or = [
-          { email: { $regex: normalizedSearch, $options: "i" } },
-          { name: { $regex: normalizedSearch, $options: "i" } },
-          { lastname: { $regex: normalizedSearch, $options: "i" } },
-        ];
+        conditions.push({
+          $or: [
+            { email: { $regex: normalizedSearch, $options: "i" } },
+            { name: { $regex: normalizedSearch, $options: "i" } },
+            { lastname: { $regex: normalizedSearch, $options: "i" } },
+          ],
+        });
       }
+      if (conditions.length) query.$and = conditions;
 
       const total = await userSchema.countDocuments(query);
 

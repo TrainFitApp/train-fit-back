@@ -66,4 +66,5 @@ const multiple = (resources, authUser) =>
 module.exports = {
   single,
   multiple,
+  resolvePremium,
 };

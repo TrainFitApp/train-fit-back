@@ -10,7 +10,10 @@ const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-ser
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 function sendBillingAdminError(res, error) {
-  const status = error?.status || error?.response?.status || 500;
+  // Un error al llamar a RevenueCat (respuesta de su API o red caída) es un
+  // fallo de pasarela: 502. Reenviar su 401/403 haría que management cerrase
+  // la sesión del administrador como si su token hubiese caducado.
+  const status = error?.status || (error?.response || error?.isAxiosError ? 502 : 500);
   const message =
     error?.response?.data?.message ||
     error?.message ||
@@ -31,9 +34,9 @@ function disableCache(res) {
 module.exports = {
   async linkCustomer(req, res) {
     const user = req.user;
-    const appUserId = req.body?.appUserId || null;
-
-    const linkedCustomer = await billingService.linkCustomer(user, appUserId);
+    // El app user id de RevenueCat es siempre el _id del usuario: el que
+    // mande el cliente se ignora (ver billing-service#linkCustomer).
+    const linkedCustomer = await billingService.linkCustomer(user);
     return res.send({
       linked: Boolean(linkedCustomer),
       appUserId: linkedCustomer?.appUserId || user?._id?.toString() || null,
@@ -44,6 +47,8 @@ module.exports = {
     disableCache(res);
 
     const user = req.user;
+    // Si su premium ya caducó y el webhook no llegó, se corrige la BD ya.
+    void billingService.reconcileExpiredPremiumIfNeeded(user);
 
     // C2: si el usuario es premium pero sin plan registrado, derivarlo desde
     // BillingCustomer y corregirlo en BD para que los botones de cambio de plan funcionen
@@ -82,11 +87,7 @@ module.exports = {
     const explicitPlan =
       rawPlan === "monthly" || rawPlan === "annual" ? rawPlan : null;
 
-    if (customerInfo) {
-      await billingService.syncFromCustomerInfo(user, customerInfo, explicitPlan);
-    } else {
-      await billingService.restoreFromRevenueCat(user, req.body?.appUserId);
-    }
+    await billingService.restore(user, { customerInfo, explicitPlan });
 
     const refreshedUser = await userSchema.findById(user._id);
     const routines = await tableService.countEffectiveUserTables(user._id);

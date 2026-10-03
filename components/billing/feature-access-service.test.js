@@ -53,3 +53,12 @@ test("isPremiumUser", async (t) => {
     assert.equal(isPremiumUser(null), false);
   });
 });
+
+test("activePremiumFilter: misma regla que isEffectivelyEntitled, como filtro de MongoDB", () => {
+  const { activePremiumFilter } = require("./feature-access-service");
+  const now = new Date();
+  assert.deepEqual(activePremiumFilter(now), {
+    "premium.entitled": true,
+    $or: [{ "premium.expiresAt": null }, { "premium.expiresAt": { $gt: now } }],
+  });
+});

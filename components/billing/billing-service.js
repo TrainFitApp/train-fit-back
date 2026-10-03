@@ -11,27 +11,26 @@ const ENTITLEMENT_ID =
 // RevenueCat solo gestiona la suscripción de cliente (User.premium). La de
 // entrenadores va por Stripe (components/trainerBilling, decisión 2026-10-02).
 
-const WEBHOOK_AUTH =
+// Se leen en cada uso (no al cargar el módulo): así un cambio de entorno no
+// exige reiniciar nada más que el proceso, y los tests pueden activarlos.
+const webhookAuth = () =>
   process.env.REVENUECAT_WEBHOOK_AUTH ||
   process.env.REVENUECAT_WEBHOOK_SECRET ||
   "";
-const SECRET_API_KEY = process.env.REVENUECAT_SECRET_API_KEY || "";
-const PROMOTIONAL_DURATIONS = [
-  { id: "daily", ms: 24 * 60 * 60 * 1000 },
-  { id: "three_day", ms: 3 * 24 * 60 * 60 * 1000 },
-  { id: "weekly", ms: 7 * 24 * 60 * 60 * 1000 },
-  { id: "monthly", ms: 31 * 24 * 60 * 60 * 1000 },
-  { id: "two_month", ms: 61 * 24 * 60 * 60 * 1000 },
-  { id: "three_month", ms: 92 * 24 * 60 * 60 * 1000 },
-  { id: "six_month", ms: 183 * 24 * 60 * 60 * 1000 },
-  { id: "yearly", ms: 365 * 24 * 60 * 60 * 1000 },
-];
+const secretApiKey = () => process.env.REVENUECAT_SECRET_API_KEY || "";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Tope de negocio de una concesión manual desde management.
+const MAX_PROMOTIONAL_MS = 365 * DAY_MS;
 const PRESET_DURATIONS = {
-  "1d": 1 * 24 * 60 * 60 * 1000,
-  "1w": 7 * 24 * 60 * 60 * 1000,
-  "1m": 31 * 24 * 60 * 60 * 1000,
-  "1y": 365 * 24 * 60 * 60 * 1000,
+  "1d": 1 * DAY_MS,
+  "1w": 7 * DAY_MS,
+  "1m": 31 * DAY_MS,
+  "1y": 365 * DAY_MS,
 };
+// Margen para decidir que un EXPIRATION/CANCELLATION habla de un periodo
+// anterior al que el usuario tiene ahora (relojes y redondeos de RevenueCat).
+const PERIOD_TOLERANCE_MS = 60 * 1000;
 
 function toDateOrNull(value) {
   if (!value) return null;
@@ -40,10 +39,26 @@ function toDateOrNull(value) {
 }
 
 function toDateFromMsOrNull(value) {
-  if (value === null || value === undefined) return null;
+  if (value === null || value === undefined || value === "") return null;
   const numericValue = Number(value);
   if (Number.isNaN(numericValue)) return null;
   return toDateOrNull(new Date(numericValue));
+}
+
+function laterDate(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return b.getTime() > a.getTime() ? b : a;
+}
+
+// Fin real del acceso de un producto o entitlement: la caducidad o, si la
+// tienda está en periodo de gracia por un cobro fallido, el fin de la gracia
+// (RevenueCat mantiene el entitlement activo durante la gracia).
+function accessEndOf(payload) {
+  return laterDate(
+    toDateOrNull(payload?.expires_date),
+    toDateOrNull(payload?.grace_period_expires_date),
+  );
 }
 
 function normalizeEventType(type) {
@@ -103,11 +118,12 @@ function isPromotionalStore(store) {
   return normalized === "promotional" || normalized === "promotional_entitlement";
 }
 
+function isPromotionalProduct(store, productId) {
+  return isPromotionalStore(store) || String(productId || "").startsWith("rc_promo_");
+}
+
 function resolvePremiumSource(store, productId) {
-  if (isPromotionalStore(store) || String(productId || "").startsWith("rc_promo_")) {
-    return "manual";
-  }
-  return "revenuecat";
+  return isPromotionalProduct(store, productId) ? "manual" : "revenuecat";
 }
 
 function getSubscriberSubscription(subscriber, productId) {
@@ -127,7 +143,7 @@ function resolveActiveSubscriptionEntry(subscriber) {
   const now = Date.now();
 
   for (const [productId, payload] of entries) {
-    const expiresAt = toDateOrNull(payload?.expires_date);
+    const expiresAt = accessEndOf(payload);
     if (!expiresAt || expiresAt.getTime() <= now) continue;
 
     const timestamp = expiresAt.getTime();
@@ -151,7 +167,7 @@ function resolveSubscriberProductId(subscriber) {
   let winnerTimestamp = -1;
 
   for (const [productId, payload] of entries) {
-    const expiresAt = toDateOrNull(payload?.expires_date);
+    const expiresAt = accessEndOf(payload);
     // M2: ignorar suscripciones ya expiradas para no elegirlas por encima de activas
     if (expiresAt && expiresAt.getTime() < Date.now()) continue;
 
@@ -168,6 +184,17 @@ function resolveSubscriberProductId(subscriber) {
   return winner;
 }
 
+// ¿Tiene el suscriptor una suscripción de tienda (App Store / Play) vigente?
+// Las promocionales (las que concede management) no cuentan.
+function hasActiveStoreSubscription(subscriber) {
+  const now = Date.now();
+  return Object.entries(subscriber?.subscriptions || {}).some(([productId, payload]) => {
+    if (isPromotionalProduct(payload?.store, productId)) return false;
+    const accessEnd = accessEndOf(payload);
+    return Boolean(accessEnd && accessEnd.getTime() > now);
+  });
+}
+
 function parseSDKCustomerInfoWithPreferredId(customerInfo, preferredId) {
   const active = customerInfo?.entitlements?.active || {};
   const selectedEntitlement =
@@ -175,21 +202,19 @@ function parseSDKCustomerInfoWithPreferredId(customerInfo, preferredId) {
 
   const expiresAt = toDateOrNull(selectedEntitlement?.expirationDate);
   const entitled = Boolean(selectedEntitlement?.isActive);
+  const source = resolvePremiumSource(
+    selectedEntitlement?.store,
+    selectedEntitlement?.productIdentifier,
+  );
 
   return {
     entitled,
-    plan:
-      resolvePremiumSource(selectedEntitlement?.store, selectedEntitlement?.productIdentifier) === "manual"
-        ? "manual"
-        : derivePlan(selectedEntitlement?.productIdentifier),
+    plan: source === "manual" ? "manual" : derivePlan(selectedEntitlement?.productIdentifier),
     expiresAt,
-    source: resolvePremiumSource(
-      selectedEntitlement?.store,
-      selectedEntitlement?.productIdentifier,
-    ),
+    source,
     productId: selectedEntitlement?.productIdentifier || null,
     store: selectedEntitlement?.store || null,
-    willRenew: Boolean(selectedEntitlement?.willRenew),
+    willRenew: source !== "manual" && Boolean(selectedEntitlement?.willRenew),
     activeEntitlement: selectedEntitlement?.identifier || preferredId,
   };
 }
@@ -208,9 +233,9 @@ function parseRCSubscriberPayloadForId(subscriber, entitlementId) {
     resolveSubscriberProductId(subscriber);
   const subscriptionPayload = getSubscriberSubscription(subscriber, resolvedProductId);
 
-  const entitlementExpiresAt = toDateOrNull(entitlement?.expires_date);
+  const entitlementExpiresAt = accessEndOf(entitlement);
   const subscriptionExpiresAt =
-    activeSubscription?.expiresAt || toDateOrNull(subscriptionPayload?.expires_date);
+    activeSubscription?.expiresAt || accessEndOf(subscriptionPayload);
   const now = Date.now();
   const expiresAt =
     subscriptionExpiresAt &&
@@ -220,18 +245,18 @@ function parseRCSubscriberPayloadForId(subscriber, entitlementId) {
       ? subscriptionExpiresAt
       : entitlementExpiresAt;
   const entitled = Boolean(expiresAt && expiresAt.getTime() > now);
-  const store = entitlement?.store || subscriptionPayload?.store || null;
+  const store = subscriptionPayload?.store || entitlement?.store || null;
+  const source = resolvePremiumSource(store, resolvedProductId);
 
-  const willRenew = !subscriptionPayload?.unsubscribe_detected_at && entitled;
+  // Una promocional no se renueva nunca: termina en su fecha.
+  const willRenew =
+    source !== "manual" && !subscriptionPayload?.unsubscribe_detected_at && entitled;
 
   return {
     entitled,
-    plan:
-      resolvePremiumSource(store, resolvedProductId) === "manual"
-        ? "manual"
-        : derivePlan(resolvedProductId),
+    plan: source === "manual" ? "manual" : derivePlan(resolvedProductId),
     expiresAt,
-    source: resolvePremiumSource(store, resolvedProductId),
+    source,
     productId: resolvedProductId || null,
     store,
     willRenew,
@@ -332,9 +357,13 @@ function parseWebhookEvent(rawPayload) {
     payload?.event_id ||
     `${type || "unknown"}-${payload?.app_user_id || "unknown"}-${payload?.event_timestamp_ms || Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-  const expiresAt = payload?.expiration_at_ms
-    ? new Date(Number(payload.expiration_at_ms))
-    : toDateOrNull(payload?.expiration_at);
+  const expiresAt = laterDate(
+    payload?.expiration_at_ms
+      ? toDateFromMsOrNull(payload.expiration_at_ms)
+      : toDateOrNull(payload?.expiration_at),
+    // BILLING_ISSUE con periodo de gracia: el acceso dura hasta el fin de la gracia.
+    toDateFromMsOrNull(payload?.grace_period_expiration_at_ms),
+  );
 
   const eventTimestamp =
     toDateFromMsOrNull(payload?.event_timestamp_ms) ||
@@ -354,8 +383,13 @@ function parseWebhookEvent(rawPayload) {
     entitled = false;
     willRenew = false;
   } else if (type === "CANCELLATION") {
-    entitled = hasAccessByExpiry;
+    // Cancelar solo apaga la renovación: el acceso sigue hasta la fecha que
+    // el usuario ya tiene. Si la fecha ya pasó (reembolso, revocación de una
+    // promocional), sí lo corta. Nunca concede ni alarga acceso: un
+    // CANCELLATION de una promocional revocada trae su fecha original.
+    entitled = false;
     willRenew = false;
+    applyEntitlementUpdate = !hasAccessByExpiry;
   } else if (type === "RENEWAL" || type === "INITIAL_PURCHASE") {
     entitled = hasAccessByExpiry;
     willRenew = true;
@@ -375,10 +409,17 @@ function parseWebhookEvent(rawPayload) {
         : Boolean(payload?.renewal_number || payload?.period_type === "NORMAL");
   }
 
+  const source = resolvePremiumSource(payload?.store, payload?.product_id);
+  if (source === "manual") willRenew = false;
+
+  const transferredFrom = Array.isArray(payload?.transferred_from) ? payload.transferred_from : [];
+  const transferredTo = Array.isArray(payload?.transferred_to) ? payload.transferred_to : [];
+
   return {
     eventId,
     eventTimestamp,
-    appUserId: payload?.app_user_id || null,
+    // Un TRANSFER puede no traer app_user_id: el destinatario va en transferred_to.
+    appUserId: payload?.app_user_id || (type === "TRANSFER" ? transferredTo[0] || null : null),
     originalAppUserId: payload?.original_app_user_id || payload?.app_user_id || null,
     activeEntitlement:
       Array.isArray(payload?.entitlement_ids) && payload.entitlement_ids.length
@@ -389,13 +430,13 @@ function parseWebhookEvent(rawPayload) {
     expiresAt: expiresAt || null,
     willRenew,
     entitled,
-    plan: resolvePremiumSource(payload?.store, payload?.product_id) === "manual"
-      ? "manual"
-      : derivePlan(payload?.product_id),
-    source: resolvePremiumSource(payload?.store, payload?.product_id),
+    plan: source === "manual" ? "manual" : derivePlan(payload?.product_id),
+    source,
     type,
     applyEntitlementUpdate,
     keepExistingSubscriptionState,
+    transferredFrom,
+    transferredTo,
     payload,
   };
 }
@@ -415,15 +456,30 @@ function shouldApplyEventByOrder(event, billingCustomer) {
   return eventTimestamp >= customerTimestamp;
 }
 
+// Un EXPIRATION/CANCELLATION de algo que ya no es lo vigente (la promocional
+// que management revocó para conceder otra, el producto anterior tras un
+// cambio de plan…) no puede quitar el acceso del periodo actual. Un reembolso
+// o una expiración del MISMO producto de tienda sí se aplica aunque la fecha
+// sea anterior: es justo lo que corta el acceso.
+function refersToOlderPeriod(event, user, billingCustomer) {
+  if (event?.type !== "EXPIRATION" && event?.type !== "CANCELLATION") return false;
+  if (!isEffectivelyEntitled(user?.premium)) return false;
+  const currentExpiresAt = toDateOrNull(user.premium.expiresAt);
+  if (!currentExpiresAt || !event.expiresAt) return false;
+  if (currentExpiresAt.getTime() - event.expiresAt.getTime() <= PERIOD_TOLERANCE_MS) return false;
+  const currentProductId = billingCustomer?.productId || null;
+  return event.source === "manual" || !currentProductId || event.productId !== currentProductId;
+}
+
 async function getRevenueCatSubscriber(appUserId) {
-  if (!SECRET_API_KEY || !appUserId) {
+  if (!secretApiKey() || !appUserId) {
     return null;
   }
 
   const url = `${REVENUECAT_API_BASE}/subscribers/${encodeURIComponent(appUserId)}`;
   const response = await axios.get(url, {
     headers: {
-      Authorization: `Bearer ${SECRET_API_KEY}`,
+      Authorization: `Bearer ${secretApiKey()}`,
       "Content-Type": "application/json",
     },
     timeout: 10000,
@@ -433,7 +489,7 @@ async function getRevenueCatSubscriber(appUserId) {
 }
 
 function assertRevenueCatSecret() {
-  if (!SECRET_API_KEY) {
+  if (!secretApiKey()) {
     const error = new Error("RevenueCat secret API key is not configured");
     error.status = 500;
     throw error;
@@ -443,16 +499,18 @@ function assertRevenueCatSecret() {
 function getRevenueCatHeaders() {
   assertRevenueCatSecret();
   return {
-    Authorization: `Bearer ${SECRET_API_KEY}`,
+    Authorization: `Bearer ${secretApiKey()}`,
     "Content-Type": "application/json",
     Accept: "application/json",
   };
 }
 
+// RevenueCat acepta la fecha de fin exacta (`end_time_ms`). `duration` y
+// `start_time_ms` están obsoletos: obligaban a redondear a un tramo (diario,
+// semanal, mensual…) y la caducidad real no coincidía con la elegida.
 function getPromotionPayloadForTarget(targetExpiresAt) {
   const targetMs = new Date(targetExpiresAt).getTime();
-  const nowMs = Date.now();
-  const requestedMs = targetMs - nowMs;
+  const requestedMs = targetMs - Date.now();
 
   if (!Number.isFinite(targetMs) || requestedMs <= 0) {
     const error = new Error("La fecha de expiracion debe estar en el futuro");
@@ -460,20 +518,13 @@ function getPromotionPayloadForTarget(targetExpiresAt) {
     throw error;
   }
 
-  const selectedDuration = PROMOTIONAL_DURATIONS.find(
-    (duration) => requestedMs <= duration.ms,
-  );
-
-  if (!selectedDuration) {
+  if (requestedMs > MAX_PROMOTIONAL_MS) {
     const error = new Error("La duracion maxima permitida es 1 año");
     error.status = 400;
     throw error;
   }
 
-  return {
-    duration: selectedDuration.id,
-    start_time_ms: targetMs - selectedDuration.ms,
-  };
+  return { end_time_ms: targetMs };
 }
 
 async function grantPromotionalEntitlement(appUserId, targetExpiresAt) {
@@ -570,11 +621,51 @@ function resolveTargetExpiration(user, duration, mode) {
   return new Date(baseDate.getTime() + normalizedDuration.durationMs);
 }
 
+// Premium de tienda VIGENTE. Un `entitled: true` cuya fecha ya pasó (webhook
+// de EXPIRATION perdido) no cuenta: si no, management no podría conceder
+// tiempo a quien ya no paga.
 function isRealStorePremium(user, billingCustomer) {
-  if (!user?.premium?.entitled) return false;
+  if (!isEffectivelyEntitled(user?.premium)) return false;
   if (user?.premium?.source === "manual") return false;
   if (isPromotionalStore(billingCustomer?.store)) return false;
   return user?.premium?.source === "revenuecat" || Boolean(billingCustomer?.store);
+}
+
+function storeSubscriptionConflict() {
+  const error = new Error("El usuario tiene una suscripcion activa de tienda");
+  error.status = 409;
+  return error;
+}
+
+// Aplica en BD el estado que RevenueCat da para un suscriptor (fuente de
+// verdad: lo que dice su API en este momento). El plan desconocido (base
+// plans de Google Play sin sufijo en el productId) se toma del que sabe el
+// front o del que ya había en BD.
+async function applyRevenueCatSubscriber(user, subscriber, appUserId, options = {}) {
+  const premiumState = parseRCSubscriberPayload(subscriber);
+  const knownPlan = (plan) => plan === "monthly" || plan === "annual";
+  if (premiumState.plan === "unknown") {
+    if (knownPlan(options.explicitPlan)) premiumState.plan = options.explicitPlan;
+    else if (knownPlan(user?.premium?.plan)) premiumState.plan = user.premium.plan;
+  }
+  if (options.expectManualGrant) {
+    ensureManualGrantWasApplied(premiumState);
+  }
+
+  const updatedUser = await updateUserPremium(user._id, premiumState);
+  await upsertBillingCustomer({
+    userId: user._id,
+    appUserId,
+    originalAppUserId: subscriber?.original_app_user_id || appUserId,
+    activeEntitlement: premiumState.activeEntitlement,
+    store: premiumState.store,
+    productId: premiumState.productId,
+    expiresAt: premiumState.expiresAt,
+    willRenew: premiumState.willRenew,
+    lastEventAt: new Date(),
+  });
+
+  return { updatedUser, premiumState };
 }
 
 // Corrige en BD un premium.entitled=true cuya expiresAt ya pasó, sin esperar
@@ -609,122 +700,249 @@ async function reconcileExpiredPremiumIfNeeded(user) {
 // entitled=true tras su expiresAt sin que nadie haya vuelto a abrir la app
 // (nadie disparó reconcileExpiredPremiumIfNeeded) y, cuando es posible,
 // reconsulta RevenueCat en vivo antes de revocar por si el webhook perdido
-// era en realidad una RENEWAL (no una EXPIRATION real).
+// era en realidad una RENEWAL (no una EXPIRATION real). Recorre TODOS los
+// candidatos por lotes (antes solo los 200 primeros de cada noche).
 async function runExpiredPremiumReconciliation({ batchSize = 200 } = {}) {
   const now = new Date();
-  const candidates = await userSchema
-    .find({ "premium.entitled": true, "premium.expiresAt": { $lte: now } })
-    .select("_id premium")
-    .limit(batchSize)
-    .lean();
-
+  let candidatesCount = 0;
   let reconciled = 0;
   let selfHealed = 0;
   let skipped = 0;
+  let lastId = null;
 
-  for (const candidate of candidates) {
-    const billingCustomer = await billingCustomerSchema
-      .findOne({ userId: candidate._id })
-      .catch(() => null);
-    const appUserId = billingCustomer?.appUserId || candidate._id.toString();
+  for (;;) {
+    const candidates = await userSchema
+      .find({
+        "premium.entitled": true,
+        "premium.expiresAt": { $lte: now },
+        ...(lastId ? { _id: { $gt: lastId } } : {}),
+      })
+      .sort({ _id: 1 })
+      .select("_id premium")
+      .limit(batchSize)
+      .lean();
+    if (!candidates.length) break;
+    lastId = candidates[candidates.length - 1]._id;
+    candidatesCount += candidates.length;
 
-    // Distinguir "RevenueCat confirmó que no hay entitlement" de "no pudimos
-    // preguntarle a RevenueCat" (caída de red/API, clave no configurada). Un
-    // fallo transitorio de conexión NUNCA debe degradar a un usuario — solo
-    // se reintenta en el siguiente ciclo del cron.
-    let subscriber = null;
-    let rcCallFailed = false;
+    for (const candidate of candidates) {
+      const appUserId = candidate._id.toString();
 
-    if (SECRET_API_KEY) {
+      // Distinguir "RevenueCat confirmó que no hay entitlement" de "no pudimos
+      // preguntarle a RevenueCat" (caída de red/API). Un fallo transitorio de
+      // conexión NUNCA debe degradar a un usuario — solo se reintenta en el
+      // siguiente ciclo del cron.
+      let subscriber = null;
+      let rcCallFailed = false;
+
+      if (secretApiKey()) {
+        try {
+          subscriber = await getRevenueCatSubscriber(appUserId);
+        } catch (error) {
+          rcCallFailed = true;
+          console.error(
+            "[BillingReconciliation] Fallo consultando RevenueCat, se reintentará",
+            appUserId,
+            error?.message || error,
+          );
+        }
+      }
+
+      if (rcCallFailed) {
+        skipped += 1;
+        continue;
+      }
+
       try {
-        subscriber = await getRevenueCatSubscriber(appUserId);
+        if (subscriber) {
+          // Llamada a RC exitosa: aplicar el estado real (puede ser una
+          // RENEWAL cuyo webhook se perdió, no necesariamente una expiración).
+          await applyRevenueCatSubscriber(candidate, subscriber, appUserId);
+          reconciled += 1;
+        } else {
+          // RC no está configurado (SECRET_API_KEY ausente) y expiresAt local
+          // es la única fuente disponible: expiresAt ya pasado basta.
+          await userSchema.updateOne(
+            {
+              _id: candidate._id,
+              "premium.expiresAt": candidate.premium.expiresAt,
+            },
+            { $set: { "premium.entitled": false } },
+          );
+          selfHealed += 1;
+        }
       } catch (error) {
-        rcCallFailed = true;
+        skipped += 1;
         console.error(
-          "[BillingReconciliation] Fallo consultando RevenueCat, se reintentará",
-          candidate._id?.toString(),
+          "[BillingReconciliation] Error reconciliando usuario",
+          appUserId,
           error?.message || error,
         );
       }
     }
-
-    if (rcCallFailed) {
-      skipped += 1;
-      continue;
-    }
-
-    try {
-      if (subscriber) {
-        // Llamada a RC exitosa: aplicar el estado real (puede ser una
-        // RENEWAL cuyo webhook se perdió, no necesariamente una expiración).
-        const premiumState = parseRCSubscriberPayload(subscriber);
-        await updateUserPremium(candidate._id, premiumState);
-        await upsertBillingCustomer({
-          userId: candidate._id,
-          appUserId,
-          originalAppUserId: subscriber?.original_app_user_id || appUserId,
-          activeEntitlement: premiumState.activeEntitlement,
-          store: premiumState.store,
-          productId: premiumState.productId,
-          expiresAt: premiumState.expiresAt,
-          willRenew: premiumState.willRenew,
-          lastEventAt: new Date(),
-        });
-        reconciled += 1;
-      } else {
-        // O bien RC no está configurado (SECRET_API_KEY ausente) y expiresAt
-        // local es la única fuente disponible, o RC respondió sin datos de
-        // suscriptor: en ambos casos, expiresAt ya pasado es motivo suficiente.
-        await userSchema.updateOne(
-          {
-            _id: candidate._id,
-            "premium.expiresAt": candidate.premium.expiresAt,
-          },
-          { $set: { "premium.entitled": false } },
-        );
-        selfHealed += 1;
-      }
-    } catch (error) {
-      skipped += 1;
-      console.error(
-        "[BillingReconciliation] Error reconciliando usuario",
-        candidate._id?.toString(),
-        error?.message || error,
-      );
-    }
   }
 
-  const summary = { candidates: candidates.length, reconciled, selfHealed, skipped };
+  const summary = { candidates: candidatesCount, reconciled, selfHealed, skipped };
   console.info("[BillingReconciliation]", JSON.stringify(summary));
   return summary;
 }
 
-async function syncSubscriberForUser(user, subscriber, appUserId, options = {}) {
+async function syncFromCustomerInfo(user, customerInfo, explicitPlan) {
+  const premiumState = parseSDKCustomerInfo(customerInfo);
+
+  // Si derivePlan no pudo determinar el plan desde el productId pero el frontend
+  // lo conoce con certeza (viene de purchasePlan), usarlo directamente
+  if (
+    premiumState.plan === "unknown" &&
+    (explicitPlan === "monthly" || explicitPlan === "annual")
+  ) {
+    premiumState.plan = explicitPlan;
+  }
+
+  // Si el plan sigue siendo "unknown" (base plans de Google Play sin sufijo en el productId),
+  // preservar el plan que ya tiene el usuario en BD para no machacar lo que el webhook pudo haber sincronizado
+  if (
+    premiumState.plan === "unknown" &&
+    (user?.premium?.plan === "monthly" || user?.premium?.plan === "annual")
+  ) {
+    premiumState.plan = user.premium.plan;
+  }
+
+  const appUserId = user?._id?.toString();
+
+  await Promise.all([
+    updateUserPremium(user._id, premiumState),
+    upsertBillingCustomer({
+      userId: user._id,
+      appUserId,
+      originalAppUserId: appUserId,
+      activeEntitlement: premiumState.activeEntitlement,
+      store: premiumState.store,
+      productId: premiumState.productId,
+      expiresAt: premiumState.expiresAt,
+      willRenew: premiumState.willRenew,
+      lastEventAt: new Date(),
+    }),
+  ]);
+
+  return premiumState;
+}
+
+async function findBillingCustomer(appUserId, originalAppUserId) {
+  let billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+  if (!billingCustomer && originalAppUserId) {
+    billingCustomer = await billingCustomerSchema.findOne({ originalAppUserId });
+  }
+  return billingCustomer;
+}
+
+async function findUserForAppUserId(appUserId, billingCustomer) {
+  let user = null;
+  if (mongoose.Types.ObjectId.isValid(appUserId)) {
+    user = await userSchema.findById(appUserId);
+  }
+  if (!user && billingCustomer?.userId) {
+    user = await userSchema.findById(billingCustomer.userId);
+  }
+  return user;
+}
+
+// Con la clave secreta configurada, un webhook solo dice "algo cambió en este
+// suscriptor": se pregunta a RevenueCat el estado completo y se aplica tal
+// cual (lo que RevenueCat recomienda). Así da igual el orden en que lleguen
+// los eventos, que el evento hable de otro producto (la promocional caducada
+// de alguien que ya paga en la tienda) o que sea de una transferencia (el que
+// la pierde y el que la recibe). Devuelve null si no hay a quién aplicarlo;
+// un fallo de RevenueCat lanza, y quien llama vuelve al estado del evento.
+async function resyncFromRevenueCat(event, user, billingCustomer) {
+  const targets = new Map();
+  if (user) targets.set(event.appUserId, user);
+  if (event.type === "TRANSFER") {
+    for (const appUserId of [...event.transferredFrom, ...event.transferredTo]) {
+      if (!appUserId || targets.has(appUserId)) continue;
+      const otherCustomer = await findBillingCustomer(appUserId, null);
+      const otherUser = await findUserForAppUserId(appUserId, otherCustomer);
+      if (otherUser) targets.set(appUserId, otherUser);
+    }
+  }
+  if (!targets.size) return null;
+
+  const applied = [];
+  for (const [appUserId, targetUser] of targets) {
+    const subscriber = await getRevenueCatSubscriber(appUserId);
+    if (!subscriber) throw new Error("RevenueCat no devolvio el suscriptor");
+    const { premiumState } = await applyRevenueCatSubscriber(targetUser, subscriber, appUserId);
+    applied.push({ userId: targetUser._id, entitled: premiumState.entitled });
+  }
+
+  if (user) {
+    await billingEventSchema.updateOne({ eventId: event.eventId }, { $set: { userId: user._id } });
+  }
+  return { applied, billingCustomerId: billingCustomer?._id || null };
+}
+
+function logWebhook(event, extra) {
+  console.info(
+    "[BillingWebhook]",
+    JSON.stringify({
+      eventId: event.eventId,
+      type: event.type,
+      appUserId: event.appUserId,
+      productId: event.productId,
+      ...extra,
+    }),
+  );
+}
+
+async function loadAdminTarget(userId) {
+  const user = await userSchema.findById(userId);
+  if (!user) {
+    const error = new Error("Usuario no encontrado");
+    error.status = 404;
+    throw error;
+  }
+  const appUserId = user._id.toString();
+  const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+  return { user, appUserId, billingCustomer };
+}
+
+// Conceder ("grant") o ampliar ("extend") premium manual desde management:
+// una promocional de RevenueCat con la fecha de fin exacta.
+async function applyAdminPremium(userId, duration, mode) {
+  assertRevenueCatSecret();
+  const { user, appUserId, billingCustomer } = await loadAdminTarget(userId);
+  if (isRealStorePremium(user, billingCustomer)) {
+    throw storeSubscriptionConflict();
+  }
+
+  const targetExpiresAt = resolveTargetExpiration(user, duration, mode);
+  // Valida la fecha antes de tocar nada en RevenueCat.
+  getPromotionPayloadForTarget(targetExpiresAt);
+
+  // La BD puede ir atrasada (webhook de compra perdido): se pregunta a
+  // RevenueCat si paga en la tienda antes de superponer una promocional.
+  const current = await getRevenueCatSubscriber(appUserId);
+  if (hasActiveStoreSubscription(current)) {
+    throw storeSubscriptionConflict();
+  }
+
+  await revokePromotionalEntitlement(appUserId).catch((error) => {
+    const status = error?.response?.status;
+    if (status !== 400 && status !== 404) {
+      throw error;
+    }
+  });
+  await grantPromotionalEntitlement(appUserId, targetExpiresAt);
+  const subscriber = await getRevenueCatSubscriber(appUserId);
   if (!subscriber) {
     const error = new Error("No se pudo sincronizar la suscripcion con RevenueCat");
     error.status = 502;
     throw error;
   }
 
-  const premiumState = parseRCSubscriberPayload(subscriber);
-  if (options.expectManualGrant) {
-    ensureManualGrantWasApplied(premiumState);
-  }
-
-  const updatedUser = await updateUserPremium(user._id, premiumState);
-
-  await upsertBillingCustomer({
-    userId: user._id,
-    appUserId,
-    originalAppUserId: subscriber?.original_app_user_id || appUserId,
-    activeEntitlement: premiumState.activeEntitlement,
-    store: premiumState.store,
-    productId: premiumState.productId,
-    expiresAt: premiumState.expiresAt,
-    willRenew: premiumState.willRenew,
-    lastEventAt: new Date(),
+  const { updatedUser } = await applyRevenueCatSubscriber(user, subscriber, appUserId, {
+    expectManualGrant: true,
   });
-
   return updatedUser;
 }
 
@@ -732,6 +950,14 @@ module.exports = {
   entitlementId: ENTITLEMENT_ID,
   derivePlan,
   parseRCSubscriberPayload,
+  parseSDKCustomerInfo,
+  parseWebhookEvent,
+  shouldApplyEventByOrder,
+  refersToOlderPeriod,
+  hasActiveStoreSubscription,
+  isRealStorePremium,
+  getPromotionPayloadForTarget,
+  resolveTargetExpiration,
   reconcileExpiredPremiumIfNeeded,
   runExpiredPremiumReconciliation,
 
@@ -739,7 +965,8 @@ module.exports = {
     // Sin secreto configurado se falla CERRADO (antes cualquiera podía
     // mandar un evento falso y darse premium). Solo en desarrollo local se
     // deja pasar, para probar webhooks sin configurar nada.
-    if (!WEBHOOK_AUTH) {
+    const secret = webhookAuth();
+    if (!secret) {
       if (process.env.NODE_ENV === "development") return true;
       console.error("[billing] Webhook de RevenueCat rechazado: falta REVENUECAT_WEBHOOK_AUTH");
       return false;
@@ -750,123 +977,61 @@ module.exports = {
       return false;
     }
 
-    if (authHeader === WEBHOOK_AUTH) {
-      return true;
-    }
-
-    if (authHeader === `Bearer ${WEBHOOK_AUTH}`) {
-      return true;
-    }
-
-    return false;
+    return authHeader === secret || authHeader === `Bearer ${secret}`;
   },
 
-  async linkCustomer(user, appUserId) {
-    const resolvedAppUserId = (appUserId || user?._id?.toString() || "").trim();
-    if (!resolvedAppUserId) {
-      return null;
-    }
-
-    return upsertBillingCustomer({
-      userId: user._id,
-      appUserId: resolvedAppUserId,
-      originalAppUserId: resolvedAppUserId,
-      activeEntitlement: user?.premium?.entitled ? ENTITLEMENT_ID : null,
-      store: user?.premium?.source || null,
-      productId: null,
-      expiresAt: user?.premium?.expiresAt || null,
-      willRenew: false,
-      lastEventAt: new Date(),
-    });
-  },
-
-  async syncFromCustomerInfo(user, customerInfo, explicitPlan) {
-    const premiumState = parseSDKCustomerInfo(customerInfo);
-
-    // Si derivePlan no pudo determinar el plan desde el productId pero el frontend
-    // lo conoce con certeza (viene de purchasePlan), usarlo directamente
-    if (
-      premiumState.plan === "unknown" &&
-      (explicitPlan === "monthly" || explicitPlan === "annual")
-    ) {
-      premiumState.plan = explicitPlan;
-    }
-
-    // Si el plan sigue siendo "unknown" (base plans de Google Play sin sufijo en el productId),
-    // preservar el plan que ya tiene el usuario en BD para no machacar lo que el webhook pudo haber sincronizado
-    if (
-      premiumState.plan === "unknown" &&
-      (user?.premium?.plan === "monthly" || user?.premium?.plan === "annual")
-    ) {
-      premiumState.plan = user.premium.plan;
-    }
-
+  // El app user id de RevenueCat es siempre el _id del usuario (el front hace
+  // Purchases.logIn con él). No se acepta otro del cliente: enlazar el id de
+  // otra persona daba su suscripción a quien lo enlazaba. Tampoco se pisa el
+  // estado de suscripción ni lastEventAt: abrir la app no puede hacer que un
+  // webhook de RENEWAL/EXPIRATION posterior se descarte por "antiguo".
+  async linkCustomer(user) {
     const appUserId = user?._id?.toString();
-
-    await Promise.all([
-      updateUserPremium(user._id, premiumState),
-      upsertBillingCustomer({
-        userId: user._id,
-        appUserId,
-        originalAppUserId: appUserId,
-        activeEntitlement: premiumState.activeEntitlement,
-        store: premiumState.store,
-        productId: premiumState.productId,
-        expiresAt: premiumState.expiresAt,
-        willRenew: premiumState.willRenew,
-        lastEventAt: new Date(),
-      }),
-    ]);
-
-    return premiumState;
-  },
-
-  async restoreFromRevenueCat(user, appUserId) {
-    const resolvedAppUserId = appUserId || user?._id?.toString();
-    const subscriber = await getRevenueCatSubscriber(resolvedAppUserId);
-    if (!subscriber) {
+    if (!appUserId) {
       return null;
     }
 
-    const premiumState = parseRCSubscriberPayload(subscriber);
+    return billingCustomerSchema.findOneAndUpdate(
+      { appUserId },
+      {
+        $set: { userId: user._id },
+        $setOnInsert: { appUserId, originalAppUserId: appUserId, willRenew: false },
+      },
+      { upsert: true, new: true },
+    );
+  },
 
-    // Mismo fallback que syncFromCustomerInfo: si el productId no incluye sufijo de plan
-    // (base plans de Google Play), preservar el plan registrado en BD
-    if (
-      premiumState.plan === "unknown" &&
-      (user?.premium?.plan === "monthly" || user?.premium?.plan === "annual")
-    ) {
-      premiumState.plan = user.premium.plan;
+  // "Restaurar compras" y cada CustomerInfo que empuja el SDK. Con la clave
+  // secreta, manda RevenueCat (su API): el CustomerInfo viene del cliente y
+  // se puede falsificar. Solo si RevenueCat no responde se usa el del SDK.
+  async restore(user, { customerInfo = null, explicitPlan = null } = {}) {
+    const appUserId = user._id.toString();
+    if (secretApiKey()) {
+      try {
+        const subscriber = await getRevenueCatSubscriber(appUserId);
+        if (subscriber) {
+          const { premiumState } = await applyRevenueCatSubscriber(user, subscriber, appUserId, {
+            explicitPlan,
+          });
+          return premiumState;
+        }
+      } catch (error) {
+        console.error(
+          "[Billing] RevenueCat no responde al restaurar; se usa el CustomerInfo del SDK",
+          appUserId,
+          error?.message || error,
+        );
+      }
     }
 
-    await Promise.all([
-      updateUserPremium(user._id, premiumState),
-      upsertBillingCustomer({
-        userId: user._id,
-        appUserId: resolvedAppUserId,
-        originalAppUserId: subscriber?.original_app_user_id || resolvedAppUserId,
-        activeEntitlement: premiumState.activeEntitlement,
-        store: premiumState.store,
-        productId: premiumState.productId,
-        expiresAt: premiumState.expiresAt,
-        willRenew: premiumState.willRenew,
-        lastEventAt: new Date(),
-      }),
-    ]);
-
-    return premiumState;
+    if (customerInfo) {
+      return syncFromCustomerInfo(user, customerInfo, explicitPlan);
+    }
+    return null;
   },
 
   async getAdminSubscriptionStatus(userId) {
-    const user = await userSchema.findById(userId);
-    if (!user) {
-      const error = new Error("Usuario no encontrado");
-      error.status = 404;
-      throw error;
-    }
-
-    const appUserId = user._id.toString();
-    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+    const { user, appUserId, billingCustomer } = await loadAdminTarget(userId);
     return {
       userId: appUserId,
       isPremium: isEffectivelyEntitled(user?.premium),
@@ -879,148 +1044,69 @@ module.exports = {
     };
   },
 
-  async grantAdminPremium(userId, duration) {
-    const user = await userSchema.findById(userId);
-    if (!user) {
-      const error = new Error("Usuario no encontrado");
-      error.status = 404;
-      throw error;
-    }
-
-    const appUserId = user._id.toString();
-    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
-    if (isRealStorePremium(user, billingCustomer)) {
-      const error = new Error("El usuario tiene una suscripcion activa de tienda");
-      error.status = 409;
-      throw error;
-    }
-
-    const targetExpiresAt = resolveTargetExpiration(user, duration, "grant");
-    await revokePromotionalEntitlement(appUserId).catch((error) => {
-      const status = error?.response?.status;
-      if (status !== 400 && status !== 404) {
-        throw error;
-      }
-    });
-    await grantPromotionalEntitlement(appUserId, targetExpiresAt);
-    const subscriber = await getRevenueCatSubscriber(appUserId);
-
-    return syncSubscriberForUser(user, subscriber, appUserId, {
-      expectManualGrant: true,
-    });
+  grantAdminPremium(userId, duration) {
+    return applyAdminPremium(userId, duration, "grant");
   },
 
-  async extendAdminPremium(userId, duration) {
-    const user = await userSchema.findById(userId);
-    if (!user) {
-      const error = new Error("Usuario no encontrado");
-      error.status = 404;
-      throw error;
-    }
-
-    const appUserId = user._id.toString();
-    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
-    if (isRealStorePremium(user, billingCustomer)) {
-      const error = new Error("El usuario tiene una suscripcion activa de tienda");
-      error.status = 409;
-      throw error;
-    }
-
-    const targetExpiresAt = resolveTargetExpiration(user, duration, "extend");
-    await revokePromotionalEntitlement(appUserId).catch((error) => {
-      const status = error?.response?.status;
-      if (status !== 400 && status !== 404) {
-        throw error;
-      }
-    });
-    await grantPromotionalEntitlement(appUserId, targetExpiresAt);
-    const subscriber = await getRevenueCatSubscriber(appUserId);
-
-    return syncSubscriberForUser(user, subscriber, appUserId, {
-      expectManualGrant: true,
-    });
+  extendAdminPremium(userId, duration) {
+    return applyAdminPremium(userId, duration, "extend");
   },
 
   async revokeAdminPremium(userId) {
-    const user = await userSchema.findById(userId);
-    if (!user) {
-      const error = new Error("Usuario no encontrado");
-      error.status = 404;
-      throw error;
-    }
-
-    const appUserId = user._id.toString();
-    const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+    assertRevenueCatSecret();
+    const { user, appUserId, billingCustomer } = await loadAdminTarget(userId);
     if (isRealStorePremium(user, billingCustomer)) {
-      const error = new Error("El usuario tiene una suscripcion activa de tienda");
-      error.status = 409;
-      throw error;
+      throw storeSubscriptionConflict();
     }
 
     const subscriber =
       (await revokePromotionalEntitlement(appUserId)) ||
       (await getRevenueCatSubscriber(appUserId));
+    if (!subscriber) {
+      const error = new Error("No se pudo sincronizar la suscripcion con RevenueCat");
+      error.status = 502;
+      throw error;
+    }
 
-    return syncSubscriberForUser(user, subscriber, appUserId);
+    const { updatedUser } = await applyRevenueCatSubscriber(user, subscriber, appUserId);
+    return updatedUser;
   },
 
   async processWebhook(rawPayload) {
-    let event = parseWebhookEvent(rawPayload);
+    const event = parseWebhookEvent(rawPayload);
     const shouldProcess = await ensureEventNotProcessed(event.eventId, event.payload);
     if (!shouldProcess) {
-      console.info(
-        "[BillingWebhook]",
-        JSON.stringify({
-          eventId: event.eventId,
-          type: event.type,
-          appUserId: event.appUserId,
-          productId: event.productId,
-          applied: false,
-          reason: "duplicate_event",
-        }),
-      );
+      logWebhook(event, { applied: false, reason: "duplicate_event" });
       return { processed: false, duplicated: true };
     }
 
     if (!event.appUserId) {
-      console.info(
-        "[BillingWebhook]",
-        JSON.stringify({
-          eventId: event.eventId,
-          type: event.type,
-          appUserId: event.appUserId,
-          productId: event.productId,
-          applied: false,
-          reason: "missing_app_user_id",
-        }),
-      );
+      logWebhook(event, { applied: false, reason: "missing_app_user_id" });
       return { processed: false, reason: "missing_app_user_id" };
     }
 
-    let billingCustomer = await billingCustomerSchema.findOne({
-      appUserId: event.appUserId,
-    });
+    const billingCustomer = await findBillingCustomer(event.appUserId, event.originalAppUserId);
+    const user = await findUserForAppUserId(event.appUserId, billingCustomer);
 
-    if (!billingCustomer && event.originalAppUserId) {
-      billingCustomer = await billingCustomerSchema.findOne({
-        originalAppUserId: event.originalAppUserId,
-      });
+    if (secretApiKey()) {
+      try {
+        const synced = await resyncFromRevenueCat(event, user, billingCustomer);
+        if (synced) {
+          logWebhook(event, { applied: true, reason: "resynced_from_revenuecat", users: synced.applied });
+          return { processed: true, duplicated: false, applied: true, resynced: true };
+        }
+      } catch (error) {
+        console.error(
+          "[BillingWebhook] RevenueCat no responde; se aplica el estado del evento",
+          event.eventId,
+          error?.message || error,
+        );
+      }
     }
 
+    // Sin clave (o con RevenueCat caído): se aplica lo que dice el evento.
     if (!shouldApplyEventByOrder(event, billingCustomer)) {
-      console.info(
-        "[BillingWebhook]",
-        JSON.stringify({
-          eventId: event.eventId,
-          type: event.type,
-          appUserId: event.appUserId,
-          productId: event.productId,
-          entitled: event.entitled,
-          willRenew: event.willRenew,
-          applied: false,
-          reason: "stale_event",
-        }),
-      );
+      logWebhook(event, { entitled: event.entitled, willRenew: event.willRenew, applied: false, reason: "stale_event" });
       return { processed: true, duplicated: false, applied: false, reason: "stale_event" };
     }
 
@@ -1030,18 +1116,13 @@ module.exports = {
     if (event.plan === "unknown" && event.productId) {
       event.plan = derivePlan(event.productId);
     }
-
-    let user = null;
-    if (mongoose.Types.ObjectId.isValid(event.appUserId)) {
-      user = await userSchema.findById(event.appUserId);
-    }
-
-    if (!user && billingCustomer?.userId) {
-      user = await userSchema.findById(billingCustomer.userId);
-    }
-
     if (event.plan === "unknown" && user?.premium?.plan) {
       event.plan = user.premium.plan;
+    }
+
+    if (event.applyEntitlementUpdate && refersToOlderPeriod(event, user, billingCustomer)) {
+      event.applyEntitlementUpdate = false;
+      event.keepExistingSubscriptionState = true;
     }
 
     if (user && event.applyEntitlementUpdate) {
@@ -1078,19 +1159,13 @@ module.exports = {
       lastEventAt: event.eventTimestamp || new Date(),
     });
 
-    console.info(
-      "[BillingWebhook]",
-      JSON.stringify({
-        eventId: event.eventId,
-        type: event.type,
-        appUserId: event.appUserId,
-        productId: resolvedCustomerState.productId,
-        entitled: event.applyEntitlementUpdate ? event.entitled : null,
-        willRenew: resolvedCustomerState.willRenew,
-        applied: true,
-        reason: event.applyEntitlementUpdate ? "updated_entitlement" : "mapping_only",
-      }),
-    );
+    logWebhook(event, {
+      productId: resolvedCustomerState.productId,
+      entitled: event.applyEntitlementUpdate ? event.entitled : null,
+      willRenew: resolvedCustomerState.willRenew,
+      applied: true,
+      reason: event.applyEntitlementUpdate ? "updated_entitlement" : "mapping_only",
+    });
 
     return {
       processed: true,
