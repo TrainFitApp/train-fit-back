@@ -1,6 +1,6 @@
 {
   "name": "trainfitback",
-  "version": "101.3.47",
+  "version": "101.3.48",
   "private": true,
   "scripts": {
     "prepare": "node .githooks/install.js",
