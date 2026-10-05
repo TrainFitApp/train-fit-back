@@ -1,5 +1,5 @@
 const { mergeRecipeIngredients } = require("./diet-days-nutrition-util");
-const { addDaysToIsoDate, todayIsoDate } = require("../util/date-util");
+const { addDaysToIsoDate } = require("../util/date-util");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -209,10 +209,11 @@ function aggregateShopping(segments, selection = {}) {
     .sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name, "es"));
 }
 
-// Rango pedido por query: una semana desde hoy por defecto (es como se hace
-// la compra) y tope de 62 días, que se recorren uno a uno. null = inválido.
-function shoppingRange(query = {}) {
-  const from = query.from || todayIsoDate();
+// Rango pedido por query: una semana desde hoy (`today`, el del cliente) por
+// defecto (es como se hace la compra) y tope de 62 días, que se recorren uno
+// a uno. null = inválido.
+function shoppingRange(query = {}, today) {
+  const from = query.from || today;
   const to = query.to || addDaysToIsoDate(from, 6);
   if (!ISO_DATE.test(from) || !ISO_DATE.test(to) || to < from) return null;
   if (to > addDaysToIsoDate(from, 61)) return null;

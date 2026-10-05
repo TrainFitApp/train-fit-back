@@ -16,11 +16,11 @@ const { CHECKIN_FIELDS_BY_KEY, isPlausibleValue, scaleLevelsFor } = require("./c
 const { validateCustomAnswer, normalizeCustomAnswer } = require("./checkin-custom-question");
 const { prefillWindow, anthropometryPrefill, changedAnthropometryFields } = require("./checkin-prefill");
 const { occurrenceDatesBetween, occurrenceCovering, historyOccurrences } = require("./checkin-schedule-dates");
-const { isoDate, addDaysToIsoDate } = require("../util/date-util");
+const { addDaysToIsoDate } = require("../util/date-util");
 
-function todayIso() {
-  return isoDate(new Date());
-}
+// `today` en todas las funciones = hoy en la zona horaria del CLIENTE (es su
+// check-in): lo resuelve quien llama, ver util/date-util.js.
+
 
 /** Estado visible de una ocurrencia, con o sin respuesta. */
 function occurrenceStatus(occurrence, response, today) {
@@ -87,7 +87,7 @@ function entryOfResponse(response) {
 }
 
 /** Agenda de un cliente entre dos fechas, con las respuestas ya unidas. */
-async function agendaFor(trainerId, clientId, from, to, today = todayIso()) {
+async function agendaFor(trainerId, clientId, from, to, today) {
   const filtro = trainerId ? { trainerId, clientId } : { clientId };
   const schedules = await Schedule.find(filtro).sort({ createdAt: 1 }).lean();
   const responses = await Response.find({ ...filtro, occurrenceDate: { $gte: from, $lte: to } }).lean();
@@ -111,7 +111,7 @@ async function agendaFor(trainerId, clientId, from, to, today = todayIso()) {
  * más antigua, respondidas o no. Pagina hacia atrás con `before` (la fecha
  * que devuelve `nextBefore`).
  */
-async function scheduleHistory(schedule, { before = null, limit = 50, today = todayIso() } = {}) {
+async function scheduleHistory(schedule, { before = null, limit = 50, today } = {}) {
   const { occurrences, nextBefore, total } = historyOccurrences(schedule, { before, limit, today });
   if (!occurrences.length) return { entries: [], nextBefore: null, total };
 
@@ -132,7 +132,7 @@ async function scheduleHistory(schedule, { before = null, limit = 50, today = to
  * Las solicitudes ABIERTAS hoy de un cliente, una por programación activa.
  * Es lo que ve el cliente en su app: el aviso de "toca check-in".
  */
-async function openForClient(clientId, today = todayIso(), trainerIds = null) {
+async function openForClient(clientId, today, trainerIds = null) {
   const filtro = { clientId, active: true };
   if (trainerIds) filtro.trainerId = { $in: trainerIds };
   const schedules = await Schedule.find(filtro).sort({ createdAt: 1 }).lean();
@@ -150,7 +150,7 @@ async function openForClient(clientId, today = todayIso(), trainerIds = null) {
  * Medidas que el cliente ya apuntó dentro del periodo de este check-in, para
  * rellenar el formulario (checkin-prefill.js). Solo rellena: no responde.
  */
-async function prefillFor(clientId, schedule, occurrence, today = todayIso()) {
+async function prefillFor(clientId, schedule, occurrence, today) {
   const window = prefillWindow(schedule, occurrence, today);
   // Solo lo que apuntó el cliente: las respuestas de check-ins anteriores no
   // rellenan el siguiente.
@@ -198,7 +198,7 @@ function missedOccurrences(schedules, answered, today, sinceDays = 60) {
 }
 
 /** Abiertas y cerradas sin respuesta de un cliente en los últimos `sinceDays`. */
-async function summaryFor(trainerId, clientId, sinceDays, today = todayIso()) {
+async function summaryFor(trainerId, clientId, sinceDays, today) {
   const schedules = await Schedule.find({ trainerId, clientId }).lean();
   const responses = await Response.find({
     trainerId,
@@ -213,7 +213,7 @@ async function summaryFor(trainerId, clientId, sinceDays, today = todayIso()) {
 }
 
 /** La ocurrencia abierta HOY de una programación, si aún no tiene respuesta. */
-async function openUnanswered(schedule, today = todayIso()) {
+async function openUnanswered(schedule, today) {
   const occurrence = occurrenceCovering(schedule, today);
   if (!occurrence || !isOpen(occurrence, today)) return null;
   const answered = await Response.exists({ scheduleId: schedule._id, occurrenceDate: occurrence.date });
@@ -309,7 +309,7 @@ async function validatePhotoAnswers(clientId, values) {
  * semana de dieta a la que pertenece y vuelca a Anthropometry lo que sea
  * composición corporal.
  */
-async function saveResponse({ schedule, occurrence, values, today = todayIso() }) {
+async function saveResponse({ schedule, occurrence, values, today }) {
   const { weekForClientAt } = require("../planAssignments/week-service");
   const week = await weekForClientAt(schedule.clientId, occurrence.date);
   const prefill = await prefillFor(schedule.clientId, schedule, occurrence, today);
@@ -372,7 +372,6 @@ async function saveResponse({ schedule, occurrence, values, today = todayIso() }
 }
 
 module.exports = {
-  todayIso,
   missedOccurrences,
   summaryFor,
   openUnanswered,

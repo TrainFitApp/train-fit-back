@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
-const { addDaysToIsoDate, todayIsoDate } = require("../util/date-util");
+const { addDaysToIsoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 // Lo que una cuenta deja en las cuentas de OTROS no se borra con ella
 // (decisión 2026-10). Lo usa el hook de borrado de components/users/schema.js
@@ -59,10 +60,11 @@ async function orphanUsedRecipes(userId) {
 // Fases de dieta que el entrenador asignó a sus clientes: las que ya habían
 // empezado se quedan como historial terminado (ayer como último día, sin
 // entrenador); las que empiezan hoy o más adelante no llegaron a correr y se
-// borran.
+// borran. "Hoy" es el del entrenador que se va: es un corte para toda su
+// cartera de una vez, no una fecha por cliente.
 async function endAssignedDietPhases(trainerId) {
   const DietTemplate = mongoose.model("DietTemplate");
-  const yesterday = addDaysToIsoDate(todayIsoDate(), -1);
+  const yesterday = addDaysToIsoDate(await todayForUser(trainerId), -1);
   const clientCopies = { trainerId, clientId: { $nin: [null, trainerId] } };
   await DietTemplate.deleteMany({ ...clientCopies, startDate: { $gt: yesterday } });
   await DietTemplate.updateMany(clientCopies, [

@@ -4,7 +4,7 @@
 //
 // PURO: entran usuario, relaciones y documentos; salen booleanos. Sin Mongo.
 
-const { isoDate } = require("../util/date-util");
+const { isoDateInZone } = require("../util/date-util");
 
 // La regla de quién sube vive con el resto de límites de plan.
 const { canUploadMedia } = require("../billing/feature-access-service");
@@ -46,7 +46,9 @@ function relationStartOf(relations) {
  *      relación en adelante, salvo que el cliente le haya compartido su
  *      historial.
  */
-function trainerCanSeeProgressDay(day, { trainerId, relationStart, historyShared } = {}) {
+// `timeZone`: la del cliente — la relación empezó en un instante, y el día
+// que cuenta es el de su calendario.
+function trainerCanSeeProgressDay(day, { trainerId, relationStart, historyShared, timeZone } = {}) {
   if (!day) return false;
   const answersHisCheckin = (day.checkins || []).some(
     (checkin) => String(checkin.trainerId) === String(trainerId)
@@ -55,7 +57,7 @@ function trainerCanSeeProgressDay(day, { trainerId, relationStart, historyShared
   if (day.hiddenFromTrainers) return false;
   if (historyShared) return true;
   if (!relationStart) return false;
-  return String(day.date) >= isoDate(relationStart);
+  return String(day.date) >= isoDateInZone(relationStart, timeZone);
 }
 
 /** Decisión 3: el admin no ve nunca fotos ni vídeos. Se niega aquí de forma explícita. */

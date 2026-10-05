@@ -16,7 +16,8 @@ const { buildPhaseEvents, sortEvents } = require("./nutrition-history");
 const checkinDao = require("../trainerCheckins/checkin-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { listSkippedDates } = require("../dietDays/diet-skips");
-const { daysElapsed, isoDate } = require("../util/date-util");
+const { daysElapsed } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 /**
  * ¿Esta fase existente impide colocar una nueva que empieza en `startDate`?
@@ -26,9 +27,10 @@ const { daysElapsed, isoDate } = require("../util/date-util");
  * rechaza es PROGRAMAR una fase futura encima de una que sigue abierta (o
  * dentro del tramo de una ya cortada).
  *
- * `today` se inyecta para poder testear sin depender del reloj.
+ * `today` (el del cliente, en su zona horaria) se inyecta: así se testea sin
+ * depender del reloj.
  */
-function blocksNewPhase(existing, startDate, today = isoDate(new Date()), rulingPhaseId = null) {
+function blocksNewPhase(existing, startDate, today, rulingPhaseId = null) {
   // La fase que RIGE en `startDate` se corta entera si se empieza hoy (o con
   // fecha pasada) — incluida su semana en curso, que ya lleva endDate si
   // tenía la siguiente preparada, y las semanas preparadas por delante
@@ -64,7 +66,7 @@ function blocksNewPhase(existing, startDate, today = isoDate(new Date()), ruling
 // nuevo empieza justo donde lo deja. Sus semanas ya cerradas sí siguen
 // bloqueando (ver findOverlapping).
 async function reserveActivePhaseSlot(clientId, startDate, excludePhaseId = null) {
-  const today = isoDate(new Date());
+  const today = await todayForUser(clientId);
   const solapadas = await dietTemplateDao.findOverlapping(clientId, startDate, null, { excludePhaseId });
   // La fase que rige en `startDate` (solo si es hoy o pasado): se corta, no
   // bloquea. `covering` es su contenido en curso — el que se encadena.
@@ -193,7 +195,7 @@ async function computeNeedAt(clientId, head, asOf, window = null) {
 // registrado, si no el último; último rango de pasos declarado).
 async function buildPhaseNeed(clientId, phase, startDate) {
   if (!phase) return null;
-  const today = isoDate(new Date());
+  const today = await todayForUser(clientId);
   const asOf = startDate && startDate <= today ? startDate : undefined;
   // Al empezar la fase todavía no hay semanas corridas: los pasos se miran
   // en los 14 días anteriores, que es lo último que se sabe de cómo se mueve.
@@ -221,7 +223,7 @@ async function loadPhase(clientId, phaseId) {
   }
   // Incluye al head (phaseId = self), ordenados por inicio.
   const members = await dietTemplateDao.findPhaseMembers(phaseId);
-  const today = isoDate(new Date());
+  const today = await todayForUser(clientId);
   const { weeks, phaseEnd } = await weeksOfPhase(head, members, today);
   const current = currentWeek(weeks, today);
   const next = current ? nextWeek(weeks, current) : null;
@@ -596,7 +598,7 @@ module.exports = {
   // una vez (no una consulta por semana); los días saltados del cliente
   // enteros, en una sola consulta.
   async getNutritionHistory(clientId) {
-    const today = isoDate(new Date());
+    const today = await todayForUser(clientId);
     const all = await dietTemplateDao.listByClient(clientId);
     const heads = all
       .filter((d) => d.phaseId && String(d.phaseId) === String(d._id) && d.startDate && d.startDate <= today)
@@ -642,7 +644,7 @@ module.exports = {
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
     const phases = [];
     const weeksOut = [];
-    const today = isoDate(new Date());
+    const today = await todayForUser(clientId);
 
     for (const [index, head] of heads.entries()) {
       const members = all

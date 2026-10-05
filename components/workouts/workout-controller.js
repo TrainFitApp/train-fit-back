@@ -182,6 +182,7 @@ module.exports = {
     const workout = await workoutModel.getWorkoutByIdAndDate(
       req.params.id,
       req.body.date,
+      req.auth.timeZone,
     );
     return res.send(workout);
   },

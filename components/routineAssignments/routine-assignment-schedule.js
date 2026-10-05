@@ -1,5 +1,5 @@
 const { addDaysToIsoDate } = require("../util/period-util");
-const { isoDate } = require("../util/date-util");
+const { isoDateInZone } = require("../util/date-util");
 const { projectionInRange } = require("./routine-assignment-projection");
 
 // Tarea 5 (2026-09) — adherencia de entrenamiento por VENTANA + FASE, en vez
@@ -56,7 +56,9 @@ function pickCurrentPhase(phases, today) {
 // antiguo arrastraría sesiones completadas de ANTES de que la fase
 // existiera ("3 de 1"), el mismo error de cuentas que checkinsDimension ya
 // evita a propósito.
-function computeWindowedTrainingProgress(phasesAsc, splitsByTableId, periodStart, periodEndClamped) {
+// `timeZone`: la del cliente. Un entreno se guarda como instante y cuenta en
+// el día de su calendario.
+function computeWindowedTrainingProgress(phasesAsc, splitsByTableId, periodStart, periodEndClamped, timeZone) {
   let plannedTotal = 0;
   let completedSessions = 0;
   // Auditoría 2026-09 — total de días proyectados EN LA VENTANA, contando
@@ -90,7 +92,7 @@ function computeWindowedTrainingProgress(phasesAsc, splitsByTableId, periodStart
     const workouts = splits.flatMap((split) => split.workouts || []);
     completedSessions += workouts.filter((workout) => {
       if (workout.rest || workout.isPlannedRestDay || !workout.date) return false;
-      const date = isoDate(workout.date);
+      const date = isoDateInZone(workout.date, timeZone);
       return date >= lower && date <= upper;
     }).length;
   });

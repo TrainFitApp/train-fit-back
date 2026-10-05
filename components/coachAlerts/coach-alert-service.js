@@ -13,7 +13,7 @@ const userSchema = require("../users/schema");
 const { runRulesForTrainer } = require("../coachRules/coach-rule-service");
 const tableDao = require("../tables/table-dao");
 const painDao = require("../painLog/pain-dao");
-const { isoDate } = require("../util/date-util");
+const { isoDate, addDaysToIsoDate, isoDateInZone, timeZoneOf } = require("../util/date-util");
 
 // Días de silencio tras un cierre MANUAL de una alerta antes de que el
 // evaluador pueda volver a abrirla. Si el coach mira un estancamiento y
@@ -99,7 +99,8 @@ async function loadTrainerContext(trainerId, now) {
     anthropometryDao.listForUsersSince(clientIds, windowStart),
     // Solo para saber SI el cliente tiene rutina (detectNoTrainingActivity)
     // y para la Cartera — ver roster-service.js.
-    userSchema.find({ _id: { $in: clientIds } }).select("tableInUse").lean(),
+    // `timezone`: el "hoy" de cada cliente es el de su zona horaria.
+    userSchema.find({ _id: { $in: clientIds } }).select("tableInUse timezone").lean(),
     // Fase 6 — sesiones entrenadas de TODA la cartera en una agregación,
     // para que el motor de reglas pueda condicionar sobre entrenamiento sin
     // una consulta por cliente. El volumen y los PRs siguen fuera del job:
@@ -116,7 +117,14 @@ async function loadTrainerContext(trainerId, now) {
     painDao.listForUsersSince(clientIds, windowStart),
     // Adherencia nutricional de toda la cartera: una agregación con solo las
     // marcas de cumplimiento, sin el árbol de autopopulate.
-    dietDaysDao.listTrackingDaysForUsers(clientIds, windowStart, isoDate(now)),
+    // Un día de margen por cada lado del día UTC: cubre el "hoy" de
+    // cualquier zona. Cada cliente se recorta después a SU ventana (ver
+    // adherenceByClient).
+    dietDaysDao.listTrackingDaysForUsers(
+      clientIds,
+      addDaysToIsoDate(windowStart, -1),
+      addDaysToIsoDate(isoDate(now), 1)
+    ),
   ]);
 
   const anthropometryByClient = groupBy(anthropometryEntries, (entry) => String(entry.userId));
@@ -127,11 +135,17 @@ async function loadTrainerContext(trainerId, now) {
   // Todos los clientes llevan adherencia, también los que no tienen días
   // (percentage null, daysWithData 0): la Cartera y lastActivityFor
   // distinguen "sin datos" de "sin cliente".
+  const timeZoneByClient = new Map(clientUsers.map((user) => [String(user._id), timeZoneOf(user)]));
+  const todayByClient = new Map(
+    [...timeZoneByClient].map(([clientKey, timeZone]) => [clientKey, isoDateInZone(now, timeZone)])
+  );
   const trackingDaysByClient = groupBy(trackingDays, (day) => String(day.userId));
   const adherenceByClient = new Map(
     clientUsers.map((user) => {
       const clientKey = String(user._id);
-      const days = trackingDaysByClient.get(clientKey) || [];
+      const today = todayByClient.get(clientKey);
+      const from = addDaysToIsoDate(today, -SIGNAL_THRESHOLDS.analysisWindowDays);
+      const days = (trackingDaysByClient.get(clientKey) || []).filter((day) => day.date >= from && day.date <= today);
       return [
         clientKey,
         dietDaysNutritionUtil.computeRangeAdherence(days, SIGNAL_THRESHOLDS.analysisWindowDays),
@@ -162,6 +176,9 @@ async function loadTrainerContext(trainerId, now) {
     // 2026-09, detectNoTrainingActivity (solo para saber SI hay rutina, no
     // recorre su contenido).
     tableIdByClient,
+    // Zona horaria y "hoy" de cada cliente: los días se cuentan en la suya.
+    timeZoneByClient,
+    todayByClient,
   };
 }
 
@@ -203,6 +220,8 @@ function buildClientSnapshots(context, now) {
       shortName: shortName(relation.clientId),
       relationStatus: "en_revision",
       now,
+      timeZone: timeZoneOf(relation.clientId),
+      today: isoDateInZone(now, timeZoneOf(relation.clientId)),
       entries: [],
       checkinResponses: [],
     });
@@ -215,7 +234,8 @@ function buildClientSnapshots(context, now) {
     const adherence = context.adherenceByClient.get(clientKey) || null;
     const lastResponseAt = context.lastResponseByClient.get(clientKey) || null;
     const schedules = context.schedulesByClient.get(clientKey) || [];
-    const today = isoDate(now);
+    const timeZone = context.timeZoneByClient?.get(clientKey) || timeZoneOf(entry.user);
+    const today = isoDateInZone(now, timeZone);
     const missed = checkinAgenda.missedOccurrences(
       schedules,
       context.answeredByClient.get(clientKey) || new Set(),
@@ -239,6 +259,10 @@ function buildClientSnapshots(context, now) {
       relationStatus: "active",
       intakePending: Boolean(entry.intakePending),
       now,
+      // Zona del cliente y su "hoy": de aquí cuentan los periodos de las
+      // reglas (rule-metric-catalog.js#periodStartDay) y la Cartera.
+      timeZone,
+      today,
       entries,
       adherence,
       lastResponseAt,
@@ -362,11 +386,15 @@ async function evaluateTrainer(trainerId, now = new Date(), context = null) {
 //
 // Peticiones simultáneas del mismo profesional (el panel y la Cartera a la
 // vez) se unen a la evaluación en curso en vez de lanzar otra.
+//
+// "Una vez al día" = el día del PROFESIONAL (`timeZone`, la suya): es él
+// quien mira el panel. Cada cliente se evalúa igualmente con su propio "hoy"
+// (buildClientSnapshots).
 const evaluations = new Map(); // String(trainerId) -> { day, pending, promise }
 
-function startEvaluation(trainerId, now, context) {
+function startEvaluation(trainerId, now, context, timeZone) {
   const key = String(trainerId);
-  const entry = { day: isoDate(now), pending: true, promise: null };
+  const entry = { day: isoDateInZone(now, timeZone), pending: true, promise: null };
   entry.promise = evaluateTrainer(trainerId, now, context).then(
     (result) => {
       entry.pending = false;
@@ -391,10 +419,12 @@ function startEvaluation(trainerId, now, context) {
  * `context`: si quien llama ya cargó loadTrainerContext (la Cartera), se
  * reutiliza y la evaluación no vuelve a leer nada de los clientes.
  */
-async function ensureEvaluatedToday(trainerId, { now = new Date(), context = null } = {}) {
+async function ensureEvaluatedToday(trainerId, { now = new Date(), context = null, timeZone } = {}) {
   const current = evaluations.get(String(trainerId));
   const promise =
-    current?.day === isoDate(now) ? current.promise : startEvaluation(trainerId, now, context);
+    current?.day === isoDateInZone(now, timeZone)
+      ? current.promise
+      : startEvaluation(trainerId, now, context, timeZone);
   try {
     await promise;
   } catch (error) {
@@ -403,9 +433,9 @@ async function ensureEvaluatedToday(trainerId, { now = new Date(), context = nul
 }
 
 /** "Revisar ahora": evalúa ya, salvo que haya una evaluación en curso, a la que se une. */
-function evaluateNow(trainerId, now = new Date()) {
+function evaluateNow(trainerId, { now = new Date(), timeZone } = {}) {
   const current = evaluations.get(String(trainerId));
-  return current?.pending ? current.promise : startEvaluation(trainerId, now, null);
+  return current?.pending ? current.promise : startEvaluation(trainerId, now, null, timeZone);
 }
 
 // --- helper privado ---

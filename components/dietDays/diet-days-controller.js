@@ -9,6 +9,7 @@ const { clearPlannedDay, isDaySkipped } = require("./diet-skips");
 const { buildMenuPreviews } = require("./menu-preview");
 const { shoppingRange } = require("./shopping-list-service");
 const { weekForClientAt } = require("../planAssignments/week-service");
+const { todayIsoDate } = require("../util/date-util");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -38,7 +39,7 @@ const controller = {
   // (trainer-client-data-controller#getClientShoppingList): la lista es la
   // misma, solo cambia de quién.
   async getMyShoppingList(req, res) {
-    const range = shoppingRange(req.query);
+    const range = shoppingRange(req.query, todayIsoDate(req.auth.timeZone));
     if (!range) return res.status(400).send({ message: "Rango inválido (YYYY-MM-DD, máx. 62 días)" });
     return res.send(await dietDayModel.getShoppingList(req.user.id, range.from, range.to));
   },

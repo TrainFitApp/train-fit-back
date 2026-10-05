@@ -4,7 +4,8 @@ const {
   ensureEvaluatedToday,
 } = require("../coachAlerts/coach-alert-service");
 const { SIGNAL_THRESHOLDS } = require("../coachAlerts/coach-signals-service");
-const { computeAdherence } = require("./adherence-service");
+const { computeAdherence, habitActiveDays } = require("./adherence-service");
+const { isoDate, isoDateInZone, addDaysToIsoDate } = require("../util/date-util");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { taskLabel } = require("../trainerTasks/task-label");
 const tableDao = require("../tables/table-dao");
@@ -43,16 +44,6 @@ const formCheckDao = require("../formChecks/form-check-dao");
 // Tres números distintos para "la adherencia de este cliente" según qué
 // pantalla mires sería peor que no tener ninguno.
 const ROSTER_WINDOW_DAYS = SIGNAL_THRESHOLDS.analysisWindowDays;
-
-function isoDate(date) {
-  return new Date(date).toISOString().slice(0, 10);
-}
-
-function addDays(isoDay, days) {
-  const date = new Date(`${isoDay}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
 
 function round(value, decimals) {
   const factor = 10 ** decimals;
@@ -122,19 +113,12 @@ async function countOpenAlertsByClient(trainerId) {
   return new Map(rows.map((row) => [String(row._id), { total: row.total, high: row.high }]));
 }
 
-// Días que un hábito lleva activo dentro de la ventana. Mismo criterio que
-// client-progress-controller#diasActivos.
-function diasActivosDeTarea(task, periodDays, now) {
-  const desdeCreacion = Math.floor((now.getTime() - new Date(task.createdAt).getTime()) / 86400000) + 1;
-  return Math.max(0, Math.min(periodDays, desdeCreacion));
-}
-
 // Tarea 5bis (2026-09) — igual que client-data-loader.js#loadTrainingWindow:
 // adherencia de entrenamiento de la fase EN CURSO, no de la ventana fija de
 // la Cartera. `phases` ya está cargado para TODOS los clientes de golpe
 // (listByClients, ver buildRoster) — pickCurrentPhase filtra en memoria, sin
 // consulta extra por cliente.
-function computeCurrentPhaseTraining(phases, splitsByTableId, today) {
+function computeCurrentPhaseTraining(phases, splitsByTableId, today, timeZone) {
   const currentPhase = pickCurrentPhase(phases, today);
   if (!currentPhase) return { plannedTotal: 0, completedSessions: 0, scheduledDays: 0 };
 
@@ -142,14 +126,20 @@ function computeCurrentPhaseTraining(phases, splitsByTableId, today) {
     [currentPhase],
     splitsByTableId,
     currentPhase.startDate,
-    today
+    today,
+    timeZone
   );
 }
 
-async function buildRoster(trainerId, now = new Date()) {
-  const to = isoDate(now);
-  const from = addDays(to, -(ROSTER_WINDOW_DAYS - 1));
+// La ventana de cada cliente termina en SU hoy (snapshot.today, en su zona
+// horaria), así que varía en un día de un cliente a otro.
+function windowOf(snapshot) {
+  return { from: addDaysToIsoDate(snapshot.today, -(ROSTER_WINDOW_DAYS - 1)), to: snapshot.today };
+}
 
+// `timeZone`: la del profesional, solo para saber si sus alertas ya están
+// evaluadas hoy. Los días de cada cliente van en su propia zona (windowOf).
+async function buildRoster(trainerId, { now = new Date(), timeZone } = {}) {
   const context = await loadTrainerContext(trainerId, now);
   const snapshots = buildClientSnapshots(context, now);
 
@@ -174,12 +164,13 @@ async function buildRoster(trainerId, now = new Date()) {
   );
   // Revisiones de técnica: solo de clientes de entrenamiento (el
   // nutricionista no las ve, form-check-service.js#activeTrainingClientIds).
+  const snapshotByClient = new Map(activeSnapshots.map((snapshot) => [String(snapshot.clientId), snapshot]));
   const trainingClientIds = clientIds.filter((id) => (scopesByClient.get(String(id)) || []).includes("training"));
 
   const [activeTasks, phasesByClient, alertsByClient, intakes, pendingCheckins, pendingFormChecks] = await Promise.all([
     trainerTaskDao.listForClients(trainerId, clientIds),
     routineAssignmentDao.listByClients(clientIds),
-    ensureEvaluatedToday(trainerId, { now, context }).then(() => countOpenAlertsByClient(trainerId)),
+    ensureEvaluatedToday(trainerId, { now, context, timeZone }).then(() => countOpenAlertsByClient(trainerId)),
     clientIntakeDao.listStateByTrainer(trainerId, clientIds),
     // Columna «Por revisar»: lo que el cliente ha mandado y espera respuesta.
     clientIds.length ? checkinDao.countPendingReviewByClient(trainerId, clientIds) : new Map(),
@@ -189,8 +180,8 @@ async function buildRoster(trainerId, now = new Date()) {
 
   const currentTableIds = [
     ...new Set(
-      [...phasesByClient.values()]
-        .map((phases) => pickCurrentPhase(phases, to)?.tableId)
+      [...phasesByClient]
+        .map(([clientKey, phases]) => pickCurrentPhase(phases, snapshotByClient.get(clientKey)?.today)?.tableId)
         .filter(Boolean)
         .map(String)
     ),
@@ -199,20 +190,32 @@ async function buildRoster(trainerId, now = new Date()) {
     ? await tableDao.getSplitsForTables(currentTableIds)
     : new Map();
 
+  // Un día de margen por cada lado: cubre la ventana de cualquier zona, y
+  // cada marca se recorta abajo a la de su cliente.
   const taskIds = activeTasks.map((task) => task._id);
-  const completions = await trainerTaskDao.listCompletionsForTasksInRange(taskIds, from, to);
+  const completions = await trainerTaskDao.listCompletionsForTasksInRange(
+    taskIds,
+    addDaysToIsoDate(isoDate(now), -ROSTER_WINDOW_DAYS),
+    addDaysToIsoDate(isoDate(now), 1)
+  );
 
   // Marcas por TAREA, no por cliente: cada hábito se mide contra sus propios
   // días activos, así que ya no vale un total por cliente.
   // Mismo criterio que la ficha: una marca anterior a la creación del
   // hábito no cuenta (ver client-progress-controller#buildAdherenceInput).
+  const tareaPorId = new Map(activeTasks.map((task) => [String(task._id), task]));
   const creacionPorTarea = new Map(
-    activeTasks.map((task) => [String(task._id), isoDate(task.createdAt)])
+    activeTasks.map((task) => [
+      String(task._id),
+      isoDateInZone(task.createdAt, snapshotByClient.get(String(task.clientId))?.timeZone),
+    ])
   );
   const marcasPorTarea = new Map();
   for (const completion of completions) {
     const key = String(completion.taskId);
     const desde = creacionPorTarea.get(key);
+    const ventana = windowOf(snapshotByClient.get(String(tareaPorId.get(key).clientId)));
+    if (completion.date < ventana.from || completion.date > ventana.to) continue;
     if (desde && completion.date < desde) continue;
     marcasPorTarea.set(key, (marcasPorTarea.get(key) || 0) + 1);
   }
@@ -224,6 +227,7 @@ async function buildRoster(trainerId, now = new Date()) {
 
   return activeSnapshots.map((snapshot) => {
     const clientKey = String(snapshot.clientId);
+    const { to } = windowOf(snapshot);
 
     const adherence = computeAdherence({
       // El snapshot ya trae la adherencia nutricional calculada por
@@ -233,7 +237,8 @@ async function buildRoster(trainerId, now = new Date()) {
       training: computeCurrentPhaseTraining(
         phasesByClient.get(clientKey) || [],
         splitsByTableId,
-        to
+        to,
+        snapshot.timeZone
       ),
       habits: {
         habits: (tareasPorCliente.get(clientKey) || []).map((task) => ({
@@ -242,7 +247,7 @@ async function buildRoster(trainerId, now = new Date()) {
           target: task.target,
           unit: task.unit,
           completions: marcasPorTarea.get(String(task._id)) || 0,
-          activeDays: diasActivosDeTarea(task, ROSTER_WINDOW_DAYS, now),
+          activeDays: habitActiveDays(creacionPorTarea.get(String(task._id)), to, ROSTER_WINDOW_DAYS),
         })),
       },
       checkins: snapshot.checkin

@@ -11,6 +11,7 @@ const { validateQuestionDefinition } = require("./checkin-custom-question");
 const { validateTiming } = require("./checkin-schedule-dates");
 const { scheduleContent, hasQuestions, defaultTiming } = require("./checkin-agenda-controller");
 const { weekForClientAt } = require("../planAssignments/week-service");
+const { todayIsoDate } = require("../util/date-util");
 
 // Fase 5 Coach Pro — comprueba la forma de TODAS las preguntas propias antes
 // de guardar la plantilla. Devuelve el primer error o null.
@@ -121,7 +122,7 @@ module.exports = {
     const clientIds = Array.isArray(req.body?.clientIds) ? req.body.clientIds : [];
     if (!clientIds.length) return res.status(400).send({ message: "clientIds es obligatorio y no puede estar vacío" });
 
-    const timing = { ...defaultTiming(), ...(req.body?.timing || {}) };
+    const timing = { ...defaultTiming(todayIsoDate(req.auth.timeZone)), ...(req.body?.timing || {}) };
     const timingError = validateTiming(timing);
     if (timingError) return res.status(400).send({ message: timingError });
 
@@ -192,7 +193,7 @@ module.exports = {
     const trainerIds = relations.map((relation) => String(relation.trainerId?._id || relation.trainerId));
     if (!trainerIds.length) return res.send([]);
 
-    const today = agenda.todayIso();
+    const today = todayIsoDate(req.auth.timeZone);
     const open = await agenda.openForClient(clientId, today, trainerIds);
     const week = await weekForClientAt(clientId, today);
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
@@ -241,7 +242,7 @@ module.exports = {
     const relation = await trainerClientDao.findActiveByTrainerAndClient(schedule.trainerId, clientId);
     if (!relation) return res.status(403).send({ message: "No tienes una relación activa con este profesional" });
 
-    const today = agenda.todayIso();
+    const today = todayIsoDate(req.auth.timeZone);
     const open = await agenda.openForClient(clientId, today, [String(schedule.trainerId)]);
     const current = open.find((o) => String(o.schedule._id) === String(schedule._id));
     if (!current) {

@@ -1,5 +1,18 @@
 const userSchema = require("../components/users/schema");
 const TokenService = require("../services/token.service");
+const { normalizeTimeZone, timeZoneOf } = require("../components/util/date-util");
+
+// La app manda su zona horaria en cada petición. Se guarda en el usuario solo
+// cuando cambia (viajes, primera vez): de ahí la leen los cálculos que hace
+// otro por él, como la ficha que ve su entrenador.
+async function resolveTimeZone(req, user) {
+  const fromHeader = normalizeTimeZone(String(req.headers?.["x-timezone"] || "").trim());
+  if (fromHeader && fromHeader !== user.timezone) {
+    await userSchema.updateOne({ _id: user._id }, { $set: { timezone: fromHeader } });
+    user.timezone = fromHeader;
+  }
+  return timeZoneOf(user);
+}
 
 function resolveClientFamily(req) {
   return String(req.headers?.["x-client-family"] || "").trim() || "trainfit-front";
@@ -127,6 +140,7 @@ const auth = (permissions) => {
         sessionId: currentAuth.sessionId,
         roles: userRoles,
         email: user.email,
+        timeZone: await resolveTimeZone(req, user),
       };
       req.userData = {
         sub: user._id.toString(),

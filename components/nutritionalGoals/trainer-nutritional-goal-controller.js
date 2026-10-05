@@ -13,7 +13,8 @@ const userSchema = require("../users/schema");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { resolveClientNutritionTarget } = require("./nutrition-target-resolver");
 const { stepsFromHabit } = require("../planAssignments/week-need");
-const { addDaysToIsoDate, isoDate } = require("../util/date-util");
+const { addDaysToIsoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 function round1(value) {
   const n = Number(value);
@@ -38,7 +39,7 @@ function goalResponse(goal) {
 // La referencia calculada con los ÚLTIMOS datos: último peso registrado y
 // los pasos de su hábito en las dos últimas semanas.
 async function computeReference(clientId) {
-  const today = isoDate(new Date());
+  const today = await todayForUser(clientId);
   const window = { start: addDaysToIsoDate(today, -14), end: today };
   const task = await trainerTaskDao.findActiveStepsTask(clientId);
   const completions = task

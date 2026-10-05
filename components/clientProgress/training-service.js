@@ -4,12 +4,16 @@ const {
   normalizeMuscles,
   fromLegacyMuscleGroups,
 } = require("../exercises/muscle-catalog");
-const { buildWeekWindows, isoDate } = require("./progress-service");
+const { buildWeekWindows } = require("./progress-service");
+const { isoDateInZone } = require("../util/date-util");
 
 // Fase 6 Coach Pro — volumen, PRs y evolución de cargas (§17).
 //
 // Puro: entra la lista de series completadas (tableDao.listCompletedSetsForUser)
 // y salen los agregados. Sin BD, sin await.
+//
+// `timeZone` (último argumento) es la zona horaria del CLIENTE: una serie se
+// guarda como instante y cuenta en el día de su calendario, no en el UTC.
 //
 // Todo lo de aquí se calcula sobre series REALMENTE hechas (`doned`), nunca
 // sobre lo planificado: "ha levantado 12.000 kg esta semana" tiene que ser un
@@ -44,15 +48,15 @@ function isReducedLoad(set) {
   return REDUCED_LOAD_PURPOSES.includes(set.splitPurpose);
 }
 
-function buildWeeklyTraining(sets, weeks, now) {
-  return buildWeekWindows(weeks, now).map((window) => {
+function buildWeeklyTraining(sets, weeks, now, timeZone) {
+  return buildWeekWindows(weeks, now, timeZone).map((window) => {
     const inWeek = (sets || []).filter((set) => {
-      const day = isoDate(set.date);
+      const day = isoDateInZone(set.date, timeZone);
       return day >= window.start && day <= window.end;
     });
 
     const volume = inWeek.reduce((acc, set) => acc + volumeOf(set), 0);
-    const sessions = new Set(inWeek.map((set) => isoDate(set.date))).size;
+    const sessions = new Set(inWeek.map((set) => isoDateInZone(set.date, timeZone))).size;
 
     return {
       start: window.start,
@@ -101,7 +105,7 @@ function buildPersonalRecords(sets) {
  * Evolución de cargas de los ejercicios más entrenados: peso máximo por
  * semana, para ver si las cargas suben o se han quedado planas.
  */
-function buildLoadEvolution(sets, weeks, now) {
+function buildLoadEvolution(sets, weeks, now, timeZone) {
   const countByExercise = new Map();
   for (const set of sets || []) {
     if (!set.exerciseName || (Number(set.weight) || 0) < MIN_TRACKED_WEIGHT) continue;
@@ -113,14 +117,14 @@ function buildLoadEvolution(sets, weeks, now) {
     .slice(0, TOP_EXERCISES)
     .map(([name]) => name);
 
-  const windows = buildWeekWindows(weeks, now);
+  const windows = buildWeekWindows(weeks, now, timeZone);
 
   return topExercises.map((exerciseName) => ({
     exerciseName,
     weeks: windows.map((window) => {
       const inWeek = (sets || []).filter((set) => {
         if (set.exerciseName !== exerciseName) return false;
-        const day = isoDate(set.date);
+        const day = isoDateInZone(set.date, timeZone);
         return day >= window.start && day <= window.end;
       });
       return {
@@ -167,7 +171,7 @@ function buildVolumeComparison(weeklyTraining) {
  * Table.splits es el de planificación, y un microciclo insertado a posteriori
  * aparecería fuera de sitio en la comparación.
  */
-function buildBlockTraining(sets) {
+function buildBlockTraining(sets, timeZone) {
   const blocks = new Map();
 
   for (const set of sets || []) {
@@ -190,7 +194,7 @@ function buildBlockTraining(sets) {
     }
 
     const block = blocks.get(key);
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!block.start || day < block.start) block.start = day;
     if (!block.end || day > block.end) block.end = day;
     block.volume += volumeOf(set);
@@ -255,7 +259,7 @@ function buildBlockComparison(blockTraining) {
  * sesión a propósito, así que hay que deduplicar por fecha ANTES de
  * promediar, o una sesión con 40 series pesaría 40 veces más que una de 4.
  */
-function buildBlockReadiness(sets) {
+function buildBlockReadiness(sets, timeZone) {
   const blocks = new Map();
 
   for (const set of sets || []) {
@@ -273,7 +277,7 @@ function buildBlockReadiness(sets) {
     }
 
     const block = blocks.get(key);
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!block.start || day < block.start) block.start = day;
     if (!block.sessions.has(day)) {
       block.sessions.set(day, {
@@ -354,7 +358,7 @@ function roundSets(value) {
  * etiqueta de muscleGroups1 y "Pectoral" y "Pectoral superior" contaban
  * como dos músculos.
  */
-function buildBlockMuscleGroups(sets) {
+function buildBlockMuscleGroups(sets, timeZone) {
   const blocks = new Map();
 
   for (const set of sets || []) {
@@ -374,7 +378,7 @@ function buildBlockMuscleGroups(sets) {
     }
 
     const block = blocks.get(key);
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!block.start || day < block.start) block.start = day;
     if (!block.end || day > block.end) block.end = day;
 
@@ -414,7 +418,7 @@ function buildBlockMuscleGroups(sets) {
  * problema de escalas mezcladas que ya evita TrainingComparisonMetric al ser
  * un selector, no varias métricas activas a la vez.
  */
-function buildBlockExerciseProgress(sets, exerciseName) {
+function buildBlockExerciseProgress(sets, exerciseName, timeZone) {
   const blocks = new Map();
 
   for (const set of sets || []) {
@@ -439,7 +443,7 @@ function buildBlockExerciseProgress(sets, exerciseName) {
     }
 
     const block = blocks.get(key);
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!block.start || day < block.start) block.start = day;
     if (!block.end || day > block.end) block.end = day;
     block.maxWeight = Math.max(block.maxWeight, weight);
@@ -474,11 +478,11 @@ function buildBlockExerciseProgress(sets, exerciseName) {
  * splitId/splitName se llevan de contexto (para la etiqueta "12 ene ·
  * Semana 2" en el frontend), no para agrupar.
  */
-function buildSessionTraining(sets) {
+function buildSessionTraining(sets, timeZone) {
   const sessions = new Map();
 
   for (const set of sets || []) {
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!day) continue;
 
     if (!sessions.has(day)) {
@@ -502,14 +506,14 @@ function buildSessionTraining(sets) {
 }
 
 /** Igual que buildSessionTraining, pero por grupo muscular — espejo de buildBlockMuscleGroups. */
-function buildSessionMuscleGroups(sets) {
+function buildSessionMuscleGroups(sets, timeZone) {
   const sessions = new Map();
 
   for (const set of sets || []) {
     const factors = groupFactorsOf(set);
     if (!factors.size) continue;
 
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!day) continue;
 
     if (!sessions.has(day)) {
@@ -546,13 +550,13 @@ function buildSessionMuscleGroups(sets) {
  * tableDao.listCompletedSetsForUser), así que aquí basta con el primero que
  * se encuentre por fecha — no hay nada que promediar dentro de una sesión.
  */
-function buildSessionReadiness(sets) {
+function buildSessionReadiness(sets, timeZone) {
   const sessions = new Map();
 
   for (const set of sets || []) {
     if (set.readinessPre == null && set.perceivedEffortPost == null) continue;
 
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!day || sessions.has(day)) continue;
 
     sessions.set(day, {
@@ -568,7 +572,7 @@ function buildSessionReadiness(sets) {
 }
 
 /** Igual que buildBlockExerciseProgress pero por sesión — espejo de buildSessionTraining. */
-function buildSessionExerciseProgress(sets, exerciseName) {
+function buildSessionExerciseProgress(sets, exerciseName, timeZone) {
   const sessions = new Map();
 
   for (const set of sets || []) {
@@ -576,7 +580,7 @@ function buildSessionExerciseProgress(sets, exerciseName) {
     const weight = Number(set.weight) || 0;
     if (weight < MIN_TRACKED_WEIGHT) continue;
 
-    const day = isoDate(set.date);
+    const day = isoDateInZone(set.date, timeZone);
     if (!day) continue;
 
     if (!sessions.has(day)) {
@@ -615,10 +619,10 @@ function buildSessionExerciseProgress(sets, exerciseName) {
  * por Workout, no por set — esa consulta no filtra `doned`, a diferencia de
  * listCompletedSetsForUser).
  */
-function buildSessionAdherence(sessions) {
+function buildSessionAdherence(sessions, timeZone) {
   return (sessions || [])
     .map((session) => ({
-      date: isoDate(session.date),
+      date: isoDateInZone(session.date, timeZone),
       splitId: session.splitId ? String(session.splitId) : null,
       splitName: session.splitName || null,
       totalSets: session.totalSets,

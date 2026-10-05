@@ -49,7 +49,7 @@ function fixture({ capacity = 50, admission = 20, clients = [], occupied = [] } 
       },
     },
     '../util/mail': { generateMail: () => '', async sendTransactionalMail() { calls.emails++; } },
-    '../util/date-util': { todayIsoDate: () => '2026-10-02' },
+    '../users/user-time-zone': { todayForUser: async () => '2026-10-02' },
   };
   const file = path.resolve(__dirname, '../trainerClients/trainer-client-service.js');
   const exported = { exports: {} };

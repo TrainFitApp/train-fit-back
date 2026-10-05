@@ -4,7 +4,7 @@ const agenda = require("./checkin-agenda-service");
 const notificationDao = require("../notifications/notification-dao");
 const { validateTiming, validDate } = require("./checkin-schedule-dates");
 const { CHECKIN_FIELDS_BY_KEY } = require("./checkin-field-catalog");
-const { isoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 const scope = (req) => ({ trainerId: req.auth.userId, clientId: req.params.clientId });
 const validId = (id) => typeof id === "string" && /^[a-f\d]{24}$/i.test(id);
@@ -14,10 +14,11 @@ const notFound = (res) => res.status(404).send({ message: "Check-in no encontrad
 const MAX_SUMMARY_DAYS = 3 * 365;
 
 // Timing por defecto al aplicar una plantilla desde la biblioteca: empieza
-// hoy, semanal. El entrenador lo afina después en la ficha del cliente —
-// aplicar no debería obligar a rellenar un formulario de fechas.
-function defaultTiming() {
-  return { startDate: isoDate(new Date()), time: "09:00", frequency: "weekly", interval: 1 };
+// hoy (el del entrenador, que es quien la aplica), semanal. El entrenador lo
+// afina después en la ficha del cliente — aplicar no debería obligar a
+// rellenar un formulario de fechas.
+function defaultTiming(today) {
+  return { startDate: today, time: "09:00", frequency: "weekly", interval: 1 };
 }
 
 function scheduleContent(definition) {
@@ -75,7 +76,8 @@ module.exports = {
     if (!validDate(from) || !validDate(to) || from > to || Date.parse(to) - Date.parse(from) > 370 * 86400000) {
       return res.status(400).send({ message: "Elige un rango de hasta un año" });
     }
-    const { schedules, entries } = await agenda.agendaFor(req.auth.userId, req.params.clientId, from, to);
+    const today = await todayForUser(req.params.clientId);
+    const { schedules, entries } = await agenda.agendaFor(req.auth.userId, req.params.clientId, from, to, today);
     // Las respuestas viajan con la MISMA forma que las entradas de la agenda
     // (no el documento crudo): la pestaña "Por revisar" y la comparación
     // entre respuestas leen `responseId`/`date` igual que en el calendario,
@@ -84,7 +86,6 @@ module.exports = {
       agenda.entryOfResponse(response)
     );
     const reviewCount = responses.filter((r) => r.status === "responded").length;
-    const today = agenda.todayIso();
     return res.send({
       schedules: schedules.map((schedule) => ({ ...schedule, nextDate: agenda.nextDateOf(schedule, today) })),
       entries,
@@ -101,7 +102,8 @@ module.exports = {
     if (!Number.isInteger(days) || days < 1 || days > MAX_SUMMARY_DAYS) {
       return res.status(400).send({ message: "Elige un rango de hasta 3 años" });
     }
-    const { open, missed } = await agenda.summaryFor(req.auth.userId, req.params.clientId, days - 1);
+    const today = await todayForUser(req.params.clientId);
+    const { open, missed } = await agenda.summaryFor(req.auth.userId, req.params.clientId, days - 1, today);
     return res.send({ days, open, missed });
   },
 
@@ -131,7 +133,11 @@ module.exports = {
     const schedule = await Schedule.findOne({ ...scope(req), _id: req.params.scheduleId }).lean();
     if (!schedule) return notFound(res);
 
-    const history = await agenda.scheduleHistory(schedule, { before: before || null, limit: size });
+    const history = await agenda.scheduleHistory(schedule, {
+      before: before || null,
+      limit: size,
+      today: await todayForUser(req.params.clientId),
+    });
     return res.send({ schedule, ...history });
   },
 
@@ -193,7 +199,7 @@ module.exports = {
     if (!schedule) return notFound(res);
     if (!schedule.active) return res.status(409).send({ message: "Reanuda la programación antes de enviarla" });
 
-    const today = agenda.todayIso();
+    const today = await todayForUser(req.params.clientId);
     if (await agenda.openUnanswered(schedule, today)) return res.send({ alreadyOpen: true });
 
     const created = await Schedule.create({

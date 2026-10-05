@@ -12,8 +12,6 @@ const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
 //
 // Puro: entran datos ya cargados, salen los buckets. Sin BD.
 
-const MS_PER_DAY = 86400000;
-
 // Campos de bienestar que se promedian por semana. Salen del catálogo de
 // check-in (misma fuente que usa el resto de la app) filtrando los
 // numéricos: los de composición corporal y perímetros ya se leen de
@@ -29,11 +27,7 @@ const PERIMETER_FIELDS = [...CHECKIN_FIELDS_BY_KEY.values()]
   .filter((f) => f.group === "perimetros" && f.anthropometryField)
   .map((f) => ({ key: f.anthropometryField, label: f.label }));
 
-// Fase 7 Coach Pro — `isoDate` vive ahora en util/date-util.js, junto al
-// resto de helpers de fecha del proyecto. Se re-exporta desde aquí porque
-// varios consumidores de este módulo (client-data-loader.js, el controller)
-// ya lo importaban de aquí.
-const { isoDate } = require("../util/date-util");
+const { isoDateInZone, addDaysToIsoDate } = require("../util/date-util");
 
 function average(values) {
   if (!values.length) return null;
@@ -48,15 +42,15 @@ function round(value, decimals = 1) {
 
 /**
  * Ventanas de 7 días, de la más antigua a la más reciente. La última termina
- * hoy. `weeks` es cuántas se piden (4, 8 o 12 según lo que mire el coach).
+ * hoy — el hoy del CLIENTE, en su zona horaria (`timeZone`). `weeks` es
+ * cuántas se piden (4, 8 o 12 según lo que mire el coach).
  */
-function buildWeekWindows(weeks, now) {
-  const endOfToday = new Date(`${isoDate(now)}T00:00:00.000Z`).getTime();
+function buildWeekWindows(weeks, now, timeZone) {
+  const today = isoDateInZone(now, timeZone);
   const windows = [];
   for (let i = weeks - 1; i >= 0; i--) {
-    const end = endOfToday - i * 7 * MS_PER_DAY;
-    const start = end - 6 * MS_PER_DAY;
-    windows.push({ start: isoDate(start), end: isoDate(end) });
+    const end = addDaysToIsoDate(today, -i * 7);
+    windows.push({ start: addDaysToIsoDate(end, -6), end });
   }
   return windows;
 }
@@ -101,8 +95,8 @@ function weekMeasurements(entries, window) {
 }
 
 /** Bienestar de una semana: media de cada campo numérico reportado. */
-function weekWellbeing(responses, window) {
-  const inWeek = responses.filter((r) => inWindow(isoDate(r.respondedAt), window));
+function weekWellbeing(responses, window, timeZone) {
+  const inWeek = responses.filter((r) => inWindow(isoDateInZone(r.respondedAt, timeZone), window));
   if (!inWeek.length) return null;
 
   const result = {};
@@ -123,8 +117,8 @@ function weekNutrition(dietDays, window) {
   return result.daysWithData ? result.percentage : null;
 }
 
-function weekSessions(workoutDates, window) {
-  return workoutDates.filter((d) => inWindow(isoDate(d), window)).length;
+function weekSessions(workoutDates, window, timeZone) {
+  return workoutDates.filter((d) => inWindow(isoDateInZone(d, timeZone), window)).length;
 }
 
 function weekHabits(completions, activeTaskCount, window) {
@@ -141,6 +135,9 @@ function weekHabits(completions, activeTaskCount, window) {
 function buildWeeklySeries({
   weeks,
   now,
+  // Zona horaria del cliente: sus sesiones y check-ins (instantes) caen en
+  // el día de SU calendario.
+  timeZone,
   anthropometryEntries = [],
   checkinResponses = [],
   dietDays = [],
@@ -148,14 +145,14 @@ function buildWeeklySeries({
   taskCompletions = [],
   activeTaskCount = 0,
 }) {
-  return buildWeekWindows(weeks, now).map((window) => {
-    const sessions = weekSessions(workoutDates, window);
+  return buildWeekWindows(weeks, now, timeZone).map((window) => {
+    const sessions = weekSessions(workoutDates, window, timeZone);
     return {
       start: window.start,
       end: window.end,
       weight: weekWeight(anthropometryEntries, window),
       measurements: weekMeasurements(anthropometryEntries, window),
-      wellbeing: weekWellbeing(checkinResponses, window),
+      wellbeing: weekWellbeing(checkinResponses, window, timeZone),
       nutritionAdherence: weekNutrition(dietDays, window),
       // Sesiones de la semana en ABSOLUTO, sin porcentaje: convertirlo en %
       // exigía saber cuántas tocaban por semana, y eso el modelo no lo sabe
@@ -164,7 +161,7 @@ function buildWeeklySeries({
       // dice más que un porcentaje calculado sobre una suposición.
       sessions,
       habitsAdherence: weekHabits(taskCompletions, activeTaskCount, window),
-      checkins: checkinResponses.filter((r) => inWindow(isoDate(r.respondedAt), window)).length,
+      checkins: checkinResponses.filter((r) => inWindow(isoDateInZone(r.respondedAt, timeZone), window)).length,
     };
   });
 }
@@ -240,7 +237,6 @@ function buildWeightTrend(series) {
 }
 
 module.exports = {
-  isoDate,
   WELLBEING_NUMERIC_KEYS,
   PERIMETER_FIELDS,
   buildWeekWindows,

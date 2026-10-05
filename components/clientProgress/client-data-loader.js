@@ -7,8 +7,7 @@ const tableDao = require("../tables/table-dao");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
 const { computeWindowedTrainingProgress } = require("../routineAssignments/routine-assignment-schedule");
-const { isoDate } = require("./progress-service");
-const { todayIsoDate } = require("../util/date-util");
+const { todayIsoDate, isoDateInZone, dayRangeInZone } = require("../util/date-util");
 
 // Tarea 5bis (2026-09) — progreso de entrenamiento de la FASE EN CURSO, no
 // de una ventana de días arbitraria. Antes se recorría TODO el historial de
@@ -30,8 +29,8 @@ const { todayIsoDate } = require("../util/date-util");
 // fase que cubra hoy, plannedTotal sale 0 de forma natural y
 // trainingDimension ya lo resuelve (`applicable:false, reason:"sin_plan"`)
 // sin cambios.
-async function loadTrainingWindow(clientId, to) {
-  const periodEndClamped = to < todayIsoDate() ? to : todayIsoDate();
+async function loadTrainingWindow(clientId, to, today, timeZone) {
+  const periodEndClamped = to < today ? to : today;
   const currentPhase = await routineAssignmentDao.findCoveringDate(clientId, periodEndClamped);
   if (!currentPhase) return { plannedTotal: 0, completedSessions: 0, scheduledDays: 0 };
 
@@ -40,7 +39,8 @@ async function loadTrainingWindow(clientId, to) {
     [currentPhase],
     splitsByTableId,
     currentPhase.startDate,
-    periodEndClamped
+    periodEndClamped,
+    timeZone
   );
 }
 
@@ -57,8 +57,13 @@ async function loadTrainingWindow(clientId, to) {
 // aquí SÍ vale gastar ~9 consultas: es un cliente concreto, bajo demanda,
 // con su ficha abierta delante. Lo que allí era un fan-out sobre 30 clientes,
 // aquí es el coste normal de una pantalla de detalle.
+//
+// `timeZone` es la del cliente (users/user-time-zone.js): su "hoy" y el día
+// en que cae cada sesión o respuesta (instantes) son los de su calendario.
 
-async function loadClientWindow(trainerId, clientId, { from, to }) {
+async function loadClientWindow(trainerId, clientId, { from, to, timeZone }) {
+  const today = todayIsoDate(timeZone);
+  const workoutRange = dayRangeInZone(from, to, timeZone);
   const client = await userSchema
     .findById(clientId)
     .select("name lastname tableInUse")
@@ -79,7 +84,7 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     checkinDao.listResponses(trainerId, clientId),
     // Las solicitudes de la ventana, para medir adherencia de check-in
     // contra fechas reales y no contra una cadencia estimada.
-    checkinAgenda.agendaFor(trainerId, clientId, from, to),
+    checkinAgenda.agendaFor(trainerId, clientId, from, to, today),
     // Auditoría 2026-09 — antes leía SOLO DietDay ya materializados
     // (getFullyPopulatedDietDaysForUser), igual que el bug ya arreglado en
     // Seguimiento (F20-undecies, ver diet-day-resolver.js): un plan recién
@@ -90,14 +95,10 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     client._id
       ? getTrackingDaysForClient(clientId, client._id, from, to)
       : [],
-    tableDao.listCompletedWorkoutDates(
-      clientId,
-      new Date(`${from}T00:00:00.000Z`),
-      new Date(`${to}T23:59:59.999Z`)
-    ),
+    tableDao.listCompletedWorkoutDates(clientId, workoutRange.start, workoutRange.end),
     // Progreso de la fase EN CURSO, no de la ventana pedida. Ver
     // loadTrainingWindow arriba.
-    loadTrainingWindow(clientId, to),
+    loadTrainingWindow(clientId, to, today, timeZone),
     trainerTaskDao.listForClient(trainerId, clientId),
   ]);
 
@@ -117,7 +118,10 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
     // listResponses no filtra por fecha (el histórico completo alimenta la
     // pestaña de check-ins). Para la ventana se recorta aquí.
     checkinResponses: allCheckinResponses
-      .filter((r) => isoDate(r.respondedAt) >= from && isoDate(r.respondedAt) <= to)
+      .filter((r) => {
+        const day = isoDateInZone(r.respondedAt, timeZone);
+        return day >= from && day <= to;
+      })
       .reverse(),
     allCheckinResponses,
     // Adherencia de check-in: solicitudes que YA han llegado en la ventana
@@ -127,7 +131,7 @@ async function loadClientWindow(trainerId, clientId, { from, to }) {
       answered: checkinAgendaData.entries.filter((entry) => entry.responseId).length,
     },
     checkinSchedules: checkinAgendaData.schedules,
-    nextCheckinDate: checkinAgenda.nextOccurrenceForClient(checkinAgendaData.schedules, checkinAgenda.todayIso()),
+    nextCheckinDate: checkinAgenda.nextOccurrenceForClient(checkinAgendaData.schedules, today),
     dietDays,
     workoutDates,
     planProgress: {

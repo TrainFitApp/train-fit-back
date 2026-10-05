@@ -1,4 +1,5 @@
 const { CHECKIN_FIELDS } = require("../trainerCheckins/checkin-field-catalog");
+const { addDaysToIsoDate } = require("../util/date-util");
 
 // Fase 3 Coach Pro — el VOCABULARIO del motor de reglas: qué se puede medir,
 // con qué operadores y sobre qué periodo.
@@ -69,8 +70,14 @@ function seriesFor(entries, field) {
     .map((e) => ({ date: e.date, value: e[field] }));
 }
 
-function withinPeriod(series, periodDays, now) {
-  const cutoff = new Date(now.getTime() - periodDays * 86400000).toISOString().slice(0, 10);
+// Primer día del periodo, contado desde el "hoy" del cliente (snapshot.today,
+// en su zona horaria — ver coach-alert-service.js#buildClientSnapshots).
+function periodStartDay(snapshot, periodDays) {
+  return addDaysToIsoDate(snapshot.today, -periodDays);
+}
+
+function withinPeriod(series, periodDays, snapshot) {
+  const cutoff = periodStartDay(snapshot, periodDays);
   return series.filter((point) => point.date >= cutoff);
 }
 
@@ -79,7 +86,7 @@ function withinPeriod(series, periodDays, now) {
 // (gt/lt) miran el actual y los de variación miran el cambio.
 function resolveSeries(field) {
   return (snapshot, periodDays) => {
-    const series = withinPeriod(seriesFor(snapshot.entries, field), periodDays, snapshot.now);
+    const series = withinPeriod(seriesFor(snapshot.entries, field), periodDays, snapshot);
     if (!series.length) return null;
     const current = series[series.length - 1].value;
     if (series.length < 2) return { current, changePct: null };
@@ -166,9 +173,7 @@ const BASE_METRICS = [
     periodAware: true,
     resolve: (snapshot, periodDays) => {
       if (!snapshot.painEntries?.length) return null;
-      const cutoff = new Date(snapshot.now.getTime() - periodDays * 86400000)
-        .toISOString()
-        .slice(0, 10);
+      const cutoff = periodStartDay(snapshot, periodDays);
       const levels = snapshot.painEntries
         .filter((entry) => entry.date >= cutoff)
         .map((entry) => entry.level)

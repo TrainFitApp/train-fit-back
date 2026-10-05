@@ -16,6 +16,8 @@
 // require de modelos, sin await. Ver client-progress-controller.js para la
 // carga.
 
+const { daysElapsed } = require("../util/date-util");
+
 // Una dimensión con menos días de datos que esto no se reporta: un
 // porcentaje sobre 2 días no es una señal, es ruido — y el coach tomaría
 // decisiones sobre él igual que sobre uno sólido.
@@ -108,6 +110,16 @@ function trainingDimension({ completedSessions, plannedTotal, scheduledDays }) {
  *
  * @param habits [{ id, label, completions, activeDays }]
  */
+/**
+ * Días que un hábito lleva activo en la ventana que termina `today`: desde
+ * el día en que se creó (ambos incluidos), nunca más que el periodo. Días
+ * de calendario del cliente, no horas: un hábito creado ayer a las 23:00
+ * lleva dos días, hoy incluido.
+ */
+function habitActiveDays(createdDay, today, periodDays) {
+  return Math.max(0, Math.min(periodDays, daysElapsed(createdDay, today) + 1));
+}
+
 function habitsDimension({ habits }) {
   const medibles = (habits || []).filter((habit) => habit.activeDays > 0);
   if (!medibles.length) {
@@ -198,6 +210,7 @@ function computeAdherence(input) {
 
 module.exports = {
   computeAdherence,
+  habitActiveDays,
   // Exportadas para test unitario — cada dimensión tiene su propio criterio
   // de "no aplica", que es donde están los errores de esta clase de código.
   nutritionDimension,

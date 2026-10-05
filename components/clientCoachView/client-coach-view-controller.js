@@ -10,7 +10,7 @@ const paymentReminders = require("../trainerPayments/trainer-payment-reminder-se
 const userSchema = require("../users/schema");
 const Table = require("../tables/table-schema");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
-const { isoDate } = require("../util/date-util");
+const { isoDateInZone, todayIsoDate } = require("../util/date-util");
 const { pickTrainingPlan, pickNutritionPlan } = require("./current-plans");
 
 module.exports = {
@@ -48,7 +48,7 @@ module.exports = {
     // Pendiente = hay una solicitud ABIERTA hoy (su ventana de fechas incluye
     // hoy) todavía sin responder, o respondida y aún editable. No hay push ni
     // recordatorio: el aviso se calcula al abrir la app.
-    const today = checkinAgenda.todayIso();
+    const today = todayIsoDate(req.auth.timeZone);
     const week = await weekForClientAt(clientId, today);
     const open = await checkinAgenda.openForClient(clientId, today, activeTrainerIds.map(String));
     const pendingCheckins = [];
@@ -137,7 +137,7 @@ module.exports = {
           status: training.status,
           name: table.name,
           assignedByTrainerName: trainerName(table.assignedByTrainerId),
-          startDate: training.startDate || isoDate(assignedAt),
+          startDate: training.startDate || isoDateInZone(assignedAt, req.auth.timeZone),
         };
       }
     }

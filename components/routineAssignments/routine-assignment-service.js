@@ -1,10 +1,10 @@
 const routineAssignmentDao = require("./routine-assignment-dao");
 const tableDao = require("../tables/table-dao");
 const userSchema = require("../users/schema");
+const { todayForUser } = require("../users/user-time-zone");
 
-function isoToday() {
-  return new Date().toISOString().slice(0, 10);
-}
+// "Hoy" en todo este servicio es el del CLIENTE (su zona horaria): una fase
+// empieza o rige según su calendario, no el del entrenador ni el del servidor.
 
 /**
  * ¿Esta fase existente impide colocar una nueva que empieza en `startDate`?
@@ -43,7 +43,7 @@ function blocksNewPhase(existing, startDate) {
  * quien llama (cancelPhase, removeAssignmentsForTable).
  */
 async function removeAssignmentAndReconcile(clientId, assignment) {
-  const today = isoToday();
+  const today = await todayForUser(clientId);
   const wasCovering = await routineAssignmentDao.findCoveringDate(clientId, today);
   const isCurrent = !!wasCovering && String(wasCovering._id) === String(assignment._id);
 
@@ -99,7 +99,7 @@ module.exports = {
     // Activación inmediata: si la fase empieza hoy o antes, el puntero se
     // sincroniza ya mismo. Una fase futura se resuelve más tarde, de forma
     // perezosa (ver syncTableInUseIfDue).
-    if (startDate <= isoToday()) {
+    if (startDate <= (await todayForUser(clientId))) {
       await tableDao.setTableInUseForClient(clientId, tableId);
       await routineAssignmentDao.markActivated(created._id);
     }
@@ -135,7 +135,7 @@ module.exports = {
   // empiezan el día en que se aplican nacen ya activadas (applyRoutine).
   // Devuelve si cambió algo.
   async syncTableInUseIfDue(clientId) {
-    const covering = await routineAssignmentDao.findCoveringDate(clientId, isoToday());
+    const covering = await routineAssignmentDao.findCoveringDate(clientId, await todayForUser(clientId));
     if (!covering || covering.activatedAt) return false;
 
     await routineAssignmentDao.markActivated(covering._id);
@@ -195,12 +195,13 @@ module.exports = {
       error.code = "ROUTINE_PHASE_NOT_FOUND";
       throw error;
     }
-    if (assignment.startDate <= isoToday()) {
+    const today = await todayForUser(clientId);
+    if (assignment.startDate <= today) {
       const error = new Error("No se puede modificar una fase que ya ha empezado");
       error.code = "ROUTINE_PHASE_ALREADY_STARTED";
       throw error;
     }
-    if (startDate < isoToday()) {
+    if (startDate < today) {
       const error = new Error("La fecha no puede ser anterior a hoy");
       error.code = "ROUTINE_START_IN_PAST";
       throw error;

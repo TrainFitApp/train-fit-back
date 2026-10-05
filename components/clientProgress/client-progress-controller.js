@@ -1,7 +1,8 @@
 const { loadClientWindow } = require("./client-data-loader");
-const { computeAdherence } = require("./adherence-service");
+const { computeAdherence, habitActiveDays } = require("./adherence-service");
+const { todayIsoDate, isoDateInZone, dayRangeInZone } = require("../util/date-util");
+const { timeZoneOfUser } = require("../users/user-time-zone");
 const {
-  isoDate,
   buildWeeklySeries,
   buildComparison,
   buildWeightTrend,
@@ -98,21 +99,14 @@ function addDays(isoDay, days) {
   return date.toISOString().slice(0, 10);
 }
 
-// Días que un hábito lleva activo dentro de la ventana: desde que se creó,
-// nunca más que el periodo. Sin esto, un hábito puesto ayer arrastraba 27
-// días de "incumplimiento" en los que todavía no existía.
-function diasActivos(task, periodDays, now) {
-  const desdeCreacion = Math.floor((now.getTime() - new Date(task.createdAt).getTime()) / 86400000) + 1;
-  return Math.max(0, Math.min(periodDays, desdeCreacion));
-}
-
-function buildAdherenceInput(data, periodDays, now = new Date(), activePlan = null) {
+// `today` y `timeZone` son los del cliente (ver client-data-loader.js).
+function buildAdherenceInput(data, periodDays, { today, timeZone }, activePlan = null) {
   // Solo cuentan las marcas POSTERIORES a la creación del hábito. Sin este
   // filtro un hábito creado ayer podía mostrar "16 de 2 días" si arrastraba
   // marcas antiguas, y el porcentaje quedaba topado a 100 escondiendo que
   // los números no cuadraban.
   const creacionPorTarea = new Map(
-    data.activeTasks.map((task) => [String(task._id), isoDate(task.createdAt)])
+    data.activeTasks.map((task) => [String(task._id), isoDateInZone(task.createdAt, timeZone)])
   );
   const marcasPorTarea = new Map();
   for (const completion of data.taskCompletions) {
@@ -145,7 +139,9 @@ function buildAdherenceInput(data, periodDays, now = new Date(), activePlan = nu
         target: task.target,
         unit: task.unit,
         completions: marcasPorTarea.get(String(task._id)) || 0,
-        activeDays: diasActivos(task, periodDays, now),
+        // Un hábito puesto ayer no arrastra 27 días de "incumplimiento" en
+        // los que todavía no existía.
+        activeDays: habitActiveDays(creacionPorTarea.get(String(task._id)), today, periodDays),
       })),
     },
     checkins: data.checkinWindow || { expected: 0, answered: 0 },
@@ -166,7 +162,7 @@ module.exports = {
   // contener a nadie que no lleve este profesional.
   async getRoster(req, res) {
     const options = parseRosterQuery(req.query);
-    const rows = await buildRoster(req.auth.userId);
+    const rows = await buildRoster(req.auth.userId, { timeZone: req.auth.timeZone });
     return res.send({ periodDays: ROSTER_WINDOW_DAYS, ...paginateRoster(rows, options) });
   },
 
@@ -177,14 +173,15 @@ module.exports = {
     const trainerId = req.auth.userId;
     const clientId = req.params.clientId;
 
-    const to = isoDate(new Date());
+    const timeZone = await timeZoneOfUser(clientId);
+    const to = todayIsoDate(timeZone);
     const from = addDays(to, -(SUMMARY_WINDOW_DAYS - 1));
 
     // Las alertas del resumen salen de la evaluación diaria del profesional:
     // si hoy aún no se ha hecho, se hace a la vez que se carga la ventana.
     const [data] = await Promise.all([
-      loadClientWindow(trainerId, clientId, { from, to }),
-      coachAlertService.ensureEvaluatedToday(trainerId),
+      loadClientWindow(trainerId, clientId, { from, to, timeZone }),
+      coachAlertService.ensureEvaluatedToday(trainerId, { timeZone: req.auth.timeZone }),
     ]);
     if (!data) return res.status(404).send({ message: "Cliente no encontrado" });
 
@@ -209,7 +206,9 @@ module.exports = {
     const routine = routineTable ? { _id: routineTable._id, name: routineTable.name } : null;
 
     const weeks = SUMMARY_WINDOW_DAYS / 7;
-    const adherence = computeAdherence(buildAdherenceInput(data, SUMMARY_WINDOW_DAYS, new Date(), activePlan));
+    const adherence = computeAdherence(
+      buildAdherenceInput(data, SUMMARY_WINDOW_DAYS, { today: to, timeZone }, activePlan)
+    );
 
     // La tendencia de peso del resumen se calcula sobre la MISMA serie
     // semanal que sirve la pestaña de comparativas — no con una segunda
@@ -217,6 +216,7 @@ module.exports = {
     const series = buildWeeklySeries({
       weeks,
       now: new Date(),
+      timeZone,
       anthropometryEntries: data.anthropometryEntries,
       checkinResponses: data.checkinResponses,
       dietDays: data.dietDays,
@@ -288,15 +288,17 @@ module.exports = {
     const weeks = ALLOWED_WEEKS.includes(requestedWeeks) ? requestedWeeks : DEFAULT_WEEKS;
 
     const now = new Date();
-    const to = isoDate(now);
+    const timeZone = await timeZoneOfUser(clientId);
+    const to = isoDateInZone(now, timeZone);
     const from = addDays(to, -(weeks * 7 - 1));
 
-    const data = await loadClientWindow(trainerId, clientId, { from, to });
+    const data = await loadClientWindow(trainerId, clientId, { from, to, timeZone });
     if (!data) return res.status(404).send({ message: "Cliente no encontrado" });
 
     const series = buildWeeklySeries({
       weeks,
       now,
+      timeZone,
       anthropometryEntries: data.anthropometryEntries,
       checkinResponses: data.checkinResponses,
       dietDays: data.dietDays,
@@ -337,6 +339,7 @@ module.exports = {
     const customRange = parseCustomRange(req.query);
 
     const now = new Date();
+    const timeZone = await timeZoneOfUser(clientId);
     let from, to, weeks;
 
     if (customRange) {
@@ -346,21 +349,16 @@ module.exports = {
     } else {
       const requestedWeeks = Number(req.query.weeks);
       weeks = ALLOWED_WEEKS.includes(requestedWeeks) ? requestedWeeks : DEFAULT_WEEKS;
-      to = isoDate(now);
+      to = isoDateInZone(now, timeZone);
       from = addDays(to, -(weeks * 7 - 1));
     }
 
+    // Las series se guardan como instante: el rango va de las 00:00 de
+    // `from` a las 23:59 de `to` EN LA ZONA DEL CLIENTE.
+    const range = dayRangeInZone(from, to, timeZone);
     const [allSets, allSessionAdherenceRows] = await Promise.all([
-      tableDao.listCompletedSetsForUser(
-        clientId,
-        new Date(`${from}T00:00:00.000Z`),
-        new Date(`${to}T23:59:59.999Z`)
-      ),
-      tableDao.listSessionAdherenceForUser(
-        clientId,
-        new Date(`${from}T00:00:00.000Z`),
-        new Date(`${to}T23:59:59.999Z`)
-      ),
+      tableDao.listCompletedSetsForUser(clientId, range.start, range.end),
+      tableDao.listSessionAdherenceForUser(clientId, range.start, range.end),
     ]);
 
     // "Elegir el workout a ver" (2026-09) — filtro por NOMBRE de
@@ -379,8 +377,8 @@ module.exports = {
     // Movimiento 3 / Tarea 4 — agrupado por microciclo. No cuesta ninguna
     // consulta más: la agregación ya proyecta split y grupos musculares (ver
     // tableDao.listCompletedSetsForUser), y agrupar es puro.
-    const blocks = buildBlockTraining(sets);
-    const sessionAdherence = buildSessionAdherence(sessionAdherenceRows);
+    const blocks = buildBlockTraining(sets, timeZone);
+    const sessionAdherence = buildSessionAdherence(sessionAdherenceRows, timeZone);
 
     // Comparar por ejercicio (2026-09), varios a la vez (2026-09 bis) —
     // exerciseNames siempre va (barato, alimenta el selector sin que el
@@ -396,17 +394,17 @@ module.exports = {
       period: { from, to },
       blocks,
       blockComparison: buildBlockComparison(blocks),
-      blockReadiness: buildBlockReadiness(sets),
-      blockMuscleGroups: buildBlockMuscleGroups(sets),
+      blockReadiness: buildBlockReadiness(sets, timeZone),
+      blockMuscleGroups: buildBlockMuscleGroups(sets, timeZone),
       blockAdherence: buildBlockAdherence(sessionAdherence),
       // 2026-09 — granularidad "Por sesión" del comparador: los mismos
       // agregados que arriba pero sin colapsar por microciclo (ver
       // training-service.js#buildSessionTraining). No es una consulta
       // nueva salvo sessionAdherence, que necesita las series NO hechas
       // (listCompletedSetsForUser las descarta).
-      sessionTraining: buildSessionTraining(sets),
-      sessionMuscleGroups: buildSessionMuscleGroups(sets),
-      sessionReadiness: buildSessionReadiness(sets),
+      sessionTraining: buildSessionTraining(sets, timeZone),
+      sessionMuscleGroups: buildSessionMuscleGroups(sets, timeZone),
+      sessionReadiness: buildSessionReadiness(sets, timeZone),
       sessionAdherence,
       exerciseNames: listTrackedExerciseNames(sets),
       workoutNames: listTrackedWorkoutNames(allSets),
@@ -417,18 +415,18 @@ module.exports = {
       response.blockExerciseByName = {};
       response.sessionExerciseByName = {};
       for (const name of exerciseNames) {
-        response.blockExerciseByName[name] = buildBlockExerciseProgress(sets, name);
-        response.sessionExerciseByName[name] = buildSessionExerciseProgress(sets, name);
+        response.blockExerciseByName[name] = buildBlockExerciseProgress(sets, name, timeZone);
+        response.sessionExerciseByName[name] = buildSessionExerciseProgress(sets, name, timeZone);
       }
     }
 
     if (weeks) {
-      const weekly = buildWeeklyTraining(sets, weeks, now);
+      const weekly = buildWeeklyTraining(sets, weeks, now, timeZone);
       response.weeks = weeks;
       response.weekly = weekly;
       response.volumeComparison = buildVolumeComparison(weekly);
       response.personalRecords = buildPersonalRecords(sets);
-      response.loadEvolution = buildLoadEvolution(sets, weeks, now);
+      response.loadEvolution = buildLoadEvolution(sets, weeks, now, timeZone);
     }
 
     return res.send(response);

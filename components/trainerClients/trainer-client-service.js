@@ -7,7 +7,7 @@ const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-prefe
 const notificationDao = require("../notifications/notification-dao");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
-const { todayIsoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 const { intakePendingOnAccept, intakeStatusFor } = require("./intake-pending");
 const { isOldEnough } = require("../users/age-policy");
 
@@ -360,7 +360,7 @@ module.exports = {
       const existing = await anthropometryDao.getAllAnthropometriesByUserId(clientId);
       if (!existing.length) {
         await anthropometryDao
-          .mergeAnthropometryFields(clientId, todayIsoDate(), { weight: userPatch.weight })
+          .mergeAnthropometryFields(clientId, await todayForUser(clientId), { weight: userPatch.weight })
           .catch(() => {});
       }
     }

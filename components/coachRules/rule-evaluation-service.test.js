@@ -20,6 +20,7 @@ function snapshot(overrides = {}) {
   return {
     clientId: "c1",
     now: NOW,
+    today: isoDaysAgo(0),
     entries: [],
     checkinResponses: [],
     relationStatus: "active",

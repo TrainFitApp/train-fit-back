@@ -9,6 +9,7 @@ const {
   sanitizeThreshold,
 } = require("./pain-catalog");
 const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 // Ventana por defecto del histórico que ve el entrenador. 28 días, el mismo
 // periodo que analizan las alertas y el resumen de la ficha: tres ventanas
@@ -16,9 +17,6 @@ const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
 // que hace desconfiar de los números.
 const PAIN_WINDOW_DAYS = 28;
 
-function isoDaysAgo(days) {
-  return addDaysToIsoDate(todayIsoDate(), -days);
-}
 
 module.exports = {
   // GET /pain/catalog — el vocabulario lo decide el backend, igual que el de
@@ -38,7 +36,7 @@ module.exports = {
 
   // GET /pain/mine?date=YYYY-MM-DD — lo que el cliente apuntó ese día.
   async listMine(req, res) {
-    const date = req.query.date || todayIsoDate();
+    const date = req.query.date || todayIsoDate(req.auth.timeZone);
     const entries = await painDao.listForDate(req.user.id, date);
     return res.send({ date, entries });
   },
@@ -49,17 +47,18 @@ module.exports = {
     // Tope duro: `days` viene del query string, y sin límite una petición
     // podría pedir diez años de registros.
     const safeDays = Math.min(Math.max(days, 1), 365);
+    const today = todayIsoDate(req.auth.timeZone);
     const entries = await painDao.listForRange(
       req.user.id,
-      isoDaysAgo(safeDays - 1),
-      todayIsoDate()
+      addDaysToIsoDate(today, -(safeDays - 1)),
+      today
     );
     return res.send({ days: safeDays, entries });
   },
 
   // PUT /pain/mine — apunta (o corrige) el dolor de una zona hoy.
   async upsertMine(req, res) {
-    const date = req.body?.date || todayIsoDate();
+    const date = req.body?.date || todayIsoDate(req.auth.timeZone);
     const entry = sanitizePainEntry(req.body);
     if (!entry) {
       return res.status(400).send({
@@ -75,7 +74,7 @@ module.exports = {
   // apuntar un 0: el 0 dice "hoy no me duele" (dato), esto dice "me
   // equivoqué al apuntarlo" (no hay dato).
   async removeMine(req, res) {
-    const date = req.query.date || todayIsoDate();
+    const date = req.query.date || todayIsoDate(req.auth.timeZone);
     const zone = req.query.zone;
     if (!zone) return res.status(400).send({ message: "Falta la zona" });
     await painDao.removeEntry(req.user.id, date, zone);
@@ -89,8 +88,9 @@ module.exports = {
   // ficha a hacer dos llamadas para pintar una tarjeta.
   async getClientPain(req, res) {
     const days = Math.min(Math.max(Number(req.query.days) || PAIN_WINDOW_DAYS, 1), 365);
+    const today = await todayForUser(req.params.clientId);
     const [entries, thresholds] = await Promise.all([
-      painDao.listForRange(req.params.clientId, isoDaysAgo(days - 1), todayIsoDate()),
+      painDao.listForRange(req.params.clientId, addDaysToIsoDate(today, -(days - 1)), today),
       painDao.listThresholds(req.auth.userId, req.params.clientId),
     ]);
     return res.send({ days, entries, thresholds });

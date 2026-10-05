@@ -33,7 +33,8 @@ const ADHERENCE_TOLERANCE = 0.15;
 // transcurridos (mismo día = 0). Dos nombres iguales con resultados que
 // difieren en 1 no fallan nunca de forma visible: solo hacen que un
 // denominador salga corrido.
-const { todayIsoDate, addDaysToIsoDate, daysInRange } = require("../util/date-util");
+const { addDaysToIsoDate, daysInRange } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 // getTrackingDaysForClient vive ahora en diet-day-resolver.js (Auditoría
 // 2026-09) — client-data-loader.js (Resumen de la ficha) necesitaba la misma
@@ -218,8 +219,8 @@ module.exports = {
     let maxDate;
     let minDate;
     try {
-      // Sin maxDate: mañana (UTC), para no dejar fuera el "hoy" local de husos por delante.
-      maxDate = toIsoDay(req.query.maxDate || Date.now() + DAY_MS);
+      // Sin maxDate: hoy, en la zona del cliente.
+      maxDate = req.query.maxDate ? toIsoDay(req.query.maxDate) : await todayForUser(clientId);
       minDate = toIsoDay(req.query.minDate || new Date(maxDate).getTime() - 90 * DAY_MS);
     } catch (e) {
       return res.status(400).send({ message: "minDate y maxDate deben ser fechas válidas" });
@@ -406,7 +407,7 @@ module.exports = {
   async getClientAdherence(req, res) {
     const clientId = req.params.clientId;
 
-    const to = req.query.to || todayIsoDate();
+    const to = req.query.to || (await todayForUser(clientId));
     const from = req.query.from || addDaysToIsoDate(to, -30);
     // La variable se llama distinto que la función para no sombrearla: el
     // campo de la respuesta sigue siendo `daysInRange` (ya lo consume el
@@ -458,7 +459,7 @@ module.exports = {
     const clientId = req.params.clientId;
     const client = await userSchema.findById(clientId).select("_id").lean();
 
-    const to = req.query.to || todayIsoDate();
+    const to = req.query.to || (await todayForUser(clientId));
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
     const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
@@ -491,7 +492,7 @@ module.exports = {
     const clientId = req.params.clientId;
     const client = await userSchema.findById(clientId).select("_id").lean();
 
-    const to = req.query.to || todayIsoDate();
+    const to = req.query.to || (await todayForUser(clientId));
     const from = req.query.from || addDaysToIsoDate(to, -30);
 
     const dietDays = await getTrackingDaysForClient(clientId, clientId, from, to);
@@ -540,7 +541,7 @@ module.exports = {
     // materializados se resuelven al vuelo con `consumed: false` (ver
     // getTrackingDaysForClient), así que contar el futuro haría parecer que el
     // cliente incumple lo que aún no le ha llegado.
-    const hoy = todayIsoDate();
+    const hoy = await todayForUser(clientId);
     const pedido = req.query.to || hoy;
     const to = pedido > hoy ? hoy : pedido;
     const from = req.query.from || addDaysToIsoDate(to, -30);
@@ -562,7 +563,7 @@ module.exports = {
     if (!client?._id) {
       return res.send({ items: [], daysWithPlan: 0, segments: [], period: null });
     }
-    const range = shoppingRange(req.query);
+    const range = shoppingRange(req.query, await todayForUser(clientId));
     if (!range) return res.status(400).send({ message: "Rango inválido (YYYY-MM-DD, máx. 62 días)" });
     return res.send(await dietDaysService.getShoppingList(client._id, range.from, range.to));
   },

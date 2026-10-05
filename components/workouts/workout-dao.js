@@ -8,6 +8,7 @@ const Workout = require("./workout-class");
 const { default: mongoose } = require("mongoose");
 const customExerciseDao = require("../customExercises/custom-exercise-dao");
 const userSchema = require("../users/schema");
+const { isoDateInZone, dayRangeInZone } = require("../util/date-util");
 const { isSamePermutation } = require("../util/permutation-util");
 const { diffBlocks, applyBlockDiff } = require("./workout-row-blocks");
 const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
@@ -97,14 +98,11 @@ module.exports = {
     return await workoutSchema.findById(id);
   },
 
-  // TODO: De momento se hace en el front por el tema fechas que pille las del cliente
-  // TODO: debería hacerse en lado en queries
-  async getWorkoutByIdAndDate(id, date) {
+  // El día de `date` en la zona del usuario, no en la del servidor.
+  async getWorkoutByIdAndDate(id, date, timeZone) {
     try {
-      const d = new Date(date);
-
-      const minDate = new Date(d).setHours(0, 0, 0, 0);
-      const maxDate = new Date(d).setHours(23, 59, 59, 999);
+      const day = isoDateInZone(date, timeZone);
+      const { start: minDate, end: maxDate } = dayRangeInZone(day, day, timeZone);
 
       const workout = await tableSchema.aggregate([
         // Etapa de filtro para obtener la tabla por su ID

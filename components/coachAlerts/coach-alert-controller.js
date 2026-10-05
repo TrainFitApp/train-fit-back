@@ -22,7 +22,7 @@ module.exports = {
   // resto es una sola consulta indexada (ver ensureEvaluatedToday).
   async listMine(req, res) {
     const status = LISTABLE_STATUSES.includes(req.query.status) ? req.query.status : "open";
-    await coachAlertService.ensureEvaluatedToday(req.auth.userId);
+    await coachAlertService.ensureEvaluatedToday(req.auth.userId, { timeZone: req.auth.timeZone });
     const alerts = await coachAlertDao.listForTrainer(req.auth.userId, { status });
     return res.send(alerts.map(toDto));
   },
@@ -66,7 +66,7 @@ module.exports = {
   // mañana no los vería en el panel hasta el día siguiente. Solo evalúa SUS
   // clientes.
   async evaluateMine(req, res) {
-    const result = await coachAlertService.evaluateNow(req.auth.userId);
+    const result = await coachAlertService.evaluateNow(req.auth.userId, { timeZone: req.auth.timeZone });
     return res.send(result);
   },
 };

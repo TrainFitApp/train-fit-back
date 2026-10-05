@@ -2,6 +2,8 @@ const supplementDao = require("./supplement-dao");
 const { SUPPLEMENT_TIMINGS } = require("./supplement-schema");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const userSchema = require("../users/schema");
+const { todayForUser } = require("../users/user-time-zone");
+const { todayIsoDate } = require("../util/date-util");
 
 const TIMING_KEYS = new Set(SUPPLEMENT_TIMINGS.map((option) => option.key));
 
@@ -30,14 +32,15 @@ function sanitizeDate(value, fallback = null) {
   return ISO_DATE.test(String(value || "")) ? String(value) : fallback;
 }
 
-function sanitizeBody(body) {
+// `today` = hoy en la zona del cliente.
+function sanitizeBody(body, today) {
   const name = String(body?.name || "").trim().slice(0, 120);
   const dose = String(body?.dose || "").trim().slice(0, 60);
   if (!name || !dose) return null;
 
   const timing = TIMING_KEYS.has(body?.timing) ? body.timing : "with_meal";
   // Sin fecha de inicio, desde hoy: una pauta que existe se está tomando ya.
-  const startDate = sanitizeDate(body?.startDate, new Date().toISOString().slice(0, 10));
+  const startDate = sanitizeDate(body?.startDate, today);
   const endDate = sanitizeDate(body?.endDate);
   if (endDate && endDate < startDate) return null;
 
@@ -74,7 +77,7 @@ module.exports = {
   },
 
   async create(req, res) {
-    const data = sanitizeBody(req.body);
+    const data = sanitizeBody(req.body, await todayForUser(req.params.clientId));
     if (!data) {
       return res.status(400).send({
         message: "Revisa el nombre, la dosis y las fechas",
@@ -103,7 +106,7 @@ module.exports = {
   },
 
   async update(req, res) {
-    const data = sanitizeBody(req.body);
+    const data = sanitizeBody(req.body, await todayForUser(req.params.clientId));
     if (!data) {
       return res.status(400).send({
         message: "Revisa el nombre, la dosis y las fechas",
@@ -139,7 +142,7 @@ module.exports = {
     const clientId = req.auth.userId;
     // Solo los vigentes hoy (o en la fecha que pida la app: la pantalla de
     // dieta los pinta debajo de las comidas del día que se está mirando).
-    const date = sanitizeDate(req.query?.date, new Date().toISOString().slice(0, 10));
+    const date = sanitizeDate(req.query?.date, todayIsoDate(req.auth.timeZone));
     const supplements = await supplementDao.listActiveForClient(clientId, date);
     if (!supplements.length) return res.send([]);
 

@@ -174,7 +174,7 @@ const controller = {
   // filas en blanco. El orden lo da el DAO (prioridad, luego más reciente),
   // que es el mismo criterio de urgencia que aplicaba el sort anterior.
   async getAttentionItems(req, res) {
-    await coachAlertService.ensureEvaluatedToday(req.auth.userId);
+    await coachAlertService.ensureEvaluatedToday(req.auth.userId, { timeZone: req.auth.timeZone });
     const alerts = await coachAlertDao.listForTrainer(req.auth.userId, { status: "open" });
 
     const items = alerts

@@ -8,8 +8,8 @@ module.exports = {
     return workoutDao.getWorkoutById(id);
   },
 
-  async getWorkoutByIdAndDate(id, date) {
-    return workoutDao.getWorkoutByIdAndDate(id, date);
+  async getWorkoutByIdAndDate(id, date, timeZone) {
+    return workoutDao.getWorkoutByIdAndDate(id, date, timeZone);
   },
 
   async pasteWorkout(workoutClipboard, workoutToPaste) {

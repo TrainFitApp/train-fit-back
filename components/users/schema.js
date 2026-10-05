@@ -96,6 +96,10 @@ const UserSchema = new Schema({
   archivedExercises: { type: [Schema.Types.ObjectId], default: [] },
   personalAds: Boolean,
   lastLogin: Date,
+  // Zona horaria IANA del móvil ("Europe/Madrid"). La pone el middleware de
+  // auth con la cabecera X-Timezone; de ella sale el "hoy" del usuario
+  // también cuando lo calcula otro (su entrenador). Ver util/date-util.js.
+  timezone: { type: String, default: null },
   premium: {
     entitled: { type: Boolean, default: false },
     plan: String,

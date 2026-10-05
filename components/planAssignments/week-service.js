@@ -7,10 +7,12 @@
 
 const dietTemplateDao = require("../dietTemplates/diet-template-dao");
 const { buildWeeks, weekAt, currentWeek, nextWeek } = require("./week-window");
-const { isoDate } = require("../util/date-util");
 
-/** Semanas de una fase: sus ventanas numeradas y el fin real de la fase. */
-async function weeksOfPhase(head, members, today = isoDate(new Date())) {
+/**
+ * Semanas de una fase: sus ventanas numeradas y el fin real de la fase.
+ * `today` = hoy en la zona horaria del cliente (users/user-time-zone.js).
+ */
+async function weeksOfPhase(head, members, today) {
   const phaseStart = head.startDate;
   const phaseEnd = members[members.length - 1]?.endDate || null;
   const weeks = buildWeeks(phaseStart, phaseEnd, today);

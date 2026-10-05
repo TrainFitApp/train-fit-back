@@ -8,7 +8,8 @@ const nutritionPreferencesDao = require("../nutritionPreferences/nutrition-prefe
 const userSchema = require("../users/schema");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { stepsFromHabit } = require("../planAssignments/week-need");
-const { addDaysToIsoDate, isoDate } = require("../util/date-util");
+const { addDaysToIsoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 const VALID_FLAGS = ["vegan", "vegetarian", "lactoseFree", "glutenFree"];
 
@@ -57,7 +58,7 @@ module.exports = {
 
     // Pasos: los de su hábito en las dos últimas semanas (§12). Sin hábito
     // o sin marcarlo, manda el rango de su perfil.
-    const today = isoDate(new Date());
+    const today = await todayForUser(clientId);
     const stepsWindow = { start: addDaysToIsoDate(today, -14), end: today };
     const stepsTask = await trainerTaskDao.findActiveStepsTask(clientId);
     const stepsCompletions = stepsTask

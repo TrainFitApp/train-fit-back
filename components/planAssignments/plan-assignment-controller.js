@@ -4,14 +4,12 @@ const { sanitizeMenus } = require("../dietTemplates/diet-template-controller");
 const { markDaySkipped } = require("../dietDays/diet-skips");
 const dietDaysService = require("../dietDays/diet-days-service");
 const userSchema = require("../users/schema");
+const { todayForUser } = require("../users/user-time-zone");
 const planChangeService = require("../planChanges/plan-change-service");
 const { resyncPlannedDays, clearAndResyncPlannedDays } = require("../dietDays/diet-day-resolver");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 // Compartida por applyPlan y createDirect: solo hace falta saber CUÁNDO
 // empieza. No hay fin ni duración (una fase acaba cuando empieza otra).
@@ -198,7 +196,7 @@ module.exports = {
     const stuckDaysCount = await dietDaysService.countDaysWithoutChoice(
       assignment.clientId,
       assignment.startDate,
-      todayIsoDate()
+      await todayForUser(assignment.clientId)
     );
 
     return res.send(toAssignmentResponse(assignment, { stuckDaysCount }));

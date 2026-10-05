@@ -7,7 +7,8 @@ const { relationStartOf, trainerCanSeeProgressDay } = require("../media/media-ac
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { ownView } = require("../anthropometry/anthropometry-origin");
-const { isoDate, todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
+const { isoDateInZone, todayIsoDate, timeZoneOf } = require("../util/date-util");
+const { timeZoneOfUser } = require("../users/user-time-zone");
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -15,9 +16,9 @@ function fail(status, code, message) {
   return { error: { status, code, message } };
 }
 
-function validDate(date) {
-  // Mañana también vale: el móvil del cliente puede ir por delante en zona horaria.
-  return DATE_RE.test(String(date || "")) && date <= addDaysToIsoDate(todayIsoDate(), 1);
+// Hasta hoy, el del cliente en su zona horaria: no se suben fotos del futuro.
+function validDate(date, user) {
+  return DATE_RE.test(String(date || "")) && date <= todayIsoDate(timeZoneOf(user));
 }
 
 async function anthropometryByDate(userId, dates, { own }) {
@@ -79,7 +80,7 @@ module.exports = {
   },
 
   async setPhoto(user, date, pose, assetId, { baseUrl } = {}) {
-    if (!validDate(date)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
+    if (!validDate(date, user)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
     if (!POSES.includes(pose)) return fail(400, "PROGRESS_INVALID_POSE", "Pose no válida");
     const attachable = await mediaService.assertAttachable(user, assetId, ["progress_photo"]);
     if (attachable.error) return attachable;
@@ -91,7 +92,7 @@ module.exports = {
   },
 
   async removePhoto(user, date, pose, { baseUrl } = {}) {
-    if (!validDate(date)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
+    if (!validDate(date, user)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
     const { removedAssetId } = await progressMediaDao.removePhoto(user._id, date, pose);
     if (removedAssetId) await mediaService.deleteAssets([removedAssetId]);
     await progressMediaDao.deleteIfEmpty(user._id, date);
@@ -99,7 +100,7 @@ module.exports = {
   },
 
   async addVideo(user, date, assetId, note, { baseUrl } = {}) {
-    if (!validDate(date)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
+    if (!validDate(date, user)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
     const attachable = await mediaService.assertAttachable(user, assetId, ["progress_video"]);
     if (attachable.error) return attachable;
     const existing = await progressMediaDao.findDay(user._id, date);
@@ -111,7 +112,7 @@ module.exports = {
   },
 
   async removeVideo(user, date, assetId, { baseUrl } = {}) {
-    if (!validDate(date)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
+    if (!validDate(date, user)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
     const existing = await progressMediaDao.findDay(user._id, date);
     const video = existing?.videos?.find((item) => String(item.assetId) === String(assetId));
     if (!video) return fail(404, "PROGRESS_NOT_FOUND", "Vídeo no encontrado");
@@ -122,7 +123,7 @@ module.exports = {
   },
 
   async updateDay(user, date, body, { baseUrl } = {}) {
-    if (!validDate(date)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
+    if (!validDate(date, user)) return fail(400, "PROGRESS_INVALID_DATE", "Fecha no válida");
     const set = {};
     if (typeof body?.note === "string") set.note = body.note.trim().slice(0, 500);
     if (typeof body?.hiddenFromTrainers === "boolean") set.hiddenFromTrainers = body.hiddenFromTrainers;
@@ -148,12 +149,13 @@ module.exports = {
     for (const [trainerId, list] of byTrainer) {
       const start = relationStartOf(list);
       const trainer = list[0].trainerId || {};
-      const previousDays = start ? await progressMediaDao.countBefore(user._id, isoDate(start)) : 0;
+      const since = start ? isoDateInZone(start, timeZoneOf(user)) : null;
+      const previousDays = since ? await progressMediaDao.countBefore(user._id, since) : 0;
       trainers.push({
         trainerId,
         name: [trainer.name, trainer.lastname].filter(Boolean).join(" ") || trainer.email || "",
         scopes: [...new Set(list.map((relation) => relation.scope))],
-        since: start ? isoDate(start) : null,
+        since,
         historyShared: list.some((relation) => relation.mediaHistorySharedAt),
         historyAsked: list.some((relation) => relation.mediaHistoryAskedAt),
         previousDays,
@@ -174,12 +176,13 @@ module.exports = {
     const relations = await trainerClientDao.findActiveRelationsOfPair(trainerId, clientId);
     const relationStart = relationStartOf(relations);
     const historyShared = relations.some((relation) => relation.mediaHistorySharedAt);
+    const timeZone = await timeZoneOfUser(clientId);
     const days = await progressMediaDao.listRange(clientId, { from, to });
     const visible = days.filter((day) =>
-      trainerCanSeeProgressDay(day, { trainerId, relationStart, historyShared })
+      trainerCanSeeProgressDay(day, { trainerId, relationStart, historyShared, timeZone })
     );
     return {
-      since: relationStart ? isoDate(relationStart) : null,
+      since: relationStart ? isoDateInZone(relationStart, timeZone) : null,
       historyShared,
       days: await viewsOfDays(visible, { baseUrl, userId: clientId, ownAnthropometry: false, trainerId }),
     };
@@ -208,6 +211,7 @@ module.exports = {
       trainerId,
       relationStart: relationStartOf(relations),
       historyShared: relations.some((relation) => relation.mediaHistorySharedAt),
+      timeZone: await timeZoneOfUser(clientId),
     });
     if (!ok) return null;
     const [view] = await viewsOfDays([day], { baseUrl, userId: clientId, ownAnthropometry: false, trainerId });

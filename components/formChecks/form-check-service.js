@@ -11,7 +11,7 @@ const mediaService = require("../media/media-service");
 const { FORM_CHECKS_PER_WEEK, EXPIRY_WARNING_DAYS, PURPOSES } = require("../media/media-catalog");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const notificationDao = require("../notifications/notification-dao");
-const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
+const { todayIsoDate, timeZoneOf } = require("../util/date-util");
 
 const DAY_MS = 86400000;
 const RETENTION_DAYS = PURPOSES.form_check.retentionDays;
@@ -168,9 +168,9 @@ module.exports = {
       return fail(429, "FORM_CHECK_WEEKLY_LIMIT", `Puedes enviar ${FORM_CHECKS_PER_WEEK} vídeos por semana`);
     }
 
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(body?.date || "") && body.date <= addDaysToIsoDate(todayIsoDate(), 1)
-      ? body.date
-      : todayIsoDate();
+    // Hasta hoy en la zona del cliente; sin fecha válida, hoy.
+    const today = todayIsoDate(timeZoneOf(user));
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(body?.date || "") && body.date <= today ? body.date : today;
     const now = new Date();
     const check = await formCheckDao.create({
       clientId: user._id,

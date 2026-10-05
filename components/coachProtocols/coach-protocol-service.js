@@ -5,7 +5,7 @@ const { scheduleContent, hasQuestions } = require("../trainerCheckins/checkin-ag
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { protocolCheckins } = require("./protocol-content");
-const { isoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 const planAssignmentService = require("../planAssignments/plan-assignment-service");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const tableService = require("../tables/table-service");
@@ -39,7 +39,8 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
     }
   };
 
-  const today = isoDate(new Date());
+  // Sin fecha, desde hoy en la zona del cliente.
+  const today = await todayForUser(clientId);
   const checkins = protocolCheckins(protocol);
   if (!checkins.length) {
     steps.push({ key: "checkin", label: "Check-ins", status: "skipped" });

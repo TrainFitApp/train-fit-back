@@ -2,13 +2,10 @@ const trainerTaskDao = require("./trainer-task-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const notificationDao = require("../notifications/notification-dao");
 const userSchema = require("../users/schema");
+const { todayIsoDate } = require("../util/date-util");
 
 const TASK_TYPES = ["steps", "water", "sleep", "cardio", "custom"];
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function taskDisplayLabel(task) {
   if (task.type === "custom") return task.label || "Tarea";
@@ -96,7 +93,7 @@ module.exports = {
     const trainers = await userSchema.find({ _id: { $in: trainerIds } }).select("name lastname").lean();
     const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
 
-    const date = ISO_DATE.test(req.query?.date || "") ? req.query.date : todayIsoDate();
+    const date = ISO_DATE.test(req.query?.date || "") ? req.query.date : todayIsoDate(req.auth.timeZone);
     const completions = await trainerTaskDao.listCompletionsForTasks(
       visible.map((t) => t._id),
       date
@@ -136,7 +133,7 @@ module.exports = {
       return res.status(403).send({ message: "No tienes una relación activa con este profesional" });
     }
 
-    const today = todayIsoDate();
+    const today = todayIsoDate(req.auth.timeZone);
     const date = ISO_DATE.test(req.body?.date || "") ? req.body.date : today;
     if (date > today) {
       return res.status(400).send({ message: "Todavía no puedes marcar un día que no ha llegado" });
