@@ -1,26 +1,26 @@
-const express = require("express");
+const express = require("@awaitjs/express");
 const router = express.Router();
 const { auth } = require("../../middleware/validateAuth");
-const PinnedExerciseNoteController = require("./pinned-exercise-note-controller");
+const controller = require("./pinned-exercise-note-controller");
 
 const ROLES = ["admin", "user", "trainer"];
 
-router.get("/table/:tableId", auth(ROLES), PinnedExerciseNoteController.getByTableId);
-router.get(
+router.getAsync("/table/:tableId", auth(ROLES), controller.getByTableId);
+router.getAsync(
   "/table/:tableId/workout/:workoutIndex/exercise/:exerciseIndex",
   auth(ROLES),
-  PinnedExerciseNoteController.getByPosition
+  controller.getByPosition
 );
-router.post(
+router.postAsync(
   "/table/:tableId/workout/:workoutIndex/exercise/:exerciseIndex",
   auth(ROLES),
-  PinnedExerciseNoteController.upsert
+  controller.upsert
 );
-router.delete("/:id", auth(ROLES), PinnedExerciseNoteController.deleteById);
-router.delete(
+router.deleteAsync("/:id", auth(ROLES), controller.deleteById);
+router.deleteAsync(
   "/table/:tableId/workout/:workoutIndex/exercise/:exerciseIndex",
   auth(ROLES),
-  PinnedExerciseNoteController.deleteByPosition
+  controller.deleteByPosition
 );
 
 module.exports = router;

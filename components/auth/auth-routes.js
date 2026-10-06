@@ -22,4 +22,11 @@ router.postAsync(
   controller.revertImpersonation
 );
 
+// Sesión terminada (session-service.js#sessionEnded): fuera la cookie del
+// refresh antes de que errorHandler responda.
+router.use((err, req, res, next) => {
+  if (err?.details?.requiresRelogin) controller.clearRefreshCookie(req, res);
+  next(err);
+});
+
 module.exports = router;

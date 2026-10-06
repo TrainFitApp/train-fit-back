@@ -1,43 +1,35 @@
-const mealSchema = require("../meals/meal-schema");
+const MealSnippet = require("./meal-snippet-schema");
 const mealDao = require("../meals/meal-dao");
 
+// Comidas guardadas del entrenador, en su propia colección y con el
+// contenido embebido (2026-10; antes un Meal con trainerId).
+
 module.exports = {
-  // Crea el Meal-snippet vacío y materializa su contenido con el mismo
-  // pasteMeal que usa cualquier paste real (clona customProducts/
-  // customRecipes de verdad, con _id propio) — no reinventa esa traducción
-  // aquí, mismo criterio que applyToSplit en workoutTemplates.
+  // Se crea vacío y se le pega el contenido con el mismo pasteMeal que el
+  // resto de altas de comida: alimentos y recetas quedan igual que en un
+  // diario (sin marca de pautado: es material de biblioteca).
   async create(trainerId, name, customProducts, customRecipes) {
-    const meal = await mealSchema.create({ trainerId, name });
+    const snippet = await MealSnippet.create({ trainerId, name });
     return mealDao.pasteMeal(
       { customProducts: customProducts || [], customRecipes: customRecipes || [] },
-      meal,
-      false
+      snippet,
+      false,
     );
   },
 
   async listByTrainer(trainerId) {
-    return mealSchema.find({ trainerId }).sort({ createdAt: -1 });
+    return MealSnippet.find({ trainerId }).sort({ createdAt: -1 });
   },
 
   async findOwnedByTrainer(trainerId, id) {
-    return mealSchema.findOne({ _id: id, trainerId });
+    return MealSnippet.findOne({ _id: id, trainerId });
   },
 
-  // TASK-047 (MASTER_BACKLOG.md) — renombrar un snippet ya guardado. Solo
-  // `name`: re-componer el contenido (customProducts/customRecipes) exige
-  // el mismo composer que ya usa la creación (compose-meal.page.ts,
-  // diet-template-builder.page.ts) — fuera de alcance aquí, ver TASK-081.
   async rename(trainerId, id, name) {
-    return mealSchema.findOneAndUpdate(
-      { _id: id, trainerId },
-      { $set: { name } },
-      { new: true }
-    );
+    return MealSnippet.findOneAndUpdate({ _id: id, trainerId }, { $set: { name }, $inc: { __v: 1 } }, { new: true });
   },
 
-  // deleteOne (no deleteMany) dispara el hook en cascada de meal-schema.js
-  // que borra los CustomProduct/CustomRecipe del snippet.
   async delete(trainerId, id) {
-    return mealSchema.deleteOne({ _id: id, trainerId });
+    return MealSnippet.deleteOne({ _id: id, trainerId });
   },
 };

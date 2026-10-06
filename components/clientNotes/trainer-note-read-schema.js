@@ -23,4 +23,6 @@ const TrainerNoteReadSchema = new Schema(
 
 TrainerNoteReadSchema.index({ trainerId: 1, clientId: 1, noteKey: 1 }, { unique: true });
 
+TrainerNoteReadSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });
+
 module.exports = mongoose.model("TrainerNoteRead", TrainerNoteReadSchema);

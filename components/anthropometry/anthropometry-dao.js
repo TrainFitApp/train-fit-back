@@ -1,9 +1,4 @@
-const mongoose = require("mongoose");
-const anthropometrySchema = require("./anthropometry-schema");
-
-const Anthropometry =
-  mongoose.models.Anthropometry ||
-  mongoose.model("Anthropometry", anthropometrySchema);
+const Anthropometry = require("./anthropometry-schema");
 
 module.exports = {
   async createAnthropometry(data) {
@@ -25,6 +20,14 @@ module.exports = {
     })
       .sort({ date: -1 })
       .lean();
+  },
+
+  // Último peso apuntado (hasta `asOf`, día "YYYY-MM-DD", si se pasa) o null.
+  async findLatestWeight(userId, { asOf = null } = {}) {
+    const query = { userId, weight: { $type: "number" } };
+    if (asOf) query.date = { $lte: asOf };
+    const latest = await Anthropometry.findOne(query).sort({ date: -1 }).select("weight date").lean();
+    return latest ? { weight: latest.weight, date: latest.date } : null;
   },
 
   async getAllAnthropometriesByUserId(userId) {

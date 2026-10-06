@@ -2,6 +2,7 @@ const tableDao = require("./table-dao");
 const tableUtil = require("./table-util");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
+const { badRequest } = require("../util/http-error");
 
 module.exports = {
   // Trainer viendo la ficha de un cliente concreto — ver comentario de
@@ -27,6 +28,12 @@ module.exports = {
     // nada, el $or degrada a solo "públicas", sin cambio de comportamiento.
     return tableDao.getTables(page, limit, false, idUser);
   },
+
+  findSummary: (id) => tableDao.findSummary(id),
+  // Series hechas y adherencia por sesión del usuario en [start, end] (instantes).
+  listCompletedSetsForUser: (userId, start, end) => tableDao.listCompletedSetsForUser(userId, start, end),
+  listSessionAdherenceForUser: (userId, start, end) => tableDao.listSessionAdherenceForUser(userId, start, end),
+  listIdsAssignedBy: (clientId, trainerIds) => tableDao.listIdsAssignedBy(clientId, trainerIds),
 
   async getTableById(id) {
     return tableDao.getTableById(id);
@@ -64,17 +71,9 @@ module.exports = {
     return tableDao.updateTable(id, name, userId, adminMode);
   },
 
-  // Borrado coherente de fases/rutinas — limpia cualquier RoutineAssignment
-  // que referenciara esta tabla para este dueño ANTES de borrarla de
-  // verdad, así tableInUse/workoutInUse nunca quedan apuntando a un _id ya
-  // borrado, ni siquiera transitoriamente entre pasos. No-op real (no solo
-  // improbable) para autoservicio: RoutineAssignment solo se crea desde el
-  // flujo del entrenador (routine-assignment-controller.js#applyRoutine),
-  // así que findByTableAndClient siempre devuelve [] para un idUser sin
-  // entrenador de por medio.
-  //
-  // En autoservicio no hay RoutineAssignment que limpiar: si la rutina
-  // borrada era la que el usuario tenía en uso, se vacía el puntero aquí.
+  // Antes de borrar una rutina, fuera sus fases (si regía hoy, vuelve a regir
+  // la anterior: la rutina en uso se calcula, routine-in-use.js), y si era la
+  // elegida, fuera la elección.
   async deleteTable(idUser, idTable, adminMode = false) {
     await routineAssignmentService.removeAssignmentsForTable(idUser, idTable);
     const result = await tableDao.deleteTable(idUser, idTable, adminMode);
@@ -94,7 +93,7 @@ module.exports = {
   // la relación); si no, cuenta todas (la exención revierte de inmediato al
   // terminar la relación, sin periodo de gracia — ver F14, F08).
   async countEffectiveUserTables(userId) {
-    const hasActiveTraining = await trainerClientDao.hasActiveRelation(userId, "training");
+    const hasActiveTraining = await trainerClientDao.hasActiveTrainer(userId, "training");
     return hasActiveTraining
       ? tableDao.countOwnUserTables(userId)
       : tableDao.countUserTables(userId);
@@ -128,20 +127,12 @@ module.exports = {
   // profesional — nunca de otro cliente suyo (ver F11 punto 9-10).
   async assignTemplateToClient(clientId, sourceTableId, trainerId) {
     const sourceTable = await tableDao.getTableById(sourceTableId);
-    if (!sourceTable) {
-      const err = new Error("La plantilla de origen no existe");
-      err.code = "TEMPLATE_NOT_FOUND";
-      throw err;
-    }
+    if (!sourceTable) throw badRequest("La plantilla de origen no existe", "TEMPLATE_NOT_FOUND");
 
     const isPublicTemplate = !sourceTable.userId;
     const isOwnTemplate = String(sourceTable.userId) === String(trainerId);
     if (!isPublicTemplate && !isOwnTemplate) {
-      const err = new Error(
-        "Solo puedes asignar plantillas públicas o rutinas propias"
-      );
-      err.code = "TEMPLATE_FORBIDDEN";
-      throw err;
+      throw badRequest("Solo puedes asignar plantillas públicas o rutinas propias", "TEMPLATE_FORBIDDEN");
     }
 
     return tableDao.copyTableForClient(clientId, sourceTableId, trainerId);

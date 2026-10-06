@@ -120,11 +120,8 @@ const CoachRuleSchema = new Schema(
     // Marca de seguridad: si una pasada supera el tope de clientes
     // afectados, la regla se desactiva sola y esto explica por qué.
     disabledReason: { type: String, default: null },
-
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
   },
-  { collection: "coachrules" }
+  { collection: "coachrules", timestamps: true }
 );
 
 // Consulta principal: "las reglas activas de este profesional" (evaluador
@@ -136,9 +133,6 @@ CoachRuleSchema.index({ trainerId: 1, enabled: 1 });
 // error silencioso.
 CoachRuleSchema.index({ trainerId: 1, name: 1 }, { unique: true });
 
-CoachRuleSchema.pre("save", function (next) {
-  this.updatedAt = new Date();
-  next();
-});
+CoachRuleSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId"], detach: { clientIds: "pull" } });
 
 module.exports = mongoose.model("CoachRule", CoachRuleSchema);

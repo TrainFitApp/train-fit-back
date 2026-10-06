@@ -3,7 +3,7 @@ const dao = require("./trainer-payment-dao");
 const mapper = require("./trainer-payment-mapper");
 const service = require("./trainer-payment-service");
 const notificationDao = require("../notifications/notification-dao");
-const TrainerClient = require("../trainerClients/trainer-client-schema");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 // Cuotas y avisos de cobro BAJO DEMANDA, sin cron (mismo criterio que las
 // alertas del coach, coach-alert-service.js#ensureEvaluatedToday). La primera
@@ -96,7 +96,7 @@ function logEntry(recipient, dueRevision, offset, state, now) {
 async function clientStillEnabled(charge) {
   const [profile, relation] = await Promise.all([
     dao.findProfile(charge.trainerId, charge.clientId),
-    TrainerClient.exists({ trainerId: charge.trainerId, clientId: charge.clientId, status: "active" }),
+    trainerClientDao.isActivePair(charge.trainerId, charge.clientId),
   ]);
   return Boolean(profile?.clientReminders?.enabled && relation);
 }
@@ -183,15 +183,14 @@ async function processReminders(docs, recipient, { settingsFor, profileFor, now,
 async function refreshTrainer(trainerId, now = new Date()) {
   const C = core();
   const stats = newStats();
-  const [settingsFor, profileDocs, relations] = await Promise.all([
+  const [settingsFor, profileDocs, activeClients] = await Promise.all([
     settingsByTrainer([trainerId]),
     dao.listProfiles({ trainerId }),
-    TrainerClient.find({ trainerId, status: "active", clientId: { $exists: true } }).select("clientId").lean(),
+    trainerClientDao.findActiveClientIds(trainerId),
   ]);
   const settings = settingsFor(trainerId);
   const today = C.civilDayInZone(now, settings.timeZone);
   const profiles = profileDocs.map((doc) => mapper.toProfile(doc));
-  const activeClients = new Set(relations.map((relation) => String(relation.clientId)));
   if (profiles.some((profile) => profile.plan)) {
     const openRecurring = (await dao.listOpenRecurring({ trainerId }, today)).map(service.normalize);
     await syncPlans(profiles, { settingsFor, isActive: (profile) => activeClients.has(profile.clientId), openRecurring, now, stats });
@@ -213,12 +212,11 @@ async function refreshTrainer(trainerId, now = new Date()) {
 async function refreshClient(clientId, now = new Date()) {
   const C = core();
   const stats = newStats();
-  const [profileDocs, relations] = await Promise.all([
+  const [profileDocs, activeTrainers] = await Promise.all([
     dao.listProfiles({ clientId }),
-    TrainerClient.find({ clientId, status: "active" }).select("trainerId").lean(),
+    trainerClientDao.findActiveTrainerIds(clientId),
   ]);
   const profiles = profileDocs.map((doc) => mapper.toProfile(doc));
-  const activeTrainers = new Set(relations.map((relation) => String(relation.trainerId)));
   const settingsFor = await settingsByTrainer([...new Set(profiles.map((profile) => profile.trainerId))]);
   // Cada entrenador tiene su zona: la consulta va en UTC con margen y la
   // decisión fina, con la zona de cada uno.

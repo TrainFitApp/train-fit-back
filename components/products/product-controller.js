@@ -1,4 +1,4 @@
-const productModel = require("./product-model");
+const productService = require("./product-service");
 const productDTO = require("./product-dto");
 
 function isAdmin(req) {
@@ -15,15 +15,14 @@ module.exports = {
   async getProducts(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 10).toString(), 10);
-    const products = await productModel.getProducts(page, limit);
+    const products = await productService.getProducts(page, limit);
     return res.send(products);
   },
 
   // Los productos propios que se buscan por código son los del usuario del
-  // token: el :userId de la URL se conserva por compatibilidad y se ignora
-  // (antes devolvía el producto privado de otro con ese código de barras).
+  // token.
   async getProductByCode(req, res) {
-    const product = await productModel.getProductByCode(
+    const product = await productService.getProductByCode(
       req.user.id,
       req.params.barcode,
     );
@@ -31,7 +30,7 @@ module.exports = {
   },
 
   async getProductsCount(req, res) {
-    const count = await productModel.getProductsCount();
+    const count = await productService.getProductsCount();
     return res.send(count);
   },
 
@@ -47,7 +46,7 @@ module.exports = {
     const search = typeof req.body === "string" ? req.body : req.body?.search;
     // El usuario autenticado, para que también encuentre SUS productos: un
     // entrenador que crea un producto tiene que poder volver a buscarlo.
-    const products = await productModel.searchProduct(
+    const products = await productService.searchProduct(
       page,
       limit,
       search,
@@ -72,7 +71,7 @@ module.exports = {
       payload.userId = req.user.id;
     }
 
-    const product = await productModel.createProduct(payload);
+    const product = await productService.createProduct(payload);
     return res.send(product);
   },
 
@@ -80,7 +79,7 @@ module.exports = {
    * Actualizar producto (soporta tanto productos globales como productos de usuario).
    */
   async updateProduct(req, res) {
-    const existing = await productModel.getProduct(req.body?._id);
+    const existing = await productService.getProduct(req.body?._id);
     if (!existing) return res.sendStatus(404);
 
     if (!isAdmin(req) && !isOwner(existing, req)) {
@@ -89,7 +88,7 @@ module.exports = {
       });
     }
 
-    const updatedProduct = await productModel.updateProduct(req.body);
+    const updatedProduct = await productService.updateProduct(req.body);
     return res.send(updatedProduct);
   },
 
@@ -99,45 +98,12 @@ module.exports = {
    */
   async promoteToGlobal(req, res) {
     if (!isAdmin(req)) return res.sendStatus(403);
-    const product = await productModel.promoteToGlobal(req.params.id);
+    const product = await productService.promoteToGlobal(req.params.id);
     return res.send(product);
   },
 
-  /**
-   * Añadir/quitar producto de favoritos del usuario.
-   * Ya no distingue entre ownProduct y product — todo va a archivedProducts.
-   */
-  async addFavoriteProduct(req, res) {
-    if (!req.body.idProduct) return res.sendStatus(400);
-    // Los favoritos son siempre del usuario del token: el idUser del cuerpo
-    // (que las apps siguen mandando) se ignora. Antes se marcaban o quitaban
-    // favoritos en nombre de cualquiera.
-    const userId = req.user.id;
-
-    const userModel = require("../users/model");
-    const user = await userModel.getUserById(userId);
-
-    const productExist = !!user.archivedProducts.find((apTemp) => {
-      const id = apTemp.toString().match(/^[0-9a-fA-F]{24}$/);
-      return id && id[0] === req.body.idProduct;
-    });
-
-    const updatedUser = await productModel.addFavouriteProduct(
-      userId,
-      req.body.idProduct,
-      productExist,
-    );
-
-    return res.send({
-      isFavorite: !productExist,
-      message: !productExist
-        ? "Product added to favorites"
-        : "Product removed from favorites",
-    });
-  },
-
   async deleteProduct(req, res) {
-    const existing = await productModel.getProduct(req.params.id);
+    const existing = await productService.getProduct(req.params.id);
     if (!existing) return res.sendStatus(404);
 
     if (!isAdmin(req) && !isOwner(existing, req)) {
@@ -146,7 +112,7 @@ module.exports = {
       });
     }
 
-    await productModel.deleteProduct(req.params.id);
+    await productService.deleteProduct(req.params.id);
     res.sendStatus(204);
   },
 };

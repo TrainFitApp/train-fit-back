@@ -7,23 +7,37 @@ const vm = require('node:vm');
 // trainer-client-service con sus dependencias en memoria: invitar y aceptar pasan siempre por el
 // bloqueo de admisión del entrenador (adapter.withClientAdmission), con o sin Stripe.
 function fixture({ capacity = 50, admission = 20, clients = [], occupied = [] } = {}) {
-  const clientKeys = new Set(clients.map((email) => `email:${email}`));
+  // Un par por email; los de `clients` ya reservan plaza (invitación pendiente).
+  const pairs = new Map(clients.map((email) => [email, { trainerId: 'trainer1', clientEmail: email, scopes: [{ scope: 'training', status: 'pending' }] }]));
   let tail = Promise.resolve();
   const calls = { admissions: 0, inserts: 0, emails: 0, updates: [], seatChecks: [] };
   const invitations = new Map();
+  const found = (id) => {
+    const invitation = invitations.get(id);
+    return invitation ? { pair: { trainerId: invitation.trainerId, clientEmail: invitation.clientEmail, scopes: [] }, invitation } : null;
+  };
   const dependencies = {
     './trainer-client-dao': {
-      async getBillableClientKeys() { return new Set(clientKeys); },
-      async findOverlapping() { return null; },
-      async create(input) {
+      async findPairByEmail(_trainerId, email) { return pairs.get(email) || null; },
+      async countSeats() { return { occupied: 0, reserved: pairs.size }; },
+      async hasOtherActiveTrainer() { return false; },
+      async createInvitation(trainerId, clientEmail, scope) {
         await new Promise((resolve) => setImmediate(resolve));
-        clientKeys.add(`email:${input.clientEmail}`);
+        const pair = pairs.get(clientEmail) || { trainerId, clientEmail, scopes: [] };
+        pair.scopes.push({ scope, status: 'pending' });
+        pairs.set(clientEmail, pair);
         calls.inserts++;
-        return { ...input };
+        return { pair, invitation: { trainerId, clientEmail, scope, status: 'pending' } };
       },
-      async findById(id) { return invitations.get(id) || null; },
-      async findByTrainerAndClientInStatuses() { return []; },
-      async updateStatus(id, status, extra) { calls.updates.push({ id, status, extra }); return { ...invitations.get(id), status, ...extra }; },
+      async findInvitation(id) { return found(id); },
+      async acceptInvitation(id) {
+        calls.updates.push({ id, status: 'active' });
+        return { invitation: { ...invitations.get(id), status: 'active' } };
+      },
+      async declineInvitation(id) {
+        calls.updates.push({ id, status: 'declined' });
+        return { invitation: { ...invitations.get(id), status: 'declined' } };
+      },
     },
     './trainer-seat-service': {
       async assertSeatForAcceptance(trainerId, clientId, seats) {
@@ -33,9 +47,10 @@ function fixture({ capacity = 50, admission = 20, clients = [], occupied = [] } 
         }
       },
     },
-    './intake-pending': { intakePendingOnAccept: () => true, intakeStatusFor: () => null },
+    './pair-state': require('../trainerClients/pair-state'),
+    '../util/http-error': require('../util/http-error'),
     '../notifications/notification-dao': { async createForTrainer() {} },
-    '../users/schema': { findOne: () => ({ lean: async () => null }) },
+    '../users/user-dao': { findFieldsByEmail: async () => null },
     '../trainerBilling/adapter': {
       async withClientAdmission(userId, action) {
         assert.equal(userId, 'trainer1');

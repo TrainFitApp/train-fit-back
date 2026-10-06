@@ -1,13 +1,6 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
-const customExerciseSchema = require("../customExercises/custom-exercise-schema");
-const {
-  MUSCLE_IDS,
-  ROLE_IDS,
-  normalizeMuscles,
-  toLegacyMuscleGroups,
-  fromLegacyMuscleGroups,
-} = require("./muscle-catalog");
+const { MUSCLE_IDS, ROLE_IDS, normalizeMuscles } = require("./muscle-catalog");
 
 // Músculo implicado y cuánto cuenta (ver muscle-catalog.js). Sin _id: es un
 // valor del ejercicio, no una entidad con vida propia.
@@ -23,14 +16,8 @@ const ExerciseSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
   videoUrl: String,
   description: { type: String, trim: true, maxlength: 6500 },
-  // Fuente de verdad desde 2026-09. `default: undefined` distingue "aún sin
-  // migrar" (campo ausente) de "no trabaja ningún músculo" ([], cardio).
-  muscles: { type: [ExerciseMuscleSchema], default: undefined },
-  // Proyección de `muscles` para quien aún lee el modelo antiguo (buscador,
-  // app cliente, progreso). No se editan a mano: los recalcula el hook de
-  // abajo y exercise-dao.js#updateExercise.
-  muscleGroups1: [String],
-  muscleGroups2: [String],
+  // Músculos que trabaja, cada uno con su papel. [] = ninguno (cardio).
+  muscles: { type: [ExerciseMuscleSchema], default: [] },
   category: [String],
   equipment: [String],
   keywords: [String],
@@ -41,82 +28,61 @@ const ExerciseSchema = Schema({
     ref: "User",
     required: false,
   },
+  // Borrado de un ejercicio que alguna sesión usa (2026-10): no se borra,
+  // se retira. Deja de salir en búsquedas y listados, pero las sesiones que
+  // lo tienen (también las de otros: el entrenador que lo creó y lo pautó a
+  // sus clientes) lo siguen pintando con su nombre y su ficha. Antes el
+  // borrado arrastraba esos ejercicios y sus series del historial de todos.
+  deletedAt: { type: Date, default: undefined },
 });
 
-// Cubre create, save e insertMany (el Planner crea ejercicios propios con
-// insertMany/create desde workout-dao.js). Un alta que llega con `muscles`
-// recalcula la proyección antigua; una que solo trae el modelo antiguo (la
-// app cliente sigue usándolo) se traduce a `muscles` para que el análisis
-// del Planner también la cuente.
+// Cubre create, save e insertMany: `muscles` siempre en forma canónica (un
+// papel por músculo, en orden). updateOne no pasa por aquí: lo hace
+// exercise-dao.js#updateExercise con la misma función.
 ExerciseSchema.pre("validate", function (next) {
-  if (Array.isArray(this.muscles) && (this.isNew || this.isModified("muscles"))) {
-    const muscles = normalizeMuscles(this.muscles);
-    const { muscleGroups1, muscleGroups2 } = toLegacyMuscleGroups(muscles);
-    this.muscles = muscles;
-    this.muscleGroups1 = muscleGroups1;
-    this.muscleGroups2 = muscleGroups2;
-  } else if (this.isNew && !this.muscles) {
-    const { muscles } = fromLegacyMuscleGroups(this.muscleGroups1, this.muscleGroups2);
-    if (muscles.length) this.muscles = muscles;
+  if (this.isNew || this.isModified("muscles")) {
+    this.muscles = normalizeMuscles(this.muscles);
   }
   next();
 });
 
-ExerciseSchema.pre("deleteOne", async function (next) {
+// Un ejercicio borrado sale de los favoritos de quien lo tuviera. Las
+// sesiones que lo usan no se tocan: solo se borra de verdad un ejercicio que
+// nadie usa (ver exercise-dao.js#deleteExercise).
+async function pullFromFavorites(exerciseIds) {
+  await require("../favorites/favorites-dao").removeEverywhere("exercises", exerciseIds);
+}
+
+ExerciseSchema.pre("deleteOne", { document: false, query: true }, async function (next) {
   try {
-    const query = this.getQuery();
-    const exercise = await this.model.findOne(query);
-
-    if (!exercise) return next();
-
-    // 1. Array de favoritos (archivedExercises) en User
-    try {
-      const UserModel = mongoose.model("User");
-      await UserModel.updateMany(
-        { archivedExercises: exercise._id },
-        { $pull: { archivedExercises: exercise._id } },
-      );
-    } catch (e) {
-      console.warn(
-        "UserModel not initialized or error updating user archivedExercises",
-        e,
-      );
-    }
-
-    // 2. Buscar customExercises enlazados a este exercise
-    const customExercises = await customExerciseSchema
-      .find({
-        exercise: exercise._id,
-      })
-      .lean();
-
-    if (customExercises.length > 0) {
-      const customExerciseIds = customExercises.map((ce) => ce._id);
-
-      // 3. Borrar los IDs de los customExercises de todos los Workouts
-      try {
-        const WorkoutModel = mongoose.model("Workout");
-        await WorkoutModel.updateMany(
-          { exercises: { $in: customExerciseIds } },
-          { $pull: { exercises: { $in: customExerciseIds } } },
-        );
-      } catch (e) {
-        console.warn(
-          "WorkoutModel not initialized or error updating workouts",
-          e,
-        );
-      }
-
-      // 4. Borrar los customExercises de la DB
-      await customExerciseSchema.deleteMany({
-        _id: { $in: customExerciseIds },
-      });
-    }
-
+    const exercise = await this.model.findOne(this.getQuery()).select("_id").lean();
+    if (exercise) await pullFromFavorites([exercise._id]);
     next();
   } catch (error) {
     next(error);
   }
 });
 
-module.exports = mongoose.model("Exercise", ExerciseSchema);
+ExerciseSchema.pre("deleteMany", async function (next) {
+  try {
+    const exercises = await this.model.find(this.getFilter()).select("_id").lean();
+    await pullFromFavorites(exercises.map((exercise) => exercise._id));
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Borrado de cuenta: después de sus rutinas y plantillas, para que solo
+// cuente el uso que hacen otros (exercise-dao.js#releaseOwnExercises).
+const { accountCascade, STAGE } = require("../util/account-cascade");
+ExerciseSchema.plugin(accountCascade, {
+  owners: ["userId"],
+  keep: (userId) => require("./exercise-dao").releaseOwnExercises(userId),
+  stage: STAGE.catalog,
+});
+
+const ExerciseModel = mongoose.model("Exercise", ExerciseSchema);
+ExerciseModel.pullFromFavorites = pullFromFavorites;
+
+module.exports = ExerciseModel;

@@ -20,7 +20,7 @@ async function main() {
   const CheckinResponse = require("../components/trainerCheckins/checkin-response-schema");
 
   const clientId = "65ccf5fbcc983be50cc36abd";
-  const relation = await TrainerClient.findOne({ clientId, status: "active" }).lean();
+  const relation = await TrainerClient.findOne({ clientId, "scopes.status": "active" }).lean();
   if (!relation) {
     console.error("No se encontró relación activa para ese clientId — abortando");
     process.exit(1);

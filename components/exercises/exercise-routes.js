@@ -29,18 +29,6 @@ router.postAsync(
 // comprueba desde ahora (antes no validaba nada, ver updateExercise).
 router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createExercise);
 router.patchAsync("/:id", auth(["admin", "user", "trainer"]), controller.updateExercise);
-router.putAsync(
-  "/archive",
-  auth(["admin", "user"]),
-  controller.archiveExercise
-);
-// "trainer": Configurar ejercicio (planner) marca favoritos del propio
-// entrenador; sin el rol daba 403 y el botón no hacía nada.
-router.putAsync(
-  "/favorite",
-  auth(["admin", "user", "trainer"]),
-  controller.addExerciseToFavorites
-);
 
 // Reproductor de YouTube (ver components/util/youtube-embed.js).
 router.getAsync("/youtube-embed", auth(["admin", "user"]), sendYouTubeEmbed);

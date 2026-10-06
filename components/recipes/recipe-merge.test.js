@@ -2,22 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const mongoose = require("mongoose");
 
-const service = require("./recipe-merge.service");
+const service = require("./recipe-merge");
 
-// La fusión de una receta con los ajustes que le hizo el cliente, y la
-// aritmética de sus macros. Es la copia que usa la API de recetas; las otras
-// dos son dietDays/diet-days-nutrition-util.js (adherencia y cumplimiento) y
-// RecipeService del front (lo que ve el cliente). Las tres tienen que dar lo
-// mismo — ver diet-days-nutrition-util.test.js y, en el front,
-// packages/shared-core/src/app/core/services/nutrition-math.test.cjs.
+// Saneado de recetas puestas en platos e ingredientes. La fusión y sus macros
+// se prueban en dietDays/diet-days-nutrition-util.test.js.
 
 const oid = () => new mongoose.Types.ObjectId().toString();
-const base = (id, quantity, extra = {}) => ({
-  _id: id,
-  quantity,
-  energyKcal100g: 100,
-  ...extra,
-});
 
 // --- normalizePositiveNumber ------------------------------------------------
 
@@ -65,123 +55,6 @@ test("validateCustomRecipe exige que las tres listas sean listas", () => {
       field,
     );
   }
-});
-
-// --- buildMergedIngredients -------------------------------------------------
-
-test("buildMergedIngredients sin ajustes devuelve la receta tal cual", () => {
-  const recipe = { customProducts: [base("a", 100), base("b", 50)] };
-  const { ingredients, removedIngredients } = service.buildMergedIngredients(recipe, {});
-  assert.deepEqual(ingredients.map((i) => i._id), ["a", "b"]);
-  assert.deepEqual(removedIngredients, []);
-});
-
-test("buildMergedIngredients pisa campo a campo, conservando lo que no cambia", () => {
-  // Igual que el front: modifiedBaseCustomProducts es un diff parcial.
-  const recipe = { customProducts: [base("a", 100, { protein100g: 20 })] };
-  const { ingredients } = service.buildMergedIngredients(recipe, {
-    modifiedBaseCustomProducts: [{ baseCustomProductId: "a", quantity: 250 }],
-  });
-  assert.equal(ingredients[0].quantity, 250);
-  assert.equal(ingredients[0].energyKcal100g, 100);
-  assert.equal(ingredients[0].protein100g, 20);
-});
-
-test("buildMergedIngredients no escribe sobre el ingrediente de la receta compartida", () => {
-  const original = base("a", 100);
-  const recipe = { customProducts: [original] };
-  service.buildMergedIngredients(recipe, {
-    modifiedBaseCustomProducts: [{ baseCustomProductId: "a", quantity: 999 }],
-  });
-  assert.equal(original.quantity, 100);
-});
-
-test("buildMergedIngredients separa los eliminados en su propia lista", () => {
-  const recipe = { customProducts: [base("a", 100), base("b", 50)] };
-  const { ingredients, removedIngredients } = service.buildMergedIngredients(recipe, {
-    removedBaseCustomProductIds: ["b"],
-  });
-  assert.deepEqual(ingredients.map((i) => i._id), ["a"]);
-  assert.deepEqual(removedIngredients.map((i) => i._id), ["b"]);
-});
-
-test("buildMergedIngredients pone los añadidos al final", () => {
-  const recipe = { customProducts: [base("a", 100)] };
-  const { ingredients } = service.buildMergedIngredients(recipe, {
-    addedCustomProducts: [base("extra", 20)],
-  });
-  assert.deepEqual(ingredients.map((i) => i._id), ["a", "extra"]);
-});
-
-test("buildMergedIngredients clona los arrays en vez de compartirlos", () => {
-  // allergens es un array: sin copia, editar la comida de un cliente tocaría
-  // la receta que comparten todos.
-  const recipe = { customProducts: [base("a", 100)] };
-  const allergens = ["gluten"];
-  const { ingredients } = service.buildMergedIngredients(recipe, {
-    modifiedBaseCustomProducts: [{ baseCustomProductId: "a", allergens }],
-  });
-  assert.deepEqual(ingredients[0].allergens, ["gluten"]);
-  assert.notEqual(ingredients[0].allergens, allergens, "comparte la referencia");
-});
-
-test("buildMergedIngredients llama a toObject en documentos de mongoose", () => {
-  const recipe = {
-    customProducts: [
-      { _id: "a", toObject: () => ({ _id: "a", quantity: 100, energyKcal100g: 100 }) },
-    ],
-  };
-  const { ingredients } = service.buildMergedIngredients(recipe, {
-    modifiedBaseCustomProducts: [{ baseCustomProductId: "a", quantity: 200 }],
-  });
-  assert.deepEqual(ingredients[0], { _id: "a", quantity: 200, energyKcal100g: 100 });
-});
-
-// --- calculateMacros --------------------------------------------------------
-
-test("calculateMacros escala por cantidad y acumula el peso crudo", () => {
-  assert.deepEqual(
-    service.calculateMacros([
-      { quantity: 200, energyKcal100g: 100, protein100g: 20, carbohydrates100g: 10, fat100g: 5 },
-      { quantity: 100, energyKcal100g: 50, protein100g: 5, carbohydrates100g: 2, fat100g: 1 },
-    ]),
-    { kcal: 250, protein: 45, carbs: 22, fat: 11, quantity: 300 },
-  );
-});
-
-test("calculateMacros cae al Product cuando el ingrediente no trae snapshot", () => {
-  const macros = service.calculateMacros([
-    { quantity: 200, product: { energyKcal100g: 150, protein100g: 10 } },
-  ]);
-  assert.equal(macros.kcal, 300);
-  assert.equal(macros.protein, 20);
-});
-
-test("calculateMacros: un 0 del ingrediente gana al valor del catálogo", () => {
-  const macros = service.calculateMacros([
-    { quantity: 100, fat100g: 0, product: { fat100g: 20 } },
-  ]);
-  assert.equal(macros.fat, 0);
-});
-
-test("calculateMacros ignora las cantidades que no son positivas", () => {
-  const macros = service.calculateMacros([
-    { quantity: 0, energyKcal100g: 500 },
-    { quantity: -100, energyKcal100g: 500 },
-    { quantity: null, energyKcal100g: 500 },
-  ]);
-  assert.equal(macros.kcal, 0);
-  assert.equal(macros.quantity, 0);
-});
-
-test("calculateMacros de una lista vacía es todo ceros", () => {
-  assert.deepEqual(service.calculateMacros([]), {
-    kcal: 0,
-    protein: 0,
-    carbs: 0,
-    fat: 0,
-    quantity: 0,
-  });
 });
 
 // --- sanitizeCustomProductData ----------------------------------------------

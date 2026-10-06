@@ -1,6 +1,6 @@
 // Única función de normalización de email del backend. La misma
 // transformación (trim + lowercase) también está declarada a nivel de
-// schema (components/users/schema.js, opciones `trim`/`lowercase` del path
+// schema (components/users/user-schema.js, opciones `trim`/`lowercase` del path
 // `email`), que Mongoose aplica automáticamente a creates, saves, updates y
 // condiciones de query — esta función cubre los sitios que comparan o
 // validan un email en JS puro antes/fuera de tocar la BD (comparar el email

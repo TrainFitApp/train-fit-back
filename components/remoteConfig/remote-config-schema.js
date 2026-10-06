@@ -17,7 +17,6 @@ const AppConfigSchema = new Schema({
     message: { type: String, default: "" },
   },
   updatedBy: { type: String, default: "" },
-  updatedAt: { type: Date, default: Date.now },
-});
+}, { timestamps: { createdAt: false } });
 
 module.exports = mongoose.model("AppConfig", AppConfigSchema);

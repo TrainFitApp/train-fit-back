@@ -1,9 +1,4 @@
-const {
-  MUSCLE_ROLES,
-  groupOf,
-  normalizeMuscles,
-  fromLegacyMuscleGroups,
-} = require("../exercises/muscle-catalog");
+const { MUSCLE_ROLES, groupOf, normalizeMuscles } = require("../exercises/muscle-catalog");
 const { buildWeekWindows } = require("./progress-service");
 const { isoDateInZone } = require("../util/date-util");
 
@@ -316,9 +311,7 @@ function buildBlockReadiness(sets, timeZone) {
  * no cuenta; un ejercicio aporta a su grupo el MAYOR factor de sus
  * músculos en ese grupo, no la suma.
  *
- * Fuente: Exercise.muscles. Si el ejercicio aún no lo tiene (sin migrar),
- * se traduce su muscleGroups1/2 con el mismo traductor que la migración.
- * El cardio no suma series de hipertrofia.
+ * Fuente: Exercise.muscles. El cardio no suma series de hipertrofia.
  *
  * Devuelve Map<etiqueta del grupo, factor>. La etiqueta es la canónica en
  * español ("Pectoral", "Bíceps"), la que TranslateDbPipe ya traduce.
@@ -327,11 +320,7 @@ function groupFactorsOf(set) {
   const factors = new Map();
   if (set.isCardio) return factors;
 
-  const muscles = Array.isArray(set.muscles)
-    ? normalizeMuscles(set.muscles)
-    : fromLegacyMuscleGroups(set.muscleGroups1, set.muscleGroups2).muscles;
-
-  for (const { muscle, role } of muscles) {
+  for (const { muscle, role } of normalizeMuscles(set.muscles)) {
     const factor = MUSCLE_ROLES[role];
     const group = groupOf(muscle);
     if (!factor || !group) continue;

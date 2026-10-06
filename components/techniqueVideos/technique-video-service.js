@@ -161,8 +161,7 @@ module.exports = {
    * ejercicio: { byExercise: { [exerciseId]: vista + assignedToYou } }.
    */
   async forClient(clientId, { baseUrl } = {}) {
-    const relations = (await trainerClientDao.findActiveByClient(clientId)).filter((relation) => relation.scope === "training");
-    const trainerIds = [...new Set(relations.map((relation) => String(relation.trainerId)))];
+    const trainerIds = [...(await trainerClientDao.findActiveTrainerIds(clientId, "training"))];
     if (!trainerIds.length) return { byExercise: {} };
 
     const [overrides, defaults] = await Promise.all([

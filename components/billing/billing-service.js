@@ -1,9 +1,8 @@
 const axios = require("axios");
 const mongoose = require("mongoose");
-const userSchema = require("../users/schema");
-const billingCustomerSchema = require("./billing-customer-schema");
-const billingEventSchema = require("./billing-event-schema");
-const { isEffectivelyEntitled } = require("./feature-access-service");
+const billingDao = require("./billing-dao");
+const { isEffectivelyEntitled } = require("./feature-access");
+const { httpError } = require("../util/http-error");
 
 const REVENUECAT_API_BASE = "https://api.revenuecat.com/v1";
 const ENTITLEMENT_ID =
@@ -288,11 +287,7 @@ async function updateUserPremium(userId, premiumState) {
     lastSyncAt: new Date(),
   };
 
-  return userSchema.findOneAndUpdate(
-    { _id: userId },
-    { $set: { premium: fieldUpdate }, $unset: { isPremium: 1 } },
-    { new: true },
-  );
+  return billingDao.setUserPremium(userId, fieldUpdate);
 }
 
 async function upsertBillingCustomer({
@@ -308,30 +303,24 @@ async function upsertBillingCustomer({
 }) {
   if (!appUserId) return null;
 
-  return billingCustomerSchema.findOneAndUpdate(
-    { appUserId },
-    {
-      $set: {
-        userId,
-        appUserId,
-        originalAppUserId: originalAppUserId || appUserId,
-        activeEntitlement: activeEntitlement || null,
-        store: store || null,
-        productId: productId || null,
-        expiresAt: expiresAt || null,
-        willRenew: Boolean(willRenew),
-        lastEventAt: lastEventAt || new Date(),
-      },
-    },
-    { upsert: true, new: true },
-  );
+  return billingDao.upsertCustomer(appUserId, {
+    userId,
+    appUserId,
+    originalAppUserId: originalAppUserId || appUserId,
+    activeEntitlement: activeEntitlement || null,
+    store: store || null,
+    productId: productId || null,
+    expiresAt: expiresAt || null,
+    willRenew: Boolean(willRenew),
+    lastEventAt: lastEventAt || new Date(),
+  });
 }
 
 async function ensureEventNotProcessed(eventId, payload) {
   if (!eventId) return true;
 
   try {
-    await billingEventSchema.create({
+    await billingDao.createEvent({
       eventId,
       type: payload?.type || "unknown",
       store: payload?.store || null,
@@ -513,15 +502,11 @@ function getPromotionPayloadForTarget(targetExpiresAt) {
   const requestedMs = targetMs - Date.now();
 
   if (!Number.isFinite(targetMs) || requestedMs <= 0) {
-    const error = new Error("La fecha de expiracion debe estar en el futuro");
-    error.status = 400;
-    throw error;
+    throw httpError(400, "La fecha de expiracion debe estar en el futuro");
   }
 
   if (requestedMs > MAX_PROMOTIONAL_MS) {
-    const error = new Error("La duracion maxima permitida es 1 año");
-    error.status = 400;
-    throw error;
+    throw httpError(400, "La duracion maxima permitida es 1 año");
   }
 
   return { end_time_ms: targetMs };
@@ -548,11 +533,7 @@ function ensureManualGrantWasApplied(premiumState) {
     !premiumState?.expiresAt ||
     new Date(premiumState.expiresAt).getTime() <= Date.now()
   ) {
-    const error = new Error(
-      "RevenueCat no devolvio un entitlement promocional activo para este usuario",
-    );
-    error.status = 502;
-    throw error;
+    throw httpError(502, "RevenueCat no devolvio un entitlement promocional activo para este usuario");
   }
 }
 
@@ -570,17 +551,13 @@ async function revokePromotionalEntitlement(appUserId) {
 
 function normalizeDurationRequest(duration) {
   if (!duration || typeof duration !== "object") {
-    const error = new Error("Duracion requerida");
-    error.status = 400;
-    throw error;
+    throw httpError(400, "Duracion requerida");
   }
 
   if (duration.type === "preset") {
     const durationMs = PRESET_DURATIONS[duration.value];
     if (!durationMs) {
-      const error = new Error("Duracion predefinida no valida");
-      error.status = 400;
-      throw error;
+      throw httpError(400, "Duracion predefinida no valida");
     }
     return { type: "preset", durationMs };
   }
@@ -588,16 +565,12 @@ function normalizeDurationRequest(duration) {
   if (duration.type === "customDate") {
     const expiresAt = toDateOrNull(duration.expiresAt);
     if (!expiresAt) {
-      const error = new Error("Fecha personalizada no valida");
-      error.status = 400;
-      throw error;
+      throw httpError(400, "Fecha personalizada no valida");
     }
     return { type: "customDate", expiresAt };
   }
 
-  const error = new Error("Tipo de duracion no valido");
-  error.status = 400;
-  throw error;
+  throw httpError(400, "Tipo de duracion no valido");
 }
 
 function getManualBaseDate(user) {
@@ -632,9 +605,7 @@ function isRealStorePremium(user, billingCustomer) {
 }
 
 function storeSubscriptionConflict() {
-  const error = new Error("El usuario tiene una suscripcion activa de tienda");
-  error.status = 409;
-  return error;
+  return httpError(409, "El usuario tiene una suscripcion activa de tienda");
 }
 
 // Aplica en BD el estado que RevenueCat da para un suscriptor (fuente de
@@ -679,14 +650,7 @@ async function reconcileExpiredPremiumIfNeeded(user) {
   if (new Date(premium.expiresAt).getTime() > Date.now()) return;
 
   try {
-    await userSchema.updateOne(
-      {
-        _id: user._id,
-        "premium.entitled": true,
-        "premium.expiresAt": premium.expiresAt,
-      },
-      { $set: { "premium.entitled": false } },
-    );
+    await billingDao.expireUserPremium(user._id, premium.expiresAt);
   } catch (error) {
     console.error(
       "[Billing] Error auto-corrigiendo premium expirado",
@@ -711,16 +675,7 @@ async function runExpiredPremiumReconciliation({ batchSize = 200 } = {}) {
   let lastId = null;
 
   for (;;) {
-    const candidates = await userSchema
-      .find({
-        "premium.entitled": true,
-        "premium.expiresAt": { $lte: now },
-        ...(lastId ? { _id: { $gt: lastId } } : {}),
-      })
-      .sort({ _id: 1 })
-      .select("_id premium")
-      .limit(batchSize)
-      .lean();
+    const candidates = await billingDao.listExpiredPremium(now, lastId, batchSize);
     if (!candidates.length) break;
     lastId = candidates[candidates.length - 1]._id;
     candidatesCount += candidates.length;
@@ -762,13 +717,7 @@ async function runExpiredPremiumReconciliation({ batchSize = 200 } = {}) {
         } else {
           // RC no está configurado (SECRET_API_KEY ausente) y expiresAt local
           // es la única fuente disponible: expiresAt ya pasado basta.
-          await userSchema.updateOne(
-            {
-              _id: candidate._id,
-              "premium.expiresAt": candidate.premium.expiresAt,
-            },
-            { $set: { "premium.entitled": false } },
-          );
+          await billingDao.expireUserPremium(candidate._id, candidate.premium.expiresAt);
           selfHealed += 1;
         }
       } catch (error) {
@@ -829,9 +778,9 @@ async function syncFromCustomerInfo(user, customerInfo, explicitPlan) {
 }
 
 async function findBillingCustomer(appUserId, originalAppUserId) {
-  let billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+  let billingCustomer = await billingDao.findCustomerByAppUserId(appUserId);
   if (!billingCustomer && originalAppUserId) {
-    billingCustomer = await billingCustomerSchema.findOne({ originalAppUserId });
+    billingCustomer = await billingDao.findCustomerByOriginalAppUserId(originalAppUserId);
   }
   return billingCustomer;
 }
@@ -839,10 +788,10 @@ async function findBillingCustomer(appUserId, originalAppUserId) {
 async function findUserForAppUserId(appUserId, billingCustomer) {
   let user = null;
   if (mongoose.Types.ObjectId.isValid(appUserId)) {
-    user = await userSchema.findById(appUserId);
+    user = await billingDao.findUser(appUserId);
   }
   if (!user && billingCustomer?.userId) {
-    user = await userSchema.findById(billingCustomer.userId);
+    user = await billingDao.findUser(billingCustomer.userId);
   }
   return user;
 }
@@ -876,7 +825,7 @@ async function resyncFromRevenueCat(event, user, billingCustomer) {
   }
 
   if (user) {
-    await billingEventSchema.updateOne({ eventId: event.eventId }, { $set: { userId: user._id } });
+    await billingDao.setEventUser(event.eventId, user._id);
   }
   return { applied, billingCustomerId: billingCustomer?._id || null };
 }
@@ -894,15 +843,24 @@ function logWebhook(event, extra) {
   );
 }
 
+// Desde management: un fallo al llamar a RevenueCat (su API o la red) es un
+// fallo de pasarela, 502. Reenviar su 401/403 haría que management cerrase la
+// sesión del administrador como si su token hubiese caducado.
+function asGatewayError(error) {
+  if (error?.response || error?.isAxiosError) {
+    console.error("[billing] RevenueCat", error?.response?.status, error?.response?.data?.message || error?.message);
+    throw httpError(502, "RevenueCat no responde", "REVENUECAT_UNAVAILABLE");
+  }
+  throw error;
+}
+
 async function loadAdminTarget(userId) {
-  const user = await userSchema.findById(userId);
+  const user = await billingDao.findUser(userId);
   if (!user) {
-    const error = new Error("Usuario no encontrado");
-    error.status = 404;
-    throw error;
+    throw httpError(404, "Usuario no encontrado");
   }
   const appUserId = user._id.toString();
-  const billingCustomer = await billingCustomerSchema.findOne({ appUserId });
+  const billingCustomer = await billingDao.findCustomerByAppUserId(appUserId);
   return { user, appUserId, billingCustomer };
 }
 
@@ -935,14 +893,31 @@ async function applyAdminPremium(userId, duration, mode) {
   await grantPromotionalEntitlement(appUserId, targetExpiresAt);
   const subscriber = await getRevenueCatSubscriber(appUserId);
   if (!subscriber) {
-    const error = new Error("No se pudo sincronizar la suscripcion con RevenueCat");
-    error.status = 502;
-    throw error;
+    throw httpError(502, "No se pudo sincronizar la suscripcion con RevenueCat");
   }
 
   const { updatedUser } = await applyRevenueCatSubscriber(user, subscriber, appUserId, {
     expectManualGrant: true,
   });
+  return updatedUser;
+}
+
+// Quitar el premium manual (promocionales de RevenueCat).
+async function revokeAdminPremium(userId) {
+  assertRevenueCatSecret();
+  const { user, appUserId, billingCustomer } = await loadAdminTarget(userId);
+  if (isRealStorePremium(user, billingCustomer)) {
+    throw storeSubscriptionConflict();
+  }
+
+  const subscriber =
+    (await revokePromotionalEntitlement(appUserId)) ||
+    (await getRevenueCatSubscriber(appUserId));
+  if (!subscriber) {
+    throw httpError(502, "No se pudo sincronizar la suscripcion con RevenueCat");
+  }
+
+  const { updatedUser } = await applyRevenueCatSubscriber(user, subscriber, appUserId);
   return updatedUser;
 }
 
@@ -960,6 +935,19 @@ module.exports = {
   resolveTargetExpiration,
   reconcileExpiredPremiumIfNeeded,
   runExpiredPremiumReconciliation,
+
+  // Premium sin plan registrado (C2): se deriva de su BillingCustomer y se
+  // corrige en BD para que los botones de cambio de plan funcionen. Devuelve
+  // el plan, o null si no se puede saber.
+  async repairMissingPlan(user) {
+    if (!user.premium?.entitled || user.premium?.plan) return user.premium?.plan || null;
+    const billingCustomer = await billingDao.findCustomerByUserId(user._id);
+    if (!billingCustomer?.productId) return null;
+    const plan = derivePlan(billingCustomer.productId);
+    if (plan === "unknown") return null;
+    await billingDao.setUserPlan(user._id, plan);
+    return plan;
+  },
 
   validateWebhookAuth(req) {
     // Sin secreto configurado se falla CERRADO (antes cualquiera podía
@@ -991,14 +979,7 @@ module.exports = {
       return null;
     }
 
-    return billingCustomerSchema.findOneAndUpdate(
-      { appUserId },
-      {
-        $set: { userId: user._id },
-        $setOnInsert: { appUserId, originalAppUserId: appUserId, willRenew: false },
-      },
-      { upsert: true, new: true },
-    );
+    return billingDao.linkCustomer(user._id, appUserId);
   },
 
   // "Restaurar compras" y cada CustomerInfo que empuja el SDK. Con la clave
@@ -1045,31 +1026,15 @@ module.exports = {
   },
 
   grantAdminPremium(userId, duration) {
-    return applyAdminPremium(userId, duration, "grant");
+    return applyAdminPremium(userId, duration, "grant").catch(asGatewayError);
   },
 
   extendAdminPremium(userId, duration) {
-    return applyAdminPremium(userId, duration, "extend");
+    return applyAdminPremium(userId, duration, "extend").catch(asGatewayError);
   },
 
-  async revokeAdminPremium(userId) {
-    assertRevenueCatSecret();
-    const { user, appUserId, billingCustomer } = await loadAdminTarget(userId);
-    if (isRealStorePremium(user, billingCustomer)) {
-      throw storeSubscriptionConflict();
-    }
-
-    const subscriber =
-      (await revokePromotionalEntitlement(appUserId)) ||
-      (await getRevenueCatSubscriber(appUserId));
-    if (!subscriber) {
-      const error = new Error("No se pudo sincronizar la suscripcion con RevenueCat");
-      error.status = 502;
-      throw error;
-    }
-
-    const { updatedUser } = await applyRevenueCatSubscriber(user, subscriber, appUserId);
-    return updatedUser;
+  revokeAdminPremium(userId) {
+    return revokeAdminPremium(userId).catch(asGatewayError);
   },
 
   async processWebhook(rawPayload) {
@@ -1127,10 +1092,7 @@ module.exports = {
 
     if (user && event.applyEntitlementUpdate) {
       await updateUserPremium(user._id, event);
-      await billingEventSchema.updateOne(
-        { eventId: event.eventId },
-        { $set: { userId: user._id } },
-      );
+      await billingDao.setEventUser(event.eventId, user._id);
     }
 
     const resolvedCustomerState = {

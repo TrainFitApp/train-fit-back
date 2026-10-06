@@ -1,284 +1,77 @@
-const customProductSchema = require("./custom-product-schema");
-const mealSchema = require("../meals/meal-schema");
-const userSchema = require("../users/schema");
 const productSchema = require("../products/product-schema");
-const dietDaySchema = require("../dietDays/diet-days-schema");
-const mealModel = require("../meals/meal-service");
-const dietDayUtil = require("../dietDays/diet-days-util");
-const CUSTOM_PRODUCT_NUTRITION_FIELDS = [
-  "energyKcal100g",
-  "protein100g",
-  "carbohydrates100g",
-  "fat100g",
-  "saturatedFat100g",
-  "sugars100g",
-  "fiber100g",
-  "salt100g",
-  "sodium100g",
-  "cholesterol100g",
-  "transFat100g",
-  "calcium100g",
-  "iron100g",
-  "magnesium100g",
-  "phosphorus100g",
-  "potassium100g",
-  "zinc100g",
-  "copper100g",
-  "manganese100g",
-  "selenium100g",
-  "iodine100g",
-  "vitaminA100g",
-  "vitaminC100g",
-  "vitaminD100g",
-  "vitaminE100g",
-  "vitaminK100g",
-  "vitaminB1100g",
-  "vitaminB2100g",
-  "vitaminB3100g",
-  "vitaminB5100g",
-  "vitaminB6100g",
-  "vitaminB9100g",
-  "vitaminB12100g",
-  "biotin100g",
-  "omega3100g",
-  "omega6100g",
-  "omega9100g",
-  "caffeine100g",
-  "taurine100g",
-  "alcohol100g",
-];
+const mealStore = require("../meals/meal-store");
+const { patchCustomProduct } = require("./custom-product-patch");
+const { NUTRIENT_FIELDS } = require("../util/nutrient-fields");
 
-const isBlankString = (value) =>
-  typeof value === "string" && value.trim() === "";
+// Alimentos del diario, EMBEBIDOS en su comida (2026-10). Las rutas los
+// siguen recibiendo por su `_id`; aquí se localiza la comida que los tiene.
 
-const hasOwn = (object, key) =>
-  !!object && Object.prototype.hasOwnProperty.call(object, key);
+const KIND = "customProducts";
 
-const areValuesEqual = (left, right, epsilon = 1e-9) => {
-  if (left === right) return true;
-  if (typeof left === "number" && typeof right === "number") {
-    return Math.abs(left - right) < epsilon;
-  }
-  return false;
-};
+const isBlankString = (value) => typeof value === "string" && value.trim() === "";
 
-const cleanForCreate = (payload = {}) => {
+function cleanForCreate(payload = {}) {
   const cleaned = {};
   Object.keys(payload).forEach((key) => {
     const value = payload[key];
-    if (value === undefined) return;
-    if (isBlankString(value)) return;
+    if (value === undefined || isBlankString(value)) return;
     cleaned[key] = value;
   });
   return cleaned;
-};
-
-const buildCustomProductUpdate = (currentDoc, payload = {}) => {
-  const $set = {};
-  const $unset = {};
-
-  Object.keys(payload).forEach((key) => {
-    if (key === "_id" || CUSTOM_PRODUCT_NUTRITION_FIELDS.includes(key)) {
-      return;
-    }
-
-    const value = payload[key];
-
-    if (value === undefined) {
-      return;
-    }
-
-    if (isBlankString(value)) {
-      $unset[key] = "";
-      return;
-    }
-
-    $set[key] = value;
-  });
-
-  CUSTOM_PRODUCT_NUTRITION_FIELDS.forEach((field) => {
-    if (!hasOwn(payload, field)) {
-      $unset[field] = "";
-      return;
-    }
-
-    const value = payload[field];
-    const baseValue = currentDoc?.product?.[field];
-
-    if (value === undefined || isBlankString(value)) {
-      $unset[field] = "";
-      return;
-    }
-
-    if (value === null) {
-      $set[field] = null;
-      return;
-    }
-
-    if (areValuesEqual(value, baseValue)) {
-      $unset[field] = "";
-      return;
-    }
-
-    $set[field] = value;
-  });
-
-  const updateQuery = {};
-  if (Object.keys($set).length) updateQuery.$set = $set;
-  if (Object.keys($unset).length) updateQuery.$unset = $unset;
-  return updateQuery;
-};
+}
 
 module.exports = {
-  async findCustomProductById(id) {
-    return new Promise((resolve, reject) =>
-      customProductSchema.findById(id, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      }),
-    );
-  },
-
-  //   async getProductByBarCode(barcode) {
-  //     return new Promise((resolve, reject) =>
-  //       productSchema
-  //         .findOne({ code: barcode })
-  //         .exec((err, doc) => {
-  //           if (err) return reject(err);
-  //           return resolve(doc);
-  //         })
-  //     );
-  //   },
-
-  //   async getProductsByUser(page, limit) {
-  //     return new Promise((resolve, reject) =>
-  //       productSchema
-  //         .find({})
-  //         .skip(page * limit)
-  //         .limit(limit)
-  //         .exec((err, docs) => {
-  //           if (err) return reject(err);
-  //           return resolve(docs);
-  //         })
-  //     );
-  //   },
-
-  //   async getSearchProduct(page, limit, search) {
-  //     return new Promise((resolve, reject) =>
-  //       productSchema
-  //         .find({ name: { $regex: search, $options: "i" } })
-  //         .skip(page * limit)
-  //         .limit(limit)
-  //         .exec((err, docs) => {
-  //           if (err) return reject(err);
-  //           return resolve(docs);
-  //         })
-  //     );
-  //   },
-
+  // Añade el alimento a la comida. Esta vía es siempre la del propio usuario
+  // añadiendo comida: nunca nace pautado (eso solo lo estampa
+  // meal-dao.js#pasteMeal con el trainerId), aunque lo diga el cuerpo.
   async createCustomProductAndAddToMeal(idMeal, customProduct, idUser) {
-    try {
-      // Limpiar datos del custom product. Esta vía es siempre la del propio
-      // usuario añadiendo comida: nunca nace pautada (eso solo lo estampa
-      // meal-dao.js#pasteMeal con el trainerId), aunque lo diga el cuerpo.
-      const cleanedCustomProduct = cleanForCreate(customProduct);
-      delete cleanedCustomProduct.assignedByTrainerId;
-      delete cleanedCustomProduct.assignedQuantity;
+    const cleaned = cleanForCreate(customProduct);
+    delete cleaned._id;
+    delete cleaned.assignedByTrainerId;
+    delete cleaned.assignedQuantity;
 
-      // Si viene un producto inline unificado (product), lo guardamos en Product.
-      // Un string es el id de un producto que ya existe (antes se trataba como
-      // producto inline y creaba un Product con las letras del id como campos).
-      const inlineProduct = cleanedCustomProduct.product;
-      if (
-        idUser &&
-        inlineProduct &&
-        typeof inlineProduct === "object" &&
-        !inlineProduct._id
-      ) {
-        const { verified, ...productData } = inlineProduct;
-        const productDoc = await productSchema.create({
-          ...productData,
-          userId: idUser,
-        });
-        cleanedCustomProduct.product = productDoc._id;
-      }
-
-      const customProductDoc =
-        await customProductSchema.create(cleanedCustomProduct);
-
-      let setCustomProduct = { $set: { mealId: idMeal } };
-      if (cleanedCustomProduct.product && cleanedCustomProduct.product._id) {
-        setCustomProduct.$set.product = cleanedCustomProduct.product;
-      }
-
-      await customProductSchema.findByIdAndUpdate(
-        customProductDoc._id,
-        setCustomProduct,
-      );
-      await mealSchema.findByIdAndUpdate(idMeal, {
-        $push: { customProducts: customProductDoc._id },
-      });
-
-      return customProductDoc;
-    } catch (error) {
-      throw error;
+    // Un producto inline (objeto sin _id) se da de alta en el catálogo del
+    // usuario. Un string es el id de un producto que ya existe (antes se
+    // trataba como inline y creaba un Product con las letras del id).
+    const inlineProduct = cleaned.product;
+    if (idUser && inlineProduct && typeof inlineProduct === "object" && !inlineProduct._id) {
+      const { verified, ...productData } = inlineProduct;
+      const productDoc = await productSchema.create({ ...productData, userId: idUser });
+      cleaned.product = productDoc._id;
+    } else if (inlineProduct && typeof inlineProduct === "object") {
+      cleaned.product = inlineProduct._id;
     }
+
+    const created = { ...cleaned, _id: mealStore.newId() };
+    await mealStore.pushToMeal(idMeal, KIND, created);
+    return mealStore.readMealItem(created._id, KIND);
   },
 
+  // Solo los valores que difieren del Product se guardan (ver
+  // custom-product-patch.js); `data` ya llega sin los campos protegidos.
   async updateCustomProduct(customProduct) {
-    return new Promise((resolve, reject) => {
-      const { _id, ...data } = customProduct;
-      customProductSchema.findById(_id, (findErr, currentDoc) => {
-        if (findErr) return reject(findErr);
-        if (!currentDoc) return resolve(null);
-
-        const updateQuery = buildCustomProductUpdate(currentDoc, data);
-
-        if (!updateQuery || (!updateQuery.$set && !updateQuery.$unset)) {
-          return resolve(currentDoc);
-        }
-
-        customProductSchema.findByIdAndUpdate(
-          _id,
-          updateQuery,
-          { new: true },
-          (err, doc) => {
-            if (err) return reject(err);
-            return resolve(doc);
-          },
-        );
-      });
+    const { _id, ...data } = customProduct || {};
+    if (data.product && typeof data.product === "object") data.product = data.product._id;
+    const found = await mealStore.mutateMealItem(_id, KIND, async (current) => {
+      const baseProduct = current.product
+        ? await productSchema.findById(current.product).lean()
+        : null;
+      return patchCustomProduct(current, data, { overrideFields: NUTRIENT_FIELDS, baseProduct, blankUnsets: true });
     });
+    return found ? mealStore.readMealItem(_id, KIND) : null;
   },
 
-  async delete(id) {
-    return new Promise((resolve, reject) =>
-      customProductSchema.deleteOne({ _id: id }, (err, docs) => {
-        if (err) return reject(err);
-        return resolve();
-      }),
-    );
-  },
-
-  // Marcar/desmarcar consumido — nunca bloqueado por assignedByTrainerId
-  // (ver custom-product-schema.js): seguimiento y composición son
-  // conceptos distintos, mismo criterio que Meal.completed.
+  // Marcar/desmarcar consumido — nunca bloqueado por assignedByTrainerId:
+  // seguimiento y composición son conceptos distintos.
   async setConsumed(id, consumed) {
-    return customProductSchema.findByIdAndUpdate(
-      id,
-      { $set: { consumed: Boolean(consumed) } },
-      { new: true },
-    );
+    await mealStore.mutateMealItem(id, KIND, (current) => ({ ...current, consumed: Boolean(consumed) }));
+    return mealStore.readMealItem(id, KIND);
   },
 
-  // Cantidad realmente consumida — mismo criterio que setConsumed: nunca
-  // bloqueado por assignedByTrainerId, solo toca `quantity`.
+  // Cantidad realmente consumida — mismo criterio que setConsumed.
   // assignedQuantity (la referencia pautada) nunca se escribe aquí.
   async setQuantity(id, quantity) {
-    return customProductSchema.findByIdAndUpdate(
-      id,
-      { $set: { quantity } },
-      { new: true },
-    );
+    await mealStore.mutateMealItem(id, KIND, (current) => ({ ...current, quantity }));
+    return mealStore.readMealItem(id, KIND);
   },
 };

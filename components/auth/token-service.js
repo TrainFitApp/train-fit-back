@@ -81,10 +81,6 @@ class TokenService {
     return DEFAULT_ALLOWED_AUDIENCES;
   }
 
-  static generateAccessToken(payload, options = {}) {
-    return TokenService.signAccess(payload, options);
-  }
-
   static signAccess(payload, options = {}) {
     const { audience = "trainfit-front", expiresIn = "15m" } = options;
     return jwt.sign(
@@ -100,10 +96,6 @@ class TokenService {
         audience,
       }
     );
-  }
-
-  static generateRefreshToken(payload, options = {}) {
-    return TokenService.signRefresh(payload, options);
   }
 
   static signRefresh(payload, options = {}) {
@@ -239,16 +231,6 @@ class TokenService {
     return values.filter(Boolean);
   }
 
-  static isSessionRefreshToken(token) {
-    const payload = TokenService.decode(token);
-    return !!(
-      payload?.type === "refresh" &&
-      payload?.sub &&
-      payload?.sid &&
-      payload?.pver !== undefined
-    );
-  }
-
   static extractBearerToken(req) {
     const authHeader = req.headers?.authorization || "";
     if (!authHeader.startsWith("Bearer ")) {
@@ -270,13 +252,6 @@ class TokenService {
     if (cookieValues.length > 0) {
       return { token: cookieValues[0], source: "cookie" };
     }
-
-    // Migración compatible: una cookie antigua solo sirve a SU app. La firma,
-    // audiencia y sesión se verifican después en el controlador como siempre.
-    const legacyToken = TokenService.getCookieValues(req, REFRESH_COOKIE_NAME)
-      .find((token) => TokenService.decode(token)?.aud === clientFamily);
-    if (legacyToken) return { token: legacyToken, source: "cookie" };
-
     return { token: null, source: null };
   }
 }

@@ -9,8 +9,8 @@ const {
   validateCustomAnswer,
   normalizeCustomAnswer,
   validateQuestionDefinition,
-} = require("./checkin-custom-question");
-const { CHECKIN_FIELD_KEYS } = require("./checkin-field-catalog");
+} = require("./custom-question");
+const { CHECKIN_FIELD_KEYS } = require("../trainerCheckins/checkin-field-catalog");
 
 // Las respuestas de check-in son el dato que alimenta alertas, comparativas
 // y reglas. Una validación laxa mete basura ahí sin ningún error visible.

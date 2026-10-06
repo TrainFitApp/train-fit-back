@@ -11,7 +11,6 @@ const {
   detectInactivity,
   detectNoTrainingActivity,
   detectCheckinOverdue,
-  detectPendingReview,
 } = require("./coach-signals-service");
 
 const NOW = new Date("2026-08-23T05:00:00.000Z");
@@ -417,23 +416,10 @@ test("detectCheckinOverdue", async (t) => {
   });
 });
 
-test("detectPendingReview", async (t) => {
-  await t.test("cuestionario en revisión -> prioridad alta (bloquea al cliente)", () => {
-    const signal = detectPendingReview({ clientName: "Nil", relationStatus: "en_revision" });
-    assert.ok(signal);
-    assert.equal(signal.priority, "high");
-  });
-
-  await t.test("relación activa -> nada que revisar", () => {
-    assert.equal(detectPendingReview({ clientName: "Nil", relationStatus: "active" }), null);
-  });
-});
-
 test("buildSignalsForClient", async (t) => {
   await t.test("cliente que va bien -> ninguna señal", () => {
     const signals = buildSignalsForClient({
       clientName: "Ok",
-      relationStatus: "active",
       now: NOW,
       entries: weightEntries([[21, 80], [0, 78.5]]),
       adherence: goodAdherence(95),
@@ -446,7 +432,6 @@ test("buildSignalsForClient", async (t) => {
   await t.test("cliente con varios problemas -> varias señales, sin duplicar tipo", () => {
     const signals = buildSignalsForClient({
       clientName: "Problemas",
-      relationStatus: "active",
       now: NOW,
       entries: weightEntries([[21, 80], [0, 80.1]]),
       adherence: goodAdherence(85),
@@ -461,21 +446,9 @@ test("buildSignalsForClient", async (t) => {
     assert.equal(new Set(types).size, types.length, "ningún tipo repetido");
   });
 
-  await t.test("cliente en revisión -> solo la señal de cuestionario", () => {
-    const signals = buildSignalsForClient({
-      clientName: "Nuevo",
-      relationStatus: "en_revision",
-      now: NOW,
-      entries: [],
-    });
-    assert.equal(signals.length, 1);
-    assert.equal(signals[0].type, "pending_review");
-  });
-
   await t.test("toda señal trae los campos que CoachAlert exige como obligatorios", () => {
     const signals = buildSignalsForClient({
       clientName: "Test",
-      relationStatus: "active",
       now: NOW,
       entries: weightEntries([[21, 80], [7, 80], [0, 76]]),
       adherence: goodAdherence(30),

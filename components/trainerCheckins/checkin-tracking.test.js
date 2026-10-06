@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { missedOccurrences, nextDateOf } = require("./checkin-agenda-service");
-const { looseContent } = require("./checkin-agenda-controller");
+const { looseContent } = require("./checkin-schedule-content");
 
 const HOY = "2026-09-21";
 const semanal = { _id: "s1", startDate: "2026-08-31", frequency: "weekly", interval: 1, active: true };

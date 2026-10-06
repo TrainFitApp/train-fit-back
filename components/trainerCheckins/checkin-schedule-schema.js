@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { CustomCheckinQuestionSchema } = require("./checkin-custom-question");
+const { CustomQuestionSchema } = require("../forms/custom-question");
 
 // La programación de check-ins de un cliente: qué se le pregunta y cada
 // cuánto. Las ocurrencias NO se materializan (no hay cron ni colección de
@@ -16,7 +16,7 @@ const schema = new mongoose.Schema({
   sourceTemplateId: { type: mongoose.Schema.Types.ObjectId, default: null },
   enabledFields: [String],
   requiredFields: { type: [String], default: [] },
-  customQuestions: { type: [CustomCheckinQuestionSchema], default: [] },
+  customQuestions: { type: [CustomQuestionSchema], default: [] },
   // "YYYY-MM-DD" y "HH:mm" de reloj: sin zona horaria, ver
   // checkin-schedule-dates.js.
   startDate: { type: String, required: true },
@@ -30,5 +30,7 @@ const schema = new mongoose.Schema({
 
 schema.index({ trainerId: 1, clientId: 1 });
 schema.index({ clientId: 1, active: 1 });
+
+schema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });
 
 module.exports = mongoose.model("CheckinSchedule", schema);

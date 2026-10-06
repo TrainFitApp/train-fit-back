@@ -215,7 +215,7 @@ test("parseSDKCustomerInfo: CustomerInfo del SDK", async (t) => {
   });
 
   await t.test("caché vieja (isActive con fecha pasada): se guarda la fecha y el acceso efectivo la respeta", () => {
-    const { isEffectivelyEntitled } = require("./feature-access-service");
+    const { isEffectivelyEntitled } = require("./feature-access");
     const state = billing.parseSDKCustomerInfo(info({ isActive: true, expirationDate: iso(-1000), productIdentifier: PROMO, store: "PROMOTIONAL" }));
     assert.equal(isEffectivelyEntitled({ entitled: state.entitled, expiresAt: state.expiresAt }), false);
   });

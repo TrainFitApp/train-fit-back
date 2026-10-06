@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const mongoose = require("mongoose");
 
-const { buildHiddenRecentStages } = require("./hidden-recent-food-match");
+const { buildHiddenRecentStages } = require("./recent-food-match");
 
 // Ocultar un reciente de una comida no es un borrado: si el cliente vuelve a
 // añadir ese alimento DESPUÉS de ocultarlo, tiene que reaparecer. Lo decide el

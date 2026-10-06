@@ -1,13 +1,8 @@
 const setDao = require("./set-dao");
 
+// Una serie siempre nace dentro de su ejercicio (al crearlo o al copiarlo):
+// aquí solo se edita o se quita una que ya existe.
 module.exports = {
-  async createSet(set) {
-    return setDao.createSet(set);
-  },
-  async createSets(sets) {
-    return setDao.createSets(sets);
-  },
-
   async updateSet(set) {
     return setDao.updateSet(set);
   },

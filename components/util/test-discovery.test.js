@@ -18,7 +18,7 @@ const ROOT = path.resolve(__dirname, "../..");
 
 // Mismas raíces que los globs de `npm test` en package.json. Al añadir una
 // carpeta nueva ahí, hay que añadirla aquí (y este test avisa si no).
-const COVERED_ROOTS = ["components/", "services/", "middleware/", "scripts/", "integration/"];
+const COVERED_ROOTS = ["components/", "middleware/", "scripts/", "integration/"];
 
 // Ni dependencias ni salidas de build (.build son los .js que genera tsc
 // desde los .ts de trainerBilling/trainerPayments).
@@ -43,7 +43,7 @@ test("todo fichero de test vive en una raíz que `npm test` recorre", () => {
   assert.deepEqual(
     uncovered,
     [],
-    "Estos tests no los ejecuta `npm test`: muévelos a components/, services/, " +
+    "Estos tests no los ejecuta `npm test`: muévelos a components/, " +
       "middleware/, scripts/ o integration/, o añade su raíz a los globs del script `test` " +
       "en package.json y a COVERED_ROOTS aquí.",
   );

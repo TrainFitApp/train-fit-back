@@ -52,4 +52,6 @@ CoachTaskSchema.index({ trainerId: 1, status: 1, dueDate: 1 });
 // La ficha del cliente pide solo los suyos.
 CoachTaskSchema.index({ clientId: 1, status: 1 });
 
+CoachTaskSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });
+
 module.exports = mongoose.model("CoachTask", CoachTaskSchema);

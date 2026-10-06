@@ -16,22 +16,26 @@ const TechniqueVideoSchema = new Schema(
     // Vídeo por defecto del entrenador para estos ejercicios, para todos sus
     // clientes de entrenamiento.
     exerciseIds: { type: [{ type: Schema.Types.ObjectId, ref: "Exercise" }], default: [] },
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
   },
-  { collection: "techniquevideos" }
+  { collection: "techniquevideos", timestamps: true }
 );
 
 TechniqueVideoSchema.index({ trainerId: 1, exerciseIds: 1 });
 
 async function cascade(model, query) {
-  const videos = await model.find(query).select("_id assetId").lean();
+  const videos = await model.find(query).select("_id assetId trainerId").lean();
   if (!videos.length) return;
   const assetIds = videos.map((video) => video.assetId).filter(Boolean);
   if (assetIds.length) await require("../media/media-schema").deleteMany({ _id: { $in: assetIds } });
-  await require("./technique-video-override-schema").deleteMany({
-    techniqueVideoId: { $in: videos.map((video) => video._id) },
-  });
+  const trainerClientDao = require("../trainerClients/trainer-client-dao");
+  const byTrainer = new Map();
+  for (const video of videos) {
+    const key = String(video.trainerId);
+    byTrainer.set(key, [...(byTrainer.get(key) || []), video._id]);
+  }
+  for (const [trainerId, videoIds] of byTrainer) {
+    await trainerClientDao.removeTechniqueOverridesOfVideos(trainerId, videoIds);
+  }
 }
 
 // Borrar un vídeo borra su archivo y las asignaciones a clientes.
@@ -52,5 +56,7 @@ TechniqueVideoSchema.pre("deleteOne", { document: false, query: true }, async fu
     next(error);
   }
 });
+
+TechniqueVideoSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId"] });
 
 module.exports = mongoose.model("TechniqueVideo", TechniqueVideoSchema);

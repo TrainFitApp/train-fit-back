@@ -1,5 +1,10 @@
 # `refactor-claude` → `main` (back)
 
+> **Histórico.** Lo que aquí se describe como modelo y migraciones lo sustituye
+> el refactor del modelo de datos (rama `refactor/modelo-datos`, 2026-10): el
+> modelo actual está en `TrainFit/docs/data-model.md` y la migración es una sola,
+> `npm run migrate:modelo-datos` (ver `TrainFit/docs/refactor-modelo-datos-estado.md`).
+
 Qué trae la rama `refactor-claude` respecto a `main` y qué hay que hacer para fusionarla y desplegarla en producción.
 Estado a **2026-09-25**. La parte del front está en `train-fit-front/docs/refactor-claude.md`.
 

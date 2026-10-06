@@ -15,14 +15,12 @@ import {
   PlanHistoryEntry,
 } from "./types";
 import { addDays } from "./calendar";
-import { centsToAmount } from "./money";
-import { balanceOf, compatDueDate, isForecast, temporalState, validMovements } from "./ledger";
+import { balanceOf, isForecast, temporalState, validMovements } from "./ledger";
 import { nextPlanDue, priceForDay } from "./plan";
 
-// PURO — contratos de salida. Tres audiencias distintas:
+// PURO — contratos de salida. Dos audiencias distintas:
 // - entrenador (todo, notas incluidas),
-// - cliente (saldo restante, fecha y concepto; nunca notas ni movimientos),
-// - apps antiguas (forma plana de siempre, con el saldo real).
+// - cliente (saldo restante, fecha y concepto; nunca notas ni movimientos).
 
 export interface ChargeView {
   id: string;
@@ -110,7 +108,6 @@ export interface AdjustmentView {
 export interface ChargeDetailView extends ChargeView {
   payments: MovementView[];
   adjustments: AdjustmentView[];
-  legacyDueDaySource: string | null;
 }
 
 export function chargeDetailView(charge: Charge, today: CivilDay): ChargeDetailView {
@@ -139,57 +136,15 @@ export function chargeDetailView(charge: Charge, today: CivilDay): ChargeDetailV
       from: item.type === "note_changed" ? null : item.from,
       to: item.type === "note_changed" ? null : item.to,
     })),
-    legacyDueDaySource: charge.legacy?.dueDaySource ?? null,
   };
 }
 
-// Forma plana de GET /trainer/clients/:id/payments (apps antiguas). `amount`
-// de un cobro abierto es su saldo real; un cobro cancelado no puede
-// representarse como pagado ni como deuda, así que no se lista aquí.
-export interface LegacyPaymentItem {
-  _id: string;
-  amount: number;
-  currency: string;
-  dueDate: Date;
-  paidAt: Date | null;
-  note: string | null;
-  createdAt: Date;
-  status: ChargeStatus;
-  dueDay: CivilDay;
-  concept: string | null;
-  balanceAmount: number;
-  receivedAmount: number;
-}
-
-export function isLegacyListable(charge: Charge): boolean {
-  return charge.status === "open" || charge.status === "settled";
-}
-
-export function legacyListItem(charge: Charge): LegacyPaymentItem {
-  const balance = Math.max(0, balanceOf(charge));
-  return {
-    _id: charge.id,
-    amount: centsToAmount(charge.status === "open" ? balance : charge.amountCents),
-    currency: charge.currency,
-    dueDate: compatDueDate(charge.dueDay),
-    paidAt: charge.status === "settled" ? charge.settledAt : null,
-    note: charge.note,
-    createdAt: charge.createdAt,
-    status: charge.status,
-    dueDay: charge.dueDay,
-    concept: charge.concept,
-    balanceAmount: centsToAmount(balance),
-    receivedAmount: centsToAmount(charge.receivedCents),
-  };
-}
-
-// Pendiente informativo del tab Coach (cliente): mismo contrato de siempre,
-// con `amount` = saldo restante. Sin notas, métodos ni movimientos.
+// Pendiente informativo del tab Coach (cliente): el saldo que le queda, sin
+// notas, métodos ni movimientos.
 export interface CoachPendingItem {
-  paymentId: string;
-  amount: number;
+  chargeId: string;
+  balanceCents: number;
   currency: string;
-  dueDate: Date;
   dueDay: CivilDay;
   concept: string | null;
   trainerName: string;
@@ -197,10 +152,9 @@ export interface CoachPendingItem {
 
 export function coachPendingItem(charge: Charge, trainerName: string): CoachPendingItem {
   return {
-    paymentId: charge.id,
-    amount: centsToAmount(Math.max(0, balanceOf(charge))),
+    chargeId: charge.id,
+    balanceCents: Math.max(0, balanceOf(charge)),
     currency: charge.currency,
-    dueDate: compatDueDate(charge.dueDay),
     dueDay: charge.dueDay,
     concept: charge.concept,
     trainerName,

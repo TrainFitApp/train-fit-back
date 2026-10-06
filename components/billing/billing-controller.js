@@ -1,26 +1,6 @@
-const featureAccessService = require("./feature-access-service");
 const billingService = require("./billing-service");
-const billingCustomerSchema = require("./billing-customer-schema");
-const exerciseModel = require("../exercises/exercise-model");
-const recipeModel = require("../recipes/recipe-model");
-const userSchema = require("../users/schema");
-const userDto = require("../users/dto");
-const tableService = require("../tables/table-service");
-const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
-
-function sendBillingAdminError(res, error) {
-  // Un error al llamar a RevenueCat (respuesta de su API o red caída) es un
-  // fallo de pasarela: 502. Reenviar su 401/403 haría que management cerrase
-  // la sesión del administrador como si su token hubiese caducado.
-  const status = error?.status || (error?.response || error?.isAxiosError ? 502 : 500);
-  const message =
-    error?.response?.data?.message ||
-    error?.message ||
-    "Error al gestionar premium";
-
-  return res.status(status).send({ message });
-}
+const entitlementService = require("./entitlement-service");
+const userService = require("../users/user-service");
 
 function disableCache(res) {
   res.set({
@@ -45,63 +25,16 @@ module.exports = {
 
   async getEntitlements(req, res) {
     disableCache(res);
-
-    const user = req.user;
-    // Si su premium ya caducó y el webhook no llegó, se corrige la BD ya.
-    void billingService.reconcileExpiredPremiumIfNeeded(user);
-
-    // C2: si el usuario es premium pero sin plan registrado, derivarlo desde
-    // BillingCustomer y corregirlo en BD para que los botones de cambio de plan funcionen
-    if (user.premium?.entitled && !user.premium?.plan) {
-      const billingCustomer = await billingCustomerSchema.findOne({ userId: user._id });
-      if (billingCustomer?.productId) {
-        const derivedPlan = billingService.derivePlan(billingCustomer.productId);
-        if (derivedPlan !== "unknown") {
-          await userSchema.findByIdAndUpdate(user._id, {
-            $set: { "premium.plan": derivedPlan },
-          });
-          user.premium.plan = derivedPlan;
-        }
-      }
-    }
-
-    const routines = await tableService.countEffectiveUserTables(user._id);
-    const customExercises = await exerciseModel.countByUserId(user.id);
-    const recipes = await recipeModel.countByUserId(user.id);
-    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
-    const hasActiveTrainerRelation = await trainerClientDao.hasActiveRelation(user._id);
-
-    return res.send(
-      featureAccessService.buildEntitlements(
-        user,
-        { routines, customExercises, recipes, nutritionalGoals },
-        hasActiveTrainerRelation,
-      ),
-    );
+    return res.send(await entitlementService.forUser(req.user));
   },
 
   async restore(req, res) {
-    const user = req.user;
-    const customerInfo = req.body?.customerInfo || null;
     const rawPlan = req.body?.plan || null;
-    const explicitPlan =
-      rawPlan === "monthly" || rawPlan === "annual" ? rawPlan : null;
-
-    await billingService.restore(user, { customerInfo, explicitPlan });
-
-    const refreshedUser = await userSchema.findById(user._id);
-    const routines = await tableService.countEffectiveUserTables(user._id);
-    const customExercises = await exerciseModel.countByUserId(user.id);
-    const recipes = await recipeModel.countByUserId(user.id);
-    const nutritionalGoals = await nutritionalGoalService.countByUserId(user.id);
-    const hasActiveTrainerRelation = await trainerClientDao.hasActiveRelation(user._id);
-
     return res.send(
-      featureAccessService.buildEntitlements(
-        refreshedUser,
-        { routines, customExercises, recipes, nutritionalGoals },
-        hasActiveTrainerRelation,
-      ),
+      await entitlementService.restore(req.user, {
+        customerInfo: req.body?.customerInfo || null,
+        explicitPlan: rawPlan === "monthly" || rawPlan === "annual" ? rawPlan : null,
+      }),
     );
   },
 
@@ -111,57 +44,26 @@ module.exports = {
       return res.status(401).send({ message: "Unauthorized webhook" });
     }
 
-    // M3: try/catch explícito para controlar el log y la respuesta ante errores de MongoDB
-    try {
-      const result = await billingService.processWebhook(req.body);
-      return res.send(result);
-    } catch (error) {
-      console.error("[BillingWebhook] Error inesperado en processWebhook", error);
-      return res.status(500).send({ message: "Internal server error processing webhook" });
-    }
+    return res.send(await billingService.processWebhook(req.body));
   },
 
+  // Premium manual desde management (promocionales de RevenueCat).
   async grantPremium(req, res) {
-    try {
-      const user = await billingService.grantAdminPremium(
-        req.body?.userId,
-        req.body?.duration,
-      );
-      return res.send(await userDto.single(user, req.user));
-    } catch (error) {
-      return sendBillingAdminError(res, error);
-    }
+    const user = await billingService.grantAdminPremium(req.body?.userId, req.body?.duration);
+    return res.send(await userService.view(user, req.user));
   },
 
   async extendPremium(req, res) {
-    try {
-      const user = await billingService.extendAdminPremium(
-        req.body?.userId,
-        req.body?.duration,
-      );
-      return res.send(await userDto.single(user, req.user));
-    } catch (error) {
-      return sendBillingAdminError(res, error);
-    }
+    const user = await billingService.extendAdminPremium(req.body?.userId, req.body?.duration);
+    return res.send(await userService.view(user, req.user));
   },
 
   async revokePremium(req, res) {
-    try {
-      const user = await billingService.revokeAdminPremium(req.body?.userId);
-      return res.send(await userDto.single(user, req.user));
-    } catch (error) {
-      return sendBillingAdminError(res, error);
-    }
+    const user = await billingService.revokeAdminPremium(req.body?.userId);
+    return res.send(await userService.view(user, req.user));
   },
 
   async getSubscriptionStatus(req, res) {
-    try {
-      const status = await billingService.getAdminSubscriptionStatus(
-        req.params?.userId,
-      );
-      return res.send(status);
-    } catch (error) {
-      return sendBillingAdminError(res, error);
-    }
+    return res.send(await billingService.getAdminSubscriptionStatus(req.params?.userId));
   },
 };

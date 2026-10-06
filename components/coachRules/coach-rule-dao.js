@@ -22,7 +22,7 @@ module.exports = {
   async update(trainerId, id, updates) {
     return CoachRule.findOneAndUpdate(
       { _id: id, trainerId },
-      { $set: { ...updates, updatedAt: new Date() } },
+      { $set: updates },
       { new: true, runValidators: true }
     ).lean();
   },
@@ -33,7 +33,8 @@ module.exports = {
 
   // Todas las reglas evaluadas en una pasada, en una escritura.
   async markEvaluated(ids, when) {
-    return CoachRule.updateMany({ _id: { $in: ids } }, { $set: { lastEvaluatedAt: when } });
+    // Evaluarla no es editarla: no cambia updatedAt.
+    return CoachRule.updateMany({ _id: { $in: ids } }, { $set: { lastEvaluatedAt: when } }, { timestamps: false });
   },
 
   // Freno de emergencia: la regla afectó a más clientes de la cuenta en una
@@ -43,7 +44,7 @@ module.exports = {
   async disableWithReason(id, reason) {
     return CoachRule.updateOne(
       { _id: id },
-      { $set: { enabled: false, disabledReason: reason, updatedAt: new Date() } }
+      { $set: { enabled: false, disabledReason: reason } }
     );
   },
 };

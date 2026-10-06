@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 const TechniqueVideo = require("./technique-video-schema");
-const Override = require("./technique-video-override-schema");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 module.exports = {
   async findById(id) {
@@ -27,7 +27,7 @@ module.exports = {
   },
 
   async update(id, set) {
-    return TechniqueVideo.findByIdAndUpdate(id, { $set: { ...set, updatedAt: new Date() } }, { new: true }).lean();
+    return TechniqueVideo.findByIdAndUpdate(id, { $set: set }, { new: true }).lean();
   },
 
   async deleteById(id) {
@@ -42,22 +42,16 @@ module.exports = {
       .lean();
   },
 
+  // Asignaciones a clientes: viven en el par (trainerClients/trainer-client-schema.js).
   async listOverrides({ trainerIds, trainerId, clientId }) {
-    const query = { clientId };
-    if (trainerId) query.trainerId = trainerId;
-    if (trainerIds) query.trainerId = { $in: trainerIds };
-    return Override.find(query).lean();
+    return trainerClientDao.listTechniqueOverrides({ clientId, trainerId, trainerIds });
   },
 
   async setOverride(trainerId, clientId, exerciseId, techniqueVideoId) {
-    return Override.findOneAndUpdate(
-      { trainerId, clientId, exerciseId },
-      { $set: { techniqueVideoId, createdAt: new Date() } },
-      { new: true, upsert: true }
-    ).lean();
+    return trainerClientDao.setTechniqueOverride(trainerId, clientId, exerciseId, techniqueVideoId);
   },
 
   async removeOverride(trainerId, clientId, exerciseId) {
-    await Override.deleteOne({ trainerId, clientId, exerciseId });
+    return trainerClientDao.removeTechniqueOverride(trainerId, clientId, exerciseId);
   },
 };

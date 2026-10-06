@@ -4,6 +4,11 @@ const FormCheck = require("./form-check-schema");
 const LIST_LIMIT = 200;
 
 module.exports = {
+  // Con el nombre y el correo del cliente (detalle en la bandeja del profesional).
+  findWithClient(id) {
+    return FormCheck.findById(id).populate("clientId", "name lastname email").lean();
+  },
+
   async create(data) {
     return (await FormCheck.create(data)).toObject();
   },

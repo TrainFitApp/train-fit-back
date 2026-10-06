@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { PaymentsError } from "./types";
 
 // Todo importe vive en céntimos enteros. Los decimales de coma flotante solo
-// aparecen en el borde (entrada del formulario y campo legacy `amount`).
+// aparecen en el borde (entrada del formulario).
 export const MAX_AMOUNT_CENTS = 100_000_000; // 1.000.000,00
 const AMOUNT_TEXT = /^\d{1,7}(?:[.,]\d{1,2})?$/;
 const OPERATION_ID = /^[A-Za-z0-9_.:-]{8,120}$/;
@@ -34,16 +34,6 @@ export function parseAmountToCents(value: unknown, field = "amount"): number {
 
 export function centsToAmount(cents: number): number {
   return Math.round(cents) / 100;
-}
-
-// Migración/lectura de cobros antiguos: nunca redondea en silencio.
-export function legacyAmountToCents(amount: unknown): { cents: number; anomaly: string | null } {
-  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
-    return { cents: 0, anomaly: "invalid_amount" };
-  }
-  const scaled = amount * 100;
-  const rounded = Math.round(scaled);
-  return { cents: rounded, anomaly: Math.abs(scaled - rounded) < 1e-6 ? null : "amount_precision" };
 }
 
 export function parseOperationId(value: unknown): string {

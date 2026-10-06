@@ -12,22 +12,16 @@ router.postAsync(
   controller.applyRoutine
 );
 router.getAsync(
-  "/trainer/clients/:clientId/routine-assignments/active",
-  auth(["trainer"]),
-  requireActiveClient("training"),
-  controller.getActive
-);
-router.getAsync(
   "/trainer/clients/:clientId/routine-assignments/history",
   auth(["trainer"]),
   requireActiveClient("training"),
   controller.getHistory
 );
 router.getAsync(
-  "/trainer/clients/:clientId/routine-assignments/active/schedule",
+  "/trainer/clients/:clientId/routine-assignments/schedule",
   auth(["trainer"]),
   requireActiveClient("training"),
-  controller.getActiveSchedule
+  controller.getSchedule
 );
 router.deleteAsync(
   "/trainer/clients/:clientId/routine-assignments/:assignmentId",

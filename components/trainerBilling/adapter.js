@@ -12,9 +12,9 @@ const notifier = {
 function getRuntime() {
   if (runtime) return runtime;
   const { createRuntime } = require("../../.build/trainer-billing/runtime");
-  const User = require("../users/schema");
+  const User = require("../users/user-schema");
   runtime = createRuntime({
-    seatUsage: (id) => require("../trainerClients/trainer-client-dao").getSeatUsage(id),
+    seatUsage: (id) => require("../trainerClients/trainer-client-dao").countSeats(id),
     async getUser(id) {
       const user = await User.findById(id).select("email").lean();
       return user ? { id: String(user._id), email: user.email } : null;
@@ -38,12 +38,12 @@ function adminUserId(value) {
 
 // Plan, plazas (contratadas, ocupadas, reservadas y libres) y estado de la facturación.
 async function getEntitlements(userId) {
-  const User = require("../users/schema");
-  const featureAccess = require("../billing/feature-access-service");
+  const User = require("../users/user-schema");
+  const featureAccess = require("../billing/feature-access");
   const trainerClientDao = require("../trainerClients/trainer-client-dao");
   const { billingMetadata, admissionSeats } = require("../../.build/trainer-billing/runtime");
   const user = await User.findById(userId).select("professionalPremium").lean();
-  const usage = await trainerClientDao.getSeatUsage(userId);
+  const usage = await trainerClientDao.countSeats(userId);
   const current = getRuntime();
   const account = await current.repository.get(String(userId));
   const plan = featureAccess.trainerPlan(user);
@@ -106,7 +106,7 @@ const controller = {
     const { normalizeEmail, isValidEmailFormat } = require("../util/normalize-email");
     const email = normalizeEmail(req.query?.email);
     if (!isValidEmailFormat(email)) throw new BillingError("INVALID_EMAIL", "Email no válido.", 400);
-    const user = await require("../users/schema").findOne({ email }).select("_id email roles").lean();
+    const user = await require("../users/user-schema").findOne({ email }).select("_id email roles").lean();
     if (!user || !(user.roles || []).includes("trainer")) throw new BillingError("TRAINER_NOT_FOUND", "No hay ningún entrenador con ese email.", 404);
     return { userId: String(user._id), email: user.email };
   }),
@@ -125,8 +125,8 @@ module.exports = {
     const current = getRuntime();
     const { admissionSeats } = require("../../.build/trainer-billing/runtime");
     return current.repository.withLock(String(userId), async (account) => {
-      const user = await require("../users/schema").findById(userId).select("professionalPremium").lean();
-      const { seats } = require("../billing/feature-access-service").trainerPlan(user);
+      const user = await require("../users/user-schema").findById(userId).select("professionalPremium").lean();
+      const { seats } = require("../billing/feature-access").trainerPlan(user);
       return action(admissionSeats(seats, account), seats);
     });
   },

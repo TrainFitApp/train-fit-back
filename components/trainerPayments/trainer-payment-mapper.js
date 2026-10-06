@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-const { load: core } = require("./core");
 
 // Frontera documento Mongo ↔ tipos del núcleo (src/types.ts): el núcleo solo
 // ve ids como string y nunca un ObjectId.
@@ -12,13 +11,9 @@ function toChargeRecord(doc) {
     id: String(doc._id),
     trainerId: String(doc.trainerId),
     clientId: String(doc.clientId),
-    amount: doc.amount,
     currency: doc.currency,
-    dueDate: doc.dueDate,
-    paidAt: doc.paidAt,
     note: doc.note,
     createdAt: doc.createdAt,
-    schemaVersion: doc.schemaVersion,
     origin: doc.origin,
     concept: doc.concept,
     dueDay: doc.dueDay,
@@ -83,7 +78,6 @@ function toChargeRecord(doc) {
           at: entry.at,
         }))
       : doc.reminderLog,
-    legacy: doc.legacy ?? null,
     anomalies: doc.anomalies,
   };
 }
@@ -125,9 +119,8 @@ function adjustmentToDoc(item) {
 // Campos que escribe una operación del entrenador. `reminderLog` NO va aquí:
 // es de los avisos (trainer-payment-reminder-service.js) y una escritura
 // basada en una lectura antigua no debe pisarlo.
-function chargeToSet(charge, { syncDueDate }) {
+function chargeToSet(charge) {
   const set = {
-    schemaVersion: 2,
     origin: charge.origin,
     concept: charge.concept,
     note: charge.note,
@@ -152,13 +145,8 @@ function chargeToSet(charge, { syncDueDate }) {
     revision: charge.revision,
     dueRevision: charge.dueRevision,
     remindersFrom: charge.remindersFrom,
-    legacy: charge.legacy ?? undefined,
     anomalies: charge.anomalies,
-    // Compatibilidad con apps y lecturas antiguas.
-    amount: charge.amountCents > 0 ? core().centsToAmount(charge.amountCents) : undefined,
-    paidAt: charge.status === "settled" ? charge.settledAt : null,
   };
-  if (syncDueDate) set.dueDate = core().compatDueDate(charge.dueDay);
   for (const key of Object.keys(set)) if (set[key] === undefined) delete set[key];
   return set;
 }
@@ -170,7 +158,7 @@ function newChargeDoc(charge, extra = {}) {
     trainerId: toOid(charge.trainerId),
     clientId: toOid(charge.clientId),
     createdAt: charge.createdAt,
-    ...chargeToSet(charge, { syncDueDate: true }),
+    ...chargeToSet(charge),
     reminderLog: [],
     ...extra,
   };

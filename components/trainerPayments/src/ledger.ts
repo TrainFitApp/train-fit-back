@@ -6,19 +6,16 @@ import {
   ChargeRecord,
   ChargeStatus,
   CivilDay,
-  LegacyDueDaySource,
   Movement,
-  MovementSource,
   OpContext,
   OperationRecord,
   PaymentMethod,
   PaymentsError,
-  ReceivedDaySource,
   TemporalState,
   VoidReason,
 } from "./types";
-import { DEFAULT_TIME_ZONE, civilDayInZone, instantForZonedTime, isCivilDay, parseCivilDay } from "./calendar";
-import { MAX_AMOUNT_CENTS, cleanText, legacyAmountToCents, parseAmountToCents, parseOperationId, payloadHash } from "./money";
+import { isCivilDay, parseCivilDay } from "./calendar";
+import { MAX_AMOUNT_CENTS, cleanText, parseAmountToCents, parseOperationId, payloadHash } from "./money";
 
 // PURO — el libro de un cobro. Toda operación recibe el cobro normalizado y
 // devuelve el cobro siguiente; la capa de datos lo escribe con compare-and-swap
@@ -29,9 +26,6 @@ import { MAX_AMOUNT_CENTS, cleanText, legacyAmountToCents, parseAmountToCents, p
 // MISMO documento y en la MISMA escritura: no son autoridades independientes
 // (verifyCharge comprueba la equivalencia).
 
-// Los cobros antiguos se crearon desde la app en España: su día civil se
-// interpreta siempre en esta zona, aunque el entrenador cambie la suya después.
-export const LEGACY_TIME_ZONE = DEFAULT_TIME_ZONE;
 export const ENTERED_METHODS: ReadonlyArray<PaymentMethod> = ["bizum", "transfer", "cash", "card_external", "other"];
 export const CONCEPT_MAX = 80;
 export const NOTE_MAX = 500;
@@ -77,138 +71,12 @@ export function isOverdue(charge: Charge, today: CivilDay): boolean {
   return temporalState(charge, today) === "overdue" && balanceOf(charge) > 0;
 }
 
-// dueDate de compatibilidad: mediodía UTC del día civil. Las apps antiguas lo
-// pintan con `| date` o `new Date()` y así sale el mismo día en casi cualquier zona.
-export function compatDueDate(day: CivilDay): Date {
-  return new Date(`${day}T12:00:00.000Z`);
-}
-
 function validDate(value: unknown): value is Date {
   return value instanceof Date && !Number.isNaN(value.getTime());
 }
 
-// --- Lectura de cobros antiguos ---------------------------------------------
-
-export interface LegacyDueDay {
-  day: CivilDay;
-  source: LegacyDueDaySource;
-  ambiguous: boolean;
-  invalid: boolean;
-}
-
-// El formulario antiguo mandaba "YYYY-MM-DD" (medianoche UTC) y los seeds
-// usan horas sueltas: no vale `toISOString().slice(0, 10)` a ciegas. Se
-// admite medianoche UTC o medianoche local; cualquier otra hora se resuelve
-// en la zona legacy y se marca ambigua si el día UTC y el local difieren.
-export function legacyDueDay(dueDate: unknown, createdAt: unknown, timeZone = LEGACY_TIME_ZONE): LegacyDueDay {
-  if (!validDate(dueDate)) {
-    const fallback = validDate(createdAt) ? civilDayInZone(createdAt, timeZone) : "1970-01-01";
-    return { day: fallback, source: "created_at_fallback", ambiguous: true, invalid: true };
-  }
-  const utcDay = dueDate.toISOString().slice(0, 10);
-  if (dueDate.getTime() === new Date(`${utcDay}T00:00:00.000Z`).getTime()) {
-    return { day: utcDay, source: "utc_midnight", ambiguous: false, invalid: false };
-  }
-  const zoneDay = civilDayInZone(dueDate, timeZone);
-  if (instantForZonedTime(zoneDay, "00:00", timeZone).getTime() === dueDate.getTime()) {
-    return { day: zoneDay, source: "zone_midnight", ambiguous: false, invalid: false };
-  }
-  return { day: zoneDay, source: "zone_date", ambiguous: zoneDay !== utcDay, invalid: false };
-}
-
-export function legacyPaymentOperationId(chargeId: string): string {
-  return `legacy-paid:${chargeId}`;
-}
-
-function normalizeLegacy(record: ChargeRecord): Charge {
-  const anomalies: string[] = [];
-  const { cents, anomaly } = legacyAmountToCents(record.amount);
-  if (anomaly) anomalies.push(anomaly);
-  const currency = (record.currency || "EUR").toUpperCase();
-  if (currency !== "EUR") anomalies.push("non_eur_currency");
-  const due = legacyDueDay(record.dueDate, record.createdAt);
-  if (due.invalid) anomalies.push("invalid_due_date");
-  else if (due.ambiguous) anomalies.push("ambiguous_due_date");
-  const paidAt = validDate(record.paidAt) ? record.paidAt : null;
-  if (record.paidAt && !paidAt) anomalies.push("invalid_paid_at");
-  const createdAt = validDate(record.createdAt) ? record.createdAt : paidAt ?? new Date(0);
-
-  // Un cobro marcado pagado pasa a tener su movimiento equivalente: mismo
-  // importe, día derivado de paidAt (marcado, no recepción), método desconocido.
-  const payments: Movement[] =
-    paidAt && cents > 0
-      ? [
-          {
-            id: record.id,
-            amountCents: cents,
-            receivedDay: civilDayInZone(paidAt, LEGACY_TIME_ZONE),
-            receivedDaySource: "legacy_marked_paid",
-            method: "unknown",
-            note: null,
-            recordedAt: null,
-            recordedBy: null,
-            source: "migration",
-            operationId: legacyPaymentOperationId(record.id),
-            payloadHash: null,
-            status: "valid",
-            voidedAt: null,
-            voidedBy: null,
-            voidReason: null,
-            correctionOf: null,
-          },
-        ]
-      : [];
-  const receivedCents = payments.length ? cents : 0;
-  const status: ChargeStatus = cents > 0 ? deriveStatus(cents, receivedCents, 0) : "open";
-
-  return {
-    id: record.id,
-    trainerId: record.trainerId,
-    clientId: record.clientId,
-    origin: "legacy",
-    concept: null,
-    note: record.note ?? null,
-    currency,
-    dueDay: due.day,
-    amountCents: cents,
-    originalAmountCents: cents,
-    receivedCents,
-    cancelledCents: 0,
-    status,
-    settledAt: status === "settled" ? paidAt : null,
-    cancelledAt: null,
-    voidedAt: null,
-    voidReason: null,
-    historical: false,
-    manualOverride: false,
-    planOccurrenceKey: null,
-    planSegment: null,
-    payments,
-    adjustments: [],
-    operations: [],
-    revision: 0,
-    dueRevision: 0,
-    remindersFrom: createdAt,
-    reminderLog: [],
-    createdAt,
-    persistedV2: false,
-    legacy: {
-      sourceAmount: typeof record.amount === "number" ? record.amount : null,
-      sourceCurrency: record.currency ?? null,
-      sourceDueDate: validDate(record.dueDate) ? record.dueDate : null,
-      sourcePaidAt: paidAt,
-      dueDaySource: due.source,
-      dueDayAmbiguous: due.ambiguous,
-      timeZone: LEGACY_TIME_ZONE,
-      migratedAt: null,
-      migratedBy: null,
-    },
-    anomalies,
-  };
-}
-
+// Documento → cobro. Los valores que falten toman su valor neutro.
 export function normalizeCharge(record: ChargeRecord): Charge {
-  if ((record.schemaVersion ?? 0) < 2) return normalizeLegacy(record);
   const amountCents = record.amountCents ?? 0;
   const receivedCents = record.receivedCents ?? 0;
   const cancelledCents = record.cancelledCents ?? 0;
@@ -244,8 +112,6 @@ export function normalizeCharge(record: ChargeRecord): Charge {
     remindersFrom: validDate(record.remindersFrom) ? record.remindersFrom : createdAt,
     reminderLog: record.reminderLog ?? [],
     createdAt,
-    persistedV2: true,
-    legacy: record.legacy ?? null,
     anomalies: record.anomalies ?? (isCivilDay(record.dueDay) ? [] : ["invalid_due_date"]),
   };
 }
@@ -315,7 +181,7 @@ export function commit(charge: Charge, patch: Partial<Charge>, ctx: OpContext): 
   const status = charge.status === "void" ? "void" : deriveStatus(next.amountCents, next.receivedCents, next.cancelledCents);
   const reopened = (charge.status === "settled" || charge.status === "cancelled") && status === "open";
   let remindersFrom = patch.remindersFrom ?? charge.remindersFrom;
-  if ((reopened || !charge.persistedV2) && remindersFrom.getTime() < ctx.now.getTime()) remindersFrom = ctx.now;
+  if (reopened && remindersFrom.getTime() < ctx.now.getTime()) remindersFrom = ctx.now;
   return {
     ...next,
     status,
@@ -323,8 +189,6 @@ export function commit(charge: Charge, patch: Partial<Charge>, ctx: OpContext): 
     cancelledAt: status === "cancelled" ? (charge.status === "cancelled" && charge.cancelledAt ? charge.cancelledAt : ctx.now) : null,
     remindersFrom,
     revision: charge.revision + 1,
-    persistedV2: true,
-    legacy: charge.persistedV2 || !charge.legacy ? next.legacy : { ...charge.legacy, migratedAt: ctx.now, migratedBy: "write" },
   };
 }
 
@@ -377,12 +241,7 @@ export interface PaymentResult {
   movement: Movement;
 }
 
-export function registerPayment(
-  charge: Charge,
-  input: PaymentInput,
-  ctx: OpContextWithIds,
-  { source = "app", receivedDaySource = "entered" }: { source?: MovementSource; receivedDaySource?: ReceivedDaySource } = {},
-): PaymentResult {
+export function registerPayment(charge: Charge, input: PaymentInput, ctx: OpContextWithIds): PaymentResult {
   const hash = paymentHash(input);
   const existing = charge.payments.find((movement) => movement.operationId === input.operationId);
   if (existing && replayed(existing.payloadHash, hash)) return { kind: "replay", charge, movement: existing };
@@ -401,12 +260,12 @@ export function registerPayment(
     id: ctx.newId(),
     amountCents: input.amountCents,
     receivedDay: input.receivedDay,
-    receivedDaySource,
+    receivedDaySource: "entered",
     method: input.method,
     note: input.note,
     recordedAt: ctx.now,
     recordedBy: ctx.actorId,
-    source,
+    source: "app",
     operationId: input.operationId,
     payloadHash: hash,
     status: "valid",
@@ -811,8 +670,6 @@ export function newOneOffCharge(
       remindersFrom: ctx.now,
       reminderLog: [],
       createdAt: ctx.now,
-      persistedV2: true,
-      legacy: null,
       anomalies: [],
     },
   };

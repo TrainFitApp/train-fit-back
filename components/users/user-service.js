@@ -1,17 +1,61 @@
 const crypto = require("node:crypto");
-const userDao = require("./dao");
-const userDto = require("./dto");
-const dietModel = require("../diets/diet-model");
-const dietDayModel = require("../dietDays/diet-days-service");
-const dietDayUtil = require("../dietDays/diet-days-util");
+const userDao = require("./user-dao");
+const userDto = require("./user-dto");
 const mail = require("../util/mail");
-const userSchema = require("./schema");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const jwt = require("jsonwebtoken");
 const { generateVerificationCode } = require("../util/verification-code");
 const { assertMinAge } = require("./age-policy");
+const { pickProfile, pointerChanges, parseWeight } = require("./user-profile");
+const anthropometryDao = require("../anthropometry/anthropometry-dao");
+const { todayForUser } = require("./user-time-zone");
+const { routineInUseOf, routineInUseOfId, routinesInUseOf } = require("../routineAssignments/routine-in-use");
+const bcrypt = require("../util/bcrypt");
+const { httpError, badRequest, conflict, notFound, onDuplicate } = require("../util/http-error");
 
 const HASH_CODE_TTL_MS = 15 * 60 * 1000;
+const RESTORE_CODE_TTL_MS = 15 * 60 * 1000;
+const CODE_COOLDOWN_MS = 60 * 1000;
+const MAX_CODE_ATTEMPTS = 5;
+const MAX_RESTORE_CODES_PER_DAY = 3;
+
+const tooManyRequests = (message, code) => httpError(429, message, code);
+const cooldownActive = () => tooManyRequests("Espera unos segundos antes de solicitar un nuevo código", "COOLDOWN_ACTIVE");
+const userNotFound = () => notFound("Usuario no encontrado", "USER_NOT_FOUND");
+const alreadyVerified = () => badRequest("Esta cuenta ya ha sido verificada", "ALREADY_VERIFIED");
+// Restablecer la contraseña: el mismo error para todo (código mal, caducado,
+// demasiados intentos o cuenta que no existe), para no revelar nada.
+const invalidRestoreCode = () => badRequest("Codigo invalido o expirado", "INVALID_RESTORE_CODE");
+
+// Una carrera entre dos altas con el mismo correo la para el índice único.
+const rethrowDuplicate = onDuplicate("Este usuario ya está registrado");
+
+// Alta por email: el correo tiene que existir (DNS/MX) y no tener ya una
+// cuenta con perfil (un registro social a medias sí se completa).
+async function assertEmailAvailable(email) {
+  if (!email) throw badRequest("Email requerido");
+  if (!(await mail.validateEmailExists(email))) throw badRequest("El correo no existe");
+  const existing = await userDao.findByEmail(email);
+  if (existing?.name) throw conflict("Este usuario ya está registrado");
+}
+
+function sendVerificationMail(email, name, code, subject) {
+  const html = mail.generateHashMail(
+    `Hola ${name}, verifique su cuenta`,
+    "Introduce el siguiente código en la aplicación para finalizar el registro.",
+    code,
+  );
+  return mail.sendTransactionalMail(email, subject, html);
+}
+
+// El objetivo inicial que manda la app al registrarse.
+const initialGoal = (body) => ({
+  name: "Default",
+  kcalTotal: body.kcalTotal || 0,
+  proteinsGTotal: body.proteinsGTotal || 0,
+  carbohydratesGTotal: body.carbohydratesGTotal || 0,
+  fatGTotal: body.fatGTotal || 0,
+});
 const axios = require("axios");
 const jwkToPem = require("jwk-to-pem");
 
@@ -27,18 +71,6 @@ const GOOGLE_ALLOWED_CLIENT_IDS = (
   .filter(Boolean);
 
 module.exports = {
-  // Pone en uso la rutina de la fase programada que ya ha empezado (sin cron:
-  // se resuelve al leer). Nunca lanza: un fallo aquí no puede tumbar la
-  // lectura del perfil. Import diferido para no crear un ciclo de módulos.
-  async syncScheduledRoutine(userId) {
-    try {
-      return await require("../routineAssignments/routine-assignment-service").syncTableInUseIfDue(userId);
-    } catch (e) {
-      console.error("[users] No se pudo sincronizar la rutina programada:", e.message);
-      return false;
-    }
-  },
-
   async getUserById(id) {
     return userDao.getUserById(id);
   },
@@ -55,160 +87,287 @@ module.exports = {
     return await userDao.findByAppleId(appleId);
   },
 
-  async checkEmailExists(email) {
-    return await userDao.existsByEmail(email);
-  },
-
+  // Panel admin: la rutina y la sesión que cada usuario tiene en uso se
+  // calculan como en sus apps (routine-in-use.js), con dos consultas para toda
+  // la página y otra para los microciclos de esas rutinas.
   async searchUsers(page, limit, search, filters) {
-    return userDao.searchUsers(page, limit, search, filters);
+    const result = await userDao.searchUsers(page, limit, search, filters);
+    // El listado sale de un aggregate (sin DTO): el premium caducado tiene
+    // que salir como no premium igual que en el resto de respuestas.
+    const routines = await routinesInUseOf(result.users.map((user) => user._id));
+    const tableIds = [...new Set([...routines.values()].map((routine) => routine.tableInUse).filter(Boolean).map(String))];
+    const splitsCount = await require("../tables/table-dao").countSplitsByTable(tableIds);
+    return {
+      ...result,
+      users: result.users.map((user) => {
+        const routine = routines.get(String(user._id));
+        return {
+          ...user,
+          premium: userDto.resolvePremium(user),
+          hasTableInUse: Boolean(routine?.tableInUse),
+          hasWorkoutInUse: Boolean(routine?.workoutInUse),
+          tableSplitsCount: routine?.tableInUse ? splitsCount.get(String(routine.tableInUse)) || 0 : 0,
+        };
+      }),
+    };
   },
 
-  async createUser(user, date) {
-    assertMinAge(user?.birth);
-    return userDao.createUser(user, date);
+  // El usuario tal como lo ven sus apps: el DTO más su último peso (vive en
+  // sus medidas) y la rutina que tiene en uso (se calcula con sus fases).
+  async view(user, authUser) {
+    if (!user) return null;
+    const [latest, routine] = await Promise.all([
+      anthropometryDao.findLatestWeight(user._id),
+      routineInUseOf(user),
+    ]);
+    return userDto.single(user, authUser, { weight: latest?.weight ?? null, routine });
   },
 
-  async searchArchivedsByFilter(userId, node, archivedNode, search) {
-    return userDao.searchArchivedsByFilter(userId, node, archivedNode, search);
+  // El peso que se escribe desde el perfil (registro, editor, cuestionario)
+  // es una medida de hoy, en la zona del usuario.
+  async recordWeight(userId, weight) {
+    if (weight === null) return;
+    await anthropometryDao.upsertOwnFields(userId, await todayForUser(userId), { weight });
   },
 
-  async addUserDiet(idUser, idDiet) {
-    return userDao.addUserDiet(idUser, idDiet);
+  /**
+   * Alta de cliente por email: su perfil (lista blanca), contraseña, el peso
+   * de hoy en sus medidas, el objetivo inicial que calculó la app y el correo
+   * con su código de verificación (15 minutos).
+   */
+  async registerClient(email, body) {
+    await assertEmailAvailable(email);
+    assertMinAge(body?.birth);
+    const weight = parseWeight(body?.weight);
+    const code = generateVerificationCode();
+    const created = await userDao
+      .createOrCompleteByEmail({
+        ...pickProfile(body),
+        password: body?.password,
+        email,
+        roles: ["user"],
+        hash: code,
+        hashExpiresAt: new Date(Date.now() + HASH_CODE_TTL_MS),
+        lastHashSentAt: new Date(),
+      })
+      .catch(rethrowDuplicate);
+    await this.recordWeight(created._id, weight);
+    if (body?.kcalTotal || body?.proteinsGTotal || body?.carbohydratesGTotal || body?.fatGTotal) {
+      const goal = await nutritionalGoalService.createForUser(created._id, initialGoal(body));
+      created.goalInUse = goal._id;
+    }
+    await sendVerificationMail(created.email, created.name, code, "Verificación de cuenta - TrainFit");
+    return created;
   },
 
   async addUserTable(idUser, idTable) {
     return userDao.addUserTable(idUser, idTable);
   },
 
-  async updateUser(user) {
-    assertMinAge(user?.birth);
-    return await userDao.updateUser(user);
+  // Editor de perfil: solo los campos del perfil (lista blanca) y el peso de hoy.
+  async updateUser(body) {
+    const { tableInUse, workoutInUse, ...fields } = pickProfile(body, { pointers: true });
+    assertMinAge(fields.birth);
+    const weight = parseWeight(body?.weight);
+    const requested = pickProfile({ tableInUse, workoutInUse }, { pointers: true });
+    const pointers = Object.keys(requested).length
+      ? pointerChanges(requested, await routineInUseOfId(body._id))
+      : { set: {}, unset: [] };
+    const updated = await userDao.updateProfile(body._id, { ...fields, ...pointers.set }, pointers.unset);
+    if (updated) await this.recordWeight(updated._id, weight);
+    return updated;
   },
 
   async updateVerificationHash(userId, hash, expiresAt) {
     return await userDao.updateVerificationHash(userId, hash, expiresAt);
   },
 
+  // Reenvío del código de verificación del alta (botón "Reenviar código").
+  // Como mucho uno por minuto (cerrojo atómico en el DAO).
   async resendVerificationCode(email) {
+    if (!(await mail.validateEmailExists(email))) throw badRequest("Email inválido", "INVALID_EMAIL");
+    const state = await userDao.findVerificationState(email);
+    if (!state) throw userNotFound();
+    if (!state.hash) throw alreadyVerified();
+
     const code = generateVerificationCode();
     const expiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
+    const updated = await userDao.setVerificationCodeIfIdle(state._id, code, expiresAt, new Date(Date.now() - CODE_COOLDOWN_MS));
+    if (!updated) throw cooldownActive();
 
-    return userDao.resendVerificationHash(email, code, expiresAt);
+    const html = mail.generateHashMail(
+      `Hola ${updated.name}, verifique su cuenta`,
+      "Introduce el siguiente código en la aplicación para finalizar el registro.",
+      code,
+    );
+    await mail.sendTransactionalMail(updated.email, "Verificación de cuenta - TrainFit", html);
+    return updated;
   },
+
+  // Verificación del código del alta: intentos y caducidad primero; un fallo
+  // suma un intento; un acierto invalida el código en el acto.
+  // Cuenta sin verificar que intenta entrar: código nuevo (15 minutos) y
+  // correo con él.
+  async sendFreshVerificationCode(user, subject = "Verificación de cuenta - TrainFit") {
+    const code = generateVerificationCode();
+    await userDao.updateVerificationHash(user._id, code, new Date(Date.now() + HASH_CODE_TTL_MS));
+    await sendVerificationMail(user.email, user.name, code, subject);
+  },
+
+  // Alta de un profesional (TrainFit: Entrenadores): sin objetivo ni nada de
+  // cliente consumidor; con su código de verificación por correo.
+  async createProfessional({ name, lastname, email, password }) {
+    if (!name || !lastname || !email || !password) {
+      throw badRequest("Nombre, apellidos, email y contraseña son obligatorios");
+    }
+    await assertEmailAvailable(email);
+    const code = generateVerificationCode();
+    const user = await userDao
+      .create({
+        name,
+        lastname,
+        email,
+        password,
+        roles: ["trainer"],
+        hash: code,
+        hashExpiresAt: new Date(Date.now() + HASH_CODE_TTL_MS),
+        lastHashSentAt: new Date(),
+      })
+      .catch(rethrowDuplicate);
+    await sendVerificationMail(user.email, name, code, "Verificación de cuenta - TrainFit Entrenadores");
+    return user;
+  },
+
+  // Registro social: la cuenta nace sin perfil (lo completa después
+  // completeSocialProfile).
+  async createSocialUser({ email, appleId, provider }) {
+    return userDao.create({ email, appleId: appleId || undefined, roles: ["user"], provider });
+  },
+
+  linkAppleId: (userId, appleId) => userDao.linkAppleId(userId, appleId),
+  setRoles: (userId, roles) => userDao.setRoles(userId, roles),
+  startSession: (userId, auth, at) => userDao.startSession(userId, auth, at),
+  touchSession: (userId) => userDao.touchSession(userId),
+  clearSessionIfCurrent: (userId, sessionId) => userDao.clearSessionIfCurrent(userId, sessionId),
+  clearSession: (userId) => userDao.clearSession(userId),
 
   async verifyActivationCode(email, code) {
-    return await userDao.verifyActivationHash(email, code);
-  },
-
-  async updateGoogleUser(user, date) {
-    assertMinAge(user?.birth);
-      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
-      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
-      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
-      // esta creación temprana no hacía). Aquí, encima, el día se creaba
-      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
-      // dueño.
-    user.theme = "dark";
-
-    user.tables = [];
-    user.archivedProducts = [];
-    user.archivedRecipes = [];
-    user.archivedExercises = [];
-
-    const updatedUser = await userDao.updateGoogleUser(user);
-
-    if (updatedUser && (user.kcalTotal || user.proteinsGTotal || user.carbohydratesGTotal || user.fatGTotal)) {
-      const goal = await nutritionalGoalService.create({
-        userId: updatedUser._id,
-        name: 'Default',
-        kcalTotal: user.kcalTotal || 0,
-        proteinsGTotal: user.proteinsGTotal || 0,
-        carbohydratesGTotal: user.carbohydratesGTotal || 0,
-        fatGTotal: user.fatGTotal || 0,
-      });
-      await userSchema.findByIdAndUpdate(updatedUser._id, { $set: { goalInUse: goal._id } });
-      updatedUser.goalInUse = goal._id;
+    const state = await userDao.findVerificationState(email);
+    if (!state) throw userNotFound();
+    if (!state.hash) throw alreadyVerified();
+    if ((state.hashFailedAttempts || 0) >= MAX_CODE_ATTEMPTS) {
+      throw tooManyRequests("Demasiados intentos fallidos. Solicita un nuevo código.", "TOO_MANY_ATTEMPTS");
     }
-
-    return updatedUser;
-  },
-
-  async updateAppleUser(user, date) {
-    assertMinAge(user?.birth);
-      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
-      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
-      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
-      // esta creación temprana no hacía). Aquí, encima, el día se creaba
-      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
-      // dueño.
-    user.theme = "dark";
-
-    user.tables = [];
-    user.archivedProducts = [];
-    user.archivedRecipes = [];
-    user.archivedExercises = [];
-
-    const updatedUser = await userDao.updateAppleUser(user);
-
-    if (updatedUser && (user.kcalTotal || user.proteinsGTotal || user.carbohydratesGTotal || user.fatGTotal)) {
-      const goal = await nutritionalGoalService.create({
-        userId: updatedUser._id,
-        name: 'Default',
-        kcalTotal: user.kcalTotal || 0,
-        proteinsGTotal: user.proteinsGTotal || 0,
-        carbohydratesGTotal: user.carbohydratesGTotal || 0,
-        fatGTotal: user.fatGTotal || 0,
-      });
-      await userSchema.findByIdAndUpdate(updatedUser._id, { $set: { goalInUse: goal._id } });
-      updatedUser.goalInUse = goal._id;
+    if (state.hashExpiresAt && Date.now() > new Date(state.hashExpiresAt).getTime()) {
+      throw badRequest("Código expirado. Solicita uno nuevo.", "CODE_EXPIRED");
     }
-
-    return updatedUser;
+    if (state.hash !== code) {
+      await userDao.countVerificationFailure(state._id);
+      throw badRequest("Código incorrecto", "INVALID_CODE");
+    }
+    return userDao.clearVerification(state._id);
   },
 
-  async createUserApple(user, date) {
-    return await userDao.createUserWithApple(user, date);
+  // Fin del registro social (Google/Apple): mismo perfil que el registro
+  // por email y el objetivo inicial que calculó la app.
+  async completeSocialProfile(userId, body) {
+    const fields = pickProfile(body);
+    assertMinAge(fields.birth);
+    const weight = parseWeight(body?.weight);
+    const updated = await userDao.updateProfile(userId, fields);
+    if (!updated) throw userNotFound();
+    await this.recordWeight(updated._id, weight);
+    if (body.kcalTotal || body.proteinsGTotal || body.carbohydratesGTotal || body.fatGTotal) {
+      const goal = await nutritionalGoalService.createForUser(updated._id, initialGoal(body));
+      updated.goalInUse = goal._id;
+    }
+    return updated;
   },
 
-  async playStopDiet(id, playStopDiet) {
-    return userDao.playStopDiet(id, playStopDiet);
-  },
-
-  async addFavouriteProduct(idUser, idProduct, productExist) {
-    return userDao.addFavoriteProduct(idUser, idProduct, productExist);
-  },
-
-  async addFavouriteRecipe(idUser, idRecipe, isOwn, recipeExist) {
-    return userDao.addFavoriteRecipe(idUser, idRecipe, isOwn, recipeExist);
-  },
-
-  async updatePassword(email, password) {
-    return userDao.updatePassword(email, password);
-  },
-
+  // Código para restablecer la contraseña: como mucho uno por minuto y tres
+  // al día por email (cerrojo atómico en el DAO). Un correo sin cuenta no da
+  // error (no se revela si existe); el reenvío demasiado pronto y el límite
+  // diario sí, porque quien lo pide necesita saber que no se ha enviado.
   async sendMailCode(email) {
-    // 8 caracteres [0-9a-z] (mismo formato que antes), con crypto en vez de
-    // Math.random: este código restablece la contraseña.
-    const code = Array.from({ length: 8 }, () => crypto.randomInt(36).toString(36)).join("");
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    if (!email || !(await mail.validateEmailExists(email))) return null;
+    const state = await userDao.findRestoreState(email);
+    if (!state) return null;
 
-    return userDao.sendMailCode(email, code, expiresAt);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isNewDay = (state.restoreCodeDate || new Date(0)).getTime() < today.getTime();
+    const sentToday = isNewDay ? 0 : state.restoreCodeDailyCount || 0;
+    if (sentToday >= MAX_RESTORE_CODES_PER_DAY) {
+      throw tooManyRequests("Has alcanzado el límite diario de códigos. Intenta de nuevo mañana.", "DAILY_LIMIT_REACHED");
+    }
+
+    // 8 caracteres [0-9a-z], con crypto: este código restablece la contraseña.
+    const code = Array.from({ length: 8 }, () => crypto.randomInt(36).toString(36)).join("");
+    const updated = await userDao.setRestoreCodeIfIdle(
+      state._id,
+      {
+        restoreCode: code,
+        restoreCodeExpiresAt: new Date(Date.now() + RESTORE_CODE_TTL_MS),
+        restoreFailedAttempts: 0,
+        lastRestoreCodeSentAt: new Date(),
+        restoreCodeDate: today,
+        restoreCodeDailyCount: sentToday + 1,
+      },
+      new Date(Date.now() - CODE_COOLDOWN_MS),
+    );
+    if (!updated) throw cooldownActive();
+
+    const html = mail.generateHashMail(`Hola ${state.email}`, "Este es tu código de verificación. Copia y pégalo en la app.", code);
+    await mail.sendTransactionalMail(state.email, "Código de verificación", html);
+    return updated;
   },
 
+  // Nueva contraseña con el código recibido: intentos y caducidad primero; un
+  // fallo suma un intento. Con la contraseña nueva se cierra la sesión que
+  // hubiera abierta.
   async checkRestoreCode(email, password, hash) {
-    return await userDao.checkRestoreCode(email, password, hash);
+    const user = await userDao.findForRestore(email);
+    const reject = (reason) => {
+      console.warn("[AUTH] password_reset_code_rejected", { reason });
+      return invalidRestoreCode();
+    };
+    if (!user) throw reject("user_not_found");
+    if ((user.restoreFailedAttempts || 0) >= MAX_CODE_ATTEMPTS) throw reject("too_many_attempts");
+    if (user.restoreCodeExpiresAt && Date.now() > user.restoreCodeExpiresAt.getTime()) throw reject("code_expired");
+    if (user.restoreCode !== hash) {
+      await userDao.countRestoreFailure(user._id);
+      throw reject("invalid_code");
+    }
+    const updated = await userDao.resetPassword(user, password);
+    if (updated?._id) await userDao.clearSession(updated._id);
+    return updated;
+  },
+
+  // Antes de borrar la cuenta o cambiar algo delicado: la contraseña del
+  // usuario de la sesión (nunca de un id que llegue en la petición).
+  async verifyOwnPassword(userId, password) {
+    if (!password) throw badRequest("Contraseña requerida");
+    const user = await userDao.getUserById(userId);
+    if (!user) throw userNotFound();
+    // Cuenta social (Google/Apple) sin contraseña propia: nada que verificar.
+    if (!user.password) throw badRequest("Esta cuenta no tiene contraseña configurada", "NO_PASSWORD_SET");
+    if (!bcrypt.comparePasswords(password, user.password)) throw httpError(401, "Contraseña incorrecta", "WRONG_PASSWORD");
   },
 
   async sendSuggestions(email, suggestions) {
     return mail.sendSuggestionMail(email, suggestions);
   },
 
+  // Antes de borrar, el flujo de cancelación de la facturación de
+  // entrenadores; la cascada la hace el hook del schema.
   async deleteUser(id) {
+    await require("../trainerBilling/adapter").prepareDeletion(id);
     return userDao.deleteUser(id);
   },
 
+  // Activación por enlace del correo. null si el código no vale o ya se usó.
   async checkHash(id, hash) {
-    return userDao.checkHash(id, hash);
+    return userDao.activateByHash(id, hash);
   },
 
   async clearUserHash(id) {

@@ -33,4 +33,6 @@ const ExerciseScoreSchema = new Schema(
 // edita el que hay.
 ExerciseScoreSchema.index({ trainerId: 1, exerciseId: 1 }, { unique: true });
 
+ExerciseScoreSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId"] });
+
 module.exports = mongoose.model("ExerciseScore", ExerciseScoreSchema);

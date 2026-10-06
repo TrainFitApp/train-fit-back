@@ -2,7 +2,7 @@
 //
 // Existían tres copias de lo mismo con nombres que no distinguían lo que
 // hacían:
-//   - plan-resolver.js#daysBetweenIsoDates -> días TRANSCURRIDOS (mismo día = 0)
+//   - la antigua daysBetweenIsoDates -> días TRANSCURRIDOS (mismo día = 0)
 //   - trainer-client-data-controller.js#daysBetweenIsoDates -> días DEL RANGO
 //     contando ambos extremos (mismo día = 1)
 //   - clientProgress/progress-service.js#isoDate

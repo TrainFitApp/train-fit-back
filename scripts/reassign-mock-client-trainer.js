@@ -27,7 +27,7 @@ async function main() {
   await mongoose.connect(mongoUri);
   ok("connected");
 
-  const userSchema = require("../components/users/schema");
+  const userSchema = require("../components/users/user-schema");
   const TrainerClient = require("../components/trainerClients/trainer-client-schema");
   const tableSchema = require("../components/tables/table-schema");
 
@@ -52,8 +52,7 @@ async function main() {
     trainerId: newTrainer._id,
     clientId: client._id,
     clientEmail: client.email,
-    scope: "training",
-    status: "active",
+    scopes: [{ scope: "training", status: "active", respondedAt: new Date() }],
   });
   ok(`relación creada: ${NEW_TRAINER_EMAIL} -> ${CLIENT_EMAIL}`);
 

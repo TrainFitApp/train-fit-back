@@ -22,10 +22,6 @@ const SNAPSHOT_NUMBERS = [
   "reps",
   "weight",
   "restSeconds",
-  "expectedMin",
-  "expectedSec",
-  "timeMin",
-  "timeSec",
   "expectedDistance",
   "distance",
 ];
@@ -121,8 +117,7 @@ async function viewsOf(checks, { baseUrl, forTrainer }) {
 // Clientes con relación de entrenamiento ACTIVA con este profesional: con
 // la relación revocada, pierde el acceso a sus revisiones.
 async function activeTrainingClientIds(trainerId) {
-  const relations = await trainerClientDao.findAllByTrainer(trainerId, { status: "active" });
-  return relations.filter((relation) => relation.scope === "training" && relation.clientId).map((relation) => relation.clientId);
+  return [...(await trainerClientDao.findActiveClientIds(trainerId, { scope: "training" }))];
 }
 
 async function purgeExpired(filter) {
@@ -156,12 +151,10 @@ module.exports = {
     const attachable = await mediaService.assertAttachable(user, body?.assetId, ["form_check"]);
     if (attachable.error) return attachable;
 
-    const relations = (await trainerClientDao.findActiveByClient(user._id)).filter((relation) => relation.scope === "training");
-    if (!relations.length) return fail(403, "FORM_CHECK_NO_TRAINER", "Necesitas un entrenador activo para enviarle vídeos");
-    const relation = body?.trainerId
-      ? relations.find((item) => String(item.trainerId) === String(body.trainerId))
-      : relations[0];
-    if (!relation) return fail(403, "FORM_CHECK_NO_TRAINER", "Ese entrenador no está activo");
+    const trainerIds = [...(await trainerClientDao.findActiveTrainerIds(user._id, "training"))];
+    if (!trainerIds.length) return fail(403, "FORM_CHECK_NO_TRAINER", "Necesitas un entrenador activo para enviarle vídeos");
+    const trainerId = body?.trainerId ? trainerIds.find((id) => id === String(body.trainerId)) : trainerIds[0];
+    if (!trainerId) return fail(403, "FORM_CHECK_NO_TRAINER", "Ese entrenador no está activo");
 
     const recent = await formCheckDao.countSince(user._id, new Date(Date.now() - 7 * DAY_MS));
     if (recent >= FORM_CHECKS_PER_WEEK) {
@@ -174,7 +167,7 @@ module.exports = {
     const now = new Date();
     const check = await formCheckDao.create({
       clientId: user._id,
-      trainerId: relation.trainerId,
+      trainerId,
       assetId: attachable.asset._id,
       exerciseId: mongoose.isValidObjectId(body?.exerciseId) ? body.exerciseId : null,
       exerciseName: String(body?.exerciseName || "").trim().slice(0, 200),
@@ -186,7 +179,7 @@ module.exports = {
       expiresAt: new Date(now.getTime() + RETENTION_DAYS * DAY_MS),
     });
 
-    await notificationDao.createForTrainer(relation.trainerId, user._id, "form_check_submitted", {
+    await notificationDao.createForTrainer(trainerId, user._id, "form_check_submitted", {
       formCheckId: String(check._id),
       exerciseName: check.exerciseName,
     });
@@ -246,15 +239,14 @@ module.exports = {
   async loadForTrainer(trainerId, id) {
     const check = await formCheckDao.findById(id);
     if (!check || String(check.trainerId) !== String(trainerId)) return null;
-    const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, check.clientId, "training");
-    return relation ? check : null;
+    return (await trainerClientDao.isActivePair(trainerId, check.clientId, "training")) ? check : null;
   },
 
   async getForTrainer(trainerId, id, { baseUrl } = {}) {
     const check = await this.loadForTrainer(trainerId, id);
     if (!check) return fail(404, "FORM_CHECK_NOT_FOUND", "Revisión no encontrada");
     if (!check.trainerSeenAt) await formCheckDao.update(check._id, { trainerSeenAt: new Date() });
-    const withClient = await require("./form-check-schema").findById(check._id).populate("clientId", "name lastname email").lean();
+    const withClient = await formCheckDao.findWithClient(check._id);
     const [view] = await viewsOf([withClient], { baseUrl, forTrainer: true });
     return { formCheck: view };
   },

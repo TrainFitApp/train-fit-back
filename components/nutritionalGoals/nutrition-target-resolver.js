@@ -1,11 +1,11 @@
 // Gathering de biométricos + guard + cálculo del target de un cliente,
 // compartido entre el cajón de sugerencias de dieta
 // (dietTemplates/diet-suggestion-controller.js#suggest) y la necesidad por
-// semana de una fase (planAssignments/week-need.js).
+// semana de una fase (dietPhases/week-need.js).
 // Extraído para no mantener la misma lógica de guard/fallback de peso en
 // dos sitios (antes solo vivía en diet-suggestion-controller.js).
 
-const userSchema = require("../users/schema");
+const userSchema = require("../users/user-schema");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { explainNutritionTarget } = require("./nutrition-target");
 const {
@@ -73,21 +73,18 @@ function resolveSteps(user, stepsRangeKey) {
  */
 async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0, macroOverride = {}, options = {}) {
   const [user, anthros] = await Promise.all([
-    userSchema.findById(clientId).select("sex height birth activity steps training weight objetive").lean(),
+    userSchema.findById(clientId).select("sex height birth activity steps training objetive").lean(),
     anthropometryDao.getAllAnthropometriesByUserId(clientId),
   ]);
 
-  // El peso sale de la última antropometría (hasta `asOf` si se pide); si el
-  // cliente todavía no tiene ninguna (recién registrado, invitado por un
-  // entrenador), se usa el que metió en el registro (`User.weight`).
+  // El peso sale de la última medida (hasta `asOf` si se pide). El del
+  // registro también es una medida: se apunta ese día.
   const latestAnthroWeight = (anthros || []).find(
     (a) => Number.isFinite(a.weight) && (!options.asOf || !a.date || a.date <= options.asOf)
   );
-  const weightKg = latestAnthroWeight?.weight ?? (Number.isFinite(user?.weight) ? user.weight : null);
+  const weightKg = latestAnthroWeight?.weight ?? null;
   const weightSource = latestAnthroWeight
     ? { weightKg: latestAnthroWeight.weight, date: latestAnthroWeight.date, from: "anthropometry" }
-    : weightKg !== null
-    ? { weightKg, from: "signup" }
     : null;
   const age = ageFromBirth(user?.birth, options.asOf ? new Date(`${options.asOf}T12:00:00`) : new Date());
   const steps = resolveSteps(user, options.stepsRangeKey);

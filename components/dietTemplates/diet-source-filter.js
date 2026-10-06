@@ -1,5 +1,5 @@
 // PURO. Filtro de ORIGEN del cajón "Empezar fase" → filtro Mongo de las
-// plantillas de biblioteca rankeables para un cliente.
+// plantillas (DietTemplate: solo biblioteca) rankeables para un cliente.
 //
 // Los tres orígenes son DISJUNTOS: una dieta de fábrica (verified) cae solo en
 // 'verified', aunque la creara este mismo entrenador (admin) o cuelgue de este
@@ -16,17 +16,15 @@ function rankableFilter(trainerId, clientId, sources) {
   if (set.has("general")) or.push({ trainerId, ownerClientId: null, ...notFactory });
   if (set.has("client")) or.push({ trainerId, ownerClientId: clientId, ...notFactory });
   if (set.has("verified")) or.push({ verified: true });
-  return { clientId: null, $or: or };
+  return { $or: or };
 }
 
-// PURO. Filtro de LECTURA de UNA plantilla por id (vista previa): las mías —
-// biblioteca o copia asignada, como hasta ahora— y las de fábrica de cualquiera,
-// las mismas que ya entran en el ranking de "Empezar fase". Solo para leer:
-// editar, borrar y aplicar siguen exigiendo ser el dueño. `clientId: null` en
-// las de fábrica: una copia congelada de un cliente ajeno no se lee por aquí
-// aunque heredara `verified`.
+// PURO. Filtro de LECTURA de UNA plantilla por id (vista previa): las mías y
+// las de fábrica de cualquiera, las mismas que ya entran en el ranking de
+// "Empezar fase". Solo para leer: editar, borrar y aplicar siguen exigiendo
+// ser el dueño.
 function readableFilter(trainerId, id) {
-  return { _id: id, $or: [{ trainerId }, { verified: true, clientId: null }] };
+  return { _id: id, $or: [{ trainerId }, { verified: true }] };
 }
 
 module.exports = { SOURCES, rankableFilter, readableFilter };

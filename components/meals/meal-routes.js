@@ -1,110 +1,31 @@
 const express = require("@awaitjs/express");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./meal-controller");
-const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-// Listado global (find({}) paginado, comidas de todos): solo admin.
-router.getAsync("/", auth(["admin"]), controller.getMeals);
+// Una comida vive dentro de su día (DietDay.meals[]) y sus alimentos y
+// recetas dentro de ella: todo se direcciona por la comida.
+
+// El entrenador también busca productos y recetas para pautar comida (solo
+// lectura; ver meal-controller.js#search).
+router.postAsync("/search", auth(["admin", "user", "trainer"]), controller.search);
+
 router.getAsync("/:id", auth(["admin", "user"]), controller.getMeal);
-router.postAsync("/", auth(["admin", "user"]), controller.createMeal);
-// TAREA5 — el entrenador necesita buscar productos/recetas reales para
-// pautar comida vía search-foods (misma pantalla del consumidor); es
-// búsqueda de solo lectura, no expone ni muta datos de otro usuario (ver
-// meal-controller.js#searchAllWithFilters, que ya recibe userId por body).
-router.postAsync(
-  "/search/all",
-  auth(["admin", "user", "trainer"]),
-  controller.searchAllWithFilters,
-);
-// router.putAsync('/add/customrecipe/to/meal', controller.addMealCustomRecipe);
-router.putAsync(
-  "/:idMeal/:idProduct",
-  auth(["admin", "user"]),
-  controller.addMealProduct,
-);
-router.putAsync("/paste", auth(["admin", "user"]), controller.pasteMeal);
-router.putAsync(
-  "/modify/one/simple",
-  auth(["admin", "user"]),
-  controller.modifyMeal,
-);
-router.putAsync(
-  "/update/all/meal/fields",
-  auth(["admin", "user"]),
-  controller.updateMeal,
-);
-router.deleteAsync("/:id", auth(["admin", "user"]), controller.deleteMeal);
-router.deleteAsync(
-  "/:idmeal/:idproduct",
-  auth(["admin", "user"]),
-  controller.deleteMealProduct,
-);
-router.deleteAsync(
-  "/customrecipe/:idmeal/:idCustomRecipe",
-  auth(["admin", "user"]),
-  controller.deleteMealCustomRecipe,
-);
-router.deleteAsync(
-  "/all/customproducts/:id",
-  auth(["admin", "user"]),
-  controller.deleteMealCustomProducts,
-);
-router.deleteAsync(
-  "/all/customrecipes/:id",
-  auth(["admin", "user"]),
-  controller.deleteMealCustomRecipes,
-);
+router.putAsync("/:id", auth(["admin", "user"]), controller.updateMeal);
+router.putAsync("/:id/paste", auth(["admin", "user"]), controller.pasteMeal);
+router.putAsync("/:id/alternative", auth(["admin", "user"]), controller.chooseAlternative);
 
-router.postAsync(
-  "/:idMeal/customrecipes/:idCustomRecipe",
-  auth(["admin", "user"]),
-  controller.addMealCustomRecipe,
-);
-router.deleteAsync(
-  "/customrecipe/:idMeal/:idCustomRecipe",
-  auth(["admin", "user"]),
-  controller.deleteMealCustomRecipeRef,
-);
-router.deleteAsync(
-  "/all/customrecipesref/:id",
-  auth(["admin", "user"]),
-  controller.deleteMealCustomRecipesRef,
-);
+router.postAsync("/:id/customproducts", auth(["admin", "user"]), controller.addCustomProduct);
+router.deleteAsync("/:id/customproducts", auth(["admin", "user"]), controller.deleteAllCustomProducts);
+router.putAsync("/:id/customproducts/:itemId", auth(["admin", "user"]), controller.updateCustomProduct);
+router.deleteAsync("/:id/customproducts/:itemId", auth(["admin", "user"]), controller.deleteCustomProduct);
+router.patchAsync("/:id/customproducts/:itemId/consumed", auth(["admin", "user"]), controller.setCustomProductConsumed);
+router.patchAsync("/:id/customproducts/:itemId/quantity", auth(["admin", "user"]), controller.setCustomProductQuantity);
 
-// TAREA 1 (coach-tab) — marcar/desmarcar cumplimiento, nunca protegido por
-// assertMealEditable (ver meal-controller.js#setMealCompleted).
-router.patchAsync(
-  "/:id/completed",
-  auth(["admin", "user"]),
-  controller.setMealCompleted,
-);
-
-// TAREA (meals pautados) — marcar/desmarcar consumido un producto/receta
-// pautados (ver meal-controller.js#setCustomProductConsumed).
-router.patchAsync(
-  "/:idMeal/customproducts/:idProduct/consumed",
-  auth(["admin", "user"]),
-  controller.setCustomProductConsumed,
-);
-router.patchAsync(
-  "/:idMeal/customrecipes/:idCustomRecipe/consumed",
-  auth(["admin", "user"]),
-  controller.setCustomRecipeConsumed,
-);
-
-// Ajustar cuánto de un pautado se consumió de verdad, sin poder tocar qué
-// es (ver meal-controller.js#setCustomProductQuantity).
-router.patchAsync(
-  "/:idMeal/customproducts/:idProduct/quantity",
-  auth(["admin", "user"]),
-  controller.setCustomProductQuantity,
-);
-router.patchAsync(
-  "/:idMeal/customrecipes/:idCustomRecipe/quantity",
-  auth(["admin", "user"]),
-  controller.setCustomRecipeQuantity,
-);
+router.deleteAsync("/:id/customrecipes", auth(["admin", "user"]), controller.deleteAllCustomRecipes);
+router.deleteAsync("/:id/customrecipes/:itemId", auth(["admin", "user"]), controller.deleteCustomRecipe);
+router.patchAsync("/:id/customrecipes/:itemId/consumed", auth(["admin", "user"]), controller.setCustomRecipeConsumed);
+router.patchAsync("/:id/customrecipes/:itemId/quantity", auth(["admin", "user"]), controller.setCustomRecipeQuantity);
 
 module.exports = router;

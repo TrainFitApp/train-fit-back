@@ -1,4 +1,4 @@
-const customExerciseModel = require("./custom-exercise-model");
+const customExerciseService = require("./custom-exercise-service");
 const tableAccess = require("../tables/table-access");
 const { withPinnedNotesSync } = require("../pinnedExerciseNotes/pinned-exercise-note-anchor-sync");
 // const customExerciseDTO = require("./dto");
@@ -22,7 +22,7 @@ async function assertCanAccessCustomExerciseId(req, res, idCustomExercise) {
 module.exports = {
   async getCustomExerciseById(req, res) {
     if (!(await assertCanAccessCustomExerciseId(req, res, req.params.id))) return;
-    const customExercise = await customExerciseModel.getCustomExerciseById(
+    const customExercise = await customExerciseService.getCustomExerciseById(
       req.params.id
     );
     return res.send(customExercise);
@@ -32,7 +32,7 @@ module.exports = {
     const table = await assertCanAccessCustomExerciseId(req, res, req.body.customExercise?._id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const customExercise = await customExerciseModel.updateCustomExercise(
+    const customExercise = await customExerciseService.updateCustomExercise(
       req.body.customExercise,
       req.body.setsToCreate,
       req.body.setsToUpdate,
@@ -46,7 +46,7 @@ module.exports = {
     const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const customExercise = await customExerciseModel.addSetToCustomExercise(
+    const customExercise = await customExerciseService.addSetToCustomExercise(
       req.params.id,
       req.body
     );
@@ -58,7 +58,7 @@ module.exports = {
     const table = await assertCanAccessCustomExerciseId(req, res, req.body?._id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const customExercise = await customExerciseModel.copySetOnCustomExercise(
+    const customExercise = await customExerciseService.copySetOnCustomExercise(
       req.params.order,
       req.body
     );
@@ -71,17 +71,7 @@ module.exports = {
     const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    try {
-      const customExercise = await customExerciseModel.setCustomExerciseBlock(
-        req.params.id,
-        req.body?.blockId ?? null,
-      );
-      return res.send(customExercise);
-    } catch (e) {
-      if (e.code === "BLOCK_NOT_FOUND") return res.status(400).send({ message: e.message });
-      if (e.code === "CUSTOM_EXERCISE_NOT_FOUND") return res.status(404).send({ message: e.message });
-      throw e;
-    }
+    return res.send(await customExerciseService.setCustomExerciseBlock(req.params.id, req.body?.blockId ?? null));
   },
 
   // PUT /customexercises/:id/client-notes — body: { clientNotes: string }
@@ -95,7 +85,7 @@ module.exports = {
   // entrenador.
   async updateClientNotes(req, res) {
     if (!(await assertCanAccessCustomExerciseId(req, res, req.params.id))) return;
-    const customExercise = await customExerciseModel.updateClientNotes(
+    const customExercise = await customExerciseService.updateClientNotes(
       req.params.id,
       req.body?.clientNotes
     );
@@ -107,7 +97,7 @@ module.exports = {
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await withPinnedNotesSync(table._id, () =>
-      customExerciseModel.deleteCustomExercise(req.params.id),
+      customExerciseService.deleteCustomExercise(req.params.id),
     );
     res.sendStatus(204);
   },
@@ -121,7 +111,7 @@ module.exports = {
       if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
       tableIds.push(table._id);
     }
-    await withPinnedNotesSync(tableIds, () => customExerciseModel.deleteCustomExercises(req.body));
+    await withPinnedNotesSync(tableIds, () => customExerciseService.deleteCustomExercises(req.body));
     res.sendStatus(204);
   },
 };

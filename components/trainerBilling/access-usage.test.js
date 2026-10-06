@@ -1,33 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { billableClientKeys, seatUsage } = require("../../.build/trainer-billing/usage");
-const { isPremiumUser, trainerPlan } = require("../billing/feature-access-service");
+const { isPremiumUser, trainerPlan } = require("../billing/feature-access");
 const { fake } = require("./test-support");
-
-test("client usage merges both scopes and pending invitations with known client ids", () => {
-  const keys = billableClientKeys([
-    { clientId: "a", clientEmail: "first@example.test" },
-    { clientEmail: " FIRST@example.test " },
-    { clientId: "a", clientEmail: "changed@example.test" },
-    { clientId: "b", clientEmail: "second@example.test" },
-    { clientEmail: "pending@example.test" },
-    { clientEmail: "PENDING@example.test" },
-  ]);
-  assert.deepEqual([...keys].sort(), ["email:pending@example.test", "id:a", "id:b"]);
-});
-
-test("una persona ocupa una plaza aunque tenga los dos scopes; una invitación sin aceptar solo la reserva", () => {
-  assert.deepEqual(seatUsage([
-    { clientId: "a", clientEmail: "a@x.test", status: "active" },
-    { clientId: "a", clientEmail: "a@x.test", status: "en_revision" },
-    // Invitación a la otra parte de alguien que ya ocupa plaza: no reserva otra.
-    { clientEmail: "A@x.test", status: "pending" },
-    { clientId: "b", clientEmail: "b@x.test", status: "cuestionario_pendiente" },
-    { clientEmail: "new@x.test", status: "pending" },
-    { clientEmail: "NEW@x.test", status: "pending" },
-  ]), { occupied: 2, reserved: 1 });
-  assert.deepEqual(seatUsage([]), { occupied: 0, reserved: 0 });
-});
 
 const ACTIVE = { entitled: true, tier: "starter", interval: "monthly", seats: 25, stripeMode: "test" };
 const future = () => new Date(Date.now() + 60000);

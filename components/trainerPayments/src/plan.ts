@@ -89,8 +89,6 @@ export function newRecurringCharge(
     remindersFrom,
     reminderLog: [],
     createdAt: now,
-    persistedV2: true,
-    legacy: null,
     anomalies: [],
   };
 }

@@ -24,6 +24,8 @@ const apply = (trainer, client, table, startDate = h.day(0)) =>
   ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables/${table._id}/apply`, { startDate });
 
 const tableInUse = async (user) => String((await ctx.get(user, "/auth/me")).user.tableInUse || "");
+const workoutInUse = async (user) => String((await ctx.get(user, "/auth/me")).user.workoutInUse || "");
+const history = (trainer, client) => ctx.get(trainer, `/trainer/clients/${client.id}/routine-assignments/history`);
 const notificationTypes = async (client) => {
   const list = await ctx.get(client, "/notifications/mine");
   return (Array.isArray(list) ? list : list.notifications || []).map((n) => n.type);
@@ -51,9 +53,11 @@ test("programar la rutina como fase desde hoy: pasa a estar en uso y el cliente 
   assert.equal(res.status, 201);
   assert.equal(await tableInUse(client), String(table._id));
   assert.deepEqual((await ctx.get(client, "/tables?own=true")).map((t) => t.name), ["Rutina del coach"]);
-  const active = await ctx.get(trainer, `/trainer/clients/${client.id}/routine-assignments/active`);
-  assert.equal(active.tableName, "Rutina del coach");
-  assert.equal(active.status, "active");
+  const [phase] = await history(trainer, client);
+  assert.deepEqual([phase.tableName, phase.state], ["Rutina del coach", "current"]);
+  const stored = await ctx.model("RoutineAssignment").collection.findOne({ _id: ctx.oid(phase._id) });
+  assert.deepEqual(["status" in stored, "supersededBy" in stored, "activatedAt" in stored], [false, false, false], "la cadena no guarda estado");
+  assert.equal((await ctx.model("User").findById(client._id).lean()).tableInUse, undefined, "la rutina en uso se calcula, no se escribe");
 });
 
 test("fase futura: no cambia la rutina en uso hasta su fecha; otra fase anterior a ella da ROUTINE_OVERLAP", async () => {
@@ -104,13 +108,53 @@ test("quitar la fase vigente devuelve al cliente la rutina de la fase anterior; 
 
   assert.equal((await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}/routine-assignments/${a2._id}`)).status, 204);
   assert.equal(await tableInUse(client), String(first._id), "vuelve la anterior");
-  const active = await ctx.get(trainer, `/trainer/clients/${client.id}/routine-assignments/active`);
-  assert.equal(String(active._id), String(a1._id));
+  assert.deepEqual((await history(trainer, client)).map((p) => [String(p._id), p.state]), [[String(a1._id), "current"]]);
 
   await ctx.del(trainer, `/trainer/clients/${client.id}/routine-assignments/${a1._id}`).catch(() => null);
   assert.equal(await tableInUse(client), "");
-  assert.equal(await ctx.get(trainer, `/trainer/clients/${client.id}/routine-assignments/active`), null);
+  assert.deepEqual(await history(trainer, client), []);
   assert.equal((await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}/routine-assignments/${a1._id}`)).status, 404);
+});
+
+test("rutina en uso: el cliente puede cambiarla a mano; la siguiente fase que empiece vuelve a mandar", async () => {
+  const { trainer, client } = await pair();
+  const coach = await assignNew(trainer, client, "Del coach");
+  const next = await assignNew(trainer, client, "Siguiente");
+  await apply(trainer, client, coach, h.day(-3));
+  const own = await ctx.model("Table").create({ name: "Mía", userId: client._id, splits: [] });
+  const me = (await ctx.get(client, "/auth/me")).user;
+  assert.equal(String(me.tableInUse), String(coach._id));
+
+  // El editor manda el usuario entero: repetir la rutina en uso no es elegir.
+  await ctx.put(client, "/users/", { ...me, name: "Otro nombre" });
+  assert.equal((await ctx.model("User").findById(client._id).lean()).tableInUseAt, undefined);
+
+  await ctx.put(client, "/users/", { ...me, tableInUse: String(own._id) });
+  assert.equal(await tableInUse(client), String(own._id), "manda la elección del cliente");
+  assert.deepEqual(
+    (await ctx.get(trainer, `/trainer/clients/${client.id}/tables`)).filter((t) => t.isActive).map((t) => t.name),
+    [],
+    "su ficha ya no marca activa la del entrenador",
+  );
+
+  await apply(trainer, client, next, h.day(5));
+  assert.equal(await tableInUse(client), String(own._id), "una fase futura aún no manda");
+  await ctx.model("RoutineAssignment").updateOne({ tableId: next._id }, { $set: { startDate: h.day(0), createdAt: new Date() } });
+  assert.equal(await tableInUse(client), String(next._id), "la fase que empieza después de la elección manda");
+});
+
+test("rutina en uso: una sesión a medias de otra rutina no se arrastra cuando entra una fase nueva", async () => {
+  const { trainer, client } = await pair();
+  const first = await assignNew(trainer, client, "Primera");
+  const second = await assignNew(trainer, client, "Segunda");
+  await apply(trainer, client, first, h.day(-3));
+  const me = (await ctx.get(client, "/auth/me")).user;
+  const workoutId = String(ctx.oid());
+  await ctx.put(client, "/users/", { ...me, workoutInUse: workoutId });
+  assert.equal(await workoutInUse(client), workoutId);
+  await apply(trainer, client, second, h.day(0));
+  assert.equal(await tableInUse(client), String(second._id));
+  assert.equal(await workoutInUse(client), "", "la sesión era de la rutina anterior");
 });
 
 test("reprogramar una fase futura: sí; una ya empezada o a una fecha pasada: 400", async () => {
@@ -132,7 +176,7 @@ test("borrar la rutina de una fase vigente (desde la ficha) arrastra sus fases y
   const drop = await assignNew(trainer, client, "Se borra");
   await apply(trainer, client, keep, h.day(-10));
   await apply(trainer, client, drop, h.day(0));
-  assert.equal((await ctx.call(trainer, "DELETE", `/tables/${client.id}/${drop._id}`)).status, 204);
+  assert.equal((await ctx.call(trainer, "DELETE", `/tables/${drop._id}`)).status, 204);
   assert.equal(await ctx.count("RoutineAssignment", { tableId: drop._id }), 0);
   assert.equal(await tableInUse(client), String(keep._id));
 });
@@ -187,12 +231,12 @@ test("plantilla de entreno aplicada a un microciclo del cliente: copia independi
   assert.equal(tpl.tags[0], "pecho");
 
   const table = await assignNew(trainer, client);
-  const split = await ctx.model("Split").create({ name: "Micro 1", workouts: [] });
-  await ctx.model("Table").updateOne({ _id: table._id }, { $push: { splits: split._id } });
+  const split = { _id: ctx.oid(), name: "Micro 1", workouts: [] };
+  await ctx.model("Table").updateOne({ _id: table._id }, { $push: { splits: split } });
 
   const applied = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/splits/${split._id}/workout-templates/${tpl._id}/apply`);
   assert.equal(applied.status, 201, JSON.stringify(applied.body));
-  const storedSplit = await ctx.model("Split").findById(split._id).lean();
+  const storedSplit = await ctx.findSplit(split._id);
   assert.equal(storedSplit.workouts.length, 1);
   const workout = await ctx.model("Workout").findById(storedSplit.workouts[0]).lean();
   assert.notEqual(String(workout._id), String(tpl._id));
@@ -209,11 +253,11 @@ test("plantilla de entreno aplicada a un microciclo del cliente: copia independi
 test("aplicar plantilla de entreno a un microciclo que no es de ese cliente: 403/404", async () => {
   const { trainer, client } = await pair();
   const tpl = await ctx.post(trainer, "/trainer/workout-templates", { name: "Pierna" });
-  const strangerSplit = await ctx.model("Split").create({ name: "Ajeno", workouts: [] });
-  await ctx.model("Table").create({ name: "Ajena", userId: (await ctx.makeClient())._id, splits: [strangerSplit._id] });
+  const { table } = await ctx.seedTable({ owner: await ctx.makeClient(), name: "Ajena", splits: [{ name: "Ajeno", workouts: [] }] });
+  const strangerSplit = table.splits[0];
   const res = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/splits/${strangerSplit._id}/workout-templates/${tpl._id}/apply`);
   assert.ok([403, 404].includes(res.status), String(res.status));
-  assert.equal((await ctx.model("Split").findById(strangerSplit._id).lean()).workouts.length, 0);
+  assert.equal((await ctx.findSplit(strangerSplit._id)).workouts.length, 0);
 });
 
 test("plantillas de entreno ajenas: invisibles e inmodificables para otro entrenador", async () => {

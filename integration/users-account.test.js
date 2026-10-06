@@ -53,6 +53,48 @@ test("editar perfil: la contraseña no se puede escribir en claro por PUT /users
   assert.notEqual(stored.password, "texto-plano");
 });
 
+test("editar perfil: el peso es la medida de hoy, la respuesta nunca trae secretos y solo entra lo del perfil", async () => {
+  const user = await ctx.makeClient({ password: "Original-1", fields: { weight: 80 } });
+  const versionBefore = (await ctx.model("User").findById(user.id).lean()).passwordVersion;
+  const res = await ctx.call(user, "PUT", "/users", {
+    _id: user.id,
+    weight: 78.4,
+    trainerSeats: { clientIds: [], lockedUntil: null },
+    mediaConsentVersion: 99,
+    passwordVersion: 7,
+    hiddenRecentFoods: [{ kind: "product" }],
+    favorites: { products: [ctx.oid()] },
+  });
+  assert.equal(res.status, 200);
+  for (const secret of ["password", "hash", "auth", "restoreCode", "refreshToken", "passwordVersion"]) {
+    assert.equal(secret in res.body, false, `la respuesta no lleva ${secret}`);
+  }
+  assert.equal(res.body.weight, 78.4);
+  const stored = await ctx.model("User").findById(user.id).lean();
+  assert.equal("weight" in stored, false, "el usuario no guarda el peso");
+  assert.equal(stored.mediaConsentVersion ?? null, null);
+  assert.equal(stored.passwordVersion, versionBefore, "la versión de contraseña no se toca");
+  assert.equal(stored.trainerSeats?.lockedUntil ?? null, null);
+  assert.deepEqual(stored.favorites?.products || [], []);
+  const today = await ctx.model("Anthropometry").findOne({ userId: user._id, date: h.day(0) }).lean();
+  assert.equal(today.weight, 78.4, "apuntado como medida de hoy");
+  assert.equal((await ctx.call(user, "PUT", "/users", { _id: user.id, weight: 5 })).body.code, "INVALID_WEIGHT");
+});
+
+test("fin del registro social: solo el perfil, el peso como medida y el objetivo inicial", async () => {
+  const user = await ctx.makeClient({ fields: { provider: "google" } });
+  const res = await ctx.put(user, "/auth/social/complete", {
+    name: "Social", sex: 1, height: 180, birth: "1990-05-05", weight: 81, activity: 1.45, steps: 1, training: 1.5, objetive: 0,
+    kcalTotal: 2500, proteinsGTotal: 160, carbohydratesGTotal: 280, fatGTotal: 80,
+    password: "plano", appleId: "apple-de-otro", roles: ["admin"], mediaConsentVersion: 99,
+  });
+  assert.equal(res.user.name, "Social");
+  assert.equal(res.user.weight, 81);
+  const stored = await ctx.model("User").findById(user.id).lean();
+  assert.deepEqual([stored.password ?? null, stored.appleId ?? null, stored.mediaConsentVersion ?? null, stored.roles], [null, null, null, ["user"]]);
+  assert.ok(stored.goalInUse, "objetivo inicial creado");
+});
+
 test("editar perfil de OTRO usuario: 403 y nada cambia", async () => {
   const victim = await ctx.makeClient({ name: "Victima" });
   const attacker = await ctx.makeClient();
@@ -78,66 +120,37 @@ test("desmarcar rutina/entreno en uso con null los quita del perfil", async () =
   assert.equal(stored.workoutInUse, undefined);
 });
 
-test("activar/parar dieta: alterna dietEnabled y el perfil expone dietInUse coherente", async () => {
+test("favoritos: marcar y quitar productos, recetas y ejercicios; solo lo que existe y se puede ver", async () => {
   const user = await ctx.makeClient();
-  assert.equal((await ctx.get(user, "/auth/me")).user.dietEnabled, true, "por defecto activada");
+  const product = await ctx.model("Product").create({ name: "Avena", verified: true });
+  const exercise = await ctx.model("Exercise").create({ name: "Sentadilla" });
+  const recipe = await ctx.model("Recipe").create({ name: "Mía", userId: user._id, customProducts: [] });
 
-  await ctx.patch(user, `/users/playstopdiet/${user.id}`, { enabled: false });
-  let me = (await ctx.get(user, "/auth/me")).user;
-  assert.equal(me.dietEnabled, false);
-  assert.equal(me.dietInUse, null, "apps antiguas: sin dieta");
+  for (const [kind, id] of [["products", product._id], ["recipes", recipe._id], ["exercises", exercise._id]]) {
+    assert.equal((await ctx.call(user, "PUT", `/favorites/${kind}/${id}`)).status, 204);
+  }
+  const favorites = (await ctx.get(user, "/auth/me")).user.favorites;
+  assert.deepEqual(
+    [favorites.products, favorites.recipes, favorites.exercises].map((list) => list.map(String)),
+    [[String(product._id)], [String(recipe._id)], [String(exercise._id)]]
+  );
+  for (const [kind, id] of [["products", product._id], ["recipes", recipe._id], ["exercises", exercise._id]]) {
+    assert.equal((await ctx.call(user, "DELETE", `/favorites/${kind}/${id}`)).status, 204);
+  }
+  assert.deepEqual((await ctx.get(user, "/auth/me")).user.favorites, { products: [], recipes: [], exercises: [] });
 
-  // Sin cuerpo: alterna respecto al estado actual (gesto de las apps antiguas).
-  await ctx.put(user, `/users/playstopdiet/${user.id}/cualquiera`, {});
-  me = (await ctx.get(user, "/auth/me")).user;
-  assert.equal(me.dietEnabled, true);
-  assert.equal(String(me.dietInUse), user.id);
-
-  const other = await ctx.makeClient();
-  assert.equal((await ctx.call(other, "PATCH", `/users/playstopdiet/${user.id}`, { enabled: false })).status, 403);
-});
-
-test("favoritos de producto: alternar añade y quita, y no se puede tocar los de otro", async () => {
-  const user = await ctx.makeClient();
-  const productId = String(ctx.oid());
-  const added = await ctx.put(user, "/users/favProduct", { idUser: user.id, idProduct: productId });
-  assert.equal(added.isFavorite, true);
-  assert.deepEqual((await ctx.get(user, "/auth/me")).user.archivedProducts.map(String), [productId]);
-  const removed = await ctx.put(user, "/users/favProduct", { idUser: user.id, idProduct: productId });
-  assert.equal(removed.isFavorite, false);
-  assert.deepEqual((await ctx.get(user, "/auth/me")).user.archivedProducts, []);
-
-  const other = await ctx.makeClient();
-  assert.equal((await ctx.call(other, "PUT", "/users/favProduct", { idUser: user.id, idProduct: productId })).status, 403);
-  assert.equal((await ctx.call(user, "PUT", "/users/favProduct", { idUser: user.id })).status, 400);
-});
-
-test("favoritos de receta: alternar añade y quita; una receta privada ajena no se puede marcar", async () => {
-  const user = await ctx.makeClient();
-  // Solo se marca como favorita una receta que el usuario puede leer: las
-  // favoritas se listan por id y servirían para leer recetas privadas ajenas.
+  // Lo que no existe, un tipo desconocido o un id inválido.
+  assert.equal((await ctx.call(user, "PUT", `/favorites/products/${ctx.oid()}`)).status, 404);
+  assert.equal((await ctx.call(user, "PUT", `/favorites/diets/${product._id}`)).status, 404);
+  assert.equal((await ctx.call(user, "PUT", "/favorites/products/xx")).status, 400);
+  // Una receta privada ajena no se marca: las favoritas se listan por id y
+  // servirían para leerla.
   const foreign = await ctx.model("Recipe").create({ name: "Privada ajena", userId: ctx.oid(), customProducts: [] });
-  assert.equal((await ctx.call(user, "PUT", "/users/favRecipe", { idUser: user.id, idRecipe: String(foreign._id) })).status, 404);
-  assert.equal((await ctx.call(user, "PUT", "/users/favRecipe", { idUser: user.id, idRecipe: String(ctx.oid()) })).status, 404);
-
-  const recipeId = String((await ctx.model("Recipe").create({ name: "Mía", userId: user._id, customProducts: [] }))._id);
-  assert.equal((await ctx.put(user, "/users/favRecipe", { idUser: user.id, idRecipe: recipeId })).isFavorite, true);
-  assert.deepEqual((await ctx.get(user, "/auth/me")).user.archivedRecipes.map(String), [recipeId]);
-  assert.equal((await ctx.put(user, "/users/favRecipe", { idUser: user.id, idRecipe: recipeId })).isFavorite, false);
-  assert.deepEqual((await ctx.get(user, "/auth/me")).user.archivedRecipes, []);
-});
-
-test("buscar entre favoritos devuelve SOLO los del usuario que pregunta", async () => {
-  // Determinista: solo OTRO usuario tiene un favorito que encaja; el que
-  // pregunta no tiene ninguno, así que lo correcto es una lista vacía.
-  const Product = ctx.model("Product");
-  const theirs = await Product.create({ name: "Avena favorita ajena", userId: ctx.oid() });
-  const other = await ctx.makeClient();
-  await ctx.put(other, "/users/favProduct", { idUser: other.id, idProduct: String(theirs._id) });
-  const me = await ctx.makeClient();
-
-  const found = await ctx.post(me, "/users/search/by", { node: "products", nodeArchived: "archivedProducts", search: "avena favorita" });
-  assert.deepEqual((Array.isArray(found) ? found : []).map((p) => p.name), []);
+  assert.equal((await ctx.call(user, "PUT", `/favorites/recipes/${foreign._id}`)).status, 404);
+  // Las rutas viejas ya no existen.
+  for (const [method, path] of [["PUT", "/users/favProduct"], ["PUT", "/users/favRecipe"], ["PUT", "/products/favProduct"], ["PUT", "/exercises/favorite"], ["PUT", "/exercises/archive"], ["POST", "/users/search/by"]]) {
+    assert.equal((await ctx.call(user, method, path, {})).status, 404, `${method} ${path}`);
+  }
 });
 
 test("verificar contraseña: siempre sobre el usuario del token", async () => {

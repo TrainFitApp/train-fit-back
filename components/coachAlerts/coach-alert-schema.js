@@ -33,7 +33,6 @@ const CoachAlertSchema = new Schema(
       type: String,
       required: true,
       enum: [
-        "pending_review", // cuestionario inicial esperando confirmación del coach
         "checkin_overdue", // check-in vencido según su cadencia
         "plan_ending_soon", // plan de nutrición a punto de caducar
         "stagnation", // sin cambio de peso pese a buena adherencia
@@ -117,5 +116,7 @@ CoachAlertSchema.index(
   { dedupeKey: 1 },
   { unique: true, partialFilterExpression: { status: "open" } }
 );
+
+CoachAlertSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"], detach: { resolvedBy: "unset" } });
 
 module.exports = mongoose.model("CoachAlert", CoachAlertSchema);

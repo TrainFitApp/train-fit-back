@@ -66,18 +66,12 @@ const CoachProtocolSchema = new Schema(
         unit: { type: String, required: true, trim: true, maxlength: 20 },
       },
     ],
-
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
   },
-  { collection: "coachprotocols" }
+  { collection: "coachprotocols", timestamps: true }
 );
 
 CoachProtocolSchema.index({ trainerId: 1, name: 1 }, { unique: true });
 
-CoachProtocolSchema.pre("save", function (next) {
-  this.updatedAt = new Date();
-  next();
-});
+CoachProtocolSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId"] });
 
 module.exports = mongoose.model("CoachProtocol", CoachProtocolSchema);

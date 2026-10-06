@@ -1,4 +1,5 @@
 const coachRuleDao = require("./coach-rule-dao");
+const { notFound, onDuplicate } = require("../util/http-error");
 const coachAlertDao = require("../coachAlerts/coach-alert-dao");
 const { planAlertWrites } = require("../coachAlerts/alert-write-plan");
 const coachTaskDao = require("../coachTasks/coach-task-dao");
@@ -37,7 +38,6 @@ function planRuleEffects(rule, snapshots) {
   const matches = [];
 
   for (const snapshot of snapshots) {
-    if (snapshot.relationStatus !== "active") continue;
     if (!shouldEvaluateClient(rule, snapshot)) continue;
 
     const evaluation = evaluateRule(rule, snapshot);
@@ -194,8 +194,22 @@ async function runRulesForTrainer(trainerId, snapshots, now = new Date()) {
   return totals;
 }
 
+const duplicateName = onDuplicate("Ya tienes una regla con ese nombre");
+const ruleNotFound = () => notFound("Regla no encontrada");
+
 module.exports = {
   runRulesForTrainer,
+  // Biblioteca de reglas del profesional (siempre filtradas por él).
+  listForTrainer: (trainerId) => coachRuleDao.listForTrainer(trainerId),
+  create: (trainerId, data) => coachRuleDao.create(trainerId, data).catch(duplicateName),
+  async update(trainerId, id, updates) {
+    const rule = await coachRuleDao.update(trainerId, id, updates).catch(duplicateName);
+    if (!rule) throw ruleNotFound();
+    return rule;
+  },
+  async remove(trainerId, id) {
+    if (!(await coachRuleDao.remove(trainerId, id))) throw ruleNotFound();
+  },
   // Exportadas para test unitario (puras).
   planRuleEffects,
   buildAlertReason,

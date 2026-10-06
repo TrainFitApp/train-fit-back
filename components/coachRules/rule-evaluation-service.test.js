@@ -23,7 +23,6 @@ function snapshot(overrides = {}) {
     today: isoDaysAgo(0),
     entries: [],
     checkinResponses: [],
-    relationStatus: "active",
     ...overrides,
   };
 }

@@ -1,768 +1,354 @@
+const { default: mongoose } = require("mongoose");
 const tableSchema = require("../tables/table-schema");
-const splitSchema = require("../splits/split-schema");
 const workoutSchema = require("./workout-schema");
 const exerciseSchema = require("../exercises/exercise-schema");
-const customExerciseSchema = require("../customExercises/custom-exercise-schema");
-const setSchema = require("../sets/set-schema");
-const Workout = require("./workout-class");
-const { default: mongoose } = require("mongoose");
-const customExerciseDao = require("../customExercises/custom-exercise-dao");
-const userSchema = require("../users/schema");
-const { isoDateInZone, dayRangeInZone } = require("../util/date-util");
+const userSchema = require("../users/user-schema");
+const { compactSet, SET_FIELDS } = require("../sets/set-schema");
 const { isSamePermutation } = require("../util/permutation-util");
 const { diffBlocks, applyBlockDiff } = require("./workout-row-blocks");
 const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
-const { clearWorkoutExecutionState } = require("./workout-copy-util");
+const { mutateWorkout } = require("./workout-store");
+const { badRequest, notFound } = require("../util/http-error");
+const {
+  toId,
+  plain,
+  newId,
+  isObjectId,
+  exerciseRefOf,
+  cloneExercise,
+  cloneWorkout,
+  reorderByIds,
+} = require("./workout-tree");
 
-function normalizeSetForTemplateCopy(setTemp) {
-  delete setTemp.doned;
-  // Mismo criterio que split-dao.js: técnica (drop/restPause/FALLO) es de
-  // esa copia concreta, no algo que deba heredar el workout duplicado.
-  delete setTemp.drop;
-  delete setTemp.restPause;
-  if (Array.isArray(setTemp.expectedRir) && setTemp.expectedRir.includes(-1)) {
-    setTemp.expectedRir = [];
+// Sesiones (Workout) con sus ejercicios y series EMBEBIDOS (2026-10). Las
+// sesiones de una rutina cuelgan de Table.splits[].workouts (ids en orden).
+
+// Campos de la sesión que se pueden escribir desde modifyWorkout. Quedan
+// fuera `_id`, `kind`, `createdAt` y `exercises`, que se trata aparte.
+const WORKOUT_WRITABLE_FIELDS = new Set([
+  "name",
+  "notes",
+  "clientNotes",
+  "date",
+  "order",
+  "cronometer",
+  "paused",
+  "startedAt",
+  "rest",
+  "isPlannedRestDay",
+  "readinessPre",
+  "perceivedEffortPost",
+  "sorenessPre",
+  "blocks",
+]);
+
+async function populatedSplits(tableFilter) {
+  const table = await tableSchema.findOne(tableFilter);
+  return table ? table.splits : [];
+}
+
+// Tabla en plano (sin poblar) con los ids de las sesiones de cada microciclo.
+async function leanTable(idTable) {
+  if (!isObjectId(idTable)) return null;
+  return tableSchema.findById(idTable).select("splits").lean();
+}
+
+// Posición de una sesión dentro de su microciclo (la "fila").
+function rowIndexOf(table, idWorkout) {
+  for (const split of table?.splits || []) {
+    const index = (split.workouts || []).findIndex((w) => toId(w) === toId(idWorkout));
+    if (index >= 0) return index;
   }
+  return -1;
 }
 
-function cloneSetForTemplateCopy(setTemp) {
-  const clonedSet =
-    typeof setTemp.toObject === "function" ? setTemp.toObject() : { ...setTemp };
-  clonedSet._id = new mongoose.Types.ObjectId();
-  normalizeSetForTemplateCopy(clonedSet);
-  return clonedSet;
+// Inserta/reescribe la lista de sesiones de varios microciclos de una tabla
+// de forma atómica por microciclo (arrayFilters por _id), sin reescribir el
+// resto del documento.
+async function writeSplitWorkouts(idTable, workoutsBySplitId) {
+  const ops = [...workoutsBySplitId.entries()].map(([splitId, workouts]) => ({
+    updateOne: {
+      filter: { _id: idTable },
+      update: { $set: { "splits.$[split].workouts": workouts } },
+      arrayFilters: [{ "split._id": new mongoose.Types.ObjectId(splitId) }],
+    },
+  }));
+  if (ops.length) await tableSchema.bulkWrite(ops);
 }
 
-function cloneCustomExerciseForTemplateCopy(exerciseTemp, setsToCreate) {
-  const clonedExercise =
-    typeof exerciseTemp.toObject === "function"
-      ? exerciseTemp.toObject()
-      : { ...exerciseTemp };
-
-  clonedExercise._id = new mongoose.Types.ObjectId();
-  clonedExercise.sets = (exerciseTemp.sets || []).map((setTemp) => {
-    const clonedSet = cloneSetForTemplateCopy(setTemp);
-    setsToCreate.push(clonedSet);
-    return clonedSet._id;
-  });
-
-  return clonedExercise;
-}
-
-function cloneWorkoutForTemplateCopy(workoutTemp, options = {}) {
-  const setsToCreate = [];
-  const customExercisesToCreate = [];
-  const clonedWorkout =
-    typeof workoutTemp.toObject === "function"
-      ? workoutTemp.toObject()
-      : { ...workoutTemp };
-
-  clonedWorkout._id = new mongoose.Types.ObjectId();
-  clearWorkoutExecutionState(clonedWorkout);
-
-  if (options.nameSuffix) {
-    clonedWorkout.name = `${clonedWorkout.name || ""} ${options.nameSuffix}`.trim();
-  }
-
-  clonedWorkout.exercises = (workoutTemp.exercises || []).map((exerciseTemp) => {
-    const clonedExercise = cloneCustomExerciseForTemplateCopy(
-      exerciseTemp,
-      setsToCreate,
-    );
-    customExercisesToCreate.push(clonedExercise);
-    return clonedExercise._id;
-  });
-
-  return {
-    workout: clonedWorkout,
-    customExercises: customExercisesToCreate,
-    sets: setsToCreate,
-  };
+// Series que llegan dentro de un ejercicio nuevo: cada una con su
+// contenido, que se guarda con un _id nuevo y en el orden recibido.
+function incomingSets(sets) {
+  return (Array.isArray(sets) ? sets : [])
+    .filter((entry) => entry && typeof entry === "object" && SET_FIELDS.some((field) => entry[field] !== undefined))
+    .map((entry, index) => {
+      const { _id, donedAt, ...rest } = plain(entry);
+      return compactSet({ order: index, ...rest, _id: newId() });
+    });
 }
 
 module.exports = {
   async getWorkouts(page, limit) {
-    return new Promise((resolve, reject) =>
-      workoutSchema
-        .find({})
-        .skip(page * limit)
-        .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        }),
-    );
+    return workoutSchema.find({}).skip(page * limit).limit(limit).exec();
+  },
+
+  // La sesión con el Exercise de cada ejercicio poblado (mongoose-autopopulate
+  // no actúa sobre .lean()).
+  async findWithExercises(id) {
+    return workoutSchema.findById(id).populate("exercises.exercise").lean();
   },
 
   async getWorkoutById(id) {
-    return await workoutSchema.findById(id);
+    return workoutSchema.findById(id);
   },
 
-  // El día de `date` en la zona del usuario, no en la del servidor.
-  async getWorkoutByIdAndDate(id, date, timeZone) {
-    try {
-      const day = isoDateInZone(date, timeZone);
-      const { start: minDate, end: maxDate } = dayRangeInZone(day, day, timeZone);
-
-      const workout = await tableSchema.aggregate([
-        // Etapa de filtro para obtener la tabla por su ID
-        { $match: { _id: new mongoose.Types.ObjectId(id) } },
-
-        // Etapa de expansión para obtener los workouts de la tabla
-        {
-          $lookup: {
-            from: "splits",
-            localField: "splits",
-            foreignField: "_id",
-            as: "splits",
-          },
-        },
-        { $unwind: "$splits" },
-        {
-          $lookup: {
-            from: "workouts",
-            localField: "splits.workouts",
-            foreignField: "_id",
-            as: "workouts",
-          },
-        },
-        { $unwind: "$workouts" },
-
-        // Etapa de filtro para obtener solo los workouts con la fecha deseada
-        {
-          $match: {
-            "workouts.date": {
-              $gte: new Date(minDate),
-              $lte: new Date(maxDate),
-            },
-          },
-        },
-
-        // Etapa de expansión para obtener los ejercicios de los workouts
-        {
-          $lookup: {
-            from: "customexercises",
-            localField: "workouts.exercises",
-            foreignField: "_id",
-            as: "exercises",
-          },
-        },
-        { $unwind: "$exercises" },
-        {
-          $lookup: {
-            from: "exercises",
-            localField: "exercises.exercise",
-            foreignField: "_id",
-            as: "exercise",
-          },
-        },
-        { $unwind: "$exercise" },
-
-        // Etapa de expansión para obtener los sets de los ejercicios
-        {
-          $lookup: {
-            from: "sets",
-            localField: "exercises.sets",
-            foreignField: "_id",
-            as: "sets",
-          },
-        },
-
-        // Agrupar por el ID del workout
-        {
-          $group: {
-            _id: "$workouts._id",
-            name: { $first: "$workouts.name" },
-            date: { $first: "$workouts.date" },
-            order: { $first: "$workouts.order" },
-            cronometer: { $first: "$workouts.cronometer" },
-            exercises: {
-              $push: {
-                _id: "$exercises._id",
-                order: "$exercises.order",
-                exercise: "$exercise",
-                sets: "$sets",
-              },
-            },
-          },
-        },
-
-        // Proyección para obtener solo los datos necesarios
-        {
-          $project: {
-            _id: 1,
-            name: 1,
-            date: 1,
-            order: 1,
-            cronometer: 1,
-            exercises: 1,
-          },
-        },
-      ]);
-
-      return workout[0];
-    } catch (err) {
-      throw err;
-    }
-  },
-
+  // Sustituye los ejercicios de `workoutToPaste` por una copia de los del
+  // portapapeles (series incluidas, sin su ejecución) y copia sus notas.
   async pasteWorkout(workoutClipboard, workoutToPaste) {
-    try {
-      const workoutIdsCustomExercises = workoutToPaste.exercises.map(
-        (exerciseTemp) => exerciseTemp._id,
-      );
-      const workoutSetsIdsExercises = workoutToPaste.exercises.flatMap(
-        (exerciseTemp) => exerciseTemp.sets.map((setTemp) => setTemp._id),
-      );
-
-      await setSchema.deleteMany({ _id: { $in: workoutSetsIdsExercises } });
-      await customExerciseSchema.deleteMany({
-        _id: { $in: workoutIdsCustomExercises },
-      });
-
-      const exercisesToCreate = [];
-      const setsToCreate = [];
-
-      workoutClipboard.exercises.forEach((exerciseTemp) => {
-        const clonedExercise = cloneCustomExerciseForTemplateCopy(
-          exerciseTemp,
-          setsToCreate,
-        );
-        exercisesToCreate.push(clonedExercise);
-      });
-
-      workoutToPaste.exercises = exercisesToCreate.map(
-        (exerciseTemp) => exerciseTemp._id,
-      );
-      // Copiar las notas del workout copiado
-      workoutToPaste.notes = workoutClipboard.notes;
-
-      await Promise.all([
-        setSchema.insertMany(setsToCreate),
-        customExerciseSchema.insertMany(exercisesToCreate),
-      ]);
-
-      const updatedWorkout = await workoutSchema.findByIdAndUpdate(
-        workoutToPaste._id,
-        workoutToPaste,
-        { new: true },
-      );
-
-      return updatedWorkout;
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  async duplicateWorkoutRow(idTable, idWorkout, nameSuffix = "Copy") {
-    try {
-      const tableDoc = await tableSchema.findById(idTable);
-      if (!tableDoc) throw new Error("Table not found");
-
-      let workoutIndex = -1;
-      tableDoc.splits.some((splitTemp) => {
-        const foundIndex = splitTemp.workouts.findIndex(
-          (workoutTemp) => workoutTemp._id.toString() === idWorkout,
-        );
-
-        if (foundIndex >= 0) {
-          workoutIndex = foundIndex;
-          return true;
-        }
-
-        return false;
-      });
-
-      if (workoutIndex < 0) throw new Error("Workout not found in table");
-
-      const workoutsToCreate = [];
-      const customExercisesToCreate = [];
-      const setsToCreate = [];
-      const splitUpdates = [];
-
-      tableDoc.splits.forEach((splitTemp) => {
-        const workoutToCopy = splitTemp.workouts[workoutIndex];
-        if (!workoutToCopy) {
-          throw new Error("Workout row is not complete in all splits");
-        }
-
-        const cloned = cloneWorkoutForTemplateCopy(workoutToCopy, {
-          nameSuffix,
-        });
-
-        workoutsToCreate.push(cloned.workout);
-        customExercisesToCreate.push(...cloned.customExercises);
-        setsToCreate.push(...cloned.sets);
-        splitUpdates.push({
-          updateOne: {
-            filter: { _id: splitTemp._id },
-            update: {
-              $push: {
-                workouts: {
-                  $each: [cloned.workout._id],
-                  $position: workoutIndex + 1,
-                },
-              },
-            },
-          },
-        });
-      });
-
-      if (setsToCreate.length > 0) await setSchema.insertMany(setsToCreate);
-      if (customExercisesToCreate.length > 0) {
-        await customExerciseSchema.insertMany(customExercisesToCreate);
-      }
-      if (workoutsToCreate.length > 0) {
-        await workoutSchema.insertMany(workoutsToCreate);
-      }
-      if (splitUpdates.length > 0) await splitSchema.bulkWrite(splitUpdates);
-
-      const updatedTable = await tableSchema.findById(idTable);
-      return updatedTable.splits;
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  // Rediseño de entrenamiento Fase B — reemplaza Workout.blocks[] completo
-  // (crear/editar/borrar/reordenar bloques en una sola llamada, mismo
-  // patrón "replace-whole-array" que ya usa el frontend para exercises[] en
-  // otros sitios). `blocks` ya viene sanitizado desde el controller
-  // (sanitizeWorkoutBlocks) — aquí solo se resuelven los _id reales.
-  async updateWorkoutBlocks(workoutId, blocks) {
-    const workout = await workoutSchema.findById(workoutId).select("blocks exercises");
-    if (!workout) {
-      const err = new Error("Workout no encontrado");
-      err.code = "WORKOUT_NOT_FOUND";
-      throw err;
-    }
-
-    const previousBlockIds = new Set(
-      (workout.blocks || []).map((block) => block._id.toString()),
-    );
-
-    const normalizedBlocks = (blocks || []).map((block) => ({
-      ...block,
-      _id:
-        block._id && mongoose.Types.ObjectId.isValid(block._id)
-          ? new mongoose.Types.ObjectId(block._id)
-          : new mongoose.Types.ObjectId(),
+    await mutateWorkout({ _id: workoutToPaste?._id }, () => ({
+      exercises: (workoutClipboard?.exercises || []).map((customExercise) => cloneExercise(customExercise)),
+      notes: workoutClipboard?.notes,
     }));
+    return workoutSchema.findById(workoutToPaste?._id);
+  },
 
-    const nextBlockIds = new Set(normalizedBlocks.map((block) => block._id.toString()));
-    const removedBlockIds = [...previousBlockIds].filter((id) => !nextBlockIds.has(id));
+  // Duplica la fila de `idWorkout` (la misma posición en todos los
+  // microciclos) justo debajo de ella.
+  async duplicateWorkoutRow(idTable, idWorkout, nameSuffix = "Copy") {
+    const tableDoc = await tableSchema.findById(idTable);
+    if (!tableDoc) throw new Error("Table not found");
 
-    await workoutSchema.findByIdAndUpdate(workoutId, {
-      $set: { blocks: normalizedBlocks },
+    const workoutIndex = rowIndexOf(tableDoc, idWorkout);
+    if (workoutIndex < 0) throw new Error("Workout not found in table");
+
+    const clones = [];
+    const workoutsBySplitId = new Map();
+    tableDoc.splits.forEach((split) => {
+      const workoutToCopy = split.workouts[workoutIndex];
+      if (!workoutToCopy) throw new Error("Workout row is not complete in all splits");
+      const clone = cloneWorkout(workoutToCopy, { nameSuffix });
+      clones.push(clone);
+      const ids = split.workouts.map((w) => w._id);
+      ids.splice(workoutIndex + 1, 0, clone._id);
+      workoutsBySplitId.set(toId(split), ids);
     });
 
-    // Un ejercicio cuyo bloque se borró vuelve a quedar "suelto" — nunca debe
-    // apuntar a un blockId que ya no existe en este Workout.
-    const releaseRemoved = (exerciseIds, ids) =>
-      ids.length > 0
-        ? customExerciseSchema.updateMany(
-            {
-              _id: { $in: exerciseIds },
-              blockId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) },
-            },
-            { $set: { blockId: null } },
-          )
-        : null;
-    await releaseRemoved(workout.exercises, removedBlockIds);
+    if (clones.length) await workoutSchema.insertMany(clones);
+    await writeSplitWorkouts(tableDoc._id, workoutsBySplitId);
+    return populatedSplits({ _id: idTable });
+  },
 
-    // 2026-09 — mismo cambio en el entrenamiento de la misma fila de los
-    // demás microciclos (ver workout-row-blocks.js: solo casan los bloques
-    // que comparten _id; los antiguos, locales, no se propagan).
-    const diff = diffBlocks(workout.blocks.map((b) => b.toObject()), normalizedBlocks);
+  // Reemplaza Workout.blocks[] completo (crear/editar/borrar/reordenar
+  // bloques en una sola llamada). `blocks` ya viene sanitizado desde el
+  // controller (sanitizeWorkoutBlocks): aquí solo se resuelven los _id.
+  async updateWorkoutBlocks(workoutId, blocks) {
+    const normalizedBlocks = (blocks || []).map((block) => ({
+      ...block,
+      _id: isObjectId(block._id) ? new mongoose.Types.ObjectId(toId(block._id)) : newId(),
+    }));
+
+    let diff = null;
+    const written = await mutateWorkout({ _id: workoutId }, (workout) => {
+      diff = diffBlocks(workout.blocks || [], normalizedBlocks);
+      const removed = new Set(diff.removedIds);
+      return {
+        blocks: normalizedBlocks,
+        // Un ejercicio cuyo bloque se borró vuelve a quedar "suelto": nunca
+        // debe apuntar a un blockId que ya no existe en este Workout.
+        exercises: (workout.exercises || []).map((exercise) =>
+          exercise.blockId && removed.has(toId(exercise.blockId)) ? { ...exercise, blockId: null } : exercise,
+        ),
+      };
+    });
+    if (!written) throw notFound("Workout no encontrado", "WORKOUT_NOT_FOUND");
+
+    // Mismo cambio en el entrenamiento de la misma fila de los demás
+    // microciclos (ver workout-row-blocks.js: solo casan los bloques que
+    // comparten _id; los antiguos, locales, no se propagan).
     const siblingIds = await findRowSiblingWorkoutIds(workoutId);
-    const siblings = await workoutSchema
-      .find({ _id: { $in: siblingIds } })
-      .select("blocks exercises")
-      .lean();
-    for (const sibling of siblings) {
-      const nextBlocks = applyBlockDiff(sibling.blocks, diff);
-      await workoutSchema.updateOne({ _id: sibling._id }, { $set: { blocks: nextBlocks } });
-      const siblingBlockIds = new Set((sibling.blocks || []).map((b) => b._id.toString()));
-      await releaseRemoved(
-        sibling.exercises,
-        diff.removedIds.filter((id) => siblingBlockIds.has(id)),
-      );
+    for (const siblingId of siblingIds) {
+      await mutateWorkout({ _id: siblingId }, (sibling) => {
+        const siblingBlockIds = new Set((sibling.blocks || []).map(toId));
+        const removed = new Set(diff.removedIds.filter((id) => siblingBlockIds.has(id)));
+        return {
+          blocks: applyBlockDiff(sibling.blocks, diff),
+          exercises: (sibling.exercises || []).map((exercise) =>
+            exercise.blockId && removed.has(toId(exercise.blockId)) ? { ...exercise, blockId: null } : exercise,
+          ),
+        };
+      });
     }
 
     // rowWorkouts: los demás microciclos ya actualizados, para que el
     // tablero los repinte sin recargar la tabla (la app de cliente lo ignora).
     const result = (await workoutSchema.findById(workoutId)).toObject();
-    result.rowWorkouts = siblings.length
-      ? await workoutSchema.find({ _id: { $in: siblingIds } })
-      : [];
+    result.rowWorkouts = siblingIds.length ? await workoutSchema.find({ _id: { $in: siblingIds } }) : [];
     return result;
   },
 
-  // Planificador visual (Fase C) — copia un workout suelto a otra semana
-  // (o a la misma, como "duplicar en el sitio"). Reutiliza
-  // cloneWorkoutForTemplateCopy sobre UN solo workout — misma mecánica de
-  // clonado ya probada en duplicateWorkoutRow/pasteWorkout, aplicada a una
-  // sola columna en vez de barrer todos los splits de la tabla (ese modelo
-  // "fila de workout compartida entre semanas" es justo lo que el
-  // Planificador deja atrás — cada semana es independiente).
+  // Copia una sesión suelta a otro microciclo (o al mismo, como "duplicar
+  // en el sitio").
   async copyWorkoutToSplit(workoutId, targetSplitId) {
     const workoutDoc = await workoutSchema.findById(workoutId);
-    if (!workoutDoc) {
-      const err = new Error("Entrenamiento no encontrado");
-      err.code = "WORKOUT_NOT_FOUND";
-      throw err;
-    }
+    if (!workoutDoc) throw notFound("Entrenamiento no encontrado", "WORKOUT_NOT_FOUND");
 
-    const targetSplit = await splitSchema.findById(targetSplitId).select("_id");
-    if (!targetSplit) {
-      const err = new Error("Split de destino no encontrado");
-      err.code = "SPLIT_NOT_FOUND";
-      throw err;
-    }
+    const table = await tableSchema.findOne({ "splits._id": targetSplitId }).select("_id").lean();
+    if (!table) throw notFound("Split de destino no encontrado", "SPLIT_NOT_FOUND");
 
-    const cloned = cloneWorkoutForTemplateCopy(workoutDoc);
-
-    if (cloned.sets.length > 0) await setSchema.insertMany(cloned.sets);
-    if (cloned.customExercises.length > 0) {
-      await customExerciseSchema.insertMany(cloned.customExercises);
-    }
-    await workoutSchema.insertMany([cloned.workout]);
-
-    await splitSchema.updateOne(
-      { _id: targetSplitId },
-      { $push: { workouts: cloned.workout._id } },
+    const clone = cloneWorkout(workoutDoc);
+    await workoutSchema.insertMany([clone]);
+    await tableSchema.updateOne(
+      { _id: table._id },
+      { $push: { "splits.$[split].workouts": clone._id } },
+      { arrayFilters: [{ "split._id": new mongoose.Types.ObjectId(toId(targetSplitId)) }] },
     );
-
-    const updatedTable = await tableSchema.findOne({ splits: targetSplitId });
-    return updatedTable.splits;
+    return populatedSplits({ _id: table._id });
   },
 
+  // Reordena las sesiones DENTRO de un microciclo.
   async reorderWorkoutsInSplit(idSplit, workoutIdsOrder) {
-    const splitDoc = await splitSchema.findById(idSplit).select("_id workouts");
-    if (!splitDoc) {
-      const err = new Error("Split no encontrado");
-      err.code = "SPLIT_NOT_FOUND";
-      throw err;
-    }
+    const table = await tableSchema.findOne({ "splits._id": idSplit }).select("splits").lean();
+    const split = (table?.splits || []).find((candidate) => toId(candidate) === toId(idSplit));
+    if (!split) throw notFound("Split no encontrado", "SPLIT_NOT_FOUND");
 
-    // split.workouts está autopoblado (mongoose-autopopulate) — cada elemento
-    // es un Workout completo, no un ObjectId suelto; hay que extraer el _id
-    // explícitamente (mismo ajuste que en split-dao.js#reorderSplits).
-    const currentIds = splitDoc.workouts.map((w) => (w._id || w).toString());
-    const requestedIds = (Array.isArray(workoutIdsOrder) ? workoutIdsOrder : []).map((id) =>
-      (id?._id || id).toString(),
-    );
-
+    const currentIds = (split.workouts || []).map(toId);
+    const requestedIds = (Array.isArray(workoutIdsOrder) ? workoutIdsOrder : []).map(toId);
     if (!isSamePermutation(currentIds, requestedIds)) {
-      const err = new Error("workoutIdsOrder debe ser una permutación exacta de los workouts actuales");
-      err.code = "INVALID_WORKOUT_ORDER";
-      throw err;
+      throw badRequest(
+        "workoutIdsOrder debe ser una permutación exacta de los workouts actuales",
+        "INVALID_WORKOUT_ORDER",
+      );
     }
 
-    await splitSchema.updateOne({ _id: idSplit }, { $set: { workouts: requestedIds } });
-
-    const updatedTable = await tableSchema.findOne({ splits: idSplit });
-    return updatedTable.splits;
+    await writeSplitWorkouts(table._id, new Map([[toId(split), requestedIds.map((id) => new mongoose.Types.ObjectId(id))]]));
+    return populatedSplits({ _id: table._id });
   },
 
+  // Reordena las FILAS: la misma permutación en todos los microciclos.
   async reorderWorkoutRows(idTable, workoutIdsOrder) {
-    try {
-      const tableDoc = await tableSchema.findById(idTable);
-      if (!tableDoc) throw new Error("Table not found");
+    const table = await leanTable(idTable);
+    if (!table) throw new Error("Table not found");
 
-      if (
-        !Array.isArray(workoutIdsOrder) ||
-        workoutIdsOrder.length !== tableDoc.splits[0]?.workouts?.length
-      ) {
-        throw new Error("Invalid workout order");
-      }
-
-      const referenceSplit = tableDoc.splits.find((splitTemp) =>
-        workoutIdsOrder.every((idWorkout) =>
-          splitTemp.workouts.some(
-            (workoutTemp) => workoutTemp._id.toString() === idWorkout,
-          ),
-        ),
-      );
-
-      if (!referenceSplit) throw new Error("Workout order does not match table");
-
-      const referenceIndexes = workoutIdsOrder.map((idWorkout) =>
-        referenceSplit.workouts.findIndex(
-          (workoutTemp) => workoutTemp._id.toString() === idWorkout,
-        ),
-      );
-
-      if (referenceIndexes.some((index) => index < 0)) {
-        throw new Error("Workout order does not match table");
-      }
-
-      const splitUpdates = tableDoc.splits.map((splitTemp) => ({
-        updateOne: {
-          filter: { _id: splitTemp._id },
-          update: {
-            $set: {
-              workouts: referenceIndexes.map(
-                (workoutIndex) => splitTemp.workouts[workoutIndex]._id,
-              ),
-            },
-          },
-        },
-      }));
-
-      await splitSchema.bulkWrite(splitUpdates);
-
-      const updatedTable = await tableSchema.findById(idTable);
-      return updatedTable.splits;
-    } catch (error) {
-      throw error;
+    if (!Array.isArray(workoutIdsOrder) || workoutIdsOrder.length !== table.splits[0]?.workouts?.length) {
+      throw new Error("Invalid workout order");
     }
-  },
 
-  async createWorkout(workout) {
-    let exercises = workout.exercises;
-
-    workout.exercises = [];
-
-    return new Promise((resolve, reject) =>
-      workoutSchema.create(workout, (err, doc) => {
-        if (err) return reject(err);
-
-        exerciseSchema.insertMany(exercises, (err2, doc2) => {
-          if (err2) return reject(err2);
-
-          let ids = doc2.map((exerciseTemp) => exerciseTemp._id);
-
-          workoutSchema.findByIdAndUpdate(
-            doc._id,
-            { $set: { exercises: ids } },
-            { new: true },
-            (err3, doc3) => {
-              if (err3) return reject(err3);
-
-              return resolve(doc3);
-            },
-          );
-        });
-      }),
+    const requested = workoutIdsOrder.map(toId);
+    const referenceSplit = table.splits.find((split) =>
+      requested.every((id) => (split.workouts || []).some((w) => toId(w) === id)),
     );
+    if (!referenceSplit) throw new Error("Workout order does not match table");
+
+    const referenceIndexes = requested.map((id) => referenceSplit.workouts.findIndex((w) => toId(w) === id));
+    if (referenceIndexes.some((index) => index < 0)) throw new Error("Workout order does not match table");
+
+    await writeSplitWorkouts(
+      table._id,
+      new Map(
+        table.splits.map((split) => [toId(split), referenceIndexes.map((index) => split.workouts[index]).filter(Boolean)]),
+      ),
+    );
+    return populatedSplits({ _id: idTable });
   },
 
+  // Añade una sesión nueva (o varias) al final de cada microciclo.
   async addWorkoutsToSplits(idTable, workouts) {
-    const promises = [];
-    const allWorkoutsToAdd = [];
-    const tableDoc = await tableSchema.findById(idTable);
+    const table = await leanTable(idTable);
+    if (!table) throw new Error("Table not found");
 
-    for (let i = 0; i < tableDoc.splits.length; i++) {
-      const splitWorkouts = [];
-      for (const workoutData of workouts) {
-        const newWorkout = new Workout(workoutData);
-        newWorkout._id = new mongoose.Types.ObjectId();
-        splitWorkouts.push(newWorkout);
-      }
-      tableDoc.splits[i].workouts.push(...splitWorkouts);
-      allWorkoutsToAdd.push(...splitWorkouts);
-
-      const promise = splitSchema.updateOne(
-        { _id: tableDoc.splits[i]._id },
-        { $push: { workouts: { $each: splitWorkouts.map((w) => w._id) } } },
-      );
-      promises.push(promise);
+    const toCreate = [];
+    const workoutsBySplitId = new Map();
+    for (const split of table.splits || []) {
+      const created = (Array.isArray(workouts) ? workouts : [workouts]).map((data) => ({
+        _id: newId(),
+        name: data?.name,
+        notes: data?.notes,
+        clientNotes: data?.clientNotes,
+        date: data?.date,
+        cronometer: data?.cronometer,
+        paused: data?.paused,
+        isPlannedRestDay: data?.isPlannedRestDay,
+        exercises: (data?.exercises || []).filter((exercise) => exercise?.exercise).map((exercise) => cloneExercise(exercise)),
+      }));
+      toCreate.push(...created);
+      workoutsBySplitId.set(toId(split), [...(split.workouts || []), ...created.map((w) => w._id)]);
     }
 
-    await workoutSchema.insertMany(allWorkoutsToAdd);
-    await Promise.all(promises);
-
-    return tableDoc.splits;
+    if (toCreate.length) await workoutSchema.insertMany(toCreate);
+    await writeSplitWorkouts(table._id, workoutsBySplitId);
+    return populatedSplits({ _id: idTable });
   },
 
   async addExerciseToWorkouts(workoutIds, exerciseId) {
-    try {
-      if (!Array.isArray(workoutIds) || workoutIds.length === 0) {
-        return [];
-      }
+    if (!Array.isArray(workoutIds) || workoutIds.length === 0) return [];
+    const exercise = await exerciseSchema.findById(exerciseId);
 
-      const customExercisesData = workoutIds.map(() => ({
-        exercise: exerciseId,
-        sets: [],
-        notes: null,
+    const result = [];
+    for (const workoutId of workoutIds) {
+      const customExercise = { _id: newId(), exercise: exerciseId, sets: [], notes: null };
+      await mutateWorkout({ _id: workoutId }, (workout) => ({
+        exercises: [...(workout.exercises || []), customExercise],
       }));
-
-      const insertedCustomExercises = await customExerciseSchema.insertMany(customExercisesData);
-
-      const bulkOperations = workoutIds.map((wId, i) => ({
-        updateOne: {
-          filter: { _id: wId },
-          update: { $push: { exercises: insertedCustomExercises[i]._id } }
-        }
-      }));
-
-      await workoutSchema.bulkWrite(bulkOperations);
-
-      await customExerciseSchema.populate(insertedCustomExercises, { path: "exercise" });
-
-      const result = workoutIds.map((wId, i) => ({
-        workoutId: wId,
-        customExercise: insertedCustomExercises[i]
-      }));
-
-      return result;
-    } catch (err) {
-      throw err;
+      result.push({ workoutId, customExercise: { ...customExercise, blockId: null, exercise } });
     }
-  },
-
-  async addWorkoutExercise(idWorkout, idExercise) {
-    const addExercise = {
-      $push: { exercises: idExercise },
-    };
-
-    return new Promise((resolve, reject) =>
-      workoutSchema.findByIdAndUpdate(
-        idWorkout,
-        addExercise,
-        {},
-        (err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        },
-      ),
-    );
-  },
-
-  async addWorkoutsExercises(idTable, idExercise, workoutOrder) {
-    return new Promise((resolve, reject) =>
-      tableSchema.findById(idTable, {}, (err, tableDoc) => {
-        if (err) return reject(err);
-
-        // tableDoc.splits.forEach((splitTemp) => {
-        //   let workouts = [];
-        //   splitTemp.workouts.forEach((workoutTemp) => {
-        //     if (workoutTemp.order === Number(workoutOrder)) {
-        //       workouts.push(workoutTemp);
-        //     }
-        //   });
-
-        //   workouts.forEach((workoutTemp) => {
-        //     const addExercises = { $push: { exercises: idExercise } };
-        //     workoutSchema.findOneAndUpdate(
-        //       { _id: workoutTemp._id },
-        //       addExercises,
-        //       {},
-        //       (err, docs) => {
-        //         if (err) return reject(err);
-        //       }
-        //     );
-        //   });
-        // });
-
-        // tableSchema.findById(idTable, {}, (err, tableDoc) => {
-        //   if (err) return reject(err);
-        //   return resolve(tableDoc);
-        // });
-      }),
-    );
-  },
-
-  async deleteWorkoutExercise(idWorkout, idExercise) {
-    const deleteWorkout = {
-      $pull: { workout: idExercise },
-    };
-
-    return new Promise((resolve, reject) =>
-      workoutSchema.findByIdAndUpdate(
-        idWorkout,
-        deleteWorkout,
-        {},
-        (err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        },
-      ),
-    );
+    return result;
   },
 
   async modifyWorkout(workout) {
-    return new Promise((resolve, reject) => {
-      const update = { $set: {} };
-      const unset = {};
+    const $set = {};
+    const $unset = {};
 
-      // Set all provided fields
-      for (const key in workout) {
-        if (key !== "_id") {
-          // Parse date if it comes as ISO string
-          if (key === "date" && typeof workout[key] === "string") {
-            update.$set[key] = new Date(workout[key]);
-          } else {
-            update.$set[key] = workout[key];
-          }
-        }
-      }
+    for (const key of Object.keys(workout || {})) {
+      if (!WORKOUT_WRITABLE_FIELDS.has(key)) continue;
+      // Parse date if it comes as ISO string
+      $set[key] = key === "date" && typeof workout[key] === "string" ? new Date(workout[key]) : workout[key];
+    }
 
-      const hasDate = Object.prototype.hasOwnProperty.call(workout, "date");
-      const hasPaused = Object.prototype.hasOwnProperty.call(workout, "paused");
-      const hasNotes = Object.prototype.hasOwnProperty.call(workout, "notes");
-      const hasClientNotes = Object.prototype.hasOwnProperty.call(workout, "clientNotes");
-      const hasStartedAt = Object.prototype.hasOwnProperty.call(workout, "startedAt");
+    const has = (key) => Object.prototype.hasOwnProperty.call(workout || {}, key);
+    const isBlank = (value) => value === null || value === undefined || value?.trim?.() === "";
 
-      // Only unset date when it is explicitly sent as null
-      if (hasDate && workout.date === null) {
-        delete update.$set.date;
-        unset.date = 1;
-      }
+    // Solo se vacían cuando llegan explícitamente vacíos.
+    if (has("date") && workout.date === null) {
+      delete $set.date;
+      $unset.date = 1;
+    }
+    if (has("startedAt") && workout.startedAt === null) {
+      delete $set.startedAt;
+      $unset.startedAt = 1;
+    }
+    if (has("paused") && (workout.paused === null || workout.paused === undefined || workout.paused === false)) {
+      delete $set.paused;
+      $unset.paused = 1;
+    }
+    if (has("notes") && isBlank(workout.notes)) {
+      delete $set.notes;
+      $unset.notes = 1;
+    }
+    if (has("clientNotes") && isBlank(workout.clientNotes)) {
+      delete $set.clientNotes;
+      $unset.clientNotes = 1;
+    }
 
-      // Only unset startedAt when it is explicitly sent as null
-      if (hasStartedAt && workout.startedAt === null) {
-        delete update.$set.startedAt;
-        unset.startedAt = 1;
-      }
+    const update = { $inc: { __v: 1 } };
+    if (Object.keys($set).length) update.$set = $set;
+    if (Object.keys($unset).length) update.$unset = $unset;
+    await workoutSchema.updateOne({ _id: workout?._id }, update);
 
-      // Only unset paused when it is explicitly sent as null/undefined/false
-      if (
-        hasPaused &&
-        (workout.paused === null ||
-          workout.paused === undefined ||
-          workout.paused === false)
-      ) {
-        delete update.$set.paused;
-        unset.paused = 1;
-      }
+    // `exercises` del cuerpo: antes se guardaba como lista de ids. Aquí solo
+    // vale para REORDENAR (misma lista de ejercicios en otro orden): el
+    // contenido que trae el cliente puede estar desfasado y nunca pisa lo
+    // guardado, y una lista con ejercicios de menos no borra ninguno.
+    if (Array.isArray(workout?.exercises)) {
+      await mutateWorkout({ _id: workout._id }, (current) => {
+        const currentIds = (current.exercises || []).map(toId);
+        const requestedIds = workout.exercises.map(toId);
+        if (!isSamePermutation(currentIds, requestedIds)) return null;
+        if (currentIds.every((id, index) => id === requestedIds[index])) return null;
+        return { exercises: reorderByIds(current.exercises, requestedIds) };
+      });
+    }
 
-      // Only unset notes when it is explicitly sent as null/undefined/empty
-      if (
-        hasNotes &&
-        (workout.notes === null ||
-          workout.notes === undefined ||
-          workout.notes?.trim() === "")
-      ) {
-        delete update.$set.notes;
-        unset.notes = 1;
-      }
-
-      if (
-        hasClientNotes &&
-        (workout.clientNotes === null ||
-          workout.clientNotes === undefined ||
-          workout.clientNotes?.trim() === "")
-      ) {
-        delete update.$set.clientNotes;
-        unset.clientNotes = 1;
-      }
-
-      if (Object.keys(unset).length > 0) {
-        update.$unset = unset;
-      }
-
-      workoutSchema.findByIdAndUpdate(
-        workout._id,
-        update,
-        { new: true },
-        (err2, workoutDoc) => {
-          if (err2) return reject(err2);
-          return resolve(workoutDoc);
-        },
-      );
-    });
+    return workoutSchema.findById(workout?._id);
   },
 
   async finishWorkout(workoutId, userId, date) {
@@ -771,317 +357,164 @@ module.exports = {
     const [workoutDoc, userDoc] = await Promise.all([
       workoutSchema.findByIdAndUpdate(
         workoutId,
-        { $set: { date: finishDate }, $unset: { paused: 1 } },
+        { $set: { date: finishDate }, $unset: { paused: 1 }, $inc: { __v: 1 } },
         { new: true },
       ),
-      userSchema.findByIdAndUpdate(
-        userId,
-        { $unset: { workoutInUse: 1 } },
-        { new: true },
-      ),
+      userSchema.findByIdAndUpdate(userId, { $unset: { workoutInUse: 1, workoutInUseAt: 1 } }, { new: true }),
     ]);
 
-    return {
-      workout: workoutDoc,
-      userUpdated: !!userDoc,
-    };
+    return { workout: workoutDoc, userUpdated: !!userDoc };
   },
 
   async skipWorkout(workoutId, userId, rest) {
     const update = rest
-      ? { $set: { rest: true }, $unset: { date: 1, paused: 1 } }
-      : { $unset: { rest: 1 } };
+      ? { $set: { rest: true }, $unset: { date: 1, paused: 1 }, $inc: { __v: 1 } }
+      : { $unset: { rest: 1 }, $inc: { __v: 1 } };
 
-    const workoutDoc = await workoutSchema.findByIdAndUpdate(workoutId, update, {
-      new: true,
-    });
+    const workoutDoc = await workoutSchema.findByIdAndUpdate(workoutId, update, { new: true });
 
     let userUpdated = false;
     if (rest) {
-      const userDoc = await userSchema.findByIdAndUpdate(
-        userId,
-        { $unset: { workoutInUse: 1 } },
-        { new: true },
-      );
+      const userDoc = await userSchema.findByIdAndUpdate(userId, { $unset: { workoutInUse: 1, workoutInUseAt: 1 } }, { new: true });
       userUpdated = !!userDoc;
     }
 
-    return {
-      workout: workoutDoc,
-      userUpdated,
-    };
+    return { workout: workoutDoc, userUpdated };
   },
 
+  // Añade `customExercise` (nuevo) al final de la sesión. Antes esta ruta
+  // reescribía además la sesión entera con la copia que tuviera la app; la
+  // única pantalla que la usa (añadir ejercicio a una fila) solo necesita
+  // añadirlo, y reescribir el resto pisaba cambios hechos entretanto.
   async updateWorkout(workout, customExercise) {
-    return new Promise((resolve, reject) =>
-      customExerciseSchema.create(customExercise, (err, customExerciseDoc) => {
-        if (err) return reject(err);
-
-        workout.exercises.push(customExerciseDoc);
-
-        const update = { $set: workout };
-
-        workoutSchema.findByIdAndUpdate(
-          workout._id,
-          update,
-          { new: true },
-          (err2, workoutDoc) => {
-            if (err2) return reject(err2);
-            return resolve(workoutDoc);
-          },
-        );
-      }),
-    );
-  },
-
-  async updateWorkoutsOrder(idWorkout, idTable, newOrder) {
-    try {
-      const tableDoc = await tableSchema.findById(idTable);
-
-      let indexWorkout;
-
-      // Obtener índice de Workout
-      tableDoc.splits.forEach((sTemp) => {
-        sTemp.workouts.forEach((wTemp, iW) => {
-          if (wTemp._id.toString() === idWorkout) {
-            indexWorkout = iW;
-          }
-        });
-      });
-
-      let bulkOperations = [];
-
-      tableDoc.splits.forEach((sTemp) => {
-        sTemp.workouts.forEach((wTemp, iW) => {
-          if (iW === indexWorkout) {
-            // Copiar el array de ejercicios y reorganizar según `newOrder`
-            const newOrderedExercises = newOrder.map(
-              (index) => wTemp.exercises[index],
-            );
-
-            // Agregar operación a bulkWrite solo para actualizar el array `exercises`
-            bulkOperations.push({
-              updateOne: {
-                filter: { _id: wTemp._id },
-                update: { $set: { exercises: newOrderedExercises } },
-              },
-            });
-          }
-        });
-      });
-      return await workoutSchema.bulkWrite(bulkOperations);
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  async updateCustomExercises(
-    idTable,
-    idWorkout,
-    idCustomExercise,
-    idExercise,
-  ) {
-    const tableDoc = await tableSchema.findById(idTable);
-    const exerciseDoc = await exerciseSchema.findById(idExercise);
-
-    let indexWorkout;
-    tableDoc.splits.forEach((sTemp) => {
-      sTemp.workouts.forEach((wTemp, iW) => {
-        if (idWorkout === wTemp._id.toString()) {
-          indexWorkout = iW;
-        }
-      });
-    });
-
-    let customExercisesToUpdate = [];
-
-    let indexCustomExercise;
-    tableDoc.splits.forEach((sTemp) => {
-      sTemp.workouts.forEach((wTemp) => {
-        wTemp.exercises.forEach((ceTemp, iCE) => {
-          if (ceTemp._id.toString() === idCustomExercise)
-            indexCustomExercise = iCE;
-        });
-      });
-    });
-
-    tableDoc.splits.forEach((sTemp) => {
-      sTemp.workouts.forEach((wTemp, iW) => {
-        if (indexWorkout === iW) {
-          const customExercise =
-            sTemp.workouts[indexWorkout].exercises[indexCustomExercise];
-          customExercise.exercise = exerciseDoc;
-          customExercisesToUpdate.push(customExercise);
-        }
-      });
-    });
-
-    const updateOperations = customExercisesToUpdate.map((ceTemp) => ({
-      updateOne: {
-        filter: { _id: ceTemp._id },
-        update: { $set: { exercise: ceTemp.exercise } },
-      },
+    const sets = incomingSets(customExercise?.sets);
+    const created = {
+      _id: newId(),
+      exercise: exerciseRefOf(customExercise),
+      order: customExercise?.order,
+      notes: customExercise?.notes || undefined,
+      blockId: isObjectId(customExercise?.blockId) ? customExercise.blockId : null,
+      sets,
+    };
+    await mutateWorkout({ _id: workout?._id }, (current) => ({
+      exercises: [...(current.exercises || []), created],
     }));
-    await customExerciseSchema.bulkWrite(updateOperations);
+    return workoutSchema.findById(workout?._id);
+  },
 
-    return await tableSchema.findById(idTable);
+  // Crea el Exercise si llega como objeto (alta de un ejercicio propio desde
+  // la propia sesión) y añade a la sesión el ejercicio con sus series.
+  async addDataExerciseToWorkout(workoutId, dataExerciseData) {
+    let exerciseId;
+    if (dataExerciseData?.exercise && !dataExerciseData.exercise._id && typeof dataExerciseData.exercise === "object") {
+      const exerciseDoc = await exerciseSchema.create(dataExerciseData.exercise);
+      exerciseId = exerciseDoc._id;
+    } else {
+      exerciseId = dataExerciseData?.exercise?._id || dataExerciseData?.exercise;
+    }
+
+    const sets = incomingSets(dataExerciseData?.sets);
+    const created = { _id: newId(), exercise: exerciseId, sets, notes: dataExerciseData?.notes || undefined };
+    await mutateWorkout({ _id: workoutId }, (current) => ({
+      exercises: [...(current.exercises || []), created],
+    }));
+    return workoutSchema.findById(workoutId);
+  },
+
+  // Reordena los ejercicios de la fila de `idWorkout` en todos los
+  // microciclos. `newOrder` son posiciones: newOrder[i] = posición antigua del
+  // ejercicio que pasa a ser el i-ésimo.
+  async updateWorkoutsOrder(idWorkout, idTable, newOrder) {
+    const table = await leanTable(idTable);
+    const indexWorkout = rowIndexOf(table, idWorkout);
+    if (indexWorkout < 0 || !Array.isArray(newOrder)) return { modifiedCount: 0 };
+
+    let modifiedCount = 0;
+    for (const split of table.splits || []) {
+      const rowWorkoutId = split.workouts?.[indexWorkout];
+      if (!rowWorkoutId) continue;
+      const written = await mutateWorkout({ _id: rowWorkoutId }, (workout) => {
+        const exercises = workout.exercises || [];
+        const reordered = newOrder.map((index) => exercises[index]).filter(Boolean);
+        return { exercises: reordered };
+      });
+      if (written) modifiedCount += 1;
+    }
+    return { modifiedCount };
+  },
+
+  // Cambia el Exercise de un ejercicio en la misma posición (fila y orden)
+  // de todos los microciclos.
+  async updateCustomExercises(idTable, idWorkout, idCustomExercise, idExercise) {
+    const table = await leanTable(idTable);
+    const exerciseDoc = await exerciseSchema.findById(idExercise).select("_id").lean();
+    const indexWorkout = rowIndexOf(table, idWorkout);
+
+    const rowWorkoutIds = (table?.splits || []).map((split) => split.workouts?.[indexWorkout]).filter(Boolean);
+    const rowWorkouts = await workoutSchema
+      .find({ _id: { $in: rowWorkoutIds } })
+      .select("exercises._id")
+      .lean();
+    let indexCustomExercise = -1;
+    for (const workout of rowWorkouts) {
+      const index = (workout.exercises || []).findIndex((exercise) => toId(exercise) === toId(idCustomExercise));
+      if (index >= 0) indexCustomExercise = index;
+    }
+
+    if (indexWorkout >= 0 && indexCustomExercise >= 0) {
+      for (const workoutId of rowWorkoutIds) {
+        await mutateWorkout({ _id: workoutId }, (workout) => {
+          const exercises = workout.exercises || [];
+          if (!exercises[indexCustomExercise]) return null;
+          return {
+            exercises: exercises.map((exercise, index) =>
+              index === indexCustomExercise ? { ...exercise, exercise: exerciseDoc?._id ?? null } : exercise,
+            ),
+          };
+        });
+      }
+    }
+
+    return tableSchema.findById(idTable);
   },
 
   async updateWorkoutsName(idTable, idWorkout, workoutsName) {
-    try {
-      const tableDoc = await tableSchema.findById(idTable);
-
-      let indexS;
-      tableDoc.splits.forEach((splitTemp, indexSplit) => {
-        splitTemp.workouts.forEach((workoutTemp) => {
-          if (workoutTemp._id.toString() === idWorkout) indexS = indexSplit;
-        });
-      });
-
-      const indexWorkout = tableDoc.splits[indexS].workouts.findIndex(
-        (workoutTemp) => workoutTemp._id.toString() === idWorkout,
-      );
-
-      const workoutIdsToUpdate = tableDoc.splits.map((splitTemp) =>
-        splitTemp.workouts[indexWorkout]._id.toString(),
-      );
-
-      await workoutSchema.updateMany(
-        { _id: { $in: workoutIdsToUpdate } },
-        { $set: { name: workoutsName } },
-      );
-
-      return;
-    } catch (err) {
-      throw err;
-    }
+    const table = await leanTable(idTable);
+    const indexWorkout = rowIndexOf(table, idWorkout);
+    if (indexWorkout < 0) return;
+    const ids = (table.splits || []).map((split) => split.workouts?.[indexWorkout]).filter(Boolean);
+    await workoutSchema.updateMany({ _id: { $in: ids } }, { $set: { name: workoutsName }, $inc: { __v: 1 } });
   },
 
+  // Añade a la sesión destino una copia de los ejercicios (con sus series).
   async pasteExercises(tableId, sourceWorkoutId, targetWorkoutId, exercises) {
-    try {
-      const setsToCreate = [];
-      const customExercisesToCreate = [];
-
-      exercises.forEach((exerciseTemp) => {
-        const clonedExercise = cloneCustomExerciseForTemplateCopy(
-          exerciseTemp,
-          setsToCreate,
-        );
-        customExercisesToCreate.push(clonedExercise);
-      });
-
-      await setSchema.insertMany(setsToCreate);
-      await customExerciseSchema.insertMany(customExercisesToCreate);
-
-      const newExerciseIds = customExercisesToCreate.map(
-        (ce) => ce._id,
-      );
-
-      await workoutSchema.findByIdAndUpdate(
-        targetWorkoutId,
-        { $push: { exercises: { $each: newExerciseIds } } },
-        { new: true },
-      );
-
-      const updatedTable = await tableSchema.findById(tableId);
-      return { tableInUse: updatedTable };
-    } catch (error) {
-      throw error;
-    }
+    const clones = (exercises || []).map((customExercise) => cloneExercise(customExercise));
+    await mutateWorkout({ _id: targetWorkoutId }, (workout) => ({
+      exercises: [...(workout.exercises || []), ...clones],
+    }));
+    return { tableInUse: await tableSchema.findById(tableId) };
   },
 
+  // Vacía la sesión de ejercicios.
   async deleteWorkoutCustomExercises(id) {
-    return new Promise((resolve, reject) =>
-      workoutSchema.findById(id, (err, doc) => {
-        if (err) return reject(err);
-        const customExerciseIds = doc.exercises.map(
-          (exerciseTemp) => exerciseTemp._id,
-        );
-        customExerciseSchema.deleteMany(
-          { _id: { $in: customExerciseIds } },
-          (err2, doc2) => {
-            if (err2) return reject(err2);
-            return resolve(doc2);
-          },
-        );
-      }),
-    );
-  },
-
-  async addDataExerciseToWorkout(workoutId, dataExerciseData) {
-    try {
-      // 1. Crear el Exercise si viene como objeto (sin _id)
-      let exerciseId;
-      if (dataExerciseData.exercise && !dataExerciseData.exercise._id) {
-        const exerciseDoc = await exerciseSchema.create(
-          dataExerciseData.exercise,
-        );
-        exerciseId = exerciseDoc._id;
-      } else {
-        // Si ya tiene _id, usar ese
-        exerciseId = dataExerciseData.exercise._id || dataExerciseData.exercise;
-      }
-
-      // 2. Procesar los Sets
-      let setIds = [];
-      if (dataExerciseData.sets && dataExerciseData.sets.length > 0) {
-        // Si vienen como objetos (con propiedades), hacer insertMany
-        if (
-          typeof dataExerciseData.sets[0] === "object" &&
-          dataExerciseData.sets[0]._id === undefined
-        ) {
-          const setsDoc = await setSchema.insertMany(dataExerciseData.sets);
-          setIds = setsDoc.map((s) => s._id);
-        } else {
-          // Si vienen como IDs (strings), usarlos directamente
-          setIds = dataExerciseData.sets;
-        }
-      }
-
-      // 3. Crear el CustomExercise (DataExercise) con la referencia al exercise
-      const customExerciseData = {
-        exercise: exerciseId,
-        sets: setIds,
-        notes: dataExerciseData.notes || null,
-      };
-
-      const customExerciseDoc =
-        await customExerciseSchema.create(customExerciseData);
-
-      // 4. Agregar el CustomExercise al Workout y devolver el workout autopoblado
-      await workoutSchema.findByIdAndUpdate(
-        workoutId,
-        { $push: { exercises: customExerciseDoc._id } },
-        { new: true },
-      );
-
-      // Leer nuevamente para aplicar autopopulate
-      const updatedWorkout = await workoutSchema.findById(workoutId);
-      return updatedWorkout;
-    } catch (error) {
-      throw error;
-    }
+    return workoutSchema.updateOne({ _id: id }, { $set: { exercises: [] }, $inc: { __v: 1 } });
   },
 
   async deleteWorkout(id) {
-    return new Promise((resolve, reject) =>
-      workoutSchema.deleteOne({ _id: id }, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
+    return this.deleteWorkouts([{ _id: id }]);
   },
 
+  // Quita las sesiones de sus microciclos y las borra.
   async deleteWorkouts(workouts) {
-    const workoutIds = workouts.map((workoutTemp) => workoutTemp._id);
+    const workoutIds = (workouts || [])
+      .map((workout) => toId(workout?._id ?? workout))
+      .filter(isObjectId)
+      .map((id) => new mongoose.Types.ObjectId(id));
+    if (!workoutIds.length) return { deletedCount: 0 };
 
-    // Bug: faltaba $in — { _id: workoutIds } compara _id (escalar) contra el
-    // array entero, así que nunca hace match. deleteMany resolvía con
-    // deletedCount:0 sin lanzar error, y el entrenamiento nunca se borraba
-    // de verdad (reaparecía al recargar).
-    await splitSchema.updateMany(
-      { workouts: { $in: workoutIds } },
-      { $pull: { workouts: { $in: workoutIds } } },
+    await tableSchema.updateMany(
+      { "splits.workouts": { $in: workoutIds } },
+      { $pull: { "splits.$[].workouts": { $in: workoutIds } } },
     );
     return workoutSchema.deleteMany({ _id: { $in: workoutIds } });
   },

@@ -5,14 +5,15 @@
 export type CivilDay = string; // "YYYY-MM-DD", día civil completo
 export type TimeOfDay = string; // "HH:mm"
 
-export type ChargeOrigin = "one_off" | "recurring" | "legacy";
+export type ChargeOrigin = "one_off" | "recurring";
 export type ChargeStatus = "open" | "settled" | "cancelled" | "void";
 export type PaymentMethod = "bizum" | "transfer" | "cash" | "card_external" | "other" | "unknown";
 export type MovementStatus = "valid" | "voided";
-export type MovementSource = "app" | "legacy_toggle" | "migration";
-// "legacy_marked_paid": el día sale de paidAt, que es cuándo se MARCÓ pagado,
+// "migration": pago creado al convertir un cobro anterior al libro de pagos.
+export type MovementSource = "app" | "migration";
+// "marked_paid": cobro anterior al libro de pagos; el día es cuándo se MARCÓ pagado,
 // no necesariamente cuándo llegó el dinero.
-export type ReceivedDaySource = "entered" | "legacy_marked_paid";
+export type ReceivedDaySource = "entered" | "marked_paid";
 export type TemporalState = "overdue" | "due_today" | "upcoming" | "closed";
 export type Recipient = "trainer" | "client";
 export type RecurrenceUnit = "week" | "month";
@@ -91,23 +92,7 @@ export interface ReminderLogEntry {
   at: Date;
 }
 
-export type LegacyDueDaySource = "utc_midnight" | "zone_midnight" | "zone_date" | "created_at_fallback";
-
-export interface LegacyInfo {
-  sourceAmount: number | null;
-  sourceCurrency: string | null;
-  sourceDueDate: Date | null;
-  sourcePaidAt: Date | null;
-  dueDaySource: LegacyDueDaySource;
-  dueDayAmbiguous: boolean;
-  timeZone: string;
-  migratedAt: Date | null;
-  migratedBy: "migration" | "write" | null;
-}
-
-// Vista normalizada de un cobro (obligación). Los documentos antiguos se
-// normalizan al leerlos; `persistedV2` dice si el documento ya está guardado
-// con esta forma.
+// Un cobro (obligación) tal como lo maneja el núcleo.
 export interface Charge {
   id: string;
   trainerId: string;
@@ -138,23 +123,19 @@ export interface Charge {
   remindersFrom: Date; // ningún hito anterior a este instante se envía
   reminderLog: ReminderLogEntry[];
   createdAt: Date;
-  persistedV2: boolean;
-  legacy: LegacyInfo | null;
+  // Datos que el entrenador debe revisar (cobros convertidos con importe o
+  // fecha dudosos). Nunca se escriben desde la app.
   anomalies: string[];
 }
 
-// Documento tal y como llega de Mongo (ids ya como string), antiguo o nuevo.
+// Documento tal y como llega de Mongo (ids ya como string).
 export interface ChargeRecord {
   id: string;
   trainerId: string;
   clientId: string;
-  amount?: number | null;
   currency?: string | null;
-  dueDate?: Date | null;
-  paidAt?: Date | null;
   note?: string | null;
   createdAt?: Date | null;
-  schemaVersion?: number | null;
   origin?: ChargeOrigin | null;
   concept?: string | null;
   dueDay?: string | null;
@@ -178,7 +159,6 @@ export interface ChargeRecord {
   dueRevision?: number | null;
   remindersFrom?: Date | null;
   reminderLog?: ReminderLogEntry[] | null;
-  legacy?: LegacyInfo | null;
   anomalies?: string[] | null;
 }
 

@@ -1,8 +1,5 @@
-const PinnedExerciseNoteModel = require("./pinned-exercise-note-schema");
 const Table = require("../tables/table-schema");
-const Split = require("../splits/split-schema");
 const Workout = require("../workouts/workout-schema");
-const CustomExercise = require("../customExercises/custom-exercise-schema");
 
 // Las notas ancladas se guardan por POSICIÓN (workoutIndex, exerciseIndex),
 // compartida por todos los microciclos en esa fila. Cualquier operación que
@@ -97,78 +94,54 @@ function resolveAnchors(anchors, grid) {
   return { moves, deletes };
 }
 
-// Queries lean por nivel (sin autopopulate: solo hacen falta ids). Las refs
-// colgantes se filtran igual que haría el populate que ve el front, para que
-// los índices coincidan con los que muestra la app.
-async function loadGrid(tableId) {
-  const table = await Table.findById(tableId).select("splits").lean();
+// Dos lecturas lean (sin autopopulate: solo hacen falta ids): la tabla, con
+// sus microciclos y notas embebidos, y los ejercicios de sus sesiones. Las
+// refs colgantes se filtran igual que haría el populate que ve el front, para
+// que los índices coincidan con los que muestra la app.
+async function loadTable(tableId) {
+  const table = await Table.findById(tableId).select("splits pinnedNotes").lean();
   if (!table) return null;
 
-  const splitIds = (table.splits || []).map(toId);
-  const splits = await Split.find({ _id: { $in: splitIds } }).select("workouts").lean();
-  const splitById = new Map(splits.map((s) => [toId(s._id), s]));
-
-  const workoutIds = splits.flatMap((s) => (s.workouts || []).map(toId));
-  const workouts = await Workout.find({ _id: { $in: workoutIds } }).select("exercises").lean();
+  const workoutIds = (table.splits || []).flatMap((split) => (split.workouts || []).map(toId));
+  const workouts = await Workout.find({ _id: { $in: workoutIds } }).select("exercises._id").lean();
   const workoutById = new Map(workouts.map((w) => [toId(w._id), w]));
 
-  const exerciseIds = workouts.flatMap((w) => (w.exercises || []).map(toId));
-  const existing = await CustomExercise.find({ _id: { $in: exerciseIds } }).select("_id").lean();
-  const existingIds = new Set(existing.map((e) => toId(e._id)));
-
-  return splitIds
-    .map((id) => splitById.get(id))
-    .filter(Boolean)
-    .map((split) =>
-      (split.workouts || [])
-        .map((id) => workoutById.get(toId(id)))
-        .filter(Boolean)
-        .map((workout) => (workout.exercises || []).map(toId).filter((id) => existingIds.has(id))),
-    );
+  const grid = (table.splits || []).map((split) =>
+    (split.workouts || [])
+      .map((id) => workoutById.get(toId(id)))
+      .filter(Boolean)
+      .map((workout) => (workout.exercises || []).map(toId)),
+  );
+  return { grid, notes: table.pinnedNotes || [] };
 }
 
 async function capture(tableId) {
-  const notes = await PinnedExerciseNoteModel.find({ tableId }).lean();
-  if (notes.length === 0) return null;
-  const grid = await loadGrid(tableId);
-  if (!grid) return null;
-  return { tableId, anchors: captureAnchors(notes, grid) };
+  const loaded = await loadTable(tableId);
+  if (!loaded || loaded.notes.length === 0) return null;
+  return { tableId, anchors: captureAnchors(loaded.notes, loaded.grid) };
 }
 
 async function reconcile({ tableId, anchors }) {
-  const grid = await loadGrid(tableId);
-  if (!grid) return;
-  const { moves, deletes } = resolveAnchors(anchors, grid);
+  const loaded = await loadTable(tableId);
+  if (!loaded) return;
+  const { moves, deletes } = resolveAnchors(anchors, loaded.grid);
+  if (!deletes.length && !moves.length) return;
 
-  if (deletes.length) {
-    await PinnedExerciseNoteModel.deleteMany({ _id: { $in: deletes } });
-  }
-  if (!moves.length) return;
-
-  // Dos pasadas por el índice único (tableId, workoutIndex, exerciseIndex):
-  // un intercambio A↔B chocaría si se escribe directamente la posición final.
-  await PinnedExerciseNoteModel.bulkWrite(
-    moves.map((move, i) => ({
-      updateOne: {
-        filter: { _id: move.noteId },
-        update: { $set: { workoutIndex: -1 - i, exerciseIndex: -1 - i } },
-      },
-    })),
-  );
-  await PinnedExerciseNoteModel.bulkWrite(
-    moves.map((move) => ({
-      updateOne: {
-        filter: { _id: move.noteId },
-        update: {
-          $set: {
-            workoutIndex: move.workoutIndex,
-            exerciseIndex: move.exerciseIndex,
-            updatedAt: new Date(),
-          },
-        },
-      },
-    })),
-  );
+  // Las notas van dentro de la tabla: se reescribe la lista entera de una vez
+  // (sin el índice único de cuando eran documentos, un intercambio A<->B ya
+  // no necesita dos pasadas).
+  const deleted = new Set(deletes.map(toId));
+  const moveById = new Map(moves.map((move) => [toId(move.noteId), move]));
+  const now = new Date();
+  const pinnedNotes = loaded.notes
+    .filter((note) => !deleted.has(toId(note._id)))
+    .map((note) => {
+      const move = moveById.get(toId(note._id));
+      return move
+        ? { ...note, workoutIndex: move.workoutIndex, exerciseIndex: move.exerciseIndex, updatedAt: now }
+        : note;
+    });
+  await Table.updateOne({ _id: tableId }, { $set: { pinnedNotes } });
 }
 
 // Envuelve una mutación de la estructura de una o varias tablas. Un fallo al

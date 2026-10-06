@@ -1,11 +1,11 @@
-const anthropometryModel = require("./anthropometry-service");
+const anthropometryService = require("./anthropometry-service");
 const { pickMeasurements } = require("./anthropometry-origin");
 
 // Pantallas del cliente: solo ve (y edita) lo que apuntó él, nunca lo que
 // respondió en check-ins de su entrenador (anthropometry-origin.js).
 const controller = {
   async createAnthropometry(req, res) {
-    const anthropometry = await anthropometryModel.createAnthropometry(
+    const anthropometry = await anthropometryService.createAnthropometry(
       req.user.id,
       req.body.date,
       pickMeasurements(req.body)
@@ -14,7 +14,7 @@ const controller = {
   },
 
   async getAnthropometryById(req, res) {
-    const anthropometry = await anthropometryModel.getAnthropometryById(req.params.id, {
+    const anthropometry = await anthropometryService.getAnthropometryById(req.params.id, {
       ownOnly: true,
       ownerId: ownerFilter(req),
     });
@@ -23,14 +23,14 @@ const controller = {
   },
 
   async getAnthropometryByUserIdAndDate(req, res) {
-    const anthropometry = await anthropometryModel.getAnthropometryByUserIdAndDate(req.user.id, req.body.date, {
+    const anthropometry = await anthropometryService.getAnthropometryByUserIdAndDate(req.user.id, req.body.date, {
       ownOnly: true,
     });
     return res.send(anthropometry);
   },
 
   async getAnthropometriesByUserIdBetweenDates(req, res) {
-    const anthropometries = await anthropometryModel.getAnthropometriesByUserIdBetweenDates(
+    const anthropometries = await anthropometryService.getAnthropometriesByUserIdBetweenDates(
       req.user.id,
       req.body.minDate,
       req.body.maxDate,
@@ -40,12 +40,12 @@ const controller = {
   },
 
   async getAllAnthropometriesByUserId(req, res) {
-    const anthropometries = await anthropometryModel.getAllAnthropometriesByUserId(req.user.id, { ownOnly: true });
+    const anthropometries = await anthropometryService.getAllAnthropometriesByUserId(req.user.id, { ownOnly: true });
     return res.send(anthropometries);
   },
 
   async updateAnthropometry(req, res) {
-    const anthropometry = await anthropometryModel.updateAnthropometry(req.params.id, pickMeasurements(req.body), {
+    const anthropometry = await anthropometryService.updateAnthropometry(req.params.id, pickMeasurements(req.body), {
       ownerId: ownerFilter(req),
     });
     if (!anthropometry) return res.sendStatus(404);
@@ -53,13 +53,13 @@ const controller = {
   },
 
   async deleteAnthropometry(req, res) {
-    const deleted = await anthropometryModel.deleteAnthropometry(req.params.id, { ownerId: ownerFilter(req) });
+    const deleted = await anthropometryService.deleteAnthropometry(req.params.id, { ownerId: ownerFilter(req) });
     if (!deleted) return res.sendStatus(404);
     return res.sendStatus(204);
   },
 
   async upsertAnthropometry(req, res) {
-    const anthropometry = await anthropometryModel.upsertAnthropometry(
+    const anthropometry = await anthropometryService.upsertAnthropometry(
       req.user.id,
       req.body.date,
       pickMeasurements(req.body)

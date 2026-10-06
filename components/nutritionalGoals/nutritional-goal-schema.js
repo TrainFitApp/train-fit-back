@@ -1,44 +1,28 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
-const NutritionalGoalSchema = new Schema({
-  userId: {
-    type: Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-    index: true,
+// Un objetivo nutricional del usuario (kcal y macros del día). Vive DENTRO
+// del usuario (User.nutritionalGoals[]): son pocos por persona y el que rige
+// lo marca User.goalInUse. Se leen y escriben solo por
+// nutritional-goal-dao.js.
+const NutritionalGoalSchema = new Schema(
+  {
+    name: { type: String, required: true, default: "Default", trim: true, maxlength: 100 },
+    kcalTotal: { type: Number, default: 0 },
+    proteinsGTotal: { type: Number, default: 0 },
+    carbohydratesGTotal: { type: Number, default: 0 },
+    fatGTotal: { type: Number, default: 0 },
+    fiberGTotal: { type: Number, default: null },
+    // "manual": alguien (el cliente o su profesional) fijó las cifras a mano
+    // y recalcular desde el perfil no las pisa.
+    source: { type: String, enum: ["calculated", "manual"], default: "calculated" },
+    updatedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
   },
-  name: {
-    type: String,
-    required: true,
-    default: "Default",
-    trim: true,
-    maxlength: 100,
-  },
-  kcalTotal: { type: Number, default: 0 },
-  proteinsGTotal: { type: Number, default: 0 },
-  carbohydratesGTotal: { type: Number, default: 0 },
-  fatGTotal: { type: Number, default: 0 },
-  // Fase 5 Coach Pro — "fibra si procede" (§15). `null` y no 0 a propósito:
-  // un objetivo sin fibra definida no es "0 g de fibra", es que ese coach no
-  // la pauta. Todo lo que ya existía sigue funcionando igual — el campo es
-  // opcional y nada lo exige.
-  fiberGTotal: { type: Number, default: null },
-  // De dónde salen estos números: "calculated" = recalculados del perfil del
-  // cliente (Mifflin + gasto + reparto), "manual" = tecleados encima. Un
-  // objetivo manual NO se pisa al recalcular: si alguien decidió esas kcal,
-  // cambiar de peso no debe borrarlas sin avisar.
-  source: { type: String, enum: ["calculated", "manual"], default: "calculated" },
-  // Quién los tecleó, cuando no fue el propio cliente. El profesional puede
-  // editar el objetivo de su cliente desde Plan > Nutrición.
-  updatedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-});
+  { timestamps: true },
+);
 
-NutritionalGoalSchema.pre("save", function (next) {
-  this.updatedAt = new Date();
-  next();
-});
+// Campos que se pueden escribir en un objetivo.
+const GOAL_FIELDS = Object.keys(NutritionalGoalSchema.paths).filter((path) => !["_id", "createdAt", "updatedAt"].includes(path));
 
-module.exports = mongoose.model("NutritionalGoal", NutritionalGoalSchema);
+module.exports = NutritionalGoalSchema;
+module.exports.GOAL_FIELDS = GOAL_FIELDS;

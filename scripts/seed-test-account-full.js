@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
 const { buildSearchFields } = require("../components/util/search-index");
 const { isoDate, addDaysToIsoDate, startOfIsoWeek } = require("../components/util/date-util");
-const { buildWeeks, weekAt } = require("../components/planAssignments/week-window");
+const { buildWeeks, weekAt } = require("../components/dietPhases/week-window");
 const { deriveSuitability } = require("../components/dietTemplates/diet-suitability");
 const { contentMacroProfile } = require("../components/dietTemplates/diet-macro-profile");
 const { explainNutritionTarget } = require("../components/nutritionalGoals/nutrition-target");
@@ -219,7 +219,7 @@ const populate = (menus) =>
     })),
   }));
 
-/** Escribe los CustomProduct de un contenido y devuelve los menús con refs. */
+/** Menús con sus alimentos embebidos (ids estables para re-sembrar). */
 function writeMenus(tag, menus) {
   return menus.map((m, mi) => ({
     name: m.name,
@@ -227,11 +227,12 @@ function writeMenus(tag, menus) {
       slot: ml.slot,
       alternatives: ml.alternatives.map((a, ai) => ({
         label: a.label,
-        customProducts: a.items.map((it, ii) => {
-          const id = oid(`cp:${tag}:${mi}:${li}:${ai}:${ii}`);
-          add("CustomProduct", id, { product: FOODS[it.food].id, quantity: it.qty, order: ii });
-          return id;
-        }),
+        customProducts: a.items.map((it, ii) => ({
+          _id: oid(`cp:${tag}:${mi}:${li}:${ai}:${ii}`),
+          product: FOODS[it.food].id,
+          quantity: it.qty,
+          order: ii,
+        })),
         customRecipes: [],
       })),
     })),
@@ -386,55 +387,32 @@ function buildNutrition(user) {
     menu("Entrenamiento", needP2.target.kcal * 0.96, { Desayuno: ["dYog"], Comida: ["cEggRice", "cLentil"], Merienda: ["mHummus"], Cena: ["nOmelet", "nLentil"], Recena: ["rYog"] }),
     menu("Descanso", needP2.target.kcal * 0.9 * 0.96, { Desayuno: ["dEgg"], Comida: ["cChickpea"], Merienda: ["mYog"], Cena: ["nLentil"] }),
   ];
-  const suit = (m) => deriveSuitability({ menus: populate(m) }).suitableFor;
-
-  const common = { trainerId: TRAINER_ID, clientId: CLIENT_ID, suitableForOverride: [] };
-  add("DietTemplate", p1Id, {
+  const common = { trainerId: TRAINER_ID, clientId: CLIENT_ID, proteinPerKg: null, fatPerKg: null };
+  add("DietPhase", p1Id, {
     ...common,
     name: "Adaptación",
     sourceTemplateId: oid("tpl:def"),
     startDate: P1_START,
     endDate: P1_END,
-    status: "superseded",
-    supersededBy: p2Id,
-    phaseId: p1Id,
-    phaseName: "Adaptación",
-    phaseTarget: { ...needP1.target, source: "calculated" },
-    phaseProteinPerKg: null,
-    phaseFatPerKg: null,
-    phaseNeed: needP1.snapshot,
-    menus: writeMenus("phase1", p1Menus),
-    suitableFor: suit(p1Menus),
+    target: { ...needP1.target, source: "calculated" },
+    need: needP1.snapshot,
+    contents: [{ _id: oid("phase1:content1"), startDate: P1_START, menus: writeMenus("phase1", p1Menus) }],
     createdAt: at(P1_START),
   });
-  add("DietTemplate", p2Id, {
+  add("DietPhase", p2Id, {
     ...common,
-    name: "Definición vegetariana",
+    name: "Definición",
     sourceTemplateId: oid("tpl:veg"),
     startDate: P2_START,
-    endDate: addDaysToIsoDate(W3_START, -1),
-    status: "superseded",
-    supersededBy: w3Id,
-    phaseId: p2Id,
-    phaseName: "Definición",
-    phaseTarget: { ...needP2.target, source: "calculated" },
-    phaseProteinPerKg: null,
-    phaseFatPerKg: null,
-    phaseNeed: needP2.snapshot,
-    menus: writeMenus("phase2", p2Menus),
-    suitableFor: suit(p2Menus),
-    createdAt: at(P2_START),
-  });
-  add("DietTemplate", w3Id, {
-    ...common,
-    name: "Definición vegetariana",
-    phaseId: p2Id,
-    startDate: W3_START,
     endDate: null,
-    status: "active",
-    menus: writeMenus("phase2w3", w3Menus),
-    suitableFor: suit(w3Menus),
-    createdAt: at(W3_START),
+    target: { ...needP2.target, source: "calculated" },
+    need: needP2.snapshot,
+    contents: [
+      { _id: oid("phase2:content1"), startDate: P2_START, menus: writeMenus("phase2", p2Menus) },
+      // Semana 3 preparada con menos cantidad: otra versión dentro de la fase.
+      { _id: w3Id, startDate: W3_START, menus: writeMenus("phase2w3", w3Menus) },
+    ],
+    createdAt: at(P2_START),
   });
 
   const contents = [
@@ -467,7 +445,7 @@ function buildDietDays(contents) {
     // Cumplimiento: ~88 %, algo peor en la semana 3-4 de la fase 2 (déficit)
     const rate = date >= d(-14) && date < d(0) ? 0.74 : 0.9;
 
-    const mealIds = [];
+    const meals = [];
     SLOTS.forEach((slot, si) => {
       const mealId = oid(`meal:${k}:${si}`);
       const planMeal = chosen?.meals.find((m) => m.slot === slot);
@@ -493,8 +471,8 @@ function buildDietDays(contents) {
         alt.items.forEach((it, ii) => {
           const ok = eaten && rnd(`c:${k}:${si}:${ii}`) < rate;
           const dev = ok && rnd(`q:${k}:${si}:${ii}`) < 0.2 ? 1 + (rnd(`qq:${k}:${si}:${ii}`) - 0.5) * 0.3 : 1;
-          const cpId = oid(`dcp:${k}:${si}:${ii}`);
-          add("CustomProduct", cpId, {
+          cps.push({
+            _id: oid(`dcp:${k}:${si}:${ii}`),
             product: FOODS[it.food].id,
             mealId,
             quantity: Math.max(5, Math.round((it.qty * dev) / 5) * 5),
@@ -503,7 +481,6 @@ function buildDietDays(contents) {
             assignedQuantity: it.qty,
             consumed: ok,
           });
-          cps.push(cpId);
           planned++;
           if (ok) {
             consumed++;
@@ -514,12 +491,11 @@ function buildDietDays(contents) {
       }
       // Extras que añade el cliente por su cuenta (no cuentan como cumplimiento)
       if ((slot === "Merienda" || slot === "Recena") && isPast && !skipped && rnd(`x:${k}:${si}`) < 0.15) {
-        const cpId = oid(`dcpx:${k}:${si}`);
-        add("CustomProduct", cpId, { product: FOODS["Plátano"].id, mealId, quantity: 100, order: 9, consumed: true });
-        cps.push(cpId);
+        cps.push({ _id: oid(`dcpx:${k}:${si}`), product: FOODS["Plátano"].id, mealId, quantity: 100, order: 9, consumed: true });
       }
 
-      add("Meal", mealId, {
+      meals.push({
+        _id: mealId,
         name: slot,
         customProducts: cps,
         customRecipes: [],
@@ -529,7 +505,6 @@ function buildDietDays(contents) {
         alternativesTrainerId: alternatives.length ? TRAINER_ID : null,
         createdAt: at(date, "07:00"),
       });
-      mealIds.push(mealId);
     });
 
     add("DietDay", oid(`dd:${k}`), {
@@ -537,7 +512,7 @@ function buildDietDays(contents) {
       date,
       menuName: skipped ? null : content ? menuName : null,
       skipped,
-      meals: mealIds,
+      meals,
     });
     days++;
   }
@@ -816,7 +791,7 @@ const MICROS = [
 ];
 
 function buildTraining(exerciseIds) {
-  const splitIds = [];
+  const splits = [];
   let nSets = 0;
   MICROS.forEach((micro, m) => {
     const monday = d(-21 + 7 * m);
@@ -824,13 +799,12 @@ function buildTraining(exerciseIds) {
     SESSIONS.forEach((ses, s) => {
       const date = addDaysToIsoDate(monday, ses.dow);
       const done = date < TODAY || (date === TODAY && false);
-      const exIds = [];
+      const exercises = [];
       ses.ex.forEach(([name, series, reps, base, rest], e) => {
         const nSeries = Math.max(2, Math.round(series * micro.sets));
-        const setIds = [];
+        const sets = [];
         for (let k = 0; k < nSeries; k++) {
-          const setId = oid(`set:${m}:${s}:${e}:${k}`);
-          const doc = { order: k, expectedReps: reps, expectedRir: [2, 1], restSeconds: rest };
+          const doc = { _id: oid(`set:${m}:${s}:${e}:${k}`), order: k, expectedReps: reps, expectedRir: [2, 1], restSeconds: rest };
           if (done) {
             doc.reps = reps[0] + ((k + e) % 3);
             doc.weight = Math.round(base * micro.factor * (1 + k * 0.01) * 2) / 2;
@@ -838,18 +812,16 @@ function buildTraining(exerciseIds) {
             doc.doned = true;
             doc.donedAt = at(date, "19:" + (10 + k * 3));
           }
-          add("Set", setId, doc);
-          setIds.push(setId);
+          sets.push(doc);
           nSets++;
         }
-        const cex = { order: e, exercise: exerciseIds[name], sets: setIds };
+        const cex = { _id: oid(`cex:${m}:${s}:${e}`), order: e, exercise: exerciseIds[name], sets };
         if (m === 3 && name === "Sentadilla barra alta") cex.notes = "Semana de descarga: RIR 3, sin buscar el fallo.";
         if (name === "Press banca") cex.notes = "Escápulas retraídas y codos a 45°.";
         if (done && name === "Sentadilla barra alta" && m === 1) cex.clientNotes = "La rodilla derecha molestó un poco en la última serie.";
-        add("CustomExercise", oid(`cex:${m}:${s}:${e}`), cex);
-        exIds.push(oid(`cex:${m}:${s}:${e}`));
+        exercises.push(cex);
       });
-      const w = { name: ses.name, exercises: exIds, order: s };
+      const w = { kind: "session", name: ses.name, exercises, order: s };
       if (done) {
         w.date = at(date, "19:00");
         w.readinessPre = 3 + (rnd(`wr:${m}:${s}`) < 0.6 ? 1 : 0);
@@ -859,14 +831,12 @@ function buildTraining(exerciseIds) {
       add("Workout", oid(`w:${m}:${s}`), w);
       workoutIds.push(oid(`w:${m}:${s}`));
     });
-    const spId = oid("split:" + m);
-    add("Split", spId, { name: micro.name, objective: micro.objective, purpose: micro.purpose, workouts: workoutIds });
-    splitIds.push(spId);
+    splits.push({ _id: oid("split:" + m), name: micro.name, objective: micro.objective, purpose: micro.purpose, workouts: workoutIds });
   });
 
   const tableId = oid("table");
-  add("Table", tableId, { name: "Hipertrofia torso-pierna", userId: CLIENT_ID, assignedByTrainerId: TRAINER_ID, splits: splitIds });
-  add("RoutineAssignment", oid("routine"), { tableId, clientId: CLIENT_ID, trainerId: TRAINER_ID, startDate: d(-21), status: "active", supersededBy: null, createdAt: at(d(-21)) });
+  add("Table", tableId, { name: "Hipertrofia torso-pierna", userId: CLIENT_ID, assignedByTrainerId: TRAINER_ID, splits });
+  add("RoutineAssignment", oid("routine"), { tableId, clientId: CLIENT_ID, trainerId: TRAINER_ID, startDate: d(-21), createdAt: at(d(-21)) });
 
   for (const ses of SESSIONS) {
     for (const [name, , , , , muscles, joints] of ses.ex) {
@@ -912,7 +882,8 @@ function buildTracking(kcalP2) {
   [2, 1, 1, 0].forEach((level, i) =>
     add("PainEntry", oid("pain:shoulder:" + i), { userId: CLIENT_ID, date: addDaysToIsoDate(TODAY, -(3 - i) * 5 - 1), zone: "Hombro izq.", level, note: "" })
   );
-  add("PainThreshold", oid("painthr:knee"), { trainerId: TRAINER_ID, clientId: CLIENT_ID, zone: "Rodilla der.", workLevel: 3, painLevel: 5, note: "Hasta 3 entrena normal. Desde 5, fuera sentadilla profunda y prensa." });
+  // El umbral vive en el par entrenador-cliente: se escribe aparte (ver main).
+  PAIN_THRESHOLDS.push({ zone: "Rodilla der.", workLevel: 3, painLevel: 5, note: "Hasta 3 entrena normal. Desde 5, fuera sentadilla profunda y prensa." });
 
   // Suplementos (nombres distintos a los que ya tienen)
   const SUPPS = [
@@ -942,7 +913,7 @@ function buildTracking(kcalP2) {
   const CHANGES = [
     { days: 70, entity: "diet_plan", action: "assigned", name: "Adaptación", reason: "Alta. Empezamos en mantenimiento para medir adherencia real.", changes: [{ field: "kcalTotal", label: "Calorías", previousValue: null, newValue: null }] },
     { days: 42, entity: "routine", action: "assigned", name: "Hipertrofia torso-pierna", reason: "Cierra el bloque de adaptación. Entra torso-pierna de 3 días.", changes: [{ field: "name", label: "Rutina", previousValue: null, newValue: "Hipertrofia torso-pierna" }] },
-    { days: 28, entity: "diet_plan", action: "replaced", name: "Definición vegetariana", reason: "Pasa a definición: -300 kcal sobre el gasto calculado.", changes: [{ field: "phaseName", label: "Fase", previousValue: "Adaptación", newValue: "Definición" }] },
+    { days: 28, entity: "diet_plan", action: "replaced", name: "Definición", reason: "Pasa a definición: -300 kcal sobre el gasto calculado.", changes: [{ field: "name", label: "Fase", previousValue: "Adaptación", newValue: "Definición" }] },
     { days: 14, entity: "diet_plan", action: "updated", name: "Definición vegetariana", reason: "Perdía menos de lo previsto: bajo un 4 % las cantidades esta semana.", changes: [{ field: "kcalTotal", label: "Calorías", previousValue: kcalP2, newValue: Math.round(kcalP2 * 0.96) }] },
     { days: 10, entity: "checkin_config", action: "updated", name: "Check-in semanal", reason: "Añado la pregunta de comidas fuera de casa: es donde se le escapa el plan.", changes: [{ field: "customQuestions", label: "Preguntas propias", previousValue: 5, newValue: 6 }] },
   ];
@@ -968,18 +939,14 @@ function buildTracking(kcalP2) {
 // ---------------------------------------------------------------------------
 const MODEL_FILES = {
   Product: "products/product-schema",
-  CustomProduct: "customProducts/custom-product-schema",
   DietTemplate: "dietTemplates/diet-template-schema",
+  DietPhase: "dietPhases/diet-phase-schema",
   DietDay: "dietDays/diet-days-schema",
-  Meal: "meals/meal-schema",
   CheckinTemplateDefinition: "trainerCheckins/checkin-template-definition-schema",
   CheckinSchedule: "trainerCheckins/checkin-schedule-schema",
   CheckinResponse: "trainerCheckins/checkin-response-schema",
   Table: "tables/table-schema",
-  Split: "splits/split-schema",
   Workout: "workouts/workout-schema",
-  CustomExercise: "customExercises/custom-exercise-schema",
-  Set: "sets/set-schema",
   RoutineAssignment: "routineAssignments/routine-assignment-schema",
   ExerciseScore: "exerciseScores/exercise-score-schema",
   TrainerTask: "trainerTasks/trainer-task-schema",
@@ -991,11 +958,8 @@ const MODEL_FILES = {
   CoachTask: "coachTasks/coach-task-schema",
 };
 function modelOf(name) {
-  if (name === "Anthropometry") {
-    require("../components/anthropometry/anthropometry-dao");
-    return mongoose.model("Anthropometry");
-  }
-  if (name === "PainEntry" || name === "PainThreshold") return require("../components/painLog/pain-schema")[name];
+  if (name === "Anthropometry") return require("../components/anthropometry/anthropometry-schema");
+  if (name === "PainEntry") return require("../components/painLog/pain-schema").PainEntry;
   if (name === "Supplement") return require("../components/supplements/supplement-schema").Supplement;
   const mod = require("../components/" + MODEL_FILES[name]);
   return mod;
@@ -1029,7 +993,9 @@ async function bulk(Model, batch) {
   }
 }
 
-const DELETE_ORDER = ["DietDay", "Meal", "CustomProduct", "DietTemplate", "Table", "Split", "Workout", "CustomExercise", "Set"];
+const DELETE_ORDER = ["DietDay", "DietPhase", "DietTemplate", "Table", "Workout"];
+// Umbrales de dolor: van dentro del par (TrainerClient.painThresholds).
+const PAIN_THRESHOLDS = [];
 
 async function main() {
   const uri = buildMongoUri();
@@ -1037,9 +1003,9 @@ async function main() {
   console.log(`[seed-full] hoy=${TODAY} lunes=${MON0} fase1=${P1_START}..${P1_END} fase2=${P2_START}..`);
   await mongoose.connect(uri);
 
-  const User = require("../components/users/schema");
+  const User = require("../components/users/user-schema");
   const trainer = await User.findOne({ email: TRAINER_EMAIL }).select("_id roles").lean();
-  const client = await User.findOne({ email: CLIENT_EMAIL }).select("_id sex height birth steps activity training objetive tableInUse").lean();
+  const client = await User.findOne({ email: CLIENT_EMAIL }).select("_id sex height birth steps activity training objetive").lean();
   if (!trainer || !client) throw new Error(`Faltan cuentas: ${!trainer ? TRAINER_EMAIL : ""} ${!client ? CLIENT_EMAIL : ""}. Este script no las crea.`);
   // `training` guarda el factor COMBINADO de la tabla pasos × días de
   // entrenamiento (training-factor.js): uno que no casa con ninguna columna
@@ -1056,7 +1022,7 @@ async function main() {
   // Antropometría existente (no se pisa) y ejercicios del catálogo
   require("../components/anthropometry/anthropometry-dao");
   // Fechas ocupadas por filas que NO son de este seed (las suyas se reescriben).
-  const existing = await mongoose.model("Anthropometry").find({ userId: CLIENT_ID }).select("date").lean();
+  const existing = await require("../components/anthropometry/anthropometry-schema").find({ userId: CLIENT_ID }).select("date").lean();
   const ownIds = new Set(Array.from({ length: 200 }, (_, i) => String(oid("anth:" + (i - 100)))));
   const existingDates = new Set(existing.filter((a) => !ownIds.has(String(a._id))).map((a) => a.date));
 
@@ -1090,7 +1056,9 @@ async function main() {
       const res = await modelOf(name).deleteMany({ _id: { $in: byModel[name].map((o) => o._id) } });
       console.log(`  - ${name.padEnd(26)} ${res.deletedCount}`);
     }
-    await User.updateOne({ _id: CLIENT_ID, tableInUse: tr.tableId }, { $unset: { tableInUse: 1 } });
+    await User.updateOne({ _id: CLIENT_ID, tableInUse: tr.tableId }, { $unset: { tableInUse: 1, tableInUseAt: 1 } });
+    const trainerClientDao = require("../components/trainerClients/trainer-client-dao");
+    for (const threshold of PAIN_THRESHOLDS) await trainerClientDao.removePainThreshold(TRAINER_ID, CLIENT_ID, threshold.zone);
     await mongoose.disconnect();
     console.log("[seed-full] limpio");
     return;
@@ -1119,20 +1087,23 @@ async function main() {
   }
 
   // Orden: primero lo que otros referencian
-  const order = ["Product", "CustomProduct", "DietTemplate", "Meal", "DietDay", "Anthropometry", "CheckinTemplateDefinition", "CheckinSchedule", "CheckinResponse",
-    "Set", "CustomExercise", "Workout", "Split", "Table", "RoutineAssignment", "ExerciseScore", "TrainerTask", "TaskCompletion", "PainEntry", "PainThreshold",
+  const order = ["Product", "DietTemplate", "DietPhase", "DietDay", "Anthropometry", "CheckinTemplateDefinition", "CheckinSchedule", "CheckinResponse",
+    "Workout", "Table", "RoutineAssignment", "ExerciseScore", "TrainerTask", "TaskCompletion", "PainEntry",
     "Supplement", "TrainerNote", "TrainerPayment", "PlanChange", "CoachTask"];
   for (const name of order) {
     const list = byModel[name] || [];
     for (let i = 0; i < list.length; i += 250) await bulk(modelOf(name), list.slice(i, i + 250));
     if (list.length) console.log(`  + ${name.padEnd(26)} ${list.length}`);
   }
-  if (!client.tableInUse) {
-    await User.updateOne({ _id: CLIENT_ID, tableInUse: { $exists: false } }, { $set: { tableInUse: tr.tableId } });
-    console.log("  + User.tableInUse -> rutina sembrada");
-  } else {
-    console.log("  = User.tableInUse ya estaba puesto, no se toca");
+  const trainerClientDao = require("../components/trainerClients/trainer-client-dao");
+  for (const threshold of PAIN_THRESHOLDS) {
+    if (!(await trainerClientDao.setPainThreshold(TRAINER_ID, CLIENT_ID, threshold))) {
+      console.log("  ! sin relación entre las dos cuentas: umbrales de dolor no sembrados");
+      break;
+    }
   }
+  if (PAIN_THRESHOLDS.length) console.log(`  + TrainerClient.painThresholds  ${PAIN_THRESHOLDS.length}`);
+  // La rutina sembrada queda en uso por su fase (routineAssignments/routine-in-use.js).
   await mongoose.disconnect();
   console.log("[seed-full] hecho");
 }

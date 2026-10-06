@@ -10,10 +10,9 @@ const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const { taskLabel } = require("../trainerTasks/task-label");
 const tableDao = require("../tables/table-dao");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
-const { computeWindowedTrainingProgress, pickCurrentPhase } = require("../routineAssignments/routine-assignment-schedule");
-const CoachAlert = require("../coachAlerts/coach-alert-schema");
-const clientIntakeDao = require("../clientIntake/client-intake-dao");
-const { intakeStatusFor } = require("../trainerClients/intake-pending");
+const { computeWindowedTrainingProgress } = require("../routineAssignments/routine-assignment-schedule");
+const { coveringPhase } = require("../util/phase-chain");
+const coachAlertDao = require("../coachAlerts/coach-alert-dao");
 const checkinDao = require("../trainerCheckins/checkin-dao");
 const formCheckDao = require("../formChecks/form-check-dao");
 
@@ -84,42 +83,14 @@ function daysSince(date, now) {
   return Math.floor((now.getTime() - new Date(date).getTime()) / 86400000);
 }
 
-/**
- * Alertas abiertas por cliente, en una sola agregación.
- *
- * Aparte del DAO de alertas porque es una consulta de RECUENTO para la
- * cartera entera; listForClient devuelve documentos completos de un cliente y
- * traerlos todos para contarlos sería mover kilobytes para producir enteros.
- */
-async function countOpenAlertsByClient(trainerId) {
-  const mongoose = require("mongoose");
-  const rows = await CoachAlert.aggregate([
-    {
-      $match: {
-        trainerId: new mongoose.Types.ObjectId(String(trainerId)),
-        status: "open",
-      },
-    },
-    {
-      $group: {
-        _id: "$clientId",
-        total: { $sum: 1 },
-        // La prioridad se guarda como string; aquí solo hace falta saber si
-        // hay alguna urgente, así que se cuenta directamente en Mongo.
-        high: { $sum: { $cond: [{ $eq: ["$priority", "high"] }, 1, 0] } },
-      },
-    },
-  ]);
-  return new Map(rows.map((row) => [String(row._id), { total: row.total, high: row.high }]));
-}
 
 // Tarea 5bis (2026-09) — igual que client-data-loader.js#loadTrainingWindow:
 // adherencia de entrenamiento de la fase EN CURSO, no de la ventana fija de
 // la Cartera. `phases` ya está cargado para TODOS los clientes de golpe
-// (listByClients, ver buildRoster) — pickCurrentPhase filtra en memoria, sin
+// (listByClients, ver buildRoster) — coveringPhase filtra en memoria, sin
 // consulta extra por cliente.
 function computeCurrentPhaseTraining(phases, splitsByTableId, today, timeZone) {
-  const currentPhase = pickCurrentPhase(phases, today);
+  const currentPhase = coveringPhase(phases, today);
   if (!currentPhase) return { plannedTotal: 0, completedSessions: 0, scheduledDays: 0 };
 
   return computeWindowedTrainingProgress(
@@ -143,45 +114,37 @@ async function buildRoster(trainerId, { now = new Date(), timeZone } = {}) {
   const context = await loadTrainerContext(trainerId, now);
   const snapshots = buildClientSnapshots(context, now);
 
-  // Solo los clientes con relación activa: los que están "en_revision"
-  // todavía no tienen nada que medir, y su sitio es el aviso de alta del
-  // panel Hoy, no una fila de adherencia vacía aquí.
-  const activeSnapshots = snapshots.filter((snapshot) => snapshot.relationStatus === "active");
-  const clientIds = activeSnapshots.map((snapshot) => snapshot.clientId);
+  const clientIds = snapshots.map((snapshot) => snapshot.clientId);
 
   // Tarea 5bis (2026-09) — entrenamiento de la fase EN CURSO de cada
   // cliente, no de su historial completo (ver computeCurrentPhaseTraining).
-  // context.tableIdByClient (el tableInUse de loadTrainerContext) tampoco
-  // sirve como atajo: puede quedarse desfasado para fases futuras — ver
-  // client-data-loader.js#loadTrainingWindow, mismo criterio. Un único
+  // Mide la fase que rige hoy, no la rutina en uso (context.tableIdByClient):
+  // ver client-data-loader.js#loadTrainingWindow, mismo criterio. Un único
   // listByClients y un único getSplitsForTables para toda la cartera, no
   // una consulta por cliente — pero SOLO de las tablas de la fase actual de
   // cada uno, no de todo el historial (ya no hace falta el resto).
   // Scopes de cada cliente: "Rechazar" desde la Cartera termina todas sus
   // relaciones (una por scope) sin pasar por la ficha.
-  const scopesByClient = new Map(
-    context.activeClients.filter((entry) => entry.user).map((entry) => [String(entry.user._id), entry.scopes])
-  );
+  const clientByKey = new Map(context.activeClients.filter((entry) => entry.user).map((entry) => [String(entry.user._id), entry]));
+  const scopesOf = (clientId) => clientByKey.get(String(clientId))?.scopes || [];
   // Revisiones de técnica: solo de clientes de entrenamiento (el
   // nutricionista no las ve, form-check-service.js#activeTrainingClientIds).
-  const snapshotByClient = new Map(activeSnapshots.map((snapshot) => [String(snapshot.clientId), snapshot]));
-  const trainingClientIds = clientIds.filter((id) => (scopesByClient.get(String(id)) || []).includes("training"));
+  const snapshotByClient = new Map(snapshots.map((snapshot) => [String(snapshot.clientId), snapshot]));
+  const trainingClientIds = clientIds.filter((id) => scopesOf(id).includes("training"));
 
-  const [activeTasks, phasesByClient, alertsByClient, intakes, pendingCheckins, pendingFormChecks] = await Promise.all([
+  const [activeTasks, phasesByClient, alertsByClient, pendingCheckins, pendingFormChecks] = await Promise.all([
     trainerTaskDao.listForClients(trainerId, clientIds),
     routineAssignmentDao.listByClients(clientIds),
-    ensureEvaluatedToday(trainerId, { now, context, timeZone }).then(() => countOpenAlertsByClient(trainerId)),
-    clientIntakeDao.listStateByTrainer(trainerId, clientIds),
+    ensureEvaluatedToday(trainerId, { now, context, timeZone }).then(() => coachAlertDao.countOpenByClient(trainerId)),
     // Columna «Por revisar»: lo que el cliente ha mandado y espera respuesta.
     clientIds.length ? checkinDao.countPendingReviewByClient(trainerId, clientIds) : new Map(),
     trainingClientIds.length ? formCheckDao.countPendingByClient(trainerId, trainingClientIds) : new Map(),
   ]);
-  const intakeByClient = new Map(intakes.map((intake) => [String(intake.clientId), intake]));
 
   const currentTableIds = [
     ...new Set(
       [...phasesByClient]
-        .map(([clientKey, phases]) => pickCurrentPhase(phases, snapshotByClient.get(clientKey)?.today)?.tableId)
+        .map(([clientKey, phases]) => coveringPhase(phases, snapshotByClient.get(clientKey)?.today)?.tableId)
         .filter(Boolean)
         .map(String)
     ),
@@ -225,7 +188,7 @@ async function buildRoster(trainerId, { now = new Date(), timeZone } = {}) {
     tareasPorCliente.set(key, [...(tareasPorCliente.get(key) || []), task]);
   }
 
-  return activeSnapshots.map((snapshot) => {
+  return snapshots.map((snapshot) => {
     const clientKey = String(snapshot.clientId);
     const { to } = windowOf(snapshot);
 
@@ -261,13 +224,10 @@ async function buildRoster(trainerId, { now = new Date(), timeZone } = {}) {
       clientId: snapshot.clientId,
       clientName: snapshot.clientName,
       clientEmail: snapshot.clientEmail || "",
-      // Cuestionario inicial: sin enviar / por revisar / revisado (null =
-      // relación antigua sin cuestionario). Ver intake-pending.js.
-      scopes: scopesByClient.get(clientKey) || [],
-      intakeStatus: intakeStatusFor({
-        intakePending: snapshot.intakePending,
-        intake: intakeByClient.get(clientKey),
-      }),
+      scopes: scopesOf(clientKey),
+      // Cuestionario de alta: sin enviar / por revisar / revisado (null =
+      // relación sin cuestionario). Ver trainerClients/pair-state.js.
+      intakeStatus: clientByKey.get(clientKey)?.intakeStatus || null,
       adherence: {
         overall: adherence.overall,
         weakest: adherence.weakest,

@@ -14,7 +14,6 @@ function makeCharge(overrides = {}) {
     id: newId(),
     trainerId: "t".repeat(24),
     clientId: "c".repeat(24),
-    schemaVersion: 2,
     origin: "one_off",
     currency: "EUR",
     dueDay: "2026-11-05",
@@ -377,82 +376,11 @@ test("avisos del cliente: activar no reproduce el histórico; cambiar zona no re
   assert.equal(core.milestoneInstant("2026-11-05", 0, ny).toISOString(), "2026-11-05T14:00:00.000Z");
 });
 
-test("legacy: fechas y pagos antiguos se conservan sin inventar precisión", () => {
-  const paid = core.normalizeCharge({
-    id: newId(), trainerId: "t".repeat(24), clientId: "c".repeat(24),
-    amount: 60, currency: "EUR", dueDate: new Date("2026-09-05T00:00:00Z"), paidAt: new Date("2026-09-07T10:00:00Z"), note: "sept", createdAt: new Date("2026-09-01T10:00:00Z"),
-  });
-  assert.equal(paid.dueDay, "2026-09-05");
-  assert.equal(paid.status, "settled");
-  assert.equal(paid.payments.length, 1);
-  assert.deepEqual(
-    [paid.payments[0].method, paid.payments[0].receivedDaySource, paid.payments[0].recordedAt, paid.payments[0].source],
-    ["unknown", "legacy_marked_paid", null, "migration"],
-  );
-  assert.equal(paid.persistedV2, false);
-  const madridMidnight = core.normalizeCharge({ id: newId(), trainerId: "t", clientId: "c", amount: 10, dueDate: new Date("2026-09-04T22:00:00Z") });
-  assert.equal(madridMidnight.dueDay, "2026-09-05");
-  assert.deepEqual(madridMidnight.anomalies, []);
-  const ambiguous = core.normalizeCharge({ id: newId(), trainerId: "t", clientId: "c", amount: 10, dueDate: new Date("2026-09-05T23:30:00Z") });
-  assert.deepEqual(ambiguous.anomalies, ["ambiguous_due_date"]);
-  const usd = core.normalizeCharge({ id: newId(), trainerId: "t", clientId: "c", amount: 10.005, currency: "usd", dueDate: new Date("2026-09-05T00:00:00Z") });
-  assert.deepEqual(usd.anomalies.sort(), ["amount_precision", "non_eur_currency"]);
-});
-
-test("migración: convierte lo limpio, reporta anomalías y los totales no cambian", () => {
-  const migratedAt = new Date("2026-10-01T03:00:00Z");
-  const records = [
-    { id: newId(), trainerId: "t", clientId: "c", amount: 60, currency: "EUR", dueDate: new Date("2026-09-05T00:00:00Z"), paidAt: new Date("2026-09-07T10:00:00Z"), createdAt: new Date("2026-09-01") },
-    { id: newId(), trainerId: "t", clientId: "c", amount: 45.5, currency: "EUR", dueDate: new Date("2026-10-05T00:00:00Z"), paidAt: null, createdAt: new Date("2026-09-01") },
-    { id: newId(), trainerId: "t", clientId: "c", amount: 20, currency: "USD", dueDate: new Date("2026-10-05T00:00:00Z"), paidAt: null, createdAt: new Date("2026-09-01") },
-  ];
-  const plans = records.map((record) => core.planMigration(record, migratedAt));
-  assert.deepEqual(plans.map((p) => p.action), ["convert", "convert", "skip"]);
-  assert.deepEqual(plans[2].anomalies, ["non_eur_currency"]);
-  assert.equal(plans[0].charge.remindersFrom.getTime(), migratedAt.getTime(), "sin avisos retroactivos");
-  const before = core.ledgerTotals(records.map((record) => core.normalizeCharge(record)));
-  const after = core.ledgerTotals(plans.map((p) => p.charge));
-  assert.deepEqual(after, before);
-  assert.deepEqual(before.EUR, { charges: 2, amountCents: 10550, receivedCents: 6000, pendingCents: 4550, movements: 1 });
-  // Segunda pasada: ya migrado, nada que hacer.
-  const second = core.planMigration({ ...records[0], schemaVersion: 2, amountCents: 6000, receivedCents: 6000, dueDay: "2026-09-05", status: "settled", payments: plans[0].charge.payments }, migratedAt);
-  assert.equal(second.action, "skip");
-  assert.equal(second.reason, "already_migrated");
-});
-
-test("PATCH legacy: paid:true repetido no duplica; paid:false no borra un historial parcial", () => {
-  const ctx = ctxAt("2026-11-12");
-  let charge = makeCharge();
-  const decision = core.legacyToggle(charge, true, ctx.today);
-  assert.equal(decision.kind, "pay");
-  assert.equal(decision.input.method, "unknown");
-  charge = core.registerPayment(charge, decision.input, ctx, { source: "legacy_toggle", receivedDaySource: "legacy_marked_paid" }).charge;
-  assert.equal(charge.status, "settled");
-  assert.equal(core.legacyToggle(charge, true, ctx.today).kind, "noop");
-  const unmark = core.legacyToggle(charge, false, ctx.today);
-  assert.equal(unmark.kind, "unmark");
-  const reopened = core.unmarkLegacyPayment(charge, unmark.movement, ctx);
-  assert.equal(reopened.status, "open");
-  assert.equal(reopened.payments[0].status, "voided", "el rastro se conserva");
-  // Parcial registrado con la app nueva.
-  const partial = pay(makeCharge(), 20, "2026-11-07", "op-part-00001").charge;
-  assert.equal(core.legacyToggle(partial, false, ctx.today).kind, "noop");
-  const full = pay(partial, 40, "2026-11-08", "op-part-00002").charge;
-  assert.throws(() => core.legacyToggle(full, false, ctx.today), { code: "LEGACY_CONFLICT" });
-  const cancelled = core.cancelBalance(partial, { reason: "Regalo", operationId: "op-canc-00001", confirmBalanceCents: 4000 }, ctx).charge;
-  assert.throws(() => core.legacyToggle(cancelled, true, ctx.today), { code: "LEGACY_CONFLICT" });
-});
-
-test("DTO legacy y Coach: saldo real tras un parcial, sin notas hacia el cliente", () => {
+test("Coach del cliente: saldo real tras un parcial, sin notas", () => {
   const partial = pay(makeCharge({ note: "Privada" }), 20, "2026-11-07", "op-dto-000001").charge;
-  const legacy = core.legacyListItem(partial);
-  assert.equal(legacy.amount, 40);
-  assert.equal(legacy.paidAt, null);
-  assert.equal(legacy.dueDate.toISOString(), "2026-11-05T12:00:00.000Z");
   const coach = core.coachPendingItem(partial, "Laura Coach");
-  assert.equal(coach.amount, 40);
+  assert.deepEqual([coach.balanceCents, coach.dueDay, coach.trainerName], [4000, "2026-11-05", "Laura Coach"]);
   assert.equal("note" in coach, false);
-  assert.equal(core.isLegacyListable(core.cancelBalance(partial, { reason: "Regalo", operationId: "op-dto-000002", confirmBalanceCents: 4000 }, ctxAt("2026-11-12")).charge), false);
 });
 
 test("tarjeta del Resumen: la deuda manda sobre la pausa y no hay falsos vacíos", () => {

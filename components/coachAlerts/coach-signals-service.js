@@ -371,18 +371,6 @@ function detectNoTrainingActivity({ hasRoutine, workoutDates, lastActivityAt, no
   };
 }
 
-function detectPendingReview({ relationStatus, clientName }) {
-  if (relationStatus !== "en_revision") return null;
-  return {
-    type: "pending_review",
-    // Máxima: hasta que el coach lo confirme, el cliente no tiene acceso al
-    // resto de la app — es lo único de esta lista que bloquea a alguien.
-    priority: "high",
-    reason: `${clientName} ha enviado su cuestionario inicial y espera tu confirmación.`,
-    context: { metric: "onboarding" },
-  };
-}
-
 // Punto de entrada: todas las señales de UN cliente. Devuelve [] si no hay
 // nada que reportar — el caso normal para un cliente que va bien.
 function buildSignalsForClient(input) {
@@ -390,7 +378,6 @@ function buildSignalsForClient(input) {
   const base = { ...input, weightSeries };
 
   return [
-    detectPendingReview(base),
     detectCheckinOverdue(base),
     detectSharpWeightChange(base),
     detectLowAdherence(base),
@@ -414,5 +401,4 @@ module.exports = {
   detectInactivity,
   detectNoTrainingActivity,
   detectCheckinOverdue,
-  detectPendingReview,
 };

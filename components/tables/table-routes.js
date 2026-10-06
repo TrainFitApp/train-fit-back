@@ -31,9 +31,8 @@ router.postAsync("/duplicate/:idTable", auth(["admin", "user", "trainer"]), cont
 // Actualizar nombre
 router.putAsync("/", auth(["admin", "user", "trainer"]), controller.updateTable);
 
-// Borrar una tabla: el acceso se comprueba contra su dueño real (el :idUser
-// de la URL se ignora, ver table-controller.js#deleteTable).
-router.deleteAsync("/:idUser/:idTable", auth(["admin", "user", "trainer"]), controller.deleteTable);
+// Borrar una tabla: el acceso se comprueba contra su dueño real.
+router.deleteAsync("/:idTable", auth(["admin", "user", "trainer"]), controller.deleteTable);
 
 // All-time exercise history stats
 router.getAsync(

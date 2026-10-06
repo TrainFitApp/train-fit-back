@@ -72,4 +72,6 @@ FormCheckSchema.pre("deleteOne", { document: false, query: true }, async functio
   }
 });
 
+FormCheckSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["clientId", "trainerId"], authorship: ["comments.authorId"] });
+
 module.exports = mongoose.model("FormCheck", FormCheckSchema);

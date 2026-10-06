@@ -25,30 +25,8 @@ const PainEntrySchema = new Schema(
 // registro (upsert), no lo acumula.
 PainEntrySchema.index({ userId: 1, date: -1, zone: 1 }, { unique: true });
 
-// Movimiento 3 Coach Pro — hasta dónde puede trabajar el cliente con esa
-// zona y a partir de dónde tiene que parar. Lo fija EL ENTRENADOR, y por eso
-// lleva trainerId: dos profesionales del mismo cliente pueden tener
-// criterios distintos sobre la misma rodilla, y ninguno debe pisar al otro.
-//
-// Vive aquí y no en el registro diario porque no es un dato del día: es la
-// pauta que se mantiene hasta que el entrenador la cambia.
-const PainThresholdSchema = new Schema(
-  {
-    trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    clientId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    zone: { type: String, required: true },
-    // Hasta aquí se entrena con normalidad.
-    workLevel: { type: Number, min: 0, max: 10, required: true },
-    // Desde aquí se para. Nunca menor que workLevel — ver sanitizeThreshold.
-    painLevel: { type: Number, min: 0, max: 10, required: true },
-    note: { type: String, trim: true, maxlength: 300, default: "" },
-  },
-  { timestamps: true }
-);
-
-PainThresholdSchema.index({ trainerId: 1, clientId: 1, zone: 1 }, { unique: true });
+PainEntrySchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"] });
 
 module.exports = {
   PainEntry: mongoose.model("PainEntry", PainEntrySchema),
-  PainThreshold: mongoose.model("PainThreshold", PainThresholdSchema),
 };

@@ -19,20 +19,13 @@ const AnthropometrySchema = new Schema({
   checkinFields: { type: [String], default: undefined },
   neck: { type: Number },
   chest: { type: Number },
-  // Deprecados (MVP-trainers D8, 2026-08-01): un único valor histórico sin
-  // lateralidad. Ya no se escriben desde el frontend actualizado, pero se
-  // conservan para seguir leyendo documentos históricos — ver
-  // modelos-de-datos/05-cambios-modelos-existentes.md, sección 2.2, para la
-  // estrategia de migración (deliberadamente sin backfill automático).
-  bicepsRelaxed: { type: Number },
-  bicepsContracted: { type: Number },
-  calf: { type: Number },
   waist: { type: Number },
   abdomen: { type: Number },
   hip: { type: Number },
   thighContracted: { type: Number },
   thighRelaxed: { type: Number },
-  // --- MVP-trainers D8 (2026-08-01) — campos nuevos del catálogo de check-in ---
+  // Masas y perímetros por lado: los mismos campos para lo que apunta el
+  // cliente y lo que pide el profesional en un check-in.
   muscleMass: { type: Number },
   fatMass: { type: Number },
   boneMass: { type: Number },
@@ -52,4 +45,6 @@ const AnthropometrySchema = new Schema({
 
 AnthropometrySchema.index({ userId: 1, date: -1 }, { unique: true });
 
-module.exports = AnthropometrySchema;
+AnthropometrySchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"] });
+
+module.exports = mongoose.model("Anthropometry", AnthropometrySchema);

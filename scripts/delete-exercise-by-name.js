@@ -5,23 +5,23 @@ const mongoose = require("mongoose");
 const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
 
 const Exercise = require("../components/exercises/exercise-schema");
-const CustomExercise = require("../components/customExercises/custom-exercise-schema");
-const Workout = require("../components/workouts/workout-schema");
-const Split = require("../components/splits/split-schema");
+// Sesiones y plantillas de sesión (las dos en `workouts`, por `kind`).
+const WorkoutBase = require("../components/workouts/workout-base-schema");
 const Table = require("../components/tables/table-schema");
 const ExerciseScore = require("../components/exerciseScores/exercise-score-schema");
-const User = require("../components/users/schema");
-const SetModel = require("../components/sets/set-schema");
+const User = require("../components/users/user-schema");
 const {
   withPinnedNotesSync,
 } = require("../components/pinnedExerciseNotes/pinned-exercise-note-anchor-sync");
 
 // Borra un ejercicio del catálogo por nombre, en la BBDD del `.env` y en PRO
-// (`MONGODB_URI_PRO`), junto con todo lo que cuelga de él:
-//   - Exercise.deleteOne dispara el hook de exercise-schema.js: borra sus
-//     CustomExercise (y los Set de estos), los saca de Workout.exercises
-//     —también de las plantillas del entrenador— y de User.archivedExercises.
-//   - ExerciseScore (puntuación del entrenador): el hook no la limpia.
+// (`MONGODB_URI_PRO`), junto con todo lo que cuelga de él. Es la purga
+// deliberada de un ejercicio de catálogo (la app, al borrar uno en uso, solo
+// lo retira: ver exercise-dao.js#deleteExercise):
+//   - Lo quita (con sus series) de todas las sesiones que lo usan, también de
+//     las plantillas del entrenador (Workout.exercises[] embebido).
+//   - Exercise.deleteOne: el hook lo saca de User.favorites.exercises.
+//   - ExerciseScore (puntuación del entrenador).
 //   - Notas fijadas: se guardan por posición, así que quitar un ejercicio
 //     mueve las de debajo. Se reubican con withPinnedNotesSync, como hace la app.
 //
@@ -94,23 +94,31 @@ async function buildPlan() {
   ).lean();
 
   const exerciseIds = ids(exercises);
-  const customExercises = await CustomExercise.find({ exercise: { $in: exerciseIds } }).lean();
-  const customExerciseIds = ids(customExercises);
-  const setIds = customExercises.flatMap((ce) => ce.sets || []);
 
-  // Workout excluye las plantillas (trainerId) en toda query sin trainerId
-  // propio: `workouts` son solo los reales y `templates` se piden aparte.
-  const inWorkouts = { exercises: { $in: customExerciseIds } };
-  const [workouts, templates, archivedBy, scores, sets] = await Promise.all([
-    Workout.find(inWorkouts, "_id").lean(),
-    Workout.find({ ...inWorkouts, trainerId: { $ne: null } }, "_id").lean(),
-    User.find({ archivedExercises: { $in: exerciseIds } }, "_id").lean(),
+  // Una fila por sesión o plantilla afectada.
+  const affected = exerciseIds.length
+    ? await WorkoutBase.aggregate([
+        { $match: { "exercises.exercise": { $in: exerciseIds } } },
+        {
+          $project: {
+            kind: 1,
+            uses: {
+              $filter: { input: "$exercises", cond: { $in: ["$$this.exercise", exerciseIds] } },
+            },
+          },
+        },
+      ])
+    : [];
+  const workouts = affected.filter((workout) => workout.kind !== "template");
+  const templates = affected.filter((workout) => workout.kind === "template");
+  const customExercises = affected.flatMap((workout) => workout.uses);
+  const sets = customExercises.flatMap((customExercise) => customExercise.sets || []);
+
+  const [archivedBy, scores, tables] = await Promise.all([
+    User.find({ "favorites.exercises": { $in: exerciseIds } }, "_id").lean(),
     ExerciseScore.find({ exerciseId: { $in: exerciseIds } }).lean(),
-    SetModel.find({ _id: { $in: setIds } }).lean(),
+    Table.find({ "splits.workouts": { $in: ids(workouts) } }, "_id").lean(),
   ]);
-
-  const splits = await Split.find({ workouts: { $in: ids(workouts) } }, "_id").lean();
-  const tables = await Table.find({ splits: { $in: ids(splits) } }, "_id").lean();
 
   return {
     exercises,
@@ -156,19 +164,20 @@ async function applyPlan(plan) {
   const exerciseIds = ids(plan.exercises);
 
   await withPinnedNotesSync(plan.tableIds, async () => {
+    await WorkoutBase.updateMany(
+      { "exercises.exercise": { $in: exerciseIds } },
+      { $pull: { exercises: { exercise: { $in: exerciseIds } } }, $inc: { __v: 1 } },
+    );
     await ExerciseScore.deleteMany({ exerciseId: { $in: exerciseIds } });
-    // Uno a uno: el hook de cascada solo salta en deleteOne, no en deleteMany.
     for (const id of exerciseIds) await Exercise.deleteOne({ _id: id });
   });
 
-  const [leftExercises, leftCustom] = await Promise.all([
+  const [leftExercises, leftUses] = await Promise.all([
     Exercise.countDocuments({ _id: { $in: exerciseIds } }),
-    CustomExercise.countDocuments({ exercise: { $in: exerciseIds } }),
+    WorkoutBase.countDocuments({ "exercises.exercise": { $in: exerciseIds } }),
   ]);
-  if (leftExercises || leftCustom) {
-    throw new Error(
-      `Quedan restos tras borrar: ${leftExercises} ejercicios, ${leftCustom} customExercises.`,
-    );
+  if (leftExercises || leftUses) {
+    throw new Error(`Quedan restos tras borrar: ${leftExercises} ejercicios, ${leftUses} sesiones que los usan.`);
   }
 }
 

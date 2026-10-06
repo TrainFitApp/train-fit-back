@@ -1,6 +1,6 @@
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const checkinDao = require("../trainerCheckins/checkin-dao");
-const clientIntakeDao = require("../clientIntake/client-intake-dao");
+const { activeScopes } = require("../trainerClients/pair-state");
 const formCheckService = require("../formChecks/form-check-service");
 
 /**
@@ -25,25 +25,10 @@ function idOf(value) {
   return String(value?._id || value);
 }
 
-// Una entrada por cliente activo con sus scopes y si el cuestionario sigue
-// sin enviar (intakePending en alguna de sus relaciones).
+// Una entrada por cliente en curso con sus scopes activos.
 async function activeClientsOf(trainerId) {
-  const relations = await trainerClientDao.findAllByTrainer(trainerId, { status: "active" });
-  const byClient = new Map();
-  for (const relation of relations) {
-    if (!relation.clientId) continue;
-    const key = String(relation.clientId);
-    const entry = byClient.get(key) || { clientId: relation.clientId, scopes: [], intakePending: false };
-    entry.scopes.push(relation.scope);
-    if (relation.intakePending) entry.intakePending = true;
-    byClient.set(key, entry);
-  }
-  return [...byClient.values()];
-}
-
-async function pendingIntakes(trainerId, clients) {
-  const clientIds = clients.filter((client) => !client.intakePending).map((client) => client.clientId);
-  return clientIds.length ? clientIntakeDao.listUnreviewedByTrainer(trainerId, clientIds) : [];
+  const pairs = await trainerClientDao.findActivePairsOfTrainer(trainerId);
+  return pairs.map((pair) => ({ clientId: pair.clientId, scopes: activeScopes(pair) }));
 }
 
 function formCheckItem(check) {
@@ -70,7 +55,7 @@ module.exports = {
     const [responses, formChecks, intakes] = await Promise.all([
       clientIds.length ? checkinDao.listPendingReviewForTrainer(trainerId, clientIds) : [],
       formCheckService.listForTrainer(trainerId, {}, { baseUrl }),
-      pendingIntakes(trainerId, clients),
+      trainerClientDao.findUnreviewedIntakes(trainerId),
     ]);
 
     const checkinItems = responses.map((response) => ({
@@ -84,13 +69,13 @@ module.exports = {
       since: response.respondedAt,
     }));
     const formCheckItems = formChecks.formChecks.filter((check) => check.status === "pending").map(formCheckItem);
-    const intakeItems = intakes.map((intake) => ({
+    const intakeItems = intakes.map((pair) => ({
       type: "intake",
-      id: String(intake._id),
-      clientId: idOf(intake.clientId),
-      clientName: clientNameOf(intake.clientId),
+      id: String(pair._id),
+      clientId: idOf(pair.clientId),
+      clientName: clientNameOf(pair.clientId),
       title: "",
-      since: intake.submittedAt,
+      since: pair.intake.submittedAt,
     }));
 
     const items = [...checkinItems, ...formCheckItems, ...intakeItems].sort(
@@ -123,7 +108,7 @@ module.exports = {
     const [checkin, formCheck, intakes] = await Promise.all([
       clientIds.length ? checkinDao.countPendingReviewForTrainer(trainerId, clientIds) : 0,
       formCheckService.pendingCount(trainerId).then((result) => result.pendingCount),
-      pendingIntakes(trainerId, clients),
+      trainerClientDao.findUnreviewedIntakes(trainerId),
     ]);
     return {
       total: checkin + formCheck + intakes.length,

@@ -1,4 +1,4 @@
-const workoutTemplateDao = require("./workout-template-dao");
+const workoutTemplateService = require("./workout-template-service");
 
 const LEVELS = new Set(["principiante", "intermedio", "avanzado"]);
 const BLOCK_TYPES = new Set(["straight", "superset", "circuit", "warmup", "finisher"]);
@@ -93,7 +93,7 @@ module.exports = {
     const name = (req.body?.name || "").trim();
     if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
 
-    const template = await workoutTemplateDao.create(req.auth.userId, {
+    const template = await workoutTemplateService.create(req.auth.userId, {
       name,
       ...buildPatchFromBody(req.body),
     });
@@ -101,12 +101,12 @@ module.exports = {
   },
 
   async listTemplates(req, res) {
-    const templates = await workoutTemplateDao.listByTrainer(req.auth.userId);
+    const templates = await workoutTemplateService.listByTrainer(req.auth.userId);
     return res.send(templates);
   },
 
   async updateTemplate(req, res) {
-    const existing = await workoutTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
+    const existing = await workoutTemplateService.findOwned(req.auth.userId, req.params.id);
     if (!existing) return res.status(404).send({ message: "Plantilla no encontrada" });
 
     const patch = buildPatchFromBody(req.body);
@@ -116,13 +116,12 @@ module.exports = {
       patch.name = name;
     }
 
-    const template = await workoutTemplateDao.update(req.auth.userId, req.params.id, patch);
+    const template = await workoutTemplateService.update(req.auth.userId, req.params.id, patch);
     return res.send(template);
   },
 
   async deleteTemplate(req, res) {
-    const result = await workoutTemplateDao.delete(req.auth.userId, req.params.id);
-    if (result.deletedCount === 0) {
+    if (!(await workoutTemplateService.remove(req.auth.userId, req.params.id))) {
       return res.status(404).send({ message: "Plantilla no encontrada" });
     }
     return res.sendStatus(204);
@@ -130,23 +129,13 @@ module.exports = {
 
   // POST /trainer/clients/:clientId/splits/:splitId/workout-templates/:templateId/apply
   async applyTemplateToSplit(req, res) {
-    const template = await workoutTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.templateId);
+    const template = await workoutTemplateService.findOwned(req.auth.userId, req.params.templateId);
     if (!template) return res.status(404).send({ message: "Plantilla no encontrada" });
 
-    try {
-      // Mismo shape que el resto de altas de workout (addWorkoutsToSplits):
-      // devuelve table.splits completo, no solo el Workout creado.
-      const splits = await workoutTemplateDao.applyToSplit(
-        template,
-        req.params.splitId,
-        req.params.clientId
-      );
-      return res.status(201).send(splits);
-    } catch (e) {
-      if (e.code === "SPLIT_NOT_FOUND") return res.status(404).send({ message: e.message });
-      if (e.code === "SPLIT_FORBIDDEN") return res.status(403).send({ message: e.message });
-      throw e;
-    }
+    // Mismo shape que el resto de altas de workout (addWorkoutsToSplits):
+    // devuelve table.splits completo, no solo el Workout creado.
+    const splits = await workoutTemplateService.applyToSplit(template, req.params.splitId, req.params.clientId);
+    return res.status(201).send(splits);
   },
 
   // POST /trainer/workouts/:workoutId/save-as-template — inverso de aplicar:
@@ -156,17 +145,9 @@ module.exports = {
     const name = (req.body?.name || "").trim();
     if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
 
-    const workout = await workoutTemplateDao.findWorkoutForTemplateSource(req.params.workoutId);
-    if (!workout) return res.status(404).send({ message: "Entrenamiento no encontrado" });
-
-    const owningTable = await workoutTemplateDao.findWorkoutOwnerTable(req.params.workoutId);
-    const allowed = await workoutTemplateDao.canTrainerAccessTable(req.auth.userId, owningTable);
-    if (!allowed) return res.status(403).send({ message: "No tienes acceso a este entrenamiento" });
-
-    const template = await workoutTemplateDao.create(req.auth.userId, {
+    const template = await workoutTemplateService.saveWorkoutAsTemplate(req.auth.userId, req.params.workoutId, {
       name,
       ...buildPatchFromBody(req.body),
-      blocks: workoutTemplateDao.buildBlockFromWorkout(workout),
     });
     return res.status(201).send(template);
   },

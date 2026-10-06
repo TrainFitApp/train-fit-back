@@ -1,11 +1,21 @@
-const customExerciseSchema = require("./custom-exercise-schema");
-const workoutSchema = require("../workouts/workout-schema");
-const setSchema = require("../sets/set-schema");
-const { normalizeSetsOrder } = require("../sets/set-order-util");
 const { default: mongoose } = require("mongoose");
+const { badRequest, notFound } = require("../util/http-error");
+const workoutSchema = require("../workouts/workout-schema");
+const { compactSet } = require("../sets/set-schema");
+const { normalizeSetsOrder } = require("../sets/set-order-util");
 const { findRowSiblingWorkoutIds } = require("../workouts/workout-row-dao");
 const { pickRowExercise } = require("../workouts/workout-row-blocks");
+const { mutateWorkout } = require("../workouts/workout-store");
+const { toId, plain, newId, isObjectId } = require("../workouts/workout-tree");
 
+// Ejercicios de sesión embebidos en su Workout (Workout.exercises[], con las
+// series dentro; 2026-10). Las operaciones que tocan la lista de series leen
+// la sesión, cambian ese ejercicio y la reescriben con compare-and-swap
+// (workout-store.js#mutateWorkout).
+
+// Lo que el cliente puede escribir en una serie existente desde
+// updateCustomExercise / copySetOnCustomExercise. Fuera quedan donedAt (lo
+// fija el backend) y cronometer.
 const SET_UPDATE_FIELDS = [
   "reps",
   "weight",
@@ -16,13 +26,6 @@ const SET_UPDATE_FIELDS = [
   "restPause",
   "restSeconds",
   "doned",
-  // DEPRECATED: reemplazados por time/expectedTime. Mantenidos temporalmente
-  // (rollout en fases, hay apps viejas instaladas) — quitar junto con los
-  // campos del schema en la release de limpieza posterior.
-  "timeMin",
-  "timeSec",
-  "expectedMin",
-  "expectedSec",
   "time",
   "expectedTime",
   "distance",
@@ -32,432 +35,226 @@ const SET_UPDATE_FIELDS = [
 ];
 
 function plainSet(set) {
-  if (!set) return {};
-  const value = typeof set.toObject === "function" ? set.toObject() : { ...set };
+  const value = plain(set);
   delete value.__v;
   delete value.displayOrder;
   return value;
-}
-
-function getSetId(set) {
-  const id = set?._id ?? set;
-  return id == null ? null : id.toString();
 }
 
 function isTemporarySetId(id) {
   return id != null && !Number.isNaN(Number(id));
 }
 
-function buildSetUpdate(set) {
-  const updateOperation = {};
-  const unsetOperation = {};
-
+// Aplica a una serie guardada lo que manda el cliente: null, undefined y []
+// vacían el campo; el resto se escribe.
+function applySetUpdate(target, source) {
   SET_UPDATE_FIELDS.forEach((field) => {
-    const value = set[field];
+    const value = source[field];
     const isEmptyArray = Array.isArray(value) && value.length === 0;
-    if (value === null || value === undefined || isEmptyArray) {
-      unsetOperation[field] = "";
-    } else {
-      updateOperation[field] = value;
-    }
+    target[field] = value === null || value === undefined || isEmptyArray ? undefined : value;
   });
-
-  const update = {};
-  if (Object.keys(updateOperation).length > 0) update.$set = updateOperation;
-  if (Object.keys(unsetOperation).length > 0) update.$unset = unsetOperation;
-  return update;
 }
 
-async function normalizeAndPersistCustomExerciseSets(customExerciseOrId) {
-  const shouldFetch =
-    typeof customExerciseOrId === "string" ||
-    customExerciseOrId instanceof mongoose.Types.ObjectId;
-  const customExercise = shouldFetch
-    ? await customExerciseSchema.findById(customExerciseOrId)
-    : customExerciseOrId;
+// Serie nueva a partir de lo que manda el cliente: id nuevo, sin donedAt.
+function newSet(source, extra = {}) {
+  const { _id, donedAt, ...content } = plainSet(source);
+  return compactSet({ ...content, ...extra, _id: newId() });
+}
 
-  if (!customExercise) return customExercise;
-
-  const normalizedSets = normalizeSetsOrder(
-    (customExercise.sets || []).map(plainSet),
-  );
-
-  const bulkOps = normalizedSets
-    .map((setTemp) => {
-      const setId = getSetId(setTemp);
-      if (!mongoose.Types.ObjectId.isValid(setId)) return null;
-
-      const update = buildSetUpdate(setTemp);
-      if (Object.keys(update).length === 0) return null;
-
-      return {
-        updateOne: {
-          filter: { _id: mongoose.Types.ObjectId(setId) },
-          update,
-        },
-      };
-    })
-    .filter(Boolean);
-
-  if (bulkOps.length > 0) {
-    await setSchema.bulkWrite(bulkOps);
-  }
-
-  await customExerciseSchema.findByIdAndUpdate(customExercise._id, {
-    $set: { sets: normalizedSets.map((setTemp) => setTemp._id) },
+// Cambia UN ejercicio de su sesión con compare-and-swap. `change` recibe el
+// ejercicio en plano y lo devuelve cambiado (o null para no escribir).
+async function mutateExercise(id, change) {
+  if (!isObjectId(id)) return null;
+  let found = false;
+  const written = await mutateWorkout({ "exercises._id": id }, async (workout) => {
+    const exercises = workout.exercises || [];
+    const index = exercises.findIndex((exercise) => toId(exercise) === toId(id));
+    if (index < 0) return null;
+    found = true;
+    const next = await change(exercises[index], workout);
+    if (!next) return null;
+    const list = [...exercises];
+    list[index] = next;
+    return { exercises: list };
   });
+  return written && found ? written : null;
+}
 
-  return customExerciseSchema.findById(customExercise._id);
+// El ejercicio tal cual lo recibe la app: con su Exercise poblado.
+async function loadCustomExercise(id) {
+  if (!isObjectId(id)) return null;
+  const workout = await workoutSchema.findOne({ "exercises._id": id });
+  const customExercise = workout?.exercises?.id(id);
+  return customExercise ? customExercise.toObject() : null;
 }
 
 module.exports = {
+  loadCustomExercise,
+
   async findCustomExerciseById(id) {
-    return new Promise((resolve, reject) =>
-      customExerciseSchema.findById(id).exec((err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      }),
-    );
+    return loadCustomExercise(id);
   },
 
-  // Para cuando cree Creación de customExercise
-  // if (!customExercise._id) {
-  //   customExercise.sets = await setSchema.insertMany(setsToCreate);
-  //   customExercise = await customExerciseSchema.create(customExercise);
+  // Guarda la lista de series del ejercicio TAL CUAL la manda el cliente
+  // (orden incluido): actualiza las que existen, crea las nuevas (id
+  // temporal numérico, sin id o un id que no es de este ejercicio) y quita
+  // las de setsToDelete. Una serie de OTRO ejercicio nunca se toca ni se
+  // engancha aquí: antes se actualizaba y quedaba compartida por los dos.
+  async updateCustomExercise(customExercise, setsToCreate, setsToUpdate, setsToDelete) {
+    const setsToDeleteIds = new Set((setsToDelete || []).map(toId));
+    const createByTempId = new Map((setsToCreate || []).map((set) => [toId(plainSet(set)), plainSet(set)]));
 
-  //   return customExercise;
-  // }
-  async updateCustomExercise(
-    customExercise,
-    setsToCreate,
-    setsToUpdate,
-    setsToDelete,
-  ) {
-    try {
-      const setsToDeleteIds = new Set((setsToDelete || []).map(getSetId));
-      const createByTempId = new Map();
-      const newIds = new Set();
-
-      (setsToCreate || []).forEach((setCreateTemp) => {
-        const createSet = plainSet(setCreateTemp);
-        const tempId = getSetId(createSet);
-        const newId = new mongoose.Types.ObjectId();
-
-        createSet._id = newId;
-        createByTempId.set(tempId, createSet);
-        newIds.add(newId.toString());
-      });
-
-      const finalSets = (customExercise.sets || [])
-        .map((setTemp) => {
-          const currentSet = plainSet(setTemp);
-          const currentId = getSetId(currentSet);
-
-          if (setsToDeleteIds.has(currentId)) {
-            return null;
+    const written = await mutateExercise(customExercise?._id, (saved) => {
+      const savedById = new Map((saved.sets || []).map((set) => [toId(set), set]));
+      const sets = (customExercise.sets || [])
+        .map(plainSet)
+        .filter((set) => !setsToDeleteIds.has(toId(set)))
+        .map((set, index) => {
+          const id = toId(set);
+          const existing = id && !isTemporarySetId(id) ? savedById.get(id) : null;
+          if (existing) {
+            const next = { ...existing };
+            applySetUpdate(next, set);
+            next.order = index;
+            return compactSet(next);
           }
-
-          if (isTemporarySetId(currentId) && createByTempId.has(currentId)) {
-            return {
-              ...createByTempId.get(currentId),
-              ...currentSet,
-              _id: createByTempId.get(currentId)._id,
-            };
-          }
-
-          if (!currentId || isTemporarySetId(currentId)) {
-            const newId = new mongoose.Types.ObjectId();
-            newIds.add(newId.toString());
-            return {
-              ...currentSet,
-              _id: newId,
-            };
-          }
-
-          return currentSet;
-        })
-        .filter(Boolean)
-        .map((setTemp, index) => ({
-          ...setTemp,
-          order: index,
-        }));
-
-      const bulkOps = [];
-
-      finalSets.forEach((setTemp) => {
-        const setId = getSetId(setTemp);
-        const cleanSet = plainSet(setTemp);
-
-        if (newIds.has(setId)) {
-          bulkOps.push({
-            insertOne: {
-              document: cleanSet,
-            },
-          });
-          return;
-        }
-
-        const update = buildSetUpdate(cleanSet);
-        if (Object.keys(update).length === 0) {
-          return;
-        }
-
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: mongoose.Types.ObjectId(setId) },
-            update,
-          },
+          const draft = isTemporarySetId(id) && createByTempId.has(id) ? { ...createByTempId.get(id), ...set } : set;
+          return newSet(draft, { order: index });
         });
-      });
 
-      if (bulkOps.length > 0) {
-        await setSchema.bulkWrite(bulkOps);
-      }
+      const next = { ...saved, sets };
+      // Nota del ENTRENADOR: ausente o vacía la BORRA. No es un descuido —
+      // el planificador borra una nota con `delete customExercise.notes`
+      // (workout.component.ts#updateExerciseNote) y luego manda el objeto.
+      if (!customExercise.notes || customExercise.notes?.trim() === "") delete next.notes;
+      else next.notes = customExercise.notes;
 
-      const persistedSetIdsToDelete = Array.from(setsToDeleteIds).filter((id) =>
-        mongoose.Types.ObjectId.isValid(id),
-      );
-
-      if (persistedSetIdsToDelete.length > 0) {
-        await setSchema.deleteMany({
-          _id: { $in: persistedSetIdsToDelete },
-        });
-      }
-
-      const setsUpdated = finalSets.map((setTemp) => setTemp._id);
-      const queryUpdate = { $set: { sets: setsUpdated } };
-
-      // Nota del ENTRENADOR. Se mantiene tal cual estaba: ausente o vacía
-      // borra el campo. No es un descuido — el planificador borra una nota
-      // con `delete customExercise.notes` (workout.component.ts
-      // #updateExerciseNote) y luego manda el objeto, así que "ausente"
-      // significa ahí "bórrala". Cambiarlo por hasOwnProperty dejaría de
-      // poder borrarse ninguna nota del entrenador.
-      if (!customExercise.notes || customExercise.notes?.trim() === "")
-        queryUpdate.$unset = { notes: 1 };
-      else queryUpdate.$set.notes = customExercise.notes;
-
-      // Movimiento 2 Coach Pro — nota del CLIENTE, campo aparte para que
-      // ninguno de los dos pise al otro.
-      //
-      // Aquí SÍ se mira hasOwnProperty, al revés que arriba: este campo es
-      // nuevo, así que hay objetos en memoria y en peticiones de versiones
-      // anteriores de la app que no lo traen. Con la regla de arriba, cada
-      // uno de esos guardados borraría la nota del cliente sin que nadie lo
-      // pidiera. Para vaciarla se manda la cadena vacía, que es lo que hace
-      // la pantalla del cliente.
+      // Nota del CLIENTE: aquí SÍ se mira hasOwnProperty, al revés que
+      // arriba: hay peticiones de versiones anteriores de la app que no la
+      // traen, y cada una la borraría. Para vaciarla se manda "".
       if (Object.prototype.hasOwnProperty.call(customExercise, "clientNotes")) {
         const clientNotes = customExercise.clientNotes;
-        if (!clientNotes || String(clientNotes).trim() === "") {
-          queryUpdate.$unset = { ...(queryUpdate.$unset || {}), clientNotes: 1 };
-        } else {
-          queryUpdate.$set.clientNotes = clientNotes;
-        }
+        if (!clientNotes || String(clientNotes).trim() === "") delete next.clientNotes;
+        else next.clientNotes = clientNotes;
       }
+      return next;
+    });
 
-      await customExerciseSchema.findByIdAndUpdate(
-        customExercise._id,
-        queryUpdate,
-        { new: true },
-      );
-
-      return await customExerciseSchema.findById(customExercise._id);
-    } catch (err) {
-      throw err;
-    }
+    return written ? loadCustomExercise(customExercise._id) : null;
   },
 
+  // `set` llega del cliente (sin _id o con uno temporal): se añade al final
+  // y se renumera el orden de todas.
   async addSetToCustomExercise(id, set) {
-    try {
-      const newSet = await setSchema.create(set);
-      await customExerciseSchema.findByIdAndUpdate(id, {
-        $push: { sets: newSet._id },
-      });
-
-      return normalizeAndPersistCustomExerciseSets(id);
-    } catch (err) {
-      throw err;
-    }
+    const written = await mutateExercise(id, (saved) => ({
+      ...saved,
+      sets: normalizeSetsOrder([...(saved.sets || []).map(plainSet), newSet(set)]),
+    }));
+    return written ? loadCustomExercise(id) : null;
   },
 
+  // El cliente manda el ejercicio con la serie copiada ya colocada y SIN
+  // _id; el resto de series pueden traer su orden nuevo.
   async copySetOnCustomExercise(order, customExercise) {
-    try {
-      const newSetId = new mongoose.Types.ObjectId();
-      const normalizedSets = normalizeSetsOrder(
-        (customExercise.sets || []).map((setTemp) => {
-          const currentSet = plainSet(setTemp);
-          if (!currentSet._id) currentSet._id = newSetId;
-          return currentSet;
-        }),
-      );
-
-      const newSet = normalizedSets.find(
-        (setTemp) => getSetId(setTemp) === newSetId.toString(),
-      );
-      if (!newSet) {
-        throw new Error("No set to copy found in custom exercise payload");
-      }
-
-      const bulkOps = [];
-
-      bulkOps.push({
-        insertOne: {
-          document: newSet,
-        },
-      });
-
-      normalizedSets.forEach((sTemp) => {
-        const setId = getSetId(sTemp);
-        if (setId === newSetId.toString()) return;
-
-        const update = buildSetUpdate(sTemp);
-        if (Object.keys(update).length === 0) return;
-
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: sTemp._id },
-            update,
-          },
-        });
-      });
-
-      const bulkOpsCE = [];
-
-      bulkOpsCE.push({
-        updateOne: {
-          filter: { _id: customExercise._id },
-          update: {
-            $set: { sets: normalizedSets.map((sTemp) => sTemp._id) },
-          },
-        },
-      });
-
-      await setSchema.bulkWrite(bulkOps);
-      await customExerciseSchema.bulkWrite(bulkOpsCE);
-
-      const customExerciseDoc = await customExerciseSchema.findById(
-        customExercise._id,
-      );
-      return customExerciseDoc;
-    } catch (err) {
-      throw err;
+    const incoming = (customExercise?.sets || []).map(plainSet);
+    if (!incoming.some((set) => !set._id)) {
+      throw new Error("No set to copy found in custom exercise payload");
     }
+
+    const written = await mutateExercise(customExercise?._id, (saved) => {
+      const savedById = new Map((saved.sets || []).map((set) => [toId(set), set]));
+      const merged = incoming
+        .map((set) => {
+          if (!set._id) return { ...newSet(set), order: set.order };
+          const existing = savedById.get(toId(set));
+          if (!existing) return null; // id ajeno a este ejercicio
+          const next = { ...existing };
+          applySetUpdate(next, set);
+          return next;
+        })
+        .filter(Boolean);
+      return { ...saved, sets: normalizeSetsOrder(merged).map(compactSet) };
+    });
+
+    return written ? loadCustomExercise(customExercise._id) : null;
   },
 
-  // Rediseño de entrenamiento Fase B — asigna/quita el blockId de un
-  // CustomExercise. Valida que el blockId exista de verdad en Workout.blocks[]
-  // del entrenamiento que contiene este ejercicio (nunca confiar en un id
-  // suelto del body, mismo criterio que ya aplica assertCanAccessCustomExerciseId).
+  // Asigna/quita el bloque de un ejercicio. El bloque tiene que existir en
+  // Workout.blocks[] de la MISMA sesión (nunca confiar en un id suelto del
+  // body). El mismo ejercicio de la misma fila en los demás microciclos entra
+  // o sale del mismo bloque, solo donde ese bloque existe (un bloque antiguo,
+  // local, no está en los demás).
   async setCustomExerciseBlock(id, blockId) {
-    if (blockId) {
-      const workout = await workoutSchema.findOne({ exercises: id }).select("blocks");
-      if (!workout) {
-        const err = new Error("Ejercicio no encontrado");
-        err.code = "CUSTOM_EXERCISE_NOT_FOUND";
-        throw err;
+    let originIndex = -1;
+    let originExercise = null;
+    let originWorkoutId = null;
+    let blockMissing = false;
+
+    const written = await mutateExercise(id, (saved, workout) => {
+      if (blockId && !(workout.blocks || []).some((block) => toId(block) === toId(blockId))) {
+        blockMissing = true;
+        return null;
       }
-      const blockExists = (workout.blocks || []).some(
-        (block) => block._id.toString() === blockId.toString(),
-      );
-      if (!blockExists) {
-        const err = new Error("El bloque no existe en este entrenamiento");
-        err.code = "BLOCK_NOT_FOUND";
-        throw err;
-      }
+      originIndex = workout.exercises.findIndex((exercise) => toId(exercise) === toId(id));
+      originExercise = saved.exercise;
+      originWorkoutId = workout._id;
+      return { ...saved, blockId: blockId || null };
+    });
+
+    if (blockMissing) {
+      throw badRequest("El bloque no existe en este entrenamiento", "BLOCK_NOT_FOUND");
+    }
+    if (!written) {
+      throw notFound("Ejercicio no encontrado", "CUSTOM_EXERCISE_NOT_FOUND");
     }
 
-    const updated = await customExerciseSchema.findByIdAndUpdate(
-      id,
-      { $set: { blockId: blockId || null } },
-      { new: true },
-    );
-    if (!updated) return updated;
-
-    // 2026-09 — el mismo ejercicio de la misma fila en los demás
-    // microciclos entra o sale del mismo bloque. Solo donde ese bloque
-    // existe (un bloque antiguo, local, no está en los demás).
-    const origin = await workoutSchema.findOne({ exercises: id }).select("exercises").lean();
-    const originIndex = (origin?.exercises || []).findIndex((e) => e.toString() === id.toString());
-    const siblingIds = origin ? await findRowSiblingWorkoutIds(origin._id) : [];
-    const siblings = await workoutSchema
-      .find({ _id: { $in: siblingIds } })
-      .select("blocks exercises")
-      .lean();
     const rowUpdates = [];
-    for (const sibling of siblings) {
-      if (blockId && !(sibling.blocks || []).some((b) => b._id.toString() === blockId.toString())) {
-        continue;
-      }
-      const siblingExercises = await customExerciseSchema
-        .find({ _id: { $in: sibling.exercises } })
-        .select("exercise")
-        .lean();
-      const byId = new Map(siblingExercises.map((e) => [e._id.toString(), e]));
-      const ordered = (sibling.exercises || []).map((e) => byId.get(e.toString())).filter(Boolean);
-      const target = pickRowExercise(originIndex, updated.exercise, ordered);
-      if (!target) continue;
-      await customExerciseSchema.updateOne({ _id: target._id }, { $set: { blockId: blockId || null } });
-      rowUpdates.push({ _id: target._id, blockId: blockId || null });
+    for (const siblingId of await findRowSiblingWorkoutIds(originWorkoutId)) {
+      let updated = null;
+      await mutateWorkout({ _id: siblingId }, (sibling) => {
+        updated = null;
+        if (blockId && !(sibling.blocks || []).some((block) => toId(block) === toId(blockId))) return null;
+        const rowTarget = pickRowExercise(originIndex, originExercise, sibling.exercises || []);
+        if (!rowTarget) return null;
+        updated = rowTarget._id;
+        return {
+          exercises: sibling.exercises.map((exercise) =>
+            toId(exercise) === toId(rowTarget) ? { ...exercise, blockId: blockId || null } : exercise,
+          ),
+        };
+      });
+      if (updated) rowUpdates.push({ _id: updated, blockId: blockId || null });
     }
 
     // rowUpdates: qué ejercicios de los demás microciclos cambiaron, para
     // repintarlos sin recargar (la app de cliente lo ignora).
-    return { ...updated.toObject(), rowUpdates };
+    return { ...(await loadCustomExercise(id)), rowUpdates };
   },
 
-  // 2026-09 — vía dedicada para la nota del CLIENTE, separada de
-  // updateCustomExercise (que sí queda bloqueado en rutinas asignadas).
-  // Mismo criterio de vaciar-con-cadena-vacía que ya usaba updateCustomExercise
-  // para este mismo campo (ver comentario ahí: la pantalla del cliente manda
-  // "" para vaciar la nota, no ausencia del campo).
+  // Vía dedicada para la nota del CLIENTE, separada de updateCustomExercise
+  // (que sí queda bloqueado en rutinas asignadas). Vaciar = cadena vacía.
   async updateClientNotes(id, clientNotes) {
+    if (!isObjectId(id)) return null;
     const trimmed = (clientNotes || "").toString().trim();
     const update = trimmed
-      ? { $set: { clientNotes: trimmed } }
-      : { $unset: { clientNotes: 1 } };
-    return customExerciseSchema.findByIdAndUpdate(id, update, { new: true });
+      ? { $set: { "exercises.$.clientNotes": trimmed }, $inc: { __v: 1 } }
+      : { $unset: { "exercises.$.clientNotes": 1 }, $inc: { __v: 1 } };
+    const result = await workoutSchema.updateOne({ "exercises._id": id }, update);
+    return result.matchedCount ? loadCustomExercise(id) : null;
   },
 
+  // Quita el ejercicio (con sus series) de su sesión.
   async deleteCustomExercise(id) {
-    try {
-      const customExercise = await customExerciseSchema.findById(id);
-
-      // Obtén los IDs de los conjuntos asociados
-      const setIds = customExercise.sets.map((set) => set._id);
-
-      // Elimina los conjuntos asociados
-      await setSchema.deleteMany({ _id: { $in: setIds } });
-
-      // Elimina los CustomExercises
-      const result = await customExerciseSchema.deleteOne({ _id: id });
-      return result;
-    } catch (err) {
-      throw err;
-    }
+    return this.deleteCustomExercises([id]);
   },
 
   async deleteCustomExercises(ids) {
-    try {
-      // Busca los CustomExercises que se van a eliminar
-      const customExercises = await customExerciseSchema.find({
-        _id: { $in: ids },
-      });
-
-      // Obtén los IDs de los conjuntos asociados
-      const setIds = customExercises.flatMap((exercise) =>
-        exercise.sets.map((set) => set._id),
-      );
-
-      // Elimina los conjuntos asociados
-      await setSchema.deleteMany({ _id: { $in: setIds } });
-
-      // Elimina los CustomExercises
-      const result = await customExerciseSchema.deleteMany({
-        _id: { $in: ids },
-      });
-      return result;
-    } catch (err) {
-      throw err;
-    }
+    const validIds = (ids || []).filter(isObjectId).map((id) => new mongoose.Types.ObjectId(toId(id)));
+    if (!validIds.length) return { deletedCount: 0 };
+    const result = await workoutSchema.updateMany(
+      { "exercises._id": { $in: validIds } },
+      { $pull: { exercises: { _id: { $in: validIds } } }, $inc: { __v: 1 } },
+    );
+    return { deletedCount: result.modifiedCount ? validIds.length : 0 };
   },
 };

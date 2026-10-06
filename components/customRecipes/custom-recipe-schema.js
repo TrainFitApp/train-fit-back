@@ -1,124 +1,33 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
+const CustomProductSchema = require("../customProducts/custom-product-schema");
+// `recipe` se autopuebla también al guardar el documento que la contiene.
+require("../recipes/recipe-schema");
 
-const normalizeCustomProductId = (value) => {
-  const normalized = value?._id || value;
-  return normalized?.toString?.() || null;
-};
-
-const deleteIngredientCustomProducts = async (customRecipes) => {
-  const ids = [];
-
-  for (const customRecipe of customRecipes || []) {
-    ids.push(
-      ...(customRecipe?.addedCustomProducts || []),
-      ...(customRecipe?.modifiedBaseCustomProducts || []),
-    );
-  }
-
-  const normalizedIds = ids.map(normalizeCustomProductId).filter(Boolean);
-  if (!normalizedIds.length) return;
-
-  const CustomProduct = mongoose.model("CustomProduct");
-  await CustomProduct.deleteMany({ _id: { $in: normalizedIds } });
-};
-
-const CustomRecipeSchema = new Schema(
-  {
-    recipe: {
-      type: Schema.Types.ObjectId,
-      ref: "Recipe",
-      autopopulate: true,
-      required: true,
-      index: true,
-    },
-    quantity: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-    quantityCooked: {
-      type: Number,
-      min: 0,
-      default: null,
-    },
-    addedCustomProducts: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "CustomProduct",
-        autopopulate: true,
-      },
-    ],
-    modifiedBaseCustomProducts: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "CustomProduct",
-        autopopulate: true,
-      },
-    ],
-    removedBaseCustomProductIds: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "CustomProduct",
-      },
-    ],
-    // Pautado por trainer — mismo criterio que Meal.assignedByTrainerId /
-    // CustomProduct.assignedByTrainerId (ver esos comentarios). Permanente,
-    // protege de borrado/edición directa del cliente.
-    assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
-    // Cantidad ORIGINAL pautada (gramos) — mismo criterio que
-    // CustomProduct.assignedQuantity (ver ese comentario): se estampa una
-    // vez junto con assignedByTrainerId y no vuelve a tocarse; `quantity`
-    // pasa a ser la cantidad consumida, editable por el cliente.
-    assignedQuantity: { type: Number, min: 0, default: null },
-    // El cliente lo marca como tomado — nunca bloqueado por assignedByTrainerId.
-    consumed: { type: Boolean, default: false },
+// Una receta puesta en un plato: referencia a la Recipe y SOLO lo que difiere
+// (ingredientes añadidos, cambiados o quitados), nunca una copia completa.
+// Vive EMBEBIDA donde se usa (DietDay.meals[].customRecipes[], los menús de
+// DietTemplate y DietPhase, MealSnippet) con sus ingredientes dentro.
+const CustomRecipeSchema = new Schema({
+  recipe: {
+    type: Schema.Types.ObjectId,
+    ref: "Recipe",
+    autopopulate: true,
+    required: true,
   },
-  {
-    timestamps: true,
-    strict: true,
-  },
-);
-
-CustomRecipeSchema.plugin(require("mongoose-autopopulate"));
-
-const handleDeleteOne = async function (next) {
-  try {
-    const customRecipe = await this.model
-      .findOne(this.getQuery())
-      .select("addedCustomProducts modifiedBaseCustomProducts")
-      .setOptions({ autopopulate: false });
-
-    if (customRecipe) {
-      await deleteIngredientCustomProducts([customRecipe]);
-    }
-
-    next();
-  } catch (error) {
-    next(error);
-  }
-};
-
-CustomRecipeSchema.pre(
-  "deleteOne",
-  { document: false, query: true },
-  handleDeleteOne,
-);
-CustomRecipeSchema.pre("findOneAndDelete", handleDeleteOne);
-CustomRecipeSchema.pre("findOneAndRemove", handleDeleteOne);
-
-CustomRecipeSchema.pre("deleteMany", async function (next) {
-  try {
-    const customRecipes = await this.model
-      .find(this.getFilter())
-      .select("addedCustomProducts modifiedBaseCustomProducts")
-      .setOptions({ autopopulate: false });
-
-    await deleteIngredientCustomProducts(customRecipes);
-    next();
-  } catch (error) {
-    next(error);
-  }
+  quantity: { type: Number, min: 0, default: null },
+  quantityCooked: { type: Number, min: 0, default: null },
+  addedCustomProducts: { type: [CustomProductSchema], default: [] },
+  modifiedBaseCustomProducts: { type: [CustomProductSchema], default: [] },
+  // `_id` de ingredientes de la Recipe (Recipe.customProducts[]) quitados.
+  removedBaseCustomProductIds: { type: [Schema.Types.ObjectId], default: [] },
+  // Pautado por el profesional — mismo criterio que en CustomProduct.
+  assignedByTrainerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  assignedQuantity: { type: Number, min: 0, default: null },
+  // El cliente la marca como tomada — nunca bloqueado por assignedByTrainerId.
+  consumed: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
 });
 
-module.exports = mongoose.model("CustomRecipe", CustomRecipeSchema);
+module.exports = CustomRecipeSchema;

@@ -1,11 +1,6 @@
 // Migra los ejercicios al modelo muscular de dos niveles con énfasis
-// (Exercise.muscles, ver components/exercises/muscle-catalog.js).
-//
-//   npm run migrate:exercise-muscles:dry-run   → informe sin tocar nada
-//   npm run migrate:exercise-muscles           → aplica los cambios
-//
-// Flags: --dry-run, --force (vuelve a calcular también los que ya tienen
-// `muscles`), --verbose (imprime cada ejercicio).
+// (Exercise.muscles, ver components/exercises/muscle-catalog.js) y retira
+// el vocabulario antiguo (muscleGroups1/2), que la app ya no lee.
 //
 // De dónde sale cada ejercicio, por orden:
 //   1. Catálogo global (sin userId) → dato curado de
@@ -18,28 +13,18 @@
 //      (CURATED_USER) → ese dato.
 //   5. Lo demás queda sin `muscles` y sale en el informe para revisar.
 //
-// Idempotente: sin --force, un ejercicio que ya tiene `muscles` no se toca
-// (puede haberlo editado alguien después de migrar). Antes de escribir se
-// guarda copia de los campos originales en scripts/exports/.
+// Idempotente: sin --force, un ejercicio que ya tiene `muscles` conserva los
+// suyos (puede haberlos editado alguien después de migrar) y solo pierde
+// los campos antiguos. Un ejercicio sin resolver se queda con `muscles: []`
+// y sale en el informe. Antes de escribir se guarda copia de los campos
+// originales en scripts/exports/.
 
 const fs = require("fs");
 const path = require("path");
-const mongoose = require("mongoose");
-const { buildMongoUri } = require("./_mongo-uri");
-const Exercise = require("../components/exercises/exercise-schema");
-const {
-  normalizeMuscles,
-  toLegacyMuscleGroups,
-  fromLegacyMuscleGroups,
-  normalizeLegacyText,
-  getNode,
-  groupOf,
-} = require("../components/exercises/muscle-catalog");
-const { CURATED, CURATED_USER } = require("./data/exercise-muscles-curated");
+const { normalizeMuscles, getNode, groupOf } = require("../../components/exercises/muscle-catalog");
+const { normalizeLegacyText, fromLegacyMuscleGroups } = require("../lib/legacy-muscle-groups");
+const { CURATED, CURATED_USER } = require("../data/exercise-muscles-curated");
 
-const isDryRun = process.argv.includes("--dry-run");
-const isForce = process.argv.includes("--force");
-const isVerbose = process.argv.includes("--verbose");
 
 function byNormalizedName(map) {
   return new Map(
@@ -106,18 +91,20 @@ function resolve(exercise) {
   return { source: "unresolved", muscles: [] };
 }
 
-async function migrate() {
-  if (isDryRun) console.log("DRY RUN — no se escribe nada\n");
+// `force`: vuelve a calcular también los que ya tienen `muscles`. `verbose`:
+// una línea por ejercicio.
+async function migrateExerciseMuscles(db, { dryRun = false, force = false, verbose = false, log = console.log } = {}) {
+  const isDryRun = dryRun;
+  const isForce = force;
+  const isVerbose = verbose;
 
-  await mongoose.connect(buildMongoUri());
   // Solo el nombre de la BD: la URI lleva credenciales.
-  console.log(`Conectado a la base de datos "${mongoose.connection.name}"`);
 
-  const exercises = await Exercise.find(
-    {},
-    "name userId isCardio muscles muscleGroups1 muscleGroups2",
-  ).lean();
-  console.log(`${exercises.length} ejercicios en BD (${CURATED_BY_NAME.size} curados)\n`);
+  // En crudo: el schema ya no declara muscleGroups1/2.
+  const exercises = await db.collection("exercises")
+    .find({}, { projection: { name: 1, userId: 1, isCardio: 1, muscles: 1, muscleGroups1: 1, muscleGroups2: 1 } })
+    .toArray();
+  log(`${exercises.length} ejercicios en BD (${CURATED_BY_NAME.size} curados)\n`);
 
   const counts = {
     curated: 0,
@@ -134,9 +121,15 @@ async function migrate() {
   const operations = [];
   const backup = [];
 
+  const LEGACY_FIELDS = { muscleGroups1: "", muscleGroups2: "" };
+  const hasLegacyFields = (exercise) => "muscleGroups1" in exercise || "muscleGroups2" in exercise;
+
   for (const exercise of exercises) {
     if (!isForce && Array.isArray(exercise.muscles)) {
       counts.skipped++;
+      if (hasLegacyFields(exercise)) {
+        operations.push({ updateOne: { filter: { _id: exercise._id }, update: { $unset: LEGACY_FIELDS } } });
+      }
       continue;
     }
 
@@ -153,29 +146,31 @@ async function migrate() {
         muscleGroups1: exercise.muscleGroups1 || [],
         muscleGroups2: exercise.muscleGroups2 || [],
       });
+      backup.push({ _id: exercise._id, name: exercise.name, muscleGroups1: exercise.muscleGroups1, muscleGroups2: exercise.muscleGroups2 });
+      operations.push({
+        updateOne: { filter: { _id: exercise._id }, update: { $set: { muscles: [] }, $unset: LEGACY_FIELDS } },
+      });
       continue;
     }
 
-    const legacy = toLegacyMuscleGroups(muscles);
-    const next = { muscles, ...legacy };
     const current = {
       muscles: exercise.muscles,
       muscleGroups1: exercise.muscleGroups1 || [],
       muscleGroups2: exercise.muscleGroups2 || [],
     };
-    if (JSON.stringify(next) === JSON.stringify(current)) {
+    if (JSON.stringify(muscles) === JSON.stringify(exercise.muscles) && !hasLegacyFields(exercise)) {
       counts.unchanged++;
       continue;
     }
 
     if (isVerbose) {
-      console.log(`[${source}] ${exercise.name}${exercise.userId ? " (propio)" : ""}`);
-      console.log(`    ${describe(muscles)}`);
+      log(`[${source}] ${exercise.name}${exercise.userId ? " (propio)" : ""}`);
+      log(`    ${describe(muscles)}`);
     }
 
     backup.push({ _id: exercise._id, name: exercise.name, ...current });
     operations.push({
-      updateOne: { filter: { _id: exercise._id }, update: { $set: next } },
+      updateOne: { filter: { _id: exercise._id }, update: { $set: { muscles }, $unset: LEGACY_FIELDS } },
     });
   }
 
@@ -183,33 +178,33 @@ async function migrate() {
     .filter(([key]) => !matchedCurated.has(key))
     .map(([, { name }]) => name);
 
-  console.log("Resumen");
-  console.log(`  Curados (catálogo global)      ${counts.curated}`);
-  console.log(`  Propios revisados (PRO)        ${counts.curatedUser}`);
-  console.log(`  Traducidos del modelo antiguo  ${counts.legacy}`);
-  console.log(`  Cardio sin músculos            ${counts.cardio}`);
-  console.log(`  Sin resolver (revisar a mano)  ${counts.unresolved}`);
-  console.log(`  Ya migrados (sin --force)      ${counts.skipped}`);
-  console.log(`  Sin cambios                    ${counts.unchanged}`);
-  console.log(`  A escribir                     ${operations.length}`);
+  log("Resumen");
+  log(`  Curados (catálogo global)      ${counts.curated}`);
+  log(`  Propios revisados (PRO)        ${counts.curatedUser}`);
+  log(`  Traducidos del modelo antiguo  ${counts.legacy}`);
+  log(`  Cardio sin músculos            ${counts.cardio}`);
+  log(`  Sin resolver (revisar a mano)  ${counts.unresolved}`);
+  log(`  Ya migrados (sin --force)      ${counts.skipped}`);
+  log(`  Sin cambios                    ${counts.unchanged}`);
+  log(`  A escribir                     ${operations.length}`);
 
   if (unresolved.length) {
-    console.log("\nSin resolver — asigna los músculos desde Biblioteca → Ejercicios:");
+    log("\nSin resolver — asigna los músculos desde Biblioteca → Ejercicios:");
     for (const item of unresolved) {
       const legacyText = [...item.muscleGroups1, ...item.muscleGroups2].join(", ");
-      console.log(`  - ${item.name}${item.global ? "" : " (propio)"}${legacyText ? ` [${legacyText}]` : ""}`);
+      log(`  - ${item.name}${item.global ? "" : " (propio)"}${legacyText ? ` [${legacyText}]` : ""}`);
     }
   }
   if (unknownLabels.size) {
-    console.log("\nEtiquetas antiguas no reconocidas (se ignoran):");
-    for (const [label, count] of unknownLabels) console.log(`  - "${label}" ×${count}`);
+    log("\nEtiquetas antiguas no reconocidas (se ignoran):");
+    for (const [label, count] of unknownLabels) log(`  - "${label}" ×${count}`);
   }
   if (missingCurated.length && isForce) {
-    console.log("\nCurados que no casan con ningún ejercicio global (¿renombrados?):");
-    for (const name of missingCurated) console.log(`  - ${name}`);
+    log("\nCurados que no casan con ningún ejercicio global (¿renombrados?):");
+    for (const name of missingCurated) log(`  - ${name}`);
   }
 
-  const exportsDir = path.join(__dirname, "exports");
+  const exportsDir = path.join(__dirname, "..", "exports");
   fs.mkdirSync(exportsDir, { recursive: true });
   const stamp = Date.now();
   const reportPath = path.join(exportsDir, `exercise-muscles-report-${stamp}.json`);
@@ -218,22 +213,17 @@ async function migrate() {
     JSON.stringify({ dryRun: isDryRun, counts, unresolved, missingCurated }, null, 2),
     "utf8",
   );
-  console.log(`\nInforme: ${reportPath}`);
+  log(`\nInforme: ${reportPath}`);
 
   if (!isDryRun && operations.length) {
     const backupPath = path.join(exportsDir, `exercise-muscles-backup-${stamp}.json`);
     fs.writeFileSync(backupPath, JSON.stringify(backup, null, 2), "utf8");
-    console.log(`Copia de los campos originales: ${backupPath}`);
+    log(`Copia de los campos originales: ${backupPath}`);
 
-    const result = await Exercise.bulkWrite(operations, { ordered: false });
-    console.log(`Actualizados: ${result.modifiedCount}`);
+    const result = await db.collection("exercises").bulkWrite(operations, { ordered: false });
+    log(`Actualizados: ${result.modifiedCount}`);
   }
-
-  await mongoose.disconnect();
+  return { ...counts, toWrite: operations.length };
 }
 
-migrate().catch(async (err) => {
-  console.error(err);
-  await mongoose.disconnect().catch(() => {});
-  process.exit(1);
-});
+module.exports = { migrateExerciseMuscles };

@@ -65,7 +65,7 @@ test("credenciales malas: misma respuesta para contraseña errónea y email inex
   assert.equal(wrongPassword.status, 401);
   assert.equal(unknownEmail.status, 401);
   assert.deepEqual(wrongPassword.body, unknownEmail.body);
-  assert.equal(wrongPassword.body.error, "INVALID_CREDENTIALS");
+  assert.equal(wrongPassword.body.code, "INVALID_CREDENTIALS");
 });
 
 test("login sin email o sin contraseña: 400", async () => {
@@ -79,11 +79,11 @@ test("cada rol entra solo en su app: profesional en la de clientes y cliente en 
 
   const trainerInClientApp = await login(trainer.email, PASSWORD, h.FAMILY.client);
   assert.equal(trainerInClientApp.status, 403);
-  assert.equal(trainerInClientApp.body.error, "WRONG_APP_FOR_ROLE");
+  assert.equal(trainerInClientApp.body.code, "WRONG_APP_FOR_ROLE");
 
   const clientInTrainerApp = await login(client.email, PASSWORD, h.FAMILY.trainer);
   assert.equal(clientInTrainerApp.status, 403);
-  assert.equal(clientInTrainerApp.body.error, "WRONG_APP_FOR_ROLE");
+  assert.equal(clientInTrainerApp.body.code, "WRONG_APP_FOR_ROLE");
 
   assert.equal((await login(trainer.email, PASSWORD, h.FAMILY.trainer)).status, 200);
   assert.equal((await login(client.email, PASSWORD, h.FAMILY.client)).status, 200);
@@ -99,7 +99,7 @@ test("cuenta sin verificar: el login responde ACCOUNT_NOT_VERIFIED, rota el cód
   const before = ctx.sentMail.length;
   const res = await login(user.email, PASSWORD);
   assert.equal(res.status, 403);
-  assert.equal(res.body.error, "ACCOUNT_NOT_VERIFIED");
+  assert.equal(res.body.code, "ACCOUNT_NOT_VERIFIED");
   const stored = await ctx.model("User").findById(user.id).lean();
   assert.notEqual(stored.hash, "111111", "se genera un código nuevo");
   assert.match(stored.hash, /^\d{6}$/);
@@ -434,12 +434,4 @@ test("suplantar: solo admin", async () => {
   const user = await ctx.makeClient();
   const other = await ctx.makeClient();
   assert.equal((await ctx.call(user, "POST", "/auth/impersonate", { userId: other.id })).status, 403);
-});
-
-test("rutas antiguas de auth bajo /users responden 410 AUTH_ENDPOINT_GONE", async () => {
-  for (const path of ["/users/refresh-token", "/users/logout", "/users/sign-in", "/users/activate", "/users/impersonate"]) {
-    const res = await ctx.raw("POST", path, {});
-    assert.equal(res.status, 410, path);
-    assert.equal(res.body.code, "AUTH_ENDPOINT_GONE");
-  }
 });

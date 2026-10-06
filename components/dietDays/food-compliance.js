@@ -57,7 +57,7 @@ function summarizeFoodCompliance(days) {
         row.plannedQuantity += toPositive(item?.assignedQuantity ?? item?.quantity);
         if (date) row.plannedDays.add(date);
 
-        if (isItemConsumed(item, meal)) {
+        if (isItemConsumed(item)) {
           row.consumedQuantity += toPositive(item?.quantity);
           if (date) row.consumedDays.add(date);
         }
@@ -136,7 +136,7 @@ function summarizeDailyDeviations(days) {
           continue;
         }
         mealHasPlan = true;
-        if (!isItemConsumed(item, meal)) mealMissing = true;
+        if (!isItemConsumed(item)) mealMissing = true;
       }
       if (mealHasPlan) hasPlan = true;
       if (mealMissing) unchecked.push(meal?.name || "");

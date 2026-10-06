@@ -1,17 +1,17 @@
 const coachAlertDao = require("./coach-alert-dao");
 const { planAlertWrites } = require("./alert-write-plan");
 const { SIGNAL_THRESHOLDS, buildSignalsForClient } = require("./coach-signals-service");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const trainerClientService = require("../trainerClients/trainer-client-service");
 const checkinDao = require("../trainerCheckins/checkin-dao");
 const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
-const CheckinSchedule = require("../trainerCheckins/checkin-schedule-schema");
+const checkinScheduleDao = require("../trainerCheckins/checkin-schedule-dao");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const dietDaysDao = require("../dietDays/diet-days-dao");
 const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
-const userSchema = require("../users/schema");
+const userDao = require("../users/user-dao");
 const { runRulesForTrainer } = require("../coachRules/coach-rule-service");
 const tableDao = require("../tables/table-dao");
+const { routinesInUseOf } = require("../routineAssignments/routine-in-use");
 const painDao = require("../painLog/pain-dao");
 const { isoDate, addDaysToIsoDate, isoDateInZone, timeZoneOf } = require("../util/date-util");
 
@@ -73,15 +73,13 @@ async function loadTrainerContext(trainerId, now) {
 
   const [
     activeClients,
-    pendingReviewRelations,
     checkinSchedules,
     answeredOccurrences,
     latestResponses,
     checkinResponses,
   ] = await Promise.all([
     trainerClientService.listActiveClientsForTrainer(trainerId),
-    trainerClientDao.findByTrainerAndStatusWithClient(trainerId, "en_revision"),
-    CheckinSchedule.find({ trainerId }).lean(),
+    checkinScheduleDao.listForTrainer(trainerId),
     checkinDao.listAnsweredOccurrences(trainerId, windowStart),
     checkinDao.getLatestResponseByClient(trainerId),
     // Fase 3 — los VALORES de las respuestas, no solo sus fechas: las reglas
@@ -95,12 +93,13 @@ async function loadTrainerContext(trainerId, now) {
 
   const clientIds = activeClients.filter((entry) => entry.user).map((entry) => entry.user._id);
 
-  const [anthropometryEntries, clientUsers, workoutDates, painEntries, trackingDays] = await Promise.all([
+  const [anthropometryEntries, clientUsers, routines, workoutDates, painEntries, trackingDays] = await Promise.all([
     anthropometryDao.listForUsersSince(clientIds, windowStart),
-    // Solo para saber SI el cliente tiene rutina (detectNoTrainingActivity)
-    // y para la Cartera — ver roster-service.js.
     // `timezone`: el "hoy" de cada cliente es el de su zona horaria.
-    userSchema.find({ _id: { $in: clientIds } }).select("tableInUse timezone").lean(),
+    userDao.listFields(clientIds, "timezone"),
+    // Solo para saber SI el cliente tiene rutina (detectNoTrainingActivity)
+    // y para la Cartera — ver roster-service.js. Calculada con sus fases.
+    routinesInUseOf(clientIds),
     // Fase 6 — sesiones entrenadas de TODA la cartera en una agregación,
     // para que el motor de reglas pueda condicionar sobre entrenamiento sin
     // una consulta por cliente. El volumen y los PRs siguen fuera del job:
@@ -129,7 +128,7 @@ async function loadTrainerContext(trainerId, now) {
 
   const anthropometryByClient = groupBy(anthropometryEntries, (entry) => String(entry.userId));
   const tableIdByClient = new Map(
-    clientUsers.map((user) => [String(user._id), user.tableInUse]).filter(([, table]) => table)
+    [...routines].map(([clientId, routine]) => [clientId, routine.tableInUse]).filter(([, table]) => table)
   );
 
   // Todos los clientes llevan adherencia, también los que no tienen días
@@ -155,7 +154,6 @@ async function loadTrainerContext(trainerId, now) {
 
   return {
     activeClients,
-    pendingReviewRelations,
     // Programaciones y solicitudes ya respondidas por cliente: con eso se
     // sabe qué ventanas se cerraron vacías (checkin_overdue) sin una
     // consulta por cliente.
@@ -210,23 +208,6 @@ function lastActivityFor({ lastResponseAt, entries, adherence, now }) {
 function buildClientSnapshots(context, now) {
   const snapshots = [];
 
-  // Clientes en alta (status "en_revision"): todavía no están en
-  // activeClients, y de ellos solo se sabe que esperan confirmación.
-  for (const relation of context.pendingReviewRelations) {
-    if (!relation.clientId) continue;
-    snapshots.push({
-      clientId: relation.clientId._id,
-      clientName: fullName(relation.clientId),
-      shortName: shortName(relation.clientId),
-      relationStatus: "en_revision",
-      now,
-      timeZone: timeZoneOf(relation.clientId),
-      today: isoDateInZone(now, timeZoneOf(relation.clientId)),
-      entries: [],
-      checkinResponses: [],
-    });
-  }
-
   for (const entry of context.activeClients) {
     if (!entry.user) continue;
     const clientKey = String(entry.user._id);
@@ -256,8 +237,6 @@ function buildClientSnapshots(context, now) {
       // que el trainer tiene fichados por su email, no por su nombre.
       clientEmail: entry.user.email || "",
       shortName: shortName(entry.user),
-      relationStatus: "active",
-      intakePending: Boolean(entry.intakePending),
       now,
       // Zona del cliente y su "hoy": de aquí cuentan los periodos de las
       // reglas (rule-metric-catalog.js#periodStartDay) y la Cartera.
@@ -301,7 +280,6 @@ function buildSignalsFromSnapshots(snapshots) {
     clientName: snapshot.clientName,
     signals: buildSignalsForClient({
       clientName: snapshot.shortName,
-      relationStatus: snapshot.relationStatus,
       now: snapshot.now,
       entries: snapshot.entries,
       adherence: snapshot.adherence,
@@ -459,6 +437,10 @@ module.exports = {
   // arriba. No la copies: si diverge, la Cartera y las alertas dejan de
   // contar lo mismo.
   loadTrainerContext,
+  // Alertas del profesional y cambio de estado (siempre filtradas por él).
+  listForTrainer: (trainerId, options) => coachAlertDao.listForTrainer(trainerId, options),
+  listForClient: (trainerId, clientId, options) => coachAlertDao.listForClient(trainerId, clientId, options),
+  setStatus: (trainerId, alertId, change) => coachAlertDao.setStatus(trainerId, alertId, change),
   // Exportadas para test unitario (puras, sin BD).
   buildClientSnapshots,
   buildSignalsFromSnapshots,

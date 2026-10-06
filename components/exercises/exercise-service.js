@@ -32,9 +32,6 @@ module.exports = {
   async updateExercise(id, exercise) {
     return exerciseDao.updateExercise(id, exercise);
   },
-  async archiveExercise(idExercise, idUser) {
-    return exerciseDao.archiveExercise(idExercise, idUser);
-  },
 
   async deleteExercise(id) {
     return exerciseDao.deleteExercise(id);

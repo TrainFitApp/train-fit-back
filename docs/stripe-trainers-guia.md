@@ -374,7 +374,7 @@ No hay entrenadores con planes antiguos. No hay que importar nada.
 1. Configura la parte A en **live** (1–2 horas). No actives nada todavía.
 2. Backend (Hetzner, compartido con la app de cliente):
    - `npm ci` con devDependencies (hace falta TypeScript) y `npm run build:ts`. PM2 arranca `bin/www` sin compilar: sin `.build` fallan los borrados de cuentas y las rutas de entrenador.
-   - Añade las variables de C2 **sin `STRIPE_KEY` todavía** y ejecuta `npm run migrate:trainer-seats:dry-run`, `npm run migrate:trainer-seats` y `pm2 reload train-fit-back`. La app de cliente no cambia.
+   - Añade las variables de C2 **sin `STRIPE_KEY` todavía** y ejecuta `npm run migrate:modelo-datos:dry-run`, `npm run migrate:modelo-datos` (paso 12: plazas) y `pm2 reload train-fit-back`. La app de cliente no cambia.
 3. Web de Trainers: corrige antes el bloqueo C1.5, ejecuta `npm run build:pro:t`, sírvela en `https://<dominio de Trainers>` y comprueba que llama a la API de producción.
 4. App de Gestión: despliégala como hoy (trae la pantalla «Facturación Trainers»).
 5. En el servidor, con `STRIPE_KEY` en el entorno de la shell, ejecuta `npm run stripe:catalog` (si falta) y `npm run billing:preflight`. Todo debe salir en ✔; cada aviso (!) se comprueba a mano en el Dashboard.

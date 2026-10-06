@@ -1,38 +1,12 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const Schema = mongoose.Schema;
-const dietDaySchema = require("../dietDays/diet-days-schema");
-const exerciseSchema = require("../exercises/exercise-schema");
-const tableSchema = require("../tables/table-schema");
-const productSchema = require("../products/product-schema");
-const anthropometrySchemaDef = require("../anthropometry/anthropometry-schema");
-// anthropometry-schema.js exporta el Schema crudo a propósito (cada
-// consumidor lo compila); aquí hace falta el modelo compilado para poder
-// usar .deleteMany(), no el Schema en sí.
-const anthropometrySchema =
-  mongoose.models.Anthropometry ||
-  mongoose.model("Anthropometry", anthropometrySchemaDef);
-const nutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
-const workoutSchema = require("../workouts/workout-schema");
-const mealSchema = require("../meals/meal-schema");
-const dietTemplateSchema = require("../dietTemplates/diet-template-schema");
-// Auditoría cascadas de borrado (2026-08) — ninguna de estas colecciones
-// "Coach tab" tenía limpieza al borrar cuenta, hueco preexistente arrastrado
-// desde que se fueron añadiendo feature a feature (mismo problema que tenía
-// DietTemplate antes de esta pasada).
-const trainerClientSchema = require("../trainerClients/trainer-client-schema");
-const trainerNoteSchema = require("../trainerNotes/trainer-note-schema");
-const trainerPaymentSchema = require("../trainerPayments/trainer-payment-schema");
-const trainerTaskSchema = require("../trainerTasks/trainer-task-schema");
-const clientIntakeSchema = require("../clientIntake/client-intake-schema");
-const trainerIntakeConfigSchema = require("../trainerIntakeConfig/trainer-intake-config-schema");
-const checkinResponseSchema = require("../trainerCheckins/checkin-response-schema");
-const checkinTemplateDefinitionSchema = require("../trainerCheckins/checkin-template-definition-schema");
-const notificationSchema = require("../notifications/notification-schema");
-const recipeSchema = require("../recipes/recipe-schema");
-const billingCustomerSchema = require("../billing/billing-customer-schema");
-const billingEventSchema = require("../billing/billing-event-schema");
+const NutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
+const NutritionPreferencesSchema = require("../nutritionPreferences/nutrition-preferences-schema");
+const TrainerPaymentSettingsSchema = require("../trainerPayments/trainer-payment-settings-schema");
+const TrainerIntakeConfigSchema = require("../trainerIntakeConfig/trainer-intake-config-schema");
 const { EMAIL_FORMAT_REGEX } = require("../util/normalize-email");
+const { accountCascade, deleteAccountData } = require("../util/account-cascade");
 const SALT_WORK_FACTOR = 10;
 
 const UserSchema = new Schema({
@@ -52,7 +26,6 @@ const UserSchema = new Schema({
   password: String,
   name: { type: String, trim: true, maxlength: 100 },
   lastname: { type: String, trim: true, maxlength: 200 },
-  weight: { type: Number, min: 30, max: 300 },
   height: { type: Number, min: 70, max: 300 },
   status: String,
   roles: { type: [String], default: undefined },
@@ -62,10 +35,10 @@ const UserSchema = new Schema({
   steps: Number,
   training: Number,
   birth: Date,
-  goalInUse: {
-    type: Schema.Types.ObjectId,
-    ref: "NutritionalGoal",
-  },
+  // Sus objetivos nutricionales (nutritionalGoals/nutritional-goal-dao.js) y
+  // el que rige (`_id` de uno de ellos).
+  nutritionalGoals: { type: [NutritionalGoalSchema], default: undefined },
+  goalInUse: Schema.Types.ObjectId,
   hash: String,
   hashExpiresAt: Date,
   hashFailedAttempts: { type: Number, default: 0 },
@@ -77,23 +50,24 @@ const UserSchema = new Schema({
   restoreCodeDailyCount: { type: Number, default: 0 },
   restoreCode: String,
   theme: { type: String, default: "dark" },
-  // Refactor nutrición (2026-09) — la colección `diets` se elimina: era un
-  // wrapper 1:1 con el usuario cuyo único contenido propio era `name`
-  // (literalmente siempre "Diet", nunca renombrado desde ninguna app) y esta
-  // nota. Los días se consultan ahora directos por DietDay.userId, sin array
-  // intermedio. `dietInUse` se mantiene SOLO durante la migración y se borra
-  // en el mismo script una vez copiada la nota.
+  // Nota fijada de la pantalla de dieta (los días cuelgan del usuario por
+  // DietDay.userId).
   dietPinnedNote: { type: String, trim: true, maxlength: 500 },
-  // `dietInUse` hacía doble trabajo: puntero al wrapper Y interruptor de
-  // "dieta activada" (playStopDiet lo ponía/quitaba). El puntero desaparece
-  // con el wrapper; el interruptor se queda, ahora explícito. Por defecto
-  // activada, que es como se comportaba todo usuario existente.
-  dietEnabled: { type: Boolean, default: true },
+  // La última rutina (y sesión a medias) que eligió el usuario o su
+  // entrenador, con cuándo. La que tiene en uso de verdad se calcula junto con
+  // sus fases de rutina (routineAssignments/routine-in-use.js): nunca se lee
+  // este campo a pelo.
   tableInUse: Schema.Types.ObjectId,
+  tableInUseAt: Date,
   workoutInUse: Schema.Types.ObjectId,
-  archivedProducts: { type: [Schema.Types.ObjectId], default: [] },
-  archivedRecipes: { type: [Schema.Types.ObjectId], default: [] },
-  archivedExercises: { type: [Schema.Types.ObjectId], default: [] },
+  workoutInUseAt: Date,
+  // Lo que ha marcado como favorito. Solo se toca por
+  // favorites/favorites-dao.js.
+  favorites: {
+    products: { type: [Schema.Types.ObjectId], default: [] },
+    recipes: { type: [Schema.Types.ObjectId], default: [] },
+    exercises: { type: [Schema.Types.ObjectId], default: [] },
+  },
   personalAds: Boolean,
   lastLogin: Date,
   // Zona horaria IANA del móvil ("Europe/Madrid"). La pone el middleware de
@@ -110,7 +84,7 @@ const UserSchema = new Schema({
   // Suscripción del entrenador a TrainFit, separada de `premium` (consumidor,
   // RevenueCat). Solo la escribe la facturación de Trainers (Stripe) como
   // proyección de su cuenta: plan, periodicidad y plazas de clientes contratadas
-  // (ver feature-access-service.js#trainerPlan).
+  // (ver feature-access.js#trainerPlan).
   professionalPremium: {
     entitled: { type: Boolean, default: false },
     // "free" | "starter" | "professional" | "scale" (trainerBilling/src/catalog.ts)
@@ -156,187 +130,75 @@ const UserSchema = new Schema({
   // media-access#MEDIA_CONSENT_VERSION, no puede subir.
   mediaConsentAt: { type: Date, default: null },
   mediaConsentVersion: { type: String, default: null },
+  // Preferencias y restricciones de nutrición del cliente (alergias, flags,
+  // comidas que hace). Sin subdocumento = nunca pedidas ni respondidas. Se
+  // leen y escriben solo por nutritionPreferences/nutrition-preferences-dao.js.
+  nutritionPreferences: { type: NutritionPreferencesSchema, default: undefined },
+  // Recientes que ha quitado del buscador de alimentos, por comida (posición,
+  // Desayuno = 0…) y pestaña. Los recientes no se guardan: se calculan del
+  // historial (recentFoods/recent-food-dao.js) y esto solo dice qué quitar.
+  // refId null = «Borrar todos» de esa comida; lo añadido después de
+  // `hiddenAt` vuelve a salir (recentFoods/recent-food-match.js).
+  hiddenRecentFoods: {
+    type: [
+      new Schema(
+        {
+          mealIndex: { type: Number, required: true, min: 0 },
+          kind: { type: String, enum: ["product", "recipe"], required: true },
+          refId: { type: Schema.Types.ObjectId, default: null },
+          hiddenAt: { type: Date, required: true },
+        },
+        { _id: false },
+      ),
+    ],
+    default: undefined,
+  },
+  // Ajustes propios del profesional; sin subdocumento, los de defecto.
+  // `payments`: hora, zona y avisos de sus cobros (trainerPayments/trainer-payment-dao.js).
+  // `intake`: campos y preguntas de su cuestionario inicial (trainerIntakeConfig/trainer-intake-config-dao.js).
+  trainerSettings: {
+    payments: { type: TrainerPaymentSettingsSchema, default: undefined },
+    intake: { type: TrainerIntakeConfigSchema, default: undefined },
+  },
 });
 
 UserSchema.plugin(require("mongoose-autopopulate"));
 
-UserSchema.pre("save", function (next) {
-  let user = this;
-  if (!user.isModified("password")) return next();
-
-  user.lastPasswordChangeAt = new Date();
-  if (user.isNew) {
-    user.passwordVersion = user.passwordVersion > 0 ? user.passwordVersion : 1;
-  } else {
-    user.passwordVersion = (user.passwordVersion || 0) + 1;
-  }
-
-  // generate a salt
-  bcrypt.genSalt(SALT_WORK_FACTOR, function (err, salt) {
-    if (err) return next(err);
-
-    // hash the password using our new salt
-    bcrypt.hash(user.password, salt, function (err, hash) {
-      if (err) return next(err);
-      // override the cleartext password with the hashed one
-      user.password = hash;
-      next();
-    });
-  });
+// La contraseña se guarda cifrada, y cada cambio sube su versión (los tokens
+// emitidos con la anterior dejan de valer).
+UserSchema.pre("save", async function () {
+  if (!this.isModified("password")) return;
+  this.lastPasswordChangeAt = new Date();
+  this.passwordVersion = this.isNew ? Math.max(this.passwordVersion || 0, 1) : (this.passwordVersion || 0) + 1;
+  this.password = await bcrypt.hash(this.password, SALT_WORK_FACTOR);
 });
 
-// Middleware para eliminar las referencias al eliminar un usuario con deleteOne
-UserSchema.pre("deleteOne", async function (next) {
-  try {
-    const query = this.getQuery();
-    const user = await this.model.findOne(query);
-
-    if (user) {
-      await require("../trainerBilling/adapter").assertDeletionAllowed([user._id]);
-      // Antes de cualquier cascada: lo que esta cuenta deja en las de otros
-      // (alimentos en el diario de sus clientes, fases y rutinas asignadas)
-      // se conserva para ellos. Ver account-deletion-keep.js.
-      await require("./account-deletion-keep").keepOtherUsersData(user._id);
-      // Antes: deleteOne sobre el wrapper Diet, que arrastraba sus DietDay en
-      // cascada. Sin wrapper, se borran directos por dueño — y el hook
-      // deleteMany de DietDay sigue arrastrando Meals y su contenido.
-      await dietDaySchema.deleteMany({ userId: user._id });
-      await tableSchema.deleteMany({ userId: user._id });
-      await anthropometrySchema.deleteMany({ userId: user._id });
-
-      const ownExercises = await exerciseSchema
-        .find({ userId: user._id })
-        .select("_id")
-        .lean();
-
-      for (const exercise of ownExercises) {
-        await exerciseSchema.deleteOne({ _id: exercise._id });
-      }
-
-      await productSchema.deleteMany({ userId: user._id });
-      await nutritionalGoalSchema.deleteMany({ userId: user._id });
-      // Plantillas de workout del trainer (trainerId set, sin split que las
-      // referencie) — el hook pre('deleteMany') de workout-schema.js ya
-      // cascada el borrado de sus CustomExercise/Set.
-      await workoutSchema.deleteMany({ trainerId: user._id });
-      // Snippets de comida del trainer (trainerId set, sin DietDay que los
-      // referencie) — el hook pre('deleteMany') de meal-schema.js ya
-      // cascada el borrado de sus CustomProduct/CustomRecipe.
-      await mealSchema.deleteMany({ trainerId: user._id });
-      // Plantillas de dieta del trainer, y copias congeladas de asignaciones
-      // que él creó (mismo documento — ver diet-template-schema.js). El hook
-      // pre('deleteMany') de ese schema ya cascada CustomProduct/CustomRecipe
-      // de cada plantilla.
-      await dietTemplateSchema.deleteMany({ trainerId: user._id });
-
-      // El usuario puede ser el trainer O el cliente de cada una de estas
-      // relaciones — hay que limpiar por ambos lados.
-      await trainerClientSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await trainerNoteSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      // Cobros: se borran igual que el resto (decisión vigente; la baja de una
-      // relación los conserva, el borrado de la cuenta no). Ver
-      // components/trainerPayments/README.md.
-      await trainerPaymentSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await require("../trainerPayments/trainer-payment-profile-schema").deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await require("../trainerPayments/trainer-payment-settings-schema").deleteMany({ trainerId: user._id });
-      // deleteMany (no deleteOne) dispara el hook en cascada de
-      // trainer-task-schema.js que borra los TaskCompletion de cada tarea.
-      await trainerTaskSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await clientIntakeSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await checkinResponseSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await require("../trainerCheckins/checkin-schedule-schema").deleteMany({ $or: [{ trainerId: user._id }, { clientId: user._id }] });
-      await notificationSchema.deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      // Copias congeladas asignadas a este usuario COMO CLIENTE (el lado
-      // trainerId ya se cubrió arriba, junto con sus plantillas reales), y
-      // las plantillas de biblioteca que eran exclusivas suyas
-      // (ownerClientId): sin el cliente no significan nada, mismo criterio
-      // que sus fases asignadas.
-      await dietTemplateSchema.deleteMany({
-        $or: [{ clientId: user._id }, { ownerClientId: user._id }],
-      });
-
-      // Config/biblioteca solo del lado trainer (sin clientId).
-      await trainerIntakeConfigSchema.deleteMany({ trainerId: user._id });
-      await checkinTemplateDefinitionSchema.deleteMany({ trainerId: user._id });
-
-      // Recetas propias del usuario (no verificadas por admin) — nunca
-      // tuvieron hook de borrado propio.
-      await recipeSchema.deleteMany({ userId: user._id });
-
-      // Billing — decisión explícita: se borra igual que el resto, no se
-      // conserva como histórico tras borrar la cuenta.
-      await billingCustomerSchema.deleteMany({ userId: user._id });
-      await billingEventSchema.deleteMany({ userId: user._id });
-
-      // Fotos y vídeos (docs/plan-medidas-multimedia.md). Cada deleteMany
-      // arrastra sus MediaAsset, y el hook de MediaAsset borra los archivos
-      // en R2/Bunny. Al final, los MediaAsset sueltos (subidas sin colgar de
-      // nada) de los que el usuario es dueño o protagonista.
-      await require("../progressMedia/progress-media-schema").deleteMany({ userId: user._id });
-      await require("../formChecks/form-check-schema").deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await require("../techniqueVideos/technique-video-schema").deleteMany({ trainerId: user._id });
-      await require("../techniqueVideos/technique-video-override-schema").deleteMany({
-        $or: [{ trainerId: user._id }, { clientId: user._id }],
-      });
-      await require("../media/media-schema").deleteMany({
-        $or: [{ ownerId: user._id }, { subjectId: user._id }],
-      });
-
-      // Recientes ocultos del buscador de alimentos.
-      await require("../hiddenRecentFoods/hidden-recent-food-schema").deleteMany({ userId: user._id });
-
-      // Datos de salud del cliente (dolor, suplementación, alergias y
-      // preferencias) y el seguimiento del profesional sobre él, por los dos
-      // lados. Sobrevivían al borrado de la cuenta.
-      const bothSides = { $or: [{ trainerId: user._id }, { clientId: user._id }] };
-      const { PainEntry, PainThreshold } = require("../painLog/pain-schema");
-      await PainEntry.deleteMany({ userId: user._id });
-      await PainThreshold.deleteMany(bothSides);
-      await require("../supplements/supplement-schema").Supplement.deleteMany(bothSides);
-      await require("../nutritionPreferences/nutrition-preferences-schema").deleteMany({ clientId: user._id });
-      await require("../routineAssignments/routine-assignment-schema").deleteMany(bothSides);
-      await require("../planChanges/plan-change-schema").deleteMany(bothSides);
-      const CoachAlert = require("../coachAlerts/coach-alert-schema");
-      await CoachAlert.deleteMany(bothSides);
-      await CoachAlert.updateMany({ resolvedBy: user._id }, { $unset: { resolvedBy: "" } });
-      await require("../coachTasks/coach-task-schema").deleteMany(bothSides);
-      await require("../clientNotes/trainer-note-read-schema").deleteMany(bothSides);
-      // Biblioteca del profesional (reglas, protocolos, puntuaciones de
-      // ejercicios), y el cliente borrado fuera de las reglas de otros.
-      const CoachRule = require("../coachRules/coach-rule-schema");
-      await CoachRule.deleteMany({ trainerId: user._id });
-      await CoachRule.updateMany({ clientIds: user._id }, { $pull: { clientIds: user._id } });
-      await require("../coachProtocols/coach-protocol-schema").deleteMany({ trainerId: user._id });
-      await require("../exerciseScores/exercise-score-schema").deleteMany({ trainerId: user._id });
-    }
-    next();
-  } catch (e) {
-    next(e);
-  }
+// Lo que otras cuentas guardan de esta: el cliente sale de las plazas
+// elegidas de su entrenador, y una sesión de impersonación abierta por un
+// admin que se borra se cierra (sin admin al que volver no puede seguir).
+UserSchema.plugin(accountCascade, {
+  detach: {
+    "trainerSeats.clientIds": "pull",
+    "auth.impersonatedByUserId": { $unset: { auth: "" } },
+  },
+  authorship: ["updatedByTrainerId", "requestedBy"],
 });
 
-// Los scripts de limpieza no pueden saltarse la preparación explícita de facturación.
-UserSchema.pre(["deleteMany", "findOneAndDelete"], async function () {
-  const users = await this.model.find(this.getQuery()).select("_id").lean();
+// Borrar una cuenta, por la vía que sea, borra o suelta antes todo lo que
+// tiene en las demás colecciones: cada schema declara lo suyo
+// (util/account-cascade.js). La facturación de entrenadores exige antes su
+// flujo de cancelación (trainerBilling/adapter.js#prepareDeletion).
+UserSchema.pre(["deleteOne", "deleteMany", "findOneAndDelete"], { document: false, query: true }, async function () {
+  const filter = this.getFilter();
+  const users = this.op === "deleteMany"
+    ? await this.model.find(filter).select("_id").lean()
+    : [await this.model.findOne(filter).select("_id").lean()].filter(Boolean);
+  if (!users.length) return;
   await require("../trainerBilling/adapter").assertDeletionAllowed(users.map((user) => user._id));
+  for (const user of users) await deleteAccountData(user._id);
 });
+
+// Localizar el dueño de un objetivo por su id (rutas /nutritionalgoals/:id).
+UserSchema.index({ "nutritionalGoals._id": 1 });
 
 module.exports = mongoose.model("User", UserSchema);

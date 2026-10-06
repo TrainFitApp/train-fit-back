@@ -1,4 +1,4 @@
-const express = require("express");
+const express = require("@awaitjs/express");
 const router = express.Router();
 const controller = require("./recipe-controller");
 const { validateAuth } = require("../../middleware");
@@ -13,17 +13,13 @@ const { auth } = require("../../middleware/validateAuth");
 const readAuth = auth(["admin", "user", "trainer"]);
 
 // Search and filter routes (must be before /:id)
-router.get("/search", readAuth, controller.searchRecipes);
-router.get("/user", validateAuth, controller.getUserRecipes);
-router.get("/verified", readAuth, controller.getVerifiedRecipes);
-// TAREA5 — favoritos son la biblioteca personal del entrenador (req.user.id
-// real), por eso viaja con "trainer" igual que /search, no con las rutas de
-// propiedad de abajo.
-router.get("/archived", readAuth, controller.getArchivedRecipes);
+router.getAsync("/search", readAuth, controller.searchRecipes);
+router.getAsync("/user", validateAuth, controller.getUserRecipes);
+router.getAsync("/verified", readAuth, controller.getVerifiedRecipes);
 
 // CRUD operations
-router.get("/:id", readAuth, controller.getRecipeById);
-router.post("/", validateAuth, controller.createRecipe);
+router.getAsync("/:id", readAuth, controller.getRecipeById);
+router.postAsync("/", validateAuth, controller.createRecipe);
 // El trainer necesita crear recetas reales para su propia biblioteca desde
 // el constructor de plantillas (mismo precedente que POST /product más
 // abajo en components/products/product-routes.js, que ya usa
@@ -31,20 +27,12 @@ router.post("/", validateAuth, controller.createRecipe);
 // que un trainer puede hacer aquí (ver isTrainer() ahí): solo crear una
 // receta nueva y standalone, nunca adjuntarla a un meal/diet day vía
 // recipeId/context — eso sigue siendo terreno exclusivo de "user"/"admin".
-router.post("/compose", auth(["admin", "user", "trainer"]), controller.composeRecipe);
-router.put("/:id", validateAuth, controller.updateRecipe);
-router.delete("/:id", validateAuth, controller.deleteRecipe);
-
-// Archive toggle (recipes archived by user) — mismo motivo que /archived arriba
-router.post("/:id/archive", readAuth, controller.toggleArchivedRecipe);
+router.postAsync("/compose", auth(["admin", "user", "trainer"]), controller.composeRecipe);
+router.putAsync("/:id", validateAuth, controller.updateRecipe);
+router.deleteAsync("/:id", validateAuth, controller.deleteRecipe);
 
 // CustomProduct management within Recipe
-router.post(
-  "/:idRecipe/customproducts/:idCustomProduct",
-  validateAuth,
-  controller.addRecipeCustomProduct,
-);
-router.delete(
+router.deleteAsync(
   "/:idRecipe/customproducts/:idCustomProduct",
   validateAuth,
   controller.removeRecipeCustomProduct,

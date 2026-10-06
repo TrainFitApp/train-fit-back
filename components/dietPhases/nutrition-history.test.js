@@ -6,16 +6,16 @@ const { buildWeeks } = require("./week-window");
 const TODAY = "2026-09-26";
 const SKIPPED = ["2026-09-24", "2026-09-18", "2026-09-10", "2026-09-03"];
 
-function phase(id, name, startDate, endDate) {
-  const head = { _id: id, phaseName: name, startDate, endDate, status: endDate ? "superseded" : "active" };
+function phase(id, name, startDate, endDate, successor = null) {
+  const doc = { _id: id, name, startDate, endDate, contents: [{ _id: `${id}-1`, startDate, menus: [] }] };
   const weeks = buildWeeks(startDate, endDate, TODAY);
-  return buildPhaseEvents({ head, members: [head], weeks, days: [], skippedDates: SKIPPED, today: TODAY });
+  return buildPhaseEvents({ phase: doc, successor, weeks, days: [], skippedDates: SKIPPED, today: TODAY });
 }
 
 const feed = () =>
   sortEvents([
-    ...phase("A", "Volumen", "2026-08-12", "2026-09-08"),
-    ...phase("B", "Definición", "2026-09-09", "2026-09-16"),
+    ...phase("A", "Volumen", "2026-08-12", "2026-09-08", { startDate: "2026-09-09" }),
+    ...phase("B", "Definición", "2026-09-09", "2026-09-16", { startDate: "2026-09-17" }),
     ...phase("C", "Mantenimiento", "2026-09-17", null),
   ]);
 
@@ -49,4 +49,11 @@ test("los días saltados cuelgan de su semana", () => {
 test("la semana lleva kcal y macros pautados", () => {
   const week = feed().find((e) => e.type === "week");
   assert.deepEqual(Object.keys(week.profile).sort(), ["carbs", "fat", "kcal", "protein"]);
+});
+
+test("fin de fase: sustituida si la cortó la siguiente, terminada si acabó por su fecha", () => {
+  const ended = (events) => events.find((e) => e.type === "phase_ended").status;
+  assert.equal(ended(phase("A", "Volumen", "2026-08-12", "2026-09-08", { startDate: "2026-09-09" })), "superseded");
+  assert.equal(ended(phase("A", "Volumen", "2026-08-12", "2026-09-08", { startDate: "2026-09-20" })), "finished");
+  assert.equal(ended(phase("A", "Volumen", "2026-08-12", "2026-09-08")), "finished");
 });

@@ -45,9 +45,9 @@ test("entitlements premium: límites infinitos viajan como null y sin anuncios; 
 test("anuncios: un cliente free con profesional activo no los ve; al terminar la relación vuelven al momento", async () => {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
-  const relation = await ctx.relate(trainer, client, { scope: "nutrition" });
+  await ctx.relate(trainer, client, { scope: "nutrition" });
   assert.equal((await ctx.get(client, "/billing/entitlements/me")).adsEnabled, false);
-  await ctx.model("TrainerClient").updateOne({ _id: relation._id }, { $set: { status: "revoked" } });
+  await ctx.endRelation(trainer, client);
   assert.equal((await ctx.get(client, "/billing/entitlements/me")).adsEnabled, true);
 });
 
@@ -134,7 +134,8 @@ test("objetivos de otro usuario: 404 en leer, editar, activar y borrar", async (
   for (const [method, path] of [["GET", `/nutritionalgoals/${goal._id}`], ["PUT", `/nutritionalgoals/${goal._id}`], ["PUT", `/nutritionalgoals/${goal._id}/activate`], ["DELETE", `/nutritionalgoals/${goal._id}`]]) {
     assert.equal((await ctx.call(other, method, path, { name: "x" })).status, 404, `${method} ${path}`);
   }
-  assert.equal((await ctx.model("NutritionalGoal").findById(goal._id).lean()).name, "Privado");
+  const stored = await ctx.model("User").findById(owner._id).select("nutritionalGoals").lean();
+  assert.equal(stored.nutritionalGoals.find((g) => String(g._id) === String(goal._id)).name, "Privado");
 });
 
 test("el profesional fija el objetivo a mano: el cliente lo ve en su objetivo en uso y recalcular el perfil ya no lo pisa", async () => {
@@ -198,18 +199,28 @@ test("ejercicios propios: free 2, el entrenador sin límite; solo el dueño los 
   assert.equal(String(stored.userId), user.id);
 });
 
-test("borrar un ejercicio propio lo saca de las rutinas (y sus series) y de favoritos; en una plantilla del entrenador, 409", async () => {
+// Decisión 2026-10: borrar un ejercicio que alguna sesión usa no toca el
+// historial de nadie. Se retira (deletedAt): sale de búsquedas y favoritos,
+// y las sesiones que lo tienen lo siguen mostrando con sus series. Uno que
+// nadie usa sí se borra.
+test("borrar un ejercicio propio: en uso se retira sin tocar sesiones ni series; sin uso se borra; en una plantilla del entrenador, 409", async () => {
   const user = await ctx.makeClient();
   const exercise = await ctx.post(user, "/exercises", { name: "Para borrar" });
-  const sets = await ctx.model("Set").insertMany([{ reps: 5 }, { reps: 6 }]);
-  const ce = await ctx.model("CustomExercise").create({ exercise: exercise._id, sets: sets.map((s) => s._id) });
-  const workout = await ctx.model("Workout").create({ name: "W", exercises: [ce._id] });
-  await ctx.put(user, "/exercises/favorite", { idUser: user.id, idExercise: exercise._id });
+  const workout = await ctx.model("Workout").create({ name: "W", exercises: [{ exercise: exercise._id, sets: [{ reps: 5 }, { reps: 6 }] }] });
+  await ctx.call(user, "PUT", `/favorites/exercises/${exercise._id}`);
 
   assert.equal((await ctx.call(user, "DELETE", `/exercises/${exercise._id}`)).status, 204);
-  assert.deepEqual((await ctx.model("Workout").findById(workout._id).lean()).exercises, []);
-  assert.equal(await ctx.count("CustomExercise", { _id: ce._id }), 0);
-  assert.deepEqual((await ctx.get(user, "/auth/me")).user.archivedExercises, []);
+  const stored = await ctx.model("Workout").findById(workout._id).lean();
+  assert.equal(stored.exercises.length, 1, "la sesión conserva el ejercicio");
+  assert.deepEqual(stored.exercises[0].sets.map((set) => set.reps), [5, 6], "y sus series");
+  assert.ok((await ctx.model("Exercise").findById(exercise._id).lean()).deletedAt, "retirado, no borrado");
+  assert.deepEqual((await ctx.get(user, "/auth/me")).user.favorites.exercises, []);
+  const search = await ctx.post(user, "/exercises/search", { userId: user.id, search: "Para borrar" });
+  assert.ok(!JSON.stringify(search).includes("Para borrar"), "ya no sale en la búsqueda");
+
+  const unused = await ctx.post(user, "/exercises", { name: "Sin uso" });
+  assert.equal((await ctx.call(user, "DELETE", `/exercises/${unused._id}`)).status, 204);
+  assert.equal(await ctx.count("Exercise", { _id: unused._id }), 0);
 
   const trainer = await ctx.makeTrainer();
   const coachExercise = await ctx.post(trainer, "/exercises", { name: "En plantilla" });

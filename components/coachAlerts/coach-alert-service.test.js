@@ -107,7 +107,6 @@ test("señales integradas a partir de snapshots", async (t) => {
   function context(overrides = {}) {
     return {
       activeClients: [],
-      pendingReviewRelations: [],
       schedulesByClient: new Map(),
       answeredByClient: new Map(),
       lastResponseByClient: new Map(),
@@ -125,27 +124,10 @@ test("señales integradas a partir de snapshots", async (t) => {
     assert.deepEqual(signalsFor(context(), NOW), []);
   });
 
-  await t.test("cliente en revisión produce su señal con nombre completo", () => {
-    const result = signalsFor(
-      context({
-        pendingReviewRelations: [
-          { clientId: { _id: "c1", name: "Ana", lastname: "Ruiz" } },
-        ],
-      }),
-      NOW
-    );
-    assert.equal(result.length, 1);
-    assert.equal(result[0].clientName, "Ana Ruiz");
-    assert.equal(result[0].signals[0].type, "pending_review");
-    // La frase usa el nombre de pila, no el nombre completo.
-    assert.match(result[0].signals[0].reason, /^Ana ha enviado/);
-  });
-
   await t.test("relación sin usuario poblado se salta sin reventar", () => {
     const result = signalsFor(
       context({
         activeClients: [{ user: null, scopes: ["nutrition"] }],
-        pendingReviewRelations: [{ clientId: null }],
       }),
       NOW
     );

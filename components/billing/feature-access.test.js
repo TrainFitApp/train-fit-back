@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { isEffectivelyEntitled, isPremiumUser } = require("./feature-access-service");
+const { isEffectivelyEntitled, isPremiumUser } = require("./feature-access");
 
 test("isEffectivelyEntitled", async (t) => {
   await t.test("entitled=false -> false regardless of expiresAt", () => {
@@ -55,7 +55,7 @@ test("isPremiumUser", async (t) => {
 });
 
 test("activePremiumFilter: misma regla que isEffectivelyEntitled, como filtro de MongoDB", () => {
-  const { activePremiumFilter } = require("./feature-access-service");
+  const { activePremiumFilter } = require("./feature-access");
   const now = new Date();
   assert.deepEqual(activePremiumFilter(now), {
     "premium.entitled": true,

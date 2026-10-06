@@ -181,7 +181,7 @@ test("extensionFor no distingue mayúsculas y tiene salida para lo desconocido",
 
 // --- cupo de biblioteca del entrenador --------------------------------------
 
-// El cupo sale del plan vigente (feature-access-service#trainerPlan) y del catálogo de facturación.
+// El cupo sale del plan vigente (feature-access#trainerPlan) y del catálogo de facturación.
 const plan = (tier, extra = {}) => ({ professionalPremium: { entitled: true, tier, interval: "monthly", seats: 20,
   expiresAt: new Date(Date.now() + 60000), stripeMode: "test", ...extra } });
 

@@ -244,17 +244,6 @@ test("mergeRecipeIngredients llama a toObject cuando el ingrediente es un docume
   assert.deepEqual(merged[0], { _id: "a", quantity: 200, energyKcal100g: 100 });
 });
 
-test("la lista de campos pisables no se separa de la de recipe-merge.service", () => {
-  // Está duplicada a propósito (este módulo es aritmética pura, sin mongoose),
-  // así que hace falta algo que avise si una de las dos crece y la otra no.
-  const { CUSTOM_PRODUCT_OVERRIDE_FIELDS } = require("./diet-days-nutrition-util");
-  const recipeMerge = require("../recipes/recipe-merge.service");
-  assert.deepEqual(
-    [...CUSTOM_PRODUCT_OVERRIDE_FIELDS].sort(),
-    [...recipeMerge.CUSTOM_PRODUCT_OVERRIDE_FIELDS].sort(),
-  );
-});
-
 test("mergeRecipeIngredients añade los ingredientes nuevos al final", () => {
   const recipe = { customProducts: [base("a", 100)] };
   const merged = mergeRecipeIngredients(recipe, { addedCustomProducts: [base("extra", 20)] });
@@ -389,14 +378,13 @@ test("isItemConsumed: lo que añade el cliente cuenta siempre como consumido", (
   // No existe "lo añadí pero aún no me lo he comido" para algo que registró
   // el propio cliente.
   assert.equal(isItemConsumed({}, {}), true);
-  assert.equal(isItemConsumed({ consumed: false }, { completed: false }), true);
+  assert.equal(isItemConsumed({ consumed: false }), true);
 });
 
-test("isItemConsumed: lo pautado necesita marca propia o la comida entera hecha", () => {
+test("isItemConsumed: lo pautado necesita su marca", () => {
   const planned = { assignedByTrainerId: "trainer-1" };
-  assert.equal(isItemConsumed(planned, {}), false);
-  assert.equal(isItemConsumed({ ...planned, consumed: true }, {}), true);
-  assert.equal(isItemConsumed(planned, { completed: true }), true);
+  assert.equal(isItemConsumed(planned), false);
+  assert.equal(isItemConsumed({ ...planned, consumed: true }), true);
 });
 
 // --- countMealItems / computeDayCompletion ----------------------------------
@@ -412,11 +400,6 @@ test("countMealItems solo cuenta lo pautado", () => {
     customRecipes: [plannedItem(false)],
   };
   assert.deepEqual(countMealItems(meal), { total: 2, completed: 1 });
-});
-
-test("countMealItems: la comida marcada entera da todo por hecho", () => {
-  const meal = { completed: true, customProducts: [plannedItem(false), plannedItem(false)] };
-  assert.deepEqual(countMealItems(meal), { total: 2, completed: 2 });
 });
 
 test("countMealItems de una comida sin nada pautado es 0/0", () => {

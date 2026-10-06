@@ -5,7 +5,7 @@ const { timeZoneOf, todayIsoDate } = require("../util/date-util");
 // qué es "hoy" para su cliente. La del propio usuario ya viene resuelta en
 // req.auth.timeZone (middleware/validateAuth.js), sin consulta.
 //
-// El modelo se pide al llamar, no al cargar: users/schema.js arrastra medio
+// El modelo se pide al llamar, no al cargar: users/user-schema.js arrastra medio
 // proyecto en sus hooks y un require aquí arriba sería un ciclo esperando a
 // pasar.
 async function timeZoneOfUser(userId) {

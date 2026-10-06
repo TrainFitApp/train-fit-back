@@ -18,18 +18,9 @@ async function getAdminConfig(req, res) {
 }
 
 async function updateAdminConfig(req, res) {
-  try {
-    const updatedBy = req.user?.email || req.user?.id || "";
-    const config = await service.updateConfig(req.body || {}, updatedBy);
-    res.json({ success: true, config });
-  } catch (error) {
-    if (error.statusCode === 400) {
-      return res
-        .status(400)
-        .json({ success: false, message: error.message, errors: error.errors });
-    }
-    throw error;
-  }
+  const updatedBy = req.user?.email || req.user?.id || "";
+  const config = await service.updateConfig(req.body || {}, updatedBy);
+  res.json({ success: true, config });
 }
 
 module.exports = { getPublicStatus, getAdminConfig, updateAdminConfig };

@@ -3,8 +3,9 @@
 const progressMediaDao = require("./progress-media-dao");
 const mediaService = require("../media/media-service");
 const { POSES } = require("../media/media-catalog");
-const { relationStartOf, trainerCanSeeProgressDay } = require("../media/media-access");
+const { trainerCanSeeProgressDay } = require("../media/media-access");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { activeSince, activeScopes } = require("../trainerClients/pair-state");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { ownView } = require("../anthropometry/anthropometry-origin");
 const { isoDateInZone, todayIsoDate, timeZoneOf } = require("../util/date-util");
@@ -138,26 +139,20 @@ module.exports = {
    * a los que aún no se ha hecho y tienen algo anterior que ver.
    */
   async trainersForHistory(user) {
-    const relations = await trainerClientDao.findActiveByClientWithTrainer(user._id);
-    const byTrainer = new Map();
-    for (const relation of relations) {
-      const key = String(relation.trainerId?._id || relation.trainerId);
-      if (!byTrainer.has(key)) byTrainer.set(key, []);
-      byTrainer.get(key).push(relation);
-    }
+    const pairs = await trainerClientDao.findActivePairsOfClient(user._id, { withTrainer: true });
     const trainers = [];
-    for (const [trainerId, list] of byTrainer) {
-      const start = relationStartOf(list);
-      const trainer = list[0].trainerId || {};
+    for (const pair of pairs) {
+      const start = activeSince(pair);
+      const trainer = pair.trainerId || {};
       const since = start ? isoDateInZone(start, timeZoneOf(user)) : null;
       const previousDays = since ? await progressMediaDao.countBefore(user._id, since) : 0;
       trainers.push({
-        trainerId,
+        trainerId: String(trainer._id || pair.trainerId),
         name: [trainer.name, trainer.lastname].filter(Boolean).join(" ") || trainer.email || "",
-        scopes: [...new Set(list.map((relation) => relation.scope))],
+        scopes: activeScopes(pair),
         since,
-        historyShared: list.some((relation) => relation.mediaHistorySharedAt),
-        historyAsked: list.some((relation) => relation.mediaHistoryAskedAt),
+        historyShared: Boolean(pair.mediaHistorySharedAt),
+        historyAsked: Boolean(pair.mediaHistoryAskedAt),
         previousDays,
       });
     }
@@ -173,9 +168,9 @@ module.exports = {
   // --- Lado profesional ---
 
   async listForTrainer(trainerId, clientId, { from, to } = {}, { baseUrl } = {}) {
-    const relations = await trainerClientDao.findActiveRelationsOfPair(trainerId, clientId);
-    const relationStart = relationStartOf(relations);
-    const historyShared = relations.some((relation) => relation.mediaHistorySharedAt);
+    const pair = await trainerClientDao.findActivePair(trainerId, clientId);
+    const relationStart = activeSince(pair);
+    const historyShared = Boolean(pair?.mediaHistorySharedAt);
     const timeZone = await timeZoneOfUser(clientId);
     const days = await progressMediaDao.listRange(clientId, { from, to });
     const visible = days.filter((day) =>
@@ -206,11 +201,11 @@ module.exports = {
   async dayViewForTrainer(trainerId, clientId, dayId, { baseUrl } = {}) {
     const day = await progressMediaDao.findById(dayId);
     if (!day || String(day.userId) !== String(clientId)) return null;
-    const relations = await trainerClientDao.findActiveRelationsOfPair(trainerId, clientId);
+    const pair = await trainerClientDao.findActivePair(trainerId, clientId);
     const ok = trainerCanSeeProgressDay(day, {
       trainerId,
-      relationStart: relationStartOf(relations),
-      historyShared: relations.some((relation) => relation.mediaHistorySharedAt),
+      relationStart: activeSince(pair),
+      historyShared: Boolean(pair?.mediaHistorySharedAt),
       timeZone: await timeZoneOfUser(clientId),
     });
     if (!ok) return null;

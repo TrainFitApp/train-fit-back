@@ -7,7 +7,7 @@ const TODAY = "2026-09-27";
 test("rutina: tableInUse manda y toma el inicio de su fase si coincide", () => {
   const plan = pickTrainingPlan({
     tableInUseId: "t1",
-    phases: [{ tableId: "t1", startDate: "2026-09-01", status: "active" }],
+    phases: [{ tableId: "t1", startDate: "2026-09-01" }],
     today: TODAY,
   });
   assert.deepEqual(plan, { status: "active", tableId: "t1", startDate: "2026-09-01" });
@@ -16,18 +16,19 @@ test("rutina: tableInUse manda y toma el inicio de su fase si coincide", () => {
 test("rutina: tableInUse sin fase propia sale sin fecha", () => {
   const plan = pickTrainingPlan({
     tableInUseId: "t2",
-    phases: [{ tableId: "t1", startDate: "2026-09-01", status: "active" }],
+    phases: [{ tableId: "t1", startDate: "2026-09-01" }],
     today: TODAY,
   });
   assert.deepEqual(plan, { status: "active", tableId: "t2", startDate: null });
 });
 
-test("rutina: sin tableInUse usa la fase que cubre hoy (la más reciente)", () => {
+test("rutina: la rutina en uso de la fase que cubre hoy lleva el inicio de esa fase (la más reciente)", () => {
   const plan = pickTrainingPlan({
+    tableInUseId: "cur",
     phases: [
-      { tableId: "old", startDate: "2026-08-01", status: "superseded" },
-      { tableId: "cur", startDate: "2026-09-20", status: "active" },
-      { tableId: "fut", startDate: "2026-10-05", status: "active" },
+      { tableId: "old", startDate: "2026-08-01" },
+      { tableId: "cur", startDate: "2026-09-20" },
+      { tableId: "fut", startDate: "2026-10-05" },
     ],
     today: TODAY,
   });
@@ -36,7 +37,7 @@ test("rutina: sin tableInUse usa la fase que cubre hoy (la más reciente)", () =
 
 test("rutina: solo una fase futura sale programada", () => {
   const plan = pickTrainingPlan({
-    phases: [{ tableId: "fut", startDate: "2026-10-02", status: "active" }],
+    phases: [{ tableId: "fut", startDate: "2026-10-02" }],
     today: TODAY,
   });
   assert.deepEqual(plan, { status: "scheduled", tableId: "fut", startDate: "2026-10-02" });
@@ -58,7 +59,7 @@ test("rutina: sin uso ni fases sale la última asignada, ignorando fechas futura
 
 test("rutina: una fase programada gana a una tabla solo asignada", () => {
   const plan = pickTrainingPlan({
-    phases: [{ tableId: "fut", startDate: "2026-10-02", status: "active" }],
+    phases: [{ tableId: "fut", startDate: "2026-10-02" }],
     assignedTables: [{ tableId: "otra", assignedAt: new Date("2026-09-26T18:00:00Z") }],
     today: TODAY,
   });
@@ -69,25 +70,24 @@ test("rutina: nada asignado da null", () => {
   assert.equal(pickTrainingPlan({ phases: [], today: TODAY }), null);
 });
 
-test("dieta: la semana en curso resuelve a la cabeza de su fase", () => {
-  const docs = [
-    { _id: "h1", phaseId: "h1", phaseName: "Adaptación", startDate: "2026-07-13", endDate: "2026-08-23" },
-    { _id: "h2", phaseId: "h2", phaseName: "Definición", startDate: "2026-08-24", endDate: "2026-09-06" },
-    { _id: "w2", phaseId: "h2", startDate: "2026-09-07", endDate: null },
+test("dieta: la fase que cubre hoy", () => {
+  const phases = [
+    { _id: "h1", name: "Adaptación", startDate: "2026-07-13", endDate: "2026-08-23" },
+    { _id: "h2", name: "Definición", startDate: "2026-08-24", endDate: null },
   ];
-  const plan = pickNutritionPlan({ docs, today: TODAY });
+  const plan = pickNutritionPlan({ phases, today: TODAY });
   assert.equal(plan.status, "active");
-  assert.equal(plan.head._id, "h2");
+  assert.equal(plan.phase._id, "h2");
 });
 
 test("dieta: sin fase hoy sale la próxima programada", () => {
-  const docs = [{ _id: "h1", phaseId: "h1", phaseName: "Volumen", startDate: "2026-10-05", endDate: null }];
-  const plan = pickNutritionPlan({ docs, today: TODAY });
+  const phases = [{ _id: "h1", name: "Volumen", startDate: "2026-10-05", endDate: null }];
+  const plan = pickNutritionPlan({ phases, today: TODAY });
   assert.equal(plan.status, "scheduled");
-  assert.equal(plan.head._id, "h1");
+  assert.equal(plan.phase._id, "h1");
 });
 
 test("dieta: fase terminada y nada más da null", () => {
-  const docs = [{ _id: "h1", phaseId: "h1", startDate: "2026-07-01", endDate: "2026-08-01" }];
-  assert.equal(pickNutritionPlan({ docs, today: TODAY }), null);
+  const phases = [{ _id: "h1", startDate: "2026-07-01", endDate: "2026-08-01" }];
+  assert.equal(pickNutritionPlan({ phases, today: TODAY }), null);
 });

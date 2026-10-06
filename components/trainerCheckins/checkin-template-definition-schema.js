@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const { CHECKIN_FIELD_KEYS } = require("./checkin-field-catalog");
-const { CustomCheckinQuestionSchema } = require("./checkin-custom-question");
+const { CustomQuestionSchema } = require("../forms/custom-question");
 
 const CheckinTemplateDefinitionSchema = new Schema({
   trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
@@ -31,12 +31,14 @@ const CheckinTemplateDefinitionSchema = new Schema({
   // cada tres semanas a otro.
   // Fase 5 Coach Pro — preguntas propias del coach (§7), con tipo. Conviven
   // con enabledFields, que sigue siendo el catálogo cerrado — ver
-  // checkin-custom-question.js para por qué son dos cosas distintas.
-  customQuestions: { type: [CustomCheckinQuestionSchema], default: () => [] },
+  // forms/custom-question.js para por qué son dos cosas distintas.
+  customQuestions: { type: [CustomQuestionSchema], default: () => [] },
   createdAt: { type: Date, default: Date.now },
 }, { collection: "checkintemplatedefinitions" });
 
 // No dos plantillas con el mismo nombre para el mismo profesional.
 CheckinTemplateDefinitionSchema.index({ trainerId: 1, name: 1 }, { unique: true });
+
+CheckinTemplateDefinitionSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId"] });
 
 module.exports = mongoose.model("CheckinTemplateDefinition", CheckinTemplateDefinitionSchema);

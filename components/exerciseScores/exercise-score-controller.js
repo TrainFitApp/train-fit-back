@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const exerciseScoreDao = require("./exercise-score-dao");
+const exerciseScoreService = require("./exercise-score-service");
 const {
   SCORE_MUSCLES,
   SCORE_JOINTS,
@@ -10,10 +10,6 @@ const {
   sanitizeMuscleScores,
   sanitizeJointScores,
 } = require("./exercise-score-catalog");
-const { buildSessionLoad, estimateSessionSeconds } = require("./session-load-service");
-const { getDefaultScoreForName } = require("./exercise-score-defaults");
-const workoutSchema = require("../workouts/workout-schema");
-const exerciseSchema = require("../exercises/exercise-schema");
 const tableAccess = require("../tables/table-access");
 
 // Tope de la carga masiva. 500 cubre de sobra un catálogo de ejercicios
@@ -50,8 +46,8 @@ module.exports = {
    * GET /trainer/exercise-scores/default/:exerciseId — sugerencia inicial
    * para el editor cuando el entrenador todavía no ha puntuado este
    * ejercicio (ver exercise-score-defaults.js: por patrón de movimiento,
-   * emparejado por el NOMBRE real del ejercicio, nunca por
-   * muscleGroups1/2 — vocabularios incompatibles, ver el porqué ahí).
+   * emparejado por el NOMBRE real del ejercicio, nunca por sus músculos —
+   * vocabularios distintos, ver el porqué ahí).
    *
    * Sigue siendo solo una sugerencia editable: no escribe nada, el guardado
    * real sigue siendo upsert() cuando el entrenador confirma o ajusta.
@@ -63,14 +59,11 @@ module.exports = {
     if (!isValidObjectId(exerciseId)) {
       return res.status(400).send({ message: "Ejercicio no válido" });
     }
-    const exercise = await exerciseSchema.findById(exerciseId).select("name").lean();
-    if (!exercise) return res.status(404).send({ message: "Ejercicio no encontrado" });
-
-    return res.send(getDefaultScoreForName(exercise.name));
+    return res.send(await exerciseScoreService.defaultFor(exerciseId));
   },
 
   async listMine(req, res) {
-    const scores = await exerciseScoreDao.listForTrainer(req.auth.userId);
+    const scores = await exerciseScoreService.listForTrainer(req.auth.userId);
     return res.send(scores);
   },
 
@@ -80,7 +73,7 @@ module.exports = {
       return res.status(400).send({ message: "Ejercicio no válido" });
     }
 
-    const score = await exerciseScoreDao.upsert(req.auth.userId, exerciseId, {
+    const score = await exerciseScoreService.upsert(req.auth.userId, exerciseId, {
       muscleScores: sanitizeMuscleScores(req.body?.muscleScores),
       jointScores: sanitizeJointScores(req.body?.jointScores),
       secondsPerSet: toSecondsOrNull(req.body?.secondsPerSet),
@@ -89,7 +82,7 @@ module.exports = {
   },
 
   async remove(req, res) {
-    await exerciseScoreDao.remove(req.auth.userId, req.params.exerciseId);
+    await exerciseScoreService.remove(req.auth.userId, req.params.exerciseId);
     return res.sendStatus(204);
   },
 
@@ -151,7 +144,7 @@ module.exports = {
       });
     }
 
-    const result = await exerciseScoreDao.bulkUpsert(req.auth.userId, valid);
+    const result = await exerciseScoreService.bulkUpsert(req.auth.userId, valid);
     return res.send({ ...result, saved: valid.length, skipped });
   },
 
@@ -172,38 +165,9 @@ module.exports = {
    * comprobación ad-hoc.
    */
   async getSessionLoad(req, res) {
-    // populate EXPLÍCITO y no autopopulate: el plugin mongoose-autopopulate
-    // NO actúa sobre consultas .lean() (sale por return antes de poblar), así
-    // que `exercises` llegaba como array de ObjectId pelados: exerciseIds
-    // salía vacío, buildSessionLoad descartaba todos los ejercicios por su
-    // guard de `exercise?._id`, y este endpoint devolvía SIEMPRE
-    // {muscles:[], joints:[], unscoredExercises:0, totalExercises:0,
-    // estimatedSeconds:0} — el panel de carga del planificador llevaba
-    // pidiendo "puntúa los ejercicios" a entrenadores que ya los tenían
-    // puntuados. Mismo fallo y mismo remedio que
-    // workout-template-dao.js#listByTrainer.
-    const workout = await workoutSchema
-      .findById(req.params.workoutId)
-      .populate({ path: "exercises", populate: { path: "sets" } })
-      .lean();
-    if (!workout) return res.status(404).send({ message: "Sesión no encontrada" });
-
-    const table = await tableAccess.findTableOwningWorkout(req.params.workoutId);
-    if (!table || !(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes acceso a esta sesión" });
-    }
-
-    const customExercises = workout.exercises || [];
-    const exerciseIds = customExercises
-      .map((customExercise) => customExercise?.exercise?._id || customExercise?.exercise)
-      .filter(Boolean);
-
-    const scores = await exerciseScoreDao.listForExercises(req.auth.userId, exerciseIds);
-    const scoresById = new Map(scores.map((score) => [String(score.exerciseId), score]));
-
-    return res.send({
-      ...buildSessionLoad(customExercises, scoresById),
-      estimatedSeconds: estimateSessionSeconds(customExercises, scoresById),
-    });
+    const load = await exerciseScoreService.sessionLoad(req.auth.userId, req.params.workoutId, (ownerId) =>
+      tableAccess.canAccessUserTable(req, ownerId)
+    );
+    return res.send(load);
   },
 };

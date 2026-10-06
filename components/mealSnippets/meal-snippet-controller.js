@@ -1,4 +1,4 @@
-const mealSnippetDao = require("./meal-snippet-dao");
+const mealSnippetService = require("./meal-snippet-service");
 
 module.exports = {
   async createSnippet(req, res) {
@@ -11,12 +11,12 @@ module.exports = {
       return res.status(400).send({ message: "El snippet necesita al menos un alimento" });
     }
 
-    const snippet = await mealSnippetDao.create(req.auth.userId, name, customProducts, customRecipes);
+    const snippet = await mealSnippetService.create(req.auth.userId, name, customProducts, customRecipes);
     return res.status(201).send(snippet);
   },
 
   async listSnippets(req, res) {
-    const snippets = await mealSnippetDao.listByTrainer(req.auth.userId);
+    const snippets = await mealSnippetService.listByTrainer(req.auth.userId);
     return res.send(snippets);
   },
 
@@ -24,14 +24,13 @@ module.exports = {
     const name = (req.body?.name || "").trim();
     if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
 
-    const snippet = await mealSnippetDao.rename(req.auth.userId, req.params.id, name);
+    const snippet = await mealSnippetService.rename(req.auth.userId, req.params.id, name);
     if (!snippet) return res.status(404).send({ message: "Snippet no encontrado" });
     return res.send(snippet);
   },
 
   async deleteSnippet(req, res) {
-    const result = await mealSnippetDao.delete(req.auth.userId, req.params.id);
-    if (result.deletedCount === 0) {
+    if (!(await mealSnippetService.remove(req.auth.userId, req.params.id))) {
       return res.status(404).send({ message: "Snippet no encontrado" });
     }
     res.sendStatus(204);

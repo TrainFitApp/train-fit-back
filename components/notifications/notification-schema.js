@@ -26,7 +26,6 @@ const NotificationSchema = new Schema(
       required: true,
       enum: [
         // --- Trainer → cliente (destinatario: client) ---
-        "meal_proposal",
         "payment_created",
         "nutrition_preferences_requested",
         "checkin_reviewed",
@@ -35,11 +34,6 @@ const NotificationSchema = new Schema(
         "intake_submitted",
         "client_confirmed",
         "meal_prescribed",
-        // Histórico: ya no se crea ninguna. Las medidas se piden dentro de
-        // un check-in, que es donde se configuran sus campos. Se queda en el
-        // enum porque hay notificaciones de este tipo guardadas y marcarlas
-        // como leídas revalida el documento.
-        "anthropometry_requested",
         // --- Cobros 2026-09: recordatorio in-app de un cobro con saldo. El
         // destinatario lo dice `recipient` (entrenador siempre; cliente solo
         // si el entrenador lo activó). Payload sin notas ni movimientos:
@@ -76,5 +70,7 @@ const NotificationSchema = new Schema(
 NotificationSchema.index({ clientId: 1, recipient: 1, read: 1, createdAt: -1 });
 NotificationSchema.index({ trainerId: 1, recipient: 1, read: 1, createdAt: -1 });
 NotificationSchema.index({ dedupeKey: 1 }, { unique: true, sparse: true });
+
+NotificationSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["clientId", "trainerId"] });
 
 module.exports = mongoose.model("Notification", NotificationSchema);

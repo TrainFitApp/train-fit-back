@@ -1,10 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const User = require("../users/schema");
-const TrainerClient = require("./trainer-client-schema");
+const User = require("../users/user-schema");
+const trainerClientDao = require("./trainer-client-dao");
 const seats = require("./trainer-seat-service");
 
-// Sin MongoDB: se sustituyen las dos lecturas que hace el servicio.
+// Sin MongoDB: se sustituyen las lecturas del usuario y del DAO de pares.
 const TRAINER = "64b000000000000000000001";
 const id = (n) => `64b0000000000000000001${String(n).padStart(2, "0")}`;
 let user;
@@ -14,7 +14,16 @@ const chain = (value) => ({ select: () => chain(value), sort: () => chain(value)
 User.findById = () => chain(user);
 User.find = () => chain(relations.filter((r) => r.clientId).map((r) => ({ _id: r.clientId, name: `C${r.clientId.slice(-2)}` })));
 User.updateOne = async (_filter, update) => { saved = update.$set.trainerSeats; user.trainerSeats = saved; };
-TrainerClient.find = () => chain(relations);
+// Una relación de la prueba = un par con una invitación: en curso si ya
+// tiene cuenta (clientId), pendiente si solo es un email.
+const pairOf = (r) => ({ _id: r.clientId || r.clientEmail, clientId: r.clientId, clientEmail: r.clientEmail,
+  scopes: [{ scope: "training", status: r.clientId ? "active" : "pending", invitedAt: r.invitedAt }] });
+trainerClientDao.findSeatPairs = async () => relations.map(pairOf);
+trainerClientDao.countSeats = async () => {
+  const occupied = relations.filter((r) => r.clientId).length;
+  return { occupied, reserved: relations.length - occupied };
+};
+trainerClientDao.isActivePair = async (_trainerId, clientId) => relations.some((r) => r.clientId === clientId);
 
 const free = () => ({ professionalPremium: { entitled: false } });
 const rel = (n, extra = {}) => ({ clientId: id(n), clientEmail: `c${n}@t.test`, invitedAt: new Date(2026, 0, n), ...extra });

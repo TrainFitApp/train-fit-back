@@ -18,7 +18,7 @@ const { buildSearchFields } = require("../components/util/search-index");
  * (`goalInUse`) y una mini biblioteca de plantillas de t@t.t (omnívora /
  * alta en proteína / vegetariana / vegana) para que el ranking devuelva algo.
  *
- * Mismo criterio paranoico que seed-demo-coach-pro.js (corre contra `pre`,
+ * Criterio paranoico (corre contra `pre`,
  * Atlas compartido):
  *   - _id DETERMINISTA a partir de una semilla -> volver a correrlo no
  *     duplica nada, reescribe los mismos documentos.
@@ -27,7 +27,7 @@ const { buildSearchFields } = require("../components/util/search-index");
  *   - Las plantillas de dieta llevan el sufijo " [seed-test-account]" en el
  *     nombre (mismo patrón que seed-diet-suggestions-demo.js) -> se borran
  *     por nombre, no hace falta manifiesto.
- *   - `--clean` borra EXACTAMENTE estos 2 usuarios + sus 2 TrainerClient +
+ *   - `--clean` borra EXACTAMENTE estos 2 usuarios + su relación (TrainerClient) +
  *     los datos de nutrición de u@u.u sembrados aquí.
  *
  * USO
@@ -48,8 +48,7 @@ function oid(semilla) {
 
 const TRAINER_ID = oid("trainer:t@t.t");
 const CLIENT_ID = oid("client:u@u.u");
-const REL_TRAINING_ID = oid("rel:training");
-const REL_NUTRITION_ID = oid("rel:nutrition");
+const PAIR_ID = oid("rel:pair");
 const GOAL_ID = oid("goal:u@u.u");
 
 // Los alimentos son Product REALES, no macros sueltas: una plantilla de
@@ -119,28 +118,22 @@ async function main() {
   console.log("[test-account]", clean ? "CLEAN" : "SEED", redactMongoUri(uri));
   await mongoose.connect(uri);
 
-  const User = require("../components/users/schema");
+  const User = require("../components/users/user-schema");
   const TrainerClient = require("../components/trainerClients/trainer-client-schema");
   require("../components/anthropometry/anthropometry-dao"); // registra el modelo "Anthropometry"
-  const NP = require("../components/nutritionPreferences/nutrition-preferences-schema");
-  const NutritionalGoal = require("../components/nutritionalGoals/nutritional-goal-schema");
   const dietTemplateDao = require("../components/dietTemplates/diet-template-dao");
   const DietTemplate = require("../components/dietTemplates/diet-template-schema");
   const { computeNutritionTarget } = require("../components/nutritionalGoals/nutrition-target");
   const Product = require("../components/products/product-schema");
-  require("../components/customProducts/custom-product-schema");
-  require("../components/customRecipes/custom-recipe-schema");
   require("../components/recipes/recipe-schema");
 
   if (clean) {
-    await TrainerClient.deleteMany({ _id: { $in: [REL_TRAINING_ID, REL_NUTRITION_ID] } });
+    await TrainerClient.deleteMany({ _id: PAIR_ID });
     const tpls = await DietTemplate.deleteMany({ trainerId: TRAINER_ID, name: { $regex: TEMPLATE_NAME_RX } });
-    // Después de las plantillas: su cascada ya borró los CustomProduct que
-    // apuntaban a estos alimentos.
+    // Después de las plantillas (su contenido va dentro y se borra con ellas).
     await Product.deleteMany({ _id: { $in: [...FOODS.values()].map((f) => f._id) } });
-    await NutritionalGoal.deleteMany({ userId: CLIENT_ID });
-    await mongoose.model("Anthropometry").deleteMany({ userId: CLIENT_ID }); // registrado por anthropometryDao arriba
-    await NP.deleteOne({ clientId: CLIENT_ID });
+    await require("../components/anthropometry/anthropometry-schema").deleteMany({ userId: CLIENT_ID });
+    await User.updateOne({ _id: CLIENT_ID }, { $unset: { nutritionPreferences: 1 } });
     await User.deleteMany({ _id: { $in: [TRAINER_ID, CLIENT_ID] } });
     console.log(
       "[test-account] borrados t@t.t, u@u.u, su relación, antropometría, preferencias, objetivo y",
@@ -176,7 +169,6 @@ async function main() {
     roles: ["user"],
     sex: 1,
     height: 175,
-    weight: 75,
     birth: new Date("1995-01-01"),
     activity: 1.45,
     steps: 1, // STEPS_NOT_COUNTED -> usa el factor de actividad
@@ -187,29 +179,25 @@ async function main() {
   });
   console.log("[test-account] cliente", CLIENT_EMAIL, "->", client._id.toString());
 
-  for (const [relId, scope] of [[REL_TRAINING_ID, "training"], [REL_NUTRITION_ID, "nutrition"]]) {
-    await TrainerClient.updateOne(
-      { _id: relId },
-      {
-        $set: {
-          trainerId: TRAINER_ID,
-          clientId: CLIENT_ID,
-          clientEmail: CLIENT_EMAIL,
-          scope,
-          status: "active",
-          respondedAt: new Date(),
-        },
+  const now = new Date();
+  await TrainerClient.updateOne(
+    { _id: PAIR_ID },
+    {
+      $set: {
+        trainerId: TRAINER_ID,
+        clientId: CLIENT_ID,
+        clientEmail: CLIENT_EMAIL,
+        scopes: ["training", "nutrition"].map((scope) => ({ scope, status: "active", invitedAt: now, respondedAt: now })),
       },
-      { upsert: true }
-    );
-  }
+    },
+    { upsert: true }
+  );
   console.log("[test-account] vinculados (training + nutrition, status active)");
 
-  // Check-in de antropometría — así el cajón de sugerencias lee el peso de
-  // Anthropometry ("Peso tomado del check-in del...") en vez de caer al
-  // fallback de User.weight del registro.
+  // Medida con peso: el peso vive en Anthropometry (el cajón de sugerencias
+  // y el objetivo lo leen de ahí).
   const ANTHRO_DATE = "2026-09-08";
-  await mongoose.model("Anthropometry").updateOne(
+  await require("../components/anthropometry/anthropometry-schema").updateOne(
     { userId: CLIENT_ID, date: ANTHRO_DATE },
     { $set: { userId: CLIENT_ID, date: ANTHRO_DATE, weight: 76.4, waist: 84, neck: 38 } },
     { upsert: true }
@@ -219,22 +207,22 @@ async function main() {
   // Preferencias dietéticas — dietaryFlags alimenta el filtro duro del cajón
   // de sugerencias; allergies/favoriteFoods/dislikedFoods son el texto libre
   // que ya lee la ficha del cliente.
-  await NP.updateOne(
-    { clientId: CLIENT_ID },
+  await User.updateOne(
+    { _id: CLIENT_ID },
     {
       $set: {
-        clientId: CLIENT_ID,
-        allergies: "Frutos secos",
-        dietaryFlags: ["vegetarian"],
-        favoriteFoods: "Pollo, arroz, batata, huevos",
-        dislikedFoods: "Brócoli, pescado azul",
-        cooksAtHome: "yes",
-        requestedBy: TRAINER_ID,
-        requestedAt: new Date(),
-        respondedAt: new Date(),
+        nutritionPreferences: {
+          allergies: "Frutos secos",
+          dietaryFlags: ["vegetarian"],
+          favoriteFoods: "Pollo, arroz, batata, huevos",
+          dislikedFoods: "Brócoli, pescado azul",
+          cooksAtHome: "yes",
+          requestedBy: TRAINER_ID,
+          requestedAt: new Date(),
+          respondedAt: new Date(),
+        },
       },
-    },
-    { upsert: true }
+    }
   );
   console.log("[test-account] preferencias nutricionales -> dietaryFlags ['vegetarian']");
 
@@ -251,18 +239,24 @@ async function main() {
     training: client.training,
     objetiveKcalDelta: client.objetive,
   });
-  await NutritionalGoal.deleteOne({ _id: GOAL_ID });
-  await NutritionalGoal.create({
-    _id: GOAL_ID,
-    userId: CLIENT_ID,
-    assignedByTrainerId: TRAINER_ID,
-    name: "Objetivo asignado (seed test)",
-    kcalTotal: target.kcal,
-    proteinsGTotal: target.protein,
-    carbohydratesGTotal: target.carbs,
-    fatGTotal: target.fat,
-  });
-  await User.updateOne({ _id: CLIENT_ID }, { $set: { goalInUse: GOAL_ID } });
+  await User.updateOne(
+    { _id: CLIENT_ID },
+    {
+      $set: {
+        nutritionalGoals: [
+          {
+            _id: GOAL_ID,
+            name: "Objetivo (seed test)",
+            kcalTotal: target.kcal,
+            proteinsGTotal: target.protein,
+            carbohydratesGTotal: target.carbs,
+            fatGTotal: target.fat,
+          },
+        ],
+        goalInUse: GOAL_ID,
+      },
+    },
+  );
   console.log(
     "[test-account] objetivo nutricional ->",
     target.kcal, "kcal  P" + target.protein, "C" + target.carbs, "G" + target.fat
@@ -278,7 +272,7 @@ async function main() {
   }
   console.log("[test-account] alimentos ->", FOODS.size, "productos del catálogo de t@t.t");
   for (const [name, menus] of TEMPLATES) {
-    const created = await dietTemplateDao.create(TRAINER_ID, name, menus);
+    const created = await dietTemplateDao.create(TRAINER_ID, { name, menus });
     console.log("  +", name, "-> suitableFor", JSON.stringify(created.suitableFor));
   }
 

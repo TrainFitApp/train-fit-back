@@ -1,6 +1,5 @@
-const coachRuleDao = require("./coach-rule-dao");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
-const { isReadOnly } = require("../trainerClients/trainer-seat-service");
+const coachRuleService = require("./coach-rule-service");
+const trainerClientService = require("../trainerClients/trainer-client-service");
 const { toCatalogDto, RULE_METRICS_BY_KEY, OPERATORS_BY_KIND } = require("./rule-metric-catalog");
 
 const LEVELS = ["informative", "suggestion", "automatic"];
@@ -53,9 +52,9 @@ function validateActions(actions) {
 // coach-task-controller.js#resolveClientId.
 async function validateClientIds(trainerId, clientIds) {
   for (const clientId of clientIds || []) {
-    const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId);
-    if (!relation) return "Alguno de los clientes seleccionados no tiene una relación activa contigo";
-    if (await isReadOnly(trainerId, clientId)) return "Alguno de los clientes seleccionados está en solo lectura por el cupo de tu plan";
+    const block = await trainerClientService.clientWriteBlock(trainerId, clientId);
+    if (block === "no_relation") return "Alguno de los clientes seleccionados no tiene una relación activa contigo";
+    if (block === "read_only") return "Alguno de los clientes seleccionados está en solo lectura por el cupo de tu plan";
   }
   return null;
 }
@@ -88,7 +87,7 @@ module.exports = {
   },
 
   async listMine(req, res) {
-    const rules = await coachRuleDao.listForTrainer(req.auth.userId);
+    const rules = await coachRuleService.listForTrainer(req.auth.userId);
     return res.send(rules);
   },
 
@@ -107,15 +106,7 @@ module.exports = {
     const clientError = await validateClientIds(req.auth.userId, body.clientIds);
     if (clientError) return res.status(403).send({ message: clientError });
 
-    try {
-      const rule = await coachRuleDao.create(req.auth.userId, buildPayload(body));
-      return res.status(201).send(rule);
-    } catch (e) {
-      if (e.code === 11000) {
-        return res.status(409).send({ message: "Ya tienes una regla con ese nombre" });
-      }
-      throw e;
-    }
+    return res.status(201).send(await coachRuleService.create(req.auth.userId, buildPayload(body)));
   },
 
   async update(req, res) {
@@ -132,32 +123,21 @@ module.exports = {
     const clientError = await validateClientIds(req.auth.userId, body.clientIds);
     if (clientError) return res.status(403).send({ message: clientError });
 
-    try {
-      const rule = await coachRuleDao.update(req.auth.userId, req.params.id, buildPayload(body));
-      if (!rule) return res.status(404).send({ message: "Regla no encontrada" });
-      return res.send(rule);
-    } catch (e) {
-      if (e.code === 11000) {
-        return res.status(409).send({ message: "Ya tienes una regla con ese nombre" });
-      }
-      throw e;
-    }
+    return res.send(await coachRuleService.update(req.auth.userId, req.params.id, buildPayload(body)));
   },
 
   // PATCH /trainer/rules/:id/toggle — activar/desactivar sin abrir el editor.
   async toggle(req, res) {
     const enabled = req.body?.enabled !== false;
-    const rule = await coachRuleDao.update(req.auth.userId, req.params.id, {
+    const rule = await coachRuleService.update(req.auth.userId, req.params.id, {
       enabled,
       disabledReason: enabled ? null : undefined,
     });
-    if (!rule) return res.status(404).send({ message: "Regla no encontrada" });
     return res.send(rule);
   },
 
   async remove(req, res) {
-    const rule = await coachRuleDao.remove(req.auth.userId, req.params.id);
-    if (!rule) return res.status(404).send({ message: "Regla no encontrada" });
+    await coachRuleService.remove(req.auth.userId, req.params.id);
     return res.sendStatus(204);
   },
 };

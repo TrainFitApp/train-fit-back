@@ -2,8 +2,9 @@ const mongoose = require("mongoose");
 const { load: core } = require("./core");
 const dao = require("./trainer-payment-dao");
 const service = require("./trainer-payment-service");
-const TrainerClient = require("../trainerClients/trainer-client-schema");
-const User = require("../users/schema");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { relationState } = require("../trainerClients/pair-state");
+const userDao = require("../users/user-dao");
 const { createAccentInsensitiveRegex } = require("../util/accent-insensitive-regex");
 
 // Configuración > Cobros: vista global de la cartera y preferencias comunes.
@@ -22,28 +23,27 @@ function escapeRegex(text) {
 // Relación de cada cliente con este entrenador: activa si queda algún scope
 // activo; antigua si solo quedan relaciones revocadas.
 async function relationMap(trainerId) {
-  const relations = await TrainerClient.find({ trainerId, clientId: { $exists: true } }).select("clientId status").lean();
+  const pairs = await trainerClientDao.findClientPairsOfTrainer(trainerId);
   const map = new Map();
-  for (const relation of relations) {
-    const key = String(relation.clientId);
-    if (relation.status === "active") map.set(key, "active");
-    else if (relation.status === "revoked" && map.get(key) !== "active") map.set(key, "former");
+  for (const pair of pairs) {
+    const state = relationState(pair);
+    if (state) map.set(String(pair.clientId), state);
   }
   return map;
 }
 
 function listMatch(state, today, from, to) {
   const match = {};
-  if (state === "pending") match._status = "open";
-  if (state === "overdue") Object.assign(match, { _status: "open", _dueDay: { $lt: today } });
-  if (state === "due_today") Object.assign(match, { _status: "open", _dueDay: today });
-  if (state === "upcoming") Object.assign(match, { _status: "open", _dueDay: { $gt: today } });
-  if (state === "settled") match._status = "settled";
-  if (state === "cancelled") match._status = "cancelled";
+  if (state === "pending") match.status = "open";
+  if (state === "overdue") Object.assign(match, { status: "open", dueDay: { $lt: today } });
+  if (state === "due_today") Object.assign(match, { status: "open", dueDay: today });
+  if (state === "upcoming") Object.assign(match, { status: "open", dueDay: { $gt: today } });
+  if (state === "settled") match.status = "settled";
+  if (state === "cancelled") match.status = "cancelled";
   if (from || to) {
-    match._dueDay = { ...(typeof match._dueDay === "object" ? match._dueDay : match._dueDay ? { $eq: match._dueDay } : {}) };
-    if (from) match._dueDay.$gte = from;
-    if (to) match._dueDay.$lte = to;
+    match.dueDay = { ...(typeof match.dueDay === "object" ? match.dueDay : match.dueDay ? { $eq: match.dueDay } : {}) };
+    if (from) match.dueDay.$gte = from;
+    if (to) match.dueDay.$lte = to;
   }
   return match;
 }
@@ -73,10 +73,7 @@ async function getOverview(trainerId, query = {}) {
   let clientIds = [...relations.entries()].filter(([, kind]) => relation === "all" || kind === relation).map(([id]) => id);
   if (search && clientIds.length) {
     const pattern = new RegExp(createAccentInsensitiveRegex(escapeRegex(search)), "i");
-    const matches = await User.find({ _id: { $in: clientIds }, $or: [{ name: pattern }, { lastname: pattern }, { email: pattern }] })
-      .select("_id")
-      .lean();
-    clientIds = matches.map((user) => String(user._id));
+    clientIds = await userDao.filterIdsByText(clientIds, pattern);
   }
 
   const scope = {
@@ -104,7 +101,7 @@ async function getOverview(trainerId, query = {}) {
   const filter = listMatch(state, ctx.today, from, to);
   const [facet] = await dao.aggregate([
     { $match: base },
-    ...dao.normalizeStages(ctx.today),
+    ...dao.derivedStages(ctx.today),
     {
       $facet: {
         rows: [
@@ -120,16 +117,15 @@ async function getOverview(trainerId, query = {}) {
               historical: 1,
               anomalies: 1,
               hasNote: { $gt: [{ $strLenCP: { $ifNull: ["$note", ""] } }, 0] },
-              currency: "$_currency",
-              dueDay: "$_dueDay",
-              amountCents: "$_amountCents",
-              receivedCents: "$_received",
-              cancelledCents: "$_cancelled",
+              currency: 1,
+              dueDay: 1,
+              amountCents: 1,
+              receivedCents: 1,
+              cancelledCents: 1,
               balanceCents: { $max: ["$_balance", 0] },
-              status: "$_status",
+              status: 1,
               group: "$_group",
               forecast: "$_forecast",
-              migrated: "$_v2",
             },
           },
         ],
@@ -137,26 +133,26 @@ async function getOverview(trainerId, query = {}) {
           { $match: filter },
           {
             $group: {
-              _id: "$_currency",
+              _id: "$currency",
               count: { $sum: 1 },
-              balanceCents: { $sum: { $cond: [{ $eq: ["$_status", "open"] }, { $max: ["$_balance", 0] }, 0] } },
+              balanceCents: { $sum: { $cond: [{ $eq: ["$status", "open"] }, { $max: ["$_balance", 0] }, 0] } },
             },
           },
         ],
         portfolio: [
           {
             $group: {
-              _id: "$_currency",
+              _id: "$currency",
               pendingCents: {
-                $sum: { $cond: [{ $and: [{ $eq: ["$_status", "open"] }, { $not: ["$_forecast"] }] }, { $max: ["$_balance", 0] }, 0] },
+                $sum: { $cond: [{ $and: [{ $eq: ["$status", "open"] }, { $not: ["$_forecast"] }] }, { $max: ["$_balance", 0] }, 0] },
               },
               overdueCents: {
-                $sum: { $cond: [{ $and: [{ $eq: ["$_status", "open"] }, { $lt: ["$_dueDay", ctx.today] }] }, { $max: ["$_balance", 0] }, 0] },
+                $sum: { $cond: [{ $and: [{ $eq: ["$status", "open"] }, { $lt: ["$dueDay", ctx.today] }] }, { $max: ["$_balance", 0] }, 0] },
               },
               overdueCount: {
                 $sum: {
                   $cond: [
-                    { $and: [{ $eq: ["$_status", "open"] }, { $lt: ["$_dueDay", ctx.today] }, { $gt: ["$_balance", 0] }] },
+                    { $and: [{ $eq: ["$status", "open"] }, { $lt: ["$dueDay", ctx.today] }, { $gt: ["$_balance", 0] }] },
                     1,
                     0,
                   ],
@@ -169,10 +165,10 @@ async function getOverview(trainerId, query = {}) {
         // Recibido por fecha REAL de recepción (no por vencimiento ni por
         // cuándo se anotó); una anulación nunca suma aquí.
         received: [
-          { $project: { _currency: 1, _movements: 1 } },
-          { $unwind: "$_movements" },
-          { $match: { "_movements.status": "valid", "_movements.receivedDay": { $regex: `^${C.monthOf(ctx.today)}` } } },
-          { $group: { _id: "$_currency", receivedCents: { $sum: "$_movements.amountCents" } } },
+          { $project: { currency: 1, payments: 1 } },
+          { $unwind: "$payments" },
+          { $match: { "payments.status": "valid", "payments.receivedDay": { $regex: `^${C.monthOf(ctx.today)}` } } },
+          { $group: { _id: "$currency", receivedCents: { $sum: "$payments.amountCents" } } },
         ],
       },
     },
@@ -191,7 +187,7 @@ async function getOverview(trainerId, query = {}) {
     }));
 
   const pageClientIds = [...new Set(facet.rows.map((row) => String(row.clientId)))];
-  const users = await User.find({ _id: { $in: pageClientIds } }).select("name lastname email").lean();
+  const users = await userDao.listFields(pageClientIds, "name lastname email");
   const userById = new Map(users.map((user) => [String(user._id), user]));
 
   return {
@@ -212,7 +208,7 @@ async function getOverview(trainerId, query = {}) {
         clientId: String(row.clientId),
         clientName: user ? `${user.name || ""} ${user.lastname || ""}`.trim() || user.email : "Cliente eliminado",
         clientRelation: relations.get(String(row.clientId)) || "former",
-        origin: row.origin || "legacy",
+        origin: row.origin,
         concept: row.concept || null,
         historical: Boolean(row.historical),
         hasNote: row.hasNote,
@@ -226,17 +222,16 @@ async function getOverview(trainerId, query = {}) {
         temporal: ["overdue", "due_today", "upcoming", "closed"][row.group],
         forecast: row.forecast,
         anomalies: row.anomalies || [],
-        migrated: row.migrated,
       };
     }),
   };
 }
 
-// GET /trainer/payments/summary — contrato del dashboard general, con el
-// saldo real tras parciales. La serie es por VENCIMIENTO (importe previsto
-// menos anulado), no dinero recibido; `receivedSeries` es por recepción.
-async function getLegacySummary(trainerId) {
-  const C = core();
+// GET /trainer/payments/summary — panel «Hoy»: pendiente con el saldo real
+// tras parciales y dos series de seis meses en céntimos. `dueSeries` va por
+// VENCIMIENTO (importe previsto menos anulado); `receivedSeries`, por fecha
+// real de recepción.
+async function getDashboardSummary(trainerId) {
   const settings = await service.loadSettings(trainerId);
   const ctx = service.makeContext(settings, trainerId);
   const months = [];
@@ -247,52 +242,51 @@ async function getLegacySummary(trainerId) {
   }
   const [facet] = await dao.aggregate([
     { $match: { trainerId: new mongoose.Types.ObjectId(String(trainerId)), status: { $ne: "void" } } },
-    ...dao.normalizeStages(ctx.today),
-    { $match: { _currency: "EUR" } },
+    ...dao.derivedStages(ctx.today),
+    { $match: { currency: "EUR" } },
     {
       $facet: {
         pending: [
-          { $match: { _status: "open", _forecast: false, _balance: { $gt: 0 } } },
+          { $match: { status: "open", _forecast: false, _balance: { $gt: 0 } } },
           {
             $group: {
               _id: null,
               pendingCents: { $sum: "$_balance" },
               pendingCount: { $sum: 1 },
-              overdueCount: { $sum: { $cond: [{ $lt: ["$_dueDay", ctx.today] }, 1, 0] } },
-              overdueCents: { $sum: { $cond: [{ $lt: ["$_dueDay", ctx.today] }, "$_balance", 0] } },
+              overdueCount: { $sum: { $cond: [{ $lt: ["$dueDay", ctx.today] }, 1, 0] } },
+              overdueCents: { $sum: { $cond: [{ $lt: ["$dueDay", ctx.today] }, "$_balance", 0] } },
             },
           },
         ],
         due: [
-          { $match: { _dueDay: { $gte: `${months[0]}-01` } } },
-          { $group: { _id: { $substrCP: ["$_dueDay", 0, 7] }, cents: { $sum: { $subtract: ["$_amountCents", "$_cancelled"] } } } },
+          { $match: { dueDay: { $gte: `${months[0]}-01` } } },
+          { $group: { _id: { $substrCP: ["$dueDay", 0, 7] }, cents: { $sum: { $subtract: ["$amountCents", "$cancelledCents"] } } } },
         ],
         received: [
-          { $unwind: "$_movements" },
-          { $match: { "_movements.status": "valid", "_movements.receivedDay": { $gte: `${months[0]}-01` } } },
-          { $group: { _id: { $substrCP: ["$_movements.receivedDay", 0, 7] }, cents: { $sum: "$_movements.amountCents" } } },
+          { $unwind: "$payments" },
+          { $match: { "payments.status": "valid", "payments.receivedDay": { $gte: `${months[0]}-01` } } },
+          { $group: { _id: { $substrCP: ["$payments.receivedDay", 0, 7] }, cents: { $sum: "$payments.amountCents" } } },
         ],
       },
     },
   ]);
   const due = new Map(facet.due.map((row) => [row._id, row.cents]));
   const received = new Map(facet.received.map((row) => [row._id, row.cents]));
-  const monthlySeries = months.map((key) => ({ month: key, totalAmount: C.centsToAmount(due.get(key) || 0) }));
-  const receivedSeries = months.map((key) => ({ month: key, totalAmount: C.centsToAmount(received.get(key) || 0) }));
-  const current = monthlySeries[5].totalAmount;
-  const previous = monthlySeries[4].totalAmount;
+  const dueSeries = months.map((key) => ({ month: key, cents: due.get(key) || 0 }));
+  const receivedSeries = months.map((key) => ({ month: key, cents: received.get(key) || 0 }));
+  const current = dueSeries[5].cents;
+  const previous = dueSeries[4].cents;
   let percentChangeVsLastMonth = null;
   if (previous > 0) percentChangeVsLastMonth = Math.round(((current - previous) / previous) * 100);
   else if (current > 0) percentChangeVsLastMonth = 100;
   const pending = facet.pending[0] || {};
   return {
-    pendingAmount: C.centsToAmount(pending.pendingCents || 0),
-    pendingCount: pending.pendingCount || 0,
-    overdueCount: pending.overdueCount || 0,
-    overdueAmount: C.centsToAmount(pending.overdueCents || 0),
     currency: "EUR",
-    seriesBasis: "due_date",
-    monthlySeries,
+    pendingCents: pending.pendingCents || 0,
+    pendingCount: pending.pendingCount || 0,
+    overdueCents: pending.overdueCents || 0,
+    overdueCount: pending.overdueCount || 0,
+    dueSeries,
     receivedSeries,
     percentChangeVsLastMonth,
   };
@@ -353,4 +347,4 @@ async function previewSettings(trainerId, body) {
   };
 }
 
-module.exports = { getOverview, getLegacySummary, getSettings, saveSettings, previewSettings, relationMap };
+module.exports = { getOverview, getDashboardSummary, getSettings, saveSettings, previewSettings, relationMap };

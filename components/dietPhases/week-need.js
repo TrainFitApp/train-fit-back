@@ -1,6 +1,6 @@
 // Necesidad del cliente por semana (docs/plan-semanas.md) — la parte PURA:
 // de dónde salen los pasos que entran en la fórmula y qué forma tiene el
-// snapshot del cálculo. Lo que toca BD vive en plan-assignment-service.js.
+// snapshot del cálculo. Lo que toca BD vive en diet-phase-service.js.
 
 const { stepsRangeFromAverage } = require("../nutritionalGoals/training-factor");
 const { daysInRange } = require("../util/date-util");

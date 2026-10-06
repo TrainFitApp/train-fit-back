@@ -68,62 +68,9 @@ function scaleMacros(macros, ratio) {
 }
 
 // Campos que una entrada de modifiedBaseCustomProducts puede pisar del
-// ingrediente base. MISMA lista que
-// recipes/recipe-merge.service.js#CUSTOM_PRODUCT_OVERRIDE_FIELDS y que
-// shared-core/services/recipe/recipe.service.ts#CUSTOM_PRODUCT_COMPARISON_FIELDS
-// del front; está repetida aquí a propósito para que este módulo siga siendo
-// aritmética pura (sin mongoose detrás), y hay un test que compara las dos
-// listas del backend para que no se separen.
-const CUSTOM_PRODUCT_OVERRIDE_FIELDS = [
-  "quantity",
-  "energyKcal100g",
-  "protein100g",
-  "carbohydrates100g",
-  "fat100g",
-  "saturatedFat100g",
-  "sugars100g",
-  "fiber100g",
-  "salt100g",
-  "sodium100g",
-  "cholesterol100g",
-  "transFat100g",
-  "calcium100g",
-  "iron100g",
-  "magnesium100g",
-  "phosphorus100g",
-  "potassium100g",
-  "zinc100g",
-  "copper100g",
-  "manganese100g",
-  "selenium100g",
-  "iodine100g",
-  "vitaminA100g",
-  "vitaminC100g",
-  "vitaminD100g",
-  "vitaminE100g",
-  "vitaminK100g",
-  "vitaminB1100g",
-  "vitaminB2100g",
-  "vitaminB3100g",
-  "vitaminB5100g",
-  "vitaminB6100g",
-  "vitaminB9100g",
-  "vitaminB12100g",
-  "biotin100g",
-  "omega3100g",
-  "omega6100g",
-  "omega9100g",
-  "caffeine100g",
-  "taurine100g",
-  "alcohol100g",
-  "ingredients",
-  "allergens",
-  "traces",
-  "vegan",
-  "vegetarian",
-  "lactoseFree",
-  "glutenFree",
-];
+// ingrediente base: catálogo único en util/nutrient-fields.js (módulo puro,
+// así que esta aritmética sigue sin arrastrar mongoose).
+const { RECIPE_OVERRIDE_FIELDS: CUSTOM_PRODUCT_OVERRIDE_FIELDS } = require("../util/nutrient-fields");
 
 // Refleja recipe.service.ts#mergeRecipeIngredients del front: ingredientes
 // base del Recipe, menos los eliminados, con los modificados pisando CAMPO A
@@ -139,9 +86,6 @@ const CUSTOM_PRODUCT_OVERRIDE_FIELDS = [
 // cumplimiento del plan, perfil de macros de las plantillas y alertas del
 // coach. El cliente veía sus kcal bien (las calcula el front) y su
 // profesional veía 0.
-//
-// recipes/recipe-merge.service.js#buildMergedIngredients ya lo hacía así; esto
-// alinea la tercera copia con las otras dos.
 function mergeRecipeIngredients(recipe, customRecipe) {
   const baseIngredients = recipe?.customProducts || [];
   if (!customRecipe) return baseIngredients;
@@ -212,10 +156,7 @@ function macrosForMeal(meal) {
 }
 
 // % de items pautados (customProducts + customRecipes de todas las comidas
-// del día) que el cliente marcó como hechos. Meal.completed cuenta todos
-// sus items como hechos aunque algún flag individual no se haya tocado —
-// una confirmación explícita de "toda la comida" no debe quedar
-// contradicha por un detalle sin marcar.
+// del día) que el cliente marcó como tomados (`consumed`).
 //
 // Solo cuenta lo PAUTADO (isItemPlanned): lo que el cliente añadió por su
 // cuenta no es cumplimiento de nada (docs/plan-semanas.md) — antes
@@ -224,7 +165,6 @@ function countMealItems(meal) {
   const products = (meal?.customProducts || []).filter(isItemPlanned);
   const recipes = (meal?.customRecipes || []).filter(isItemPlanned);
   const total = products.length + recipes.length;
-  if (meal?.completed) return { total, completed: total };
   const completedCount =
     products.filter((p) => p?.consumed).length + recipes.filter((r) => r?.consumed).length;
   return { total, completed: completedCount };
@@ -259,14 +199,13 @@ function isItemPlanned(item) {
   return !!item?.assignedByTrainerId;
 }
 
-// Un item pautado cuenta como "consumido" solo si el cliente lo marcó
-// (Meal.completed cubre toda la comida de una vez, o el flag individual
-// del item). Un item NO pautado (el cliente lo metió él mismo) cuenta como
+// Un item pautado cuenta como "consumido" solo si el cliente lo marcó. Un
+// item NO pautado (el cliente lo metió él mismo) cuenta como
 // consumido directamente — no existe un estado "lo añadí pero todavía no
 // me lo he comido" para algo que el propio cliente registró.
-function isItemConsumed(item, meal) {
+function isItemConsumed(item) {
   if (!isItemPlanned(item)) return true;
-  return !!(meal?.completed || item?.consumed);
+  return !!item?.consumed;
 }
 
 function mealTracking(meal) {
@@ -278,8 +217,8 @@ function mealTracking(meal) {
     ...recipes.filter(isItemPlanned).map(macrosForCustomRecipe),
   ]);
   const consumedMacros = sumMacroList([
-    ...products.filter((p) => isItemConsumed(p, meal)).map(ingredientMacros),
-    ...recipes.filter((r) => isItemConsumed(r, meal)).map(macrosForCustomRecipe),
+    ...products.filter((p) => isItemConsumed(p)).map(ingredientMacros),
+    ...recipes.filter((r) => isItemConsumed(r)).map(macrosForCustomRecipe),
   ]);
 
   return {

@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const mongooseAutopopulate = require("mongoose-autopopulate");
 const Schema = mongoose.Schema;
-const mealSchema = require("../meals/meal-schema");
+const MealSchema = require("../meals/meal-schema");
 
 const DietDaySchema = Schema({
   // Refactor nutrición (2026-09) — dueño DIRECTO del día. Antes la única
@@ -22,15 +22,13 @@ const DietDaySchema = Schema({
   // Qué menú del plan eligió el cliente para ESTE día concreto (p. ej.
   // "Entrenamiento"/"Descanso"). null mientras no elija, y en el 100% de los
   // días de quien no tiene plan — ver diet-days-controller.js getMenu/
-  // chooseMenu y planAssignments/plan-resolver.js.
+  // chooseMenu y dietPhases/diet-phase-resolver.js.
   menuName: { type: String, default: null },
-  meals: [
-    {
-      type: Schema.Types.ObjectId,
-      ref: "Meal",
-      autopopulate: true,
-    },
-  ],
+  // Las comidas del día, EMBEBIDAS y en el orden de los huecos (Desayuno,
+  // Almuerzo, Comida, Merienda, Cena, Recena), con sus alimentos y recetas
+  // dentro (2026-10; antes cuatro colecciones). Un día se lee y se escribe
+  // como un solo documento, y pegar un día o una comida es atómico.
+  meals: { type: [MealSchema], default: [] },
 });
 
 DietDaySchema.plugin(mongooseAutopopulate);
@@ -55,41 +53,25 @@ DietDaySchema.plugin(mongooseAutopopulate);
 // colisionar todos entre sí por `null`.
 //
 // Al desplegar esto sobre una base que ya tenía el índice NO único hay que
-// pasar `npm run migrate:dietday-unique` (funde duplicados, sustituye el
-// índice). Si no, mongoose no puede crear el índice (IndexOptionsConflict) y
+// pasar `npm run migrate:modelo-datos` (paso 02: funde duplicados y
+// sustituye el índice). Si no, mongoose no puede crear el índice (IndexOptionsConflict) y
 // la protección se queda sin aplicar.
 DietDaySchema.index(
   { userId: 1, date: 1 },
   { unique: true, partialFilterExpression: { userId: { $type: "objectId" } } },
 );
 
-const handleDeleteOne = async function (next) {
-  try {
-    const query = this.getQuery();
-    const dietDay = await this.model.findOne(query);
-    if (dietDay) {
-      await mealSchema.deleteMany({ _id: { $in: dietDay.meals } });
-    }
-    next();
-  } catch (error) {
-    next(error);
-  }
-};
+// Las rutas por id de comida, alimento o receta localizan su día por estos
+// campos, y el borrado de un producto o una receta del catálogo encuentra
+// los días que lo usan.
+DietDaySchema.index({ "meals._id": 1 });
+DietDaySchema.index({ "meals.customProducts._id": 1 });
+DietDaySchema.index({ "meals.customRecipes._id": 1 });
+DietDaySchema.index({ "meals.customProducts.product": 1 });
+DietDaySchema.index({ "meals.customRecipes.recipe": 1 });
+DietDaySchema.index({ "meals.customRecipes.addedCustomProducts.product": 1 });
+DietDaySchema.index({ "meals.customRecipes.modifiedBaseCustomProducts.product": 1 });
 
-DietDaySchema.pre("deleteOne", handleDeleteOne);
-DietDaySchema.pre("findOneAndDelete", handleDeleteOne);
-DietDaySchema.pre("findOneAndRemove", handleDeleteOne);
-
-DietDaySchema.pre("deleteMany", async function (next) {
-  try {
-    const filter = this.getFilter();
-    const dietsDayToDelete = await this.model.find(filter, "meals");
-    const mealIds = dietsDayToDelete.flatMap((dietsDay) => dietsDay.meals);
-    await mealSchema.deleteMany({ _id: { $in: mealIds } });
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
+DietDaySchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"], authorship: ["assignedByTrainerId", "alternativesTrainerId"] });
 
 module.exports = mongoose.model("DietDay", DietDaySchema);

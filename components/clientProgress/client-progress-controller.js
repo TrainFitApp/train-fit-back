@@ -1,52 +1,5 @@
-const { loadClientWindow } = require("./client-data-loader");
-const { computeAdherence, habitActiveDays } = require("./adherence-service");
-const { todayIsoDate, isoDateInZone, dayRangeInZone } = require("../util/date-util");
-const { timeZoneOfUser } = require("../users/user-time-zone");
-const {
-  buildWeeklySeries,
-  buildComparison,
-  buildWeightTrend,
-} = require("./progress-service");
-const dietDaysNutritionUtil = require("../dietDays/diet-days-nutrition-util");
-const { taskLabel } = require("../trainerTasks/task-label");
-const coachAlertDao = require("../coachAlerts/coach-alert-dao");
-const coachAlertService = require("../coachAlerts/coach-alert-service");
-const tableDao = require("../tables/table-dao");
-const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
-const {
-  buildWeeklyTraining,
-  buildPersonalRecords,
-  buildLoadEvolution,
-  buildVolumeComparison,
-  buildBlockTraining,
-  buildBlockComparison,
-  buildBlockReadiness,
-  buildBlockMuscleGroups,
-  buildBlockExerciseProgress,
-  buildSessionTraining,
-  buildSessionMuscleGroups,
-  buildSessionReadiness,
-  buildSessionExerciseProgress,
-  buildSessionAdherence,
-  buildBlockAdherence,
-  listTrackedExerciseNames,
-  listTrackedWorkoutNames,
-} = require("./training-service");
-const planAssignmentService = require("../planAssignments/plan-assignment-service");
-const Table = require("../tables/table-schema");
-const User = require("../users/schema");
-const {
-  buildRoster,
-  parseRosterQuery,
-  paginateRoster,
-  ROSTER_WINDOW_DAYS,
-} = require("./roster-service");
-
-// Ventana de la foto fija del resumen. 28 días = 4 semanas, el mismo periodo
-// que analiza el evaluador de alertas — así el "62% de adherencia" que ve el
-// coach en la ficha es literalmente el número que disparó la alerta, no otro
-// calculado sobre otro rango.
-const SUMMARY_WINDOW_DAYS = 28;
+const clientProgressService = require("./client-progress-service");
+const { buildRoster, parseRosterQuery, paginateRoster, ROSTER_WINDOW_DAYS } = require("./roster-service");
 
 // Las únicas ventanas de tendencia que ofrece la pantalla. Cerradas a
 // propósito: un `weeks` libre desde el query string es una invitación a
@@ -93,60 +46,10 @@ function parseCustomRange(query) {
   return { from, to };
 }
 
-function addDays(isoDay, days) {
-  const date = new Date(`${isoDay}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-// `today` y `timeZone` son los del cliente (ver client-data-loader.js).
-function buildAdherenceInput(data, periodDays, { today, timeZone }, activePlan = null) {
-  // Solo cuentan las marcas POSTERIORES a la creación del hábito. Sin este
-  // filtro un hábito creado ayer podía mostrar "16 de 2 días" si arrastraba
-  // marcas antiguas, y el porcentaje quedaba topado a 100 escondiendo que
-  // los números no cuadraban.
-  const creacionPorTarea = new Map(
-    data.activeTasks.map((task) => [String(task._id), isoDateInZone(task.createdAt, timeZone)])
-  );
-  const marcasPorTarea = new Map();
-  for (const completion of data.taskCompletions) {
-    const key = String(completion.taskId);
-    const desde = creacionPorTarea.get(key);
-    if (desde && completion.date < desde) continue;
-    marcasPorTarea.set(key, (marcasPorTarea.get(key) || 0) + 1);
-  }
-
-  return {
-    nutrition: {
-      // Auditoría 2026-09 — "sin datos suficientes" salía igual con y sin
-      // plan asignado (getTrackingDaysForClient ya resuelve los días sin
-      // materializar, pero un plan recién asignado o sin contenido sigue
-      // pudiendo tener <3 días con datos). hasActivePlan deja que
-      // nutritionDimension distinga "no hay plan" de "hay plan, aún sin
-      // datos" en vez de decir lo mismo para los dos casos.
-      ...dietDaysNutritionUtil.computeRangeAdherence(data.dietDays, periodDays),
-      hasActivePlan: !!activePlan,
-    },
-    training: {
-      completedSessions: data.planProgress.completedTotal,
-      plannedTotal: data.planProgress.plannedTotal,
-      scheduledDays: data.planProgress.scheduledDays,
-    },
-    habits: {
-      habits: data.activeTasks.map((task) => ({
-        id: String(task._id),
-        label: taskLabel(task),
-        target: task.target,
-        unit: task.unit,
-        completions: marcasPorTarea.get(String(task._id)) || 0,
-        // Un hábito puesto ayer no arrastra 27 días de "incumplimiento" en
-        // los que todavía no existía.
-        activeDays: habitActiveDays(creacionPorTarea.get(String(task._id)), today, periodDays),
-      })),
-    },
-    checkins: data.checkinWindow || { expected: 0, answered: 0 },
-  };
-}
+const weeksOf = (query) => {
+  const requested = Number(query.weeks);
+  return ALLOWED_WEEKS.includes(requested) ? requested : DEFAULT_WEEKS;
+};
 
 module.exports = {
   // GET /trainer/roster?page=&limit=&search=&sort=&dir=&weakest=&alerts=&overdue=&pending=
@@ -166,269 +69,38 @@ module.exports = {
     return res.send({ periodDays: ROSTER_WINDOW_DAYS, ...paginateRoster(rows, options) });
   },
 
-  // GET /trainer/clients/:clientId/summary — la foto fija que responde
-  // "¿cómo va este cliente?" en una sola petición. Antes esa respuesta
-  // exigía abrir 4 pestañas y componerla mentalmente.
+  // GET /trainer/clients/:clientId/summary — Movimiento 2 Coach Pro.
   async getSummary(req, res) {
-    const trainerId = req.auth.userId;
-    const clientId = req.params.clientId;
-
-    const timeZone = await timeZoneOfUser(clientId);
-    const to = todayIsoDate(timeZone);
-    const from = addDays(to, -(SUMMARY_WINDOW_DAYS - 1));
-
-    // Las alertas del resumen salen de la evaluación diaria del profesional:
-    // si hoy aún no se ha hecho, se hace a la vez que se carga la ventana.
-    const [data] = await Promise.all([
-      loadClientWindow(trainerId, clientId, { from, to, timeZone }),
-      coachAlertService.ensureEvaluatedToday(trainerId, { timeZone: req.auth.timeZone }),
-    ]);
-    if (!data) return res.status(404).send({ message: "Cliente no encontrado" });
-
-    const [alerts, activePlan, currentRoutinePhase] = await Promise.all([
-      coachAlertDao.listForClient(trainerId, clientId, { status: "open" }),
-      planAssignmentService.getActiveForClient(clientId),
-      routineAssignmentDao.findCoveringDate(clientId, to),
-    ]);
-
-    // Antes se leía data.client.tableInUse: un puntero CACHEADO que solo se
-    // refresca al abrir la pestaña de Tablas (ver
-    // routine-assignment-service.js#syncTableInUseIfDue, que aquí no se
-    // llama) — podía quedar desfasado o vacío aunque hubiera una fase
-    // vigente de verdad, mostrando en Resumen una rutina distinta (o
-    // ninguna) de la que ya calculan por fecha tanto la adherencia de
-    // entrenamiento de aquí mismo (loadTrainingWindow#findCoveringDate)
-    // como la cabecera del frontend (client-detail.page.ts#currentRoutinePhase).
-    // Con findCoveringDate también aquí, las tres fuentes leen lo mismo.
-    const routineTable = currentRoutinePhase
-      ? await Table.findById(currentRoutinePhase.tableId).select("name").lean()
-      : null;
-    const routine = routineTable ? { _id: routineTable._id, name: routineTable.name } : null;
-
-    const weeks = SUMMARY_WINDOW_DAYS / 7;
-    const adherence = computeAdherence(
-      buildAdherenceInput(data, SUMMARY_WINDOW_DAYS, { today: to, timeZone }, activePlan)
-    );
-
-    // La tendencia de peso del resumen se calcula sobre la MISMA serie
-    // semanal que sirve la pestaña de comparativas — no con una segunda
-    // fórmula que pudiera decir algo distinto sobre los mismos datos.
-    const series = buildWeeklySeries({
-      weeks,
-      now: new Date(),
-      timeZone,
-      anthropometryEntries: data.anthropometryEntries,
-      checkinResponses: data.checkinResponses,
-      dietDays: data.dietDays,
-      workoutDates: data.workoutDates,
-      taskCompletions: data.taskCompletions,
-      activeTaskCount: data.activeTasks.length,
-    });
-
-    const lastEntry = data.anthropometryEntries[data.anthropometryEntries.length - 1] || null;
-    const lastResponse = data.allCheckinResponses[0] || null;
-
-    return res.send({
-      period: { from, to, days: SUMMARY_WINDOW_DAYS },
-      alerts,
-      adherence,
-      weightTrend: buildWeightTrend(series),
-      latestWeight: lastEntry?.weight ?? null,
-      latestWeightDate: lastEntry?.date ?? null,
-      lastCheckinAt: lastResponse?.respondedAt ?? null,
-      nextCheckinDate: data.nextCheckinDate ?? null,
-      activePlan: activePlan
-        ? {
-            _id: activePlan._id,
-            name: activePlan.phaseName || activePlan.name,
-            startDate: activePlan.startDate,
-            endDate: activePlan.endDate,
-          }
-        : null,
-      routine,
-    });
+    return res.send(await clientProgressService.summary(req.auth.userId, req.params.clientId, req.auth.timeZone));
   },
 
   // GET /trainer/clients/:clientId/body-profile — Movimiento 3 Coach Pro.
-  //
-  // Altura, sexo y fecha de nacimiento del cliente: lo único que le falta a
-  // la calculadora corporal, porque las mediciones ya las tiene cargadas la
-  // pestaña de Medidas.
-  //
   // Endpoint propio y no un campo más en /summary: la calculadora vive en
-  // Medidas y /summary son ~9 consultas que sirven a Resumen. Colgarla de
-  // ahí obligaría a la pestaña de Medidas a pagar todas esas consultas para
-  // leer tres campos de un documento.
-  //
-  // No devuelve NINGÚN resultado calculado, solo datos: las fórmulas son
-  // puras y corren en el navegador (core/utils/body-metrics.util.ts), así
-  // que cambiar de fórmula en el selector no cuesta una petición.
+  // Medidas y no tiene por qué pagar las ~9 consultas del resumen.
   async getBodyProfile(req, res) {
-    const client = await User.findById(req.params.clientId)
-      .select("height sex birth")
-      .lean();
-    if (!client) return res.status(404).send({ message: "Cliente no encontrado" });
-
-    return res.send({
-      heightCm: client.height ?? null,
-      sex: client.sex ?? null,
-      birth: client.birth ?? null,
-    });
+    return res.send(await clientProgressService.bodyProfile(req.params.clientId));
   },
 
   // GET /trainer/clients/:clientId/progress?weeks=4|8|12 — serie semanal +
-  // comparativa de la última semana contra la anterior. Un solo endpoint
-  // para las dos cosas: la comparativa NO es otra consulta, son los dos
-  // últimos elementos de la misma serie.
+  // comparativa de la última semana contra la anterior.
   async getProgress(req, res) {
-    const trainerId = req.auth.userId;
-    const clientId = req.params.clientId;
-
-    const requestedWeeks = Number(req.query.weeks);
-    const weeks = ALLOWED_WEEKS.includes(requestedWeeks) ? requestedWeeks : DEFAULT_WEEKS;
-
-    const now = new Date();
-    const timeZone = await timeZoneOfUser(clientId);
-    const to = isoDateInZone(now, timeZone);
-    const from = addDays(to, -(weeks * 7 - 1));
-
-    const data = await loadClientWindow(trainerId, clientId, { from, to, timeZone });
-    if (!data) return res.status(404).send({ message: "Cliente no encontrado" });
-
-    const series = buildWeeklySeries({
-      weeks,
-      now,
-      timeZone,
-      anthropometryEntries: data.anthropometryEntries,
-      checkinResponses: data.checkinResponses,
-      dietDays: data.dietDays,
-      workoutDates: data.workoutDates,
-      taskCompletions: data.taskCompletions,
-      activeTaskCount: data.activeTasks.length,
-    });
-
-    return res.send({
-      weeks,
-      period: { from, to },
-      series,
-      comparison: buildComparison(series),
-      weightTrend: buildWeightTrend(series),
-    });
+    return res.send(await clientProgressService.weeklyProgress(req.auth.userId, req.params.clientId, weeksOf(req.query)));
   },
 
-  // GET /trainer/clients/:clientId/training-progress?weeks=4|8|12 — Fase 6.
-  //   ó ?from=YYYY-MM-DD&to=YYYY-MM-DD — Tarea 4 (2026-09).
-  //
-  // Endpoint aparte de /progress a propósito: su consulta devuelve una fila
-  // POR SERIE COMPLETADA (miles en un trimestre) y es con diferencia la más
-  // cara del módulo. Fundirla en /progress la haría pagar también a quien
-  // solo mira el peso y la adherencia, que es el caso normal al abrir la
-  // ficha.
-  //
-  // Dos modos, un único endpoint (mismo shape de fondo, distinto relleno):
-  //   - `weeks` (o ninguno) — ventana fija terminando HOY. Es lo que pide
-  //     Resumen, y necesita `weekly`/`loadEvolution`/`personalRecords` para
-  //     poder hablar de "esta semana" con sentido.
-  //   - `from`/`to` — rango libre elegido a mano en el calendario de
-  //     Entrenamiento (comparación por microciclo). Un rango libre no tiene
-  //     un "ahora" desde el que contar semanas hacia atrás, así que esos
-  //     campos no se calculan — solo lo agregado por microciclo, que no
-  //     depende de ninguna ventana semanal.
+  // GET /trainer/clients/:clientId/training-progress?weeks=4|8|12
+  //   ó ?from=YYYY-MM-DD&to=YYYY-MM-DD (rango libre, comparación por microciclo)
+  //   &workout=nombre &exercises=A&exercises=B
+  // Aparte de /progress a propósito: devuelve una fila POR SERIE COMPLETADA
+  // (miles en un trimestre) y es con diferencia la consulta más cara del
+  // módulo; quien solo mira peso y adherencia no la paga.
   async getTrainingProgress(req, res) {
-    const clientId = req.params.clientId;
-    const customRange = parseCustomRange(req.query);
-
-    const now = new Date();
-    const timeZone = await timeZoneOfUser(clientId);
-    let from, to, weeks;
-
-    if (customRange) {
-      from = customRange.from;
-      to = customRange.to;
-      weeks = null;
-    } else {
-      const requestedWeeks = Number(req.query.weeks);
-      weeks = ALLOWED_WEEKS.includes(requestedWeeks) ? requestedWeeks : DEFAULT_WEEKS;
-      to = isoDateInZone(now, timeZone);
-      from = addDays(to, -(weeks * 7 - 1));
-    }
-
-    // Las series se guardan como instante: el rango va de las 00:00 de
-    // `from` a las 23:59 de `to` EN LA ZONA DEL CLIENTE.
-    const range = dayRangeInZone(from, to, timeZone);
-    const [allSets, allSessionAdherenceRows] = await Promise.all([
-      tableDao.listCompletedSetsForUser(clientId, range.start, range.end),
-      tableDao.listSessionAdherenceForUser(clientId, range.start, range.end),
-    ]);
-
-    // "Elegir el workout a ver" (2026-09) — filtro por NOMBRE de
-    // entrenamiento (p.ej. "Día de pierna"), aplicado ANTES de calcular
-    // cualquier agregado: así el filtro alcanza por igual a las vistas por
-    // microciclo y por sesión sin tocar ninguna de las funciones de
-    // training-service.js. workoutNames sale del conjunto SIN filtrar, para
-    // que el selector siga ofreciendo todos los workouts aunque ya haya uno
-    // elegido.
-    const workoutName = typeof req.query.workout === "string" ? req.query.workout.trim() : "";
-    const sets = workoutName ? allSets.filter((set) => set.workoutName === workoutName) : allSets;
-    const sessionAdherenceRows = workoutName
-      ? allSessionAdherenceRows.filter((row) => row.workoutName === workoutName)
-      : allSessionAdherenceRows;
-
-    // Movimiento 3 / Tarea 4 — agrupado por microciclo. No cuesta ninguna
-    // consulta más: la agregación ya proyecta split y grupos musculares (ver
-    // tableDao.listCompletedSetsForUser), y agrupar es puro.
-    const blocks = buildBlockTraining(sets, timeZone);
-    const sessionAdherence = buildSessionAdherence(sessionAdherenceRows, timeZone);
-
-    // Comparar por ejercicio (2026-09), varios a la vez (2026-09 bis) —
-    // exerciseNames siempre va (barato, alimenta el selector sin que el
-    // frontend tenga que pedir nada aparte); blockExerciseByName/
-    // sessionExerciseByName solo se calculan si se pidió al menos un
-    // ejercicio. Un nombre por elemento, no una función nueva: la misma
-    // buildBlockExerciseProgress/buildSessionExerciseProgress de siempre,
-    // llamada una vez por ejercicio — no hay nada que agregar entre
-    // ejercicios distintos, así que no hace falta una versión "múltiple".
-    const exerciseNames = parseExerciseList(req.query);
-
-    const response = {
-      period: { from, to },
-      blocks,
-      blockComparison: buildBlockComparison(blocks),
-      blockReadiness: buildBlockReadiness(sets, timeZone),
-      blockMuscleGroups: buildBlockMuscleGroups(sets, timeZone),
-      blockAdherence: buildBlockAdherence(sessionAdherence),
-      // 2026-09 — granularidad "Por sesión" del comparador: los mismos
-      // agregados que arriba pero sin colapsar por microciclo (ver
-      // training-service.js#buildSessionTraining). No es una consulta
-      // nueva salvo sessionAdherence, que necesita las series NO hechas
-      // (listCompletedSetsForUser las descarta).
-      sessionTraining: buildSessionTraining(sets, timeZone),
-      sessionMuscleGroups: buildSessionMuscleGroups(sets, timeZone),
-      sessionReadiness: buildSessionReadiness(sets, timeZone),
-      sessionAdherence,
-      exerciseNames: listTrackedExerciseNames(sets),
-      workoutNames: listTrackedWorkoutNames(allSets),
-      totalSets: sets.length,
-    };
-
-    if (exerciseNames.length) {
-      response.blockExerciseByName = {};
-      response.sessionExerciseByName = {};
-      for (const name of exerciseNames) {
-        response.blockExerciseByName[name] = buildBlockExerciseProgress(sets, name, timeZone);
-        response.sessionExerciseByName[name] = buildSessionExerciseProgress(sets, name, timeZone);
-      }
-    }
-
-    if (weeks) {
-      const weekly = buildWeeklyTraining(sets, weeks, now, timeZone);
-      response.weeks = weeks;
-      response.weekly = weekly;
-      response.volumeComparison = buildVolumeComparison(weekly);
-      response.personalRecords = buildPersonalRecords(sets);
-      response.loadEvolution = buildLoadEvolution(sets, weeks, now, timeZone);
-    }
-
-    return res.send(response);
+    return res.send(
+      await clientProgressService.trainingProgress(req.params.clientId, {
+        customRange: parseCustomRange(req.query),
+        requestedWeeks: weeksOf(req.query),
+        workoutName: typeof req.query.workout === "string" ? req.query.workout.trim() : "",
+        exerciseNames: parseExerciseList(req.query),
+      })
+    );
   },
 };

@@ -341,14 +341,14 @@ test("errores de RevenueCat al conceder: 502 (nunca su 401, que cerraría la ses
   assert.equal((await ctx.get(user, "/billing/entitlements/me")).isPremium, false);
 });
 
-test("sin REVENUECAT_SECRET_API_KEY, conceder y quitar fallan con un error claro y sin tocar la BD", async () => {
+test("sin REVENUECAT_SECRET_API_KEY, conceder y quitar fallan (500, sin detalles) y sin tocar la BD", async () => {
   const admin = await ctx.makeAdmin();
   const user = await ctx.makeClient();
   delete process.env.REVENUECAT_SECRET_API_KEY;
   try {
     const res = await adminCall(admin, "grant", user, preset("1d"));
     assert.equal(res.status, 500);
-    assert.match(res.body.message, /secret API key/);
+    assert.doesNotMatch(res.body.message, /API key/);
     assert.equal((await adminCall(admin, "revoke", user)).status, 500);
   } finally {
     process.env.REVENUECAT_SECRET_API_KEY = API_KEY;

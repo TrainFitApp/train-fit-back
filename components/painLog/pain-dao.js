@@ -1,4 +1,5 @@
-const { PainEntry, PainThreshold } = require("./pain-schema");
+const { PainEntry } = require("./pain-schema");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 module.exports = {
   // Upsert: el cliente CORRIGE su registro del día, no acumula filas. El
@@ -37,23 +38,17 @@ module.exports = {
       .lean();
   },
 
-  // --- Umbrales (los fija el entrenador) ---
+  // --- Umbrales (los fija el profesional; viven en el par, ver
+  // trainerClients/trainer-client-schema.js) ---
   async listThresholds(trainerId, clientId) {
-    return PainThreshold.find({ trainerId, clientId }).lean();
+    return trainerClientDao.listPainThresholds(trainerId, clientId);
   },
 
-  async upsertThreshold(trainerId, clientId, { zone, workLevel, painLevel, note }) {
-    return PainThreshold.findOneAndUpdate(
-      { trainerId, clientId, zone },
-      { $set: { workLevel, painLevel, note } },
-      { new: true, upsert: true }
-    ).lean();
+  async upsertThreshold(trainerId, clientId, threshold) {
+    return trainerClientDao.setPainThreshold(trainerId, clientId, threshold);
   },
 
-  // trainerId en el filtro, no solo la zona: impide que un profesional borre
-  // el umbral que puso otro sobre el mismo cliente. Mismo criterio que el
-  // resto de DAOs del módulo trainer.
   async removeThreshold(trainerId, clientId, zone) {
-    return PainThreshold.deleteOne({ trainerId, clientId, zone });
+    return trainerClientDao.removePainThreshold(trainerId, clientId, zone);
   },
 };

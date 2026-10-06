@@ -10,26 +10,9 @@
 // (dietDays/diet-days-dao.js#ensureDietDay es la única vía de creación), pero
 // el índice único solo se puede crear si antes no quedan duplicados.
 //
-//   npm run migrate:dietday-unique:dry-run
-//   npm run migrate:dietday-unique
-//
 // Trabaja con las colecciones en crudo (sin modelos de mongoose) a propósito:
 // los hooks de borrado en cascada de DietDay y Meal arrastrarían las comidas
 // —y su contenido— justo cuando lo que queremos es moverlo de sitio.
-
-const path = require("path");
-
-require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
-
-const mongoose = require("mongoose");
-const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
-
-const hasFlag = (flag) => process.argv.includes(flag);
-const DRY_RUN = hasFlag("--dry-run");
-
-const LOG_PREFIX = "[migrate-dietday-unique-date]";
-const log = (...args) => console.log(LOG_PREFIX, ...args);
-const ok = (...args) => console.log(LOG_PREFIX, "OK", ...args);
 
 const INDEX_NAME = "userId_1_date_1";
 const INDEX_KEY = { userId: 1, date: 1 };
@@ -125,7 +108,15 @@ function buildMergeOps(winner, loser) {
   return { mealUpdates, dayUpdate };
 }
 
-async function mergeDuplicates(dietDays, meals) {
+async function mergeDuplicates(dietDays, meals, { dryRun, log }) {
+  // Trabaja sobre el formato con comidas en su propia colección: va ANTES de
+  // 04-embed-nutrition. Con las comidas ya embebidas no hay duplicados
+  // posibles (el índice único ya existe), así que no hay nada que fundir.
+  if (await dietDays.findOne({ "meals.0": { $type: "object" } }, { projection: { _id: 1 } })) {
+    log("los días ya tienen las comidas embebidas (04-embed-nutrition ya pasó): nada que fundir");
+    return { groups: 0, mergedDays: 0, movedItems: 0 };
+  }
+
   const groups = await dietDays
     .aggregate([
       { $match: { userId: { $type: "objectId" } } },
@@ -154,7 +145,7 @@ async function mergeDuplicates(dietDays, meals) {
         `${group._id.userId} ${group._id.date}: funde ${loser.day._id} (${countItems(loser.meals)} items) en ${winner.day._id}`,
       );
 
-      if (DRY_RUN) continue;
+      if (dryRun) continue;
 
       if (mealUpdates.length) await meals.bulkWrite(mealUpdates, { ordered: false });
       if (Object.keys(dayUpdate).length) {
@@ -172,52 +163,34 @@ async function mergeDuplicates(dietDays, meals) {
   return { groups: groups.length, mergedDays, movedItems };
 }
 
-async function replaceIndex(dietDays) {
+async function replaceIndex(dietDays, { dryRun, log }) {
   const existing = await dietDays.indexes();
   const current = existing.find((index) => index.name === INDEX_NAME);
 
   if (current?.unique) {
-    ok("el índice único ya existe");
+    log("el índice único ya existe");
     return;
   }
 
   if (current) {
     log(`sustituyendo el índice NO único ${INDEX_NAME}`);
-    if (!DRY_RUN) await dietDays.dropIndex(INDEX_NAME);
+    if (!dryRun) await dietDays.dropIndex(INDEX_NAME);
   }
 
-  if (DRY_RUN) {
+  if (dryRun) {
     log(`crearía ${INDEX_NAME} único (partial: userId objectId)`);
     return;
   }
 
   await dietDays.createIndex(INDEX_KEY, INDEX_OPTIONS);
-  ok(`${INDEX_NAME} único creado`);
+  log(`${INDEX_NAME} único creado`);
 }
 
-async function main() {
-  const mongoUri = buildMongoUri();
-  log(`connecting ${redactMongoUri(mongoUri)}`);
-  log(`flags dryRun=${DRY_RUN}`);
-
-  await mongoose.connect(mongoUri);
-  ok("connected");
-
-  const dietDays = mongoose.connection.collection("dietdays");
-  const meals = mongoose.connection.collection("meals");
-
-  const summary = await mergeDuplicates(dietDays, meals);
-  await replaceIndex(dietDays);
-
-  ok(
-    `grupos=${summary.groups} díasFundidos=${summary.mergedDays} itemsMovidos=${summary.movedItems}${DRY_RUN ? " (dry-run: nada escrito)" : ""}`,
-  );
-
-  await mongoose.disconnect();
+async function migrateDietDayUnique(db, { dryRun = false, log = () => {} } = {}) {
+  const dietDays = db.collection("dietdays");
+  const summary = await mergeDuplicates(dietDays, db.collection("meals"), { dryRun, log });
+  await replaceIndex(dietDays, { dryRun, log });
+  return summary;
 }
 
-main().catch(async (error) => {
-  console.error(LOG_PREFIX, "ERROR", error);
-  await mongoose.disconnect().catch(() => {});
-  process.exit(1);
-});
+module.exports = { migrateDietDayUnique };

@@ -20,10 +20,9 @@
  *   cierra solo.
  */
 function planAlertWrites(candidates, { openIdByKey, silencedKeys = new Set(), now }) {
-  // Una clave repetida en la misma pasada (p. ej. dos relaciones "en_revision"
-  // del mismo cliente, una por scope) es UNA alerta: gana la última, igual
-  // que cuando el segundo candidato refrescaba la alerta recién creada. Sin
-  // esto, el segundo insert chocaría con el índice único parcial.
+  // Una clave repetida en la misma pasada es UNA alerta: gana la última,
+  // igual que cuando el segundo candidato refrescaba la alerta recién
+  // creada. Sin esto, el segundo insert chocaría con el índice único parcial.
   const byKey = new Map();
   for (const candidate of candidates) byKey.set(candidate.dedupeKey, candidate);
 

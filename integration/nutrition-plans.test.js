@@ -2,10 +2,11 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const h = require("./support/harness");
 
-// Planes de dieta de punta a punta: plantilla de biblioteca → fase asignada
-// (copia congelada) → el cliente elige menú → su día se rellena con lo
-// pautado. Y todo lo que tiene que propagarse (o NO propagarse) cuando el
-// profesional edita, sustituye o quita la fase, o marca un día saltado.
+// Planes de dieta de punta a punta: plantilla de biblioteca → fase del
+// cliente (con su propia copia del contenido) → el cliente elige menú → su
+// día se rellena con lo pautado. Y todo lo que tiene que propagarse (o NO
+// propagarse) cuando el profesional edita, sustituye o quita la fase, prepara
+// la semana siguiente o marca un día saltado.
 
 const ctx = h.setup();
 
@@ -65,11 +66,13 @@ async function libraryTemplate(trainer, extra = {}) {
   return ctx.post(trainer, "/trainer/diet-templates", { name: "Definición", menus: menus(), ...extra });
 }
 
+const phasesPath = (client) => `/trainer/clients/${client.id}/diet-phases`;
+
 async function applyTemplate(trainer, client, template, startDate = h.day(0), body = {}) {
-  return ctx.post(trainer, `/trainer/clients/${client.id}/nutrition-plans/${template._id}/apply`, { startDate, ...body });
+  return ctx.post(trainer, phasesPath(client), { templateId: template._id, startDate, ...body });
 }
 
-const readDay = async (user, date) => ctx.post(user, "/dietdays/date/x", { date });
+const readDay = async (user, date) => ctx.post(user, `/dietdays/date/${date}`, {});
 const mealBySlot = (day, slot) => day.meals.find((m) => m.name === slot);
 const productNames = (meal) => meal.customProducts.map((c) => c.product?.name || c.name).sort();
 
@@ -88,7 +91,11 @@ test("plantilla: nombres de menú repetidos se desambiguan, huecos inválidos se
   assert.equal(tpl.name, "Volumen");
   assert.deepEqual(tpl.menus.map((m) => m.name), ["Día", "Día (2)", "Menú 3"]);
   assert.deepEqual(tpl.menus[0].meals.map((m) => m.slot), ["Desayuno"], "Brunch no es un hueco válido");
-  assert.equal(await ctx.count("CustomProduct", { _id: { $in: tpl.menus[0].meals[0].alternatives[0].customProducts.map((c) => c._id || c) } }), 1);
+  const stored = await ctx.model("DietTemplate").findById(tpl._id).lean();
+  const materialized = stored.menus[0].meals[0].alternatives[0].customProducts;
+  assert.equal(materialized.length, 1, "el contenido va embebido en la plantilla");
+  assert.equal(materialized[0].quantity, 80);
+  assert.ok(materialized[0]._id, "con su propio id");
   assert.equal((await ctx.call(trainer, "POST", "/trainer/diet-templates", { name: "   " })).status, 400);
 });
 
@@ -105,34 +112,43 @@ test("plantilla ajena: otro entrenador no la lee, no la edita y no la borra (404
     "una plantilla exclusiva de cliente exige relación");
 });
 
-test("editar una plantilla de biblioteca reemplaza su contenido sin dejar CustomProduct huérfanos", async () => {
+test("editar una plantilla de biblioteca reemplaza su contenido entero", async () => {
   const trainer = await ctx.makeTrainer();
   const tpl = await libraryTemplate(trainer);
-  const oldIds = tpl.menus.flatMap((m) => m.meals.flatMap((meal) => meal.alternatives.flatMap((a) => a.customProducts.map((c) => c._id || c))));
+  const oldIds = tpl.menus.flatMap((m) => m.meals.flatMap((meal) => meal.alternatives.flatMap((a) => a.customProducts.map((c) => String(c._id || c)))));
   await ctx.put(trainer, `/trainer/diet-templates/${tpl._id}`, { menus: [{ name: "Único", meals: [{ slot: "Cena", alternatives: [{ customProducts: [cp(foods.salmon, 120)] }] }] }] });
-  assert.equal(await ctx.count("CustomProduct", { _id: { $in: oldIds } }), 0);
+  const items = ctx.collectItems(await ctx.model("DietTemplate").findById(tpl._id).lean());
+  assert.deepEqual(items.map((item) => item.quantity), [120]);
+  assert.ok(items.every((item) => !oldIds.includes(String(item._id))));
   const stored = await ctx.get(trainer, `/trainer/diet-templates/${tpl._id}`);
   assert.deepEqual(stored.menus.map((m) => m.name), ["Único"]);
 });
 
 // --- Asignar y elegir menú ------------------------------------------------------------
 
-test("asignar: la fase es una COPIA congelada (contenido propio), activa desde su fecha", async () => {
+test("asignar: la fase lleva su propia COPIA del contenido, activa desde su fecha, con el nombre de la plantilla", async () => {
   const { trainer, client } = await setupPair();
   const tpl = await libraryTemplate(trainer);
-  const assignment = await applyTemplate(trainer, client, tpl);
-  assert.equal(assignment.status, "active");
-  assert.equal(String(assignment.sourceTemplateId), String(tpl._id));
-  assert.equal(assignment.menusCount, 2);
+  const phase = await applyTemplate(trainer, client, tpl);
+  assert.equal(phase.name, "Definición");
+  assert.equal(String(phase.sourceTemplateId), String(tpl._id));
+  assert.deepEqual(phase.contents.map((c) => [c.startDate, c.menusCount]), [[h.day(0), 2]]);
 
-  const copy = await ctx.model("DietTemplate").findById(assignment._id).lean();
-  const copyCpIds = copy.menus.flatMap((m) => m.meals.flatMap((meal) => meal.alternatives.flatMap((a) => a.customProducts.map(String))));
-  const tplCpIds = tpl.menus.flatMap((m) => m.meals.flatMap((meal) => meal.alternatives.flatMap((a) => a.customProducts.map((c) => String(c._id || c)))));
-  assert.ok(copyCpIds.length > 0);
-  assert.ok(copyCpIds.every((id) => !tplCpIds.includes(id)), "no comparte CustomProduct con la plantilla");
+  const stored = await ctx.model("DietPhase").findById(phase._id).lean();
+  const copyIds = stored.contents[0].menus.flatMap((m) => m.meals.flatMap((meal) => meal.alternatives.flatMap((a) => a.customProducts.map((c) => String(c._id)))));
+  const tplIds = tpl.menus.flatMap((m) => m.meals.flatMap((meal) => meal.alternatives.flatMap((a) => a.customProducts.map((c) => String(c._id)))));
+  assert.ok(copyIds.length > 0);
+  assert.ok(copyIds.every((id) => !tplIds.includes(id)), "no comparte alimentos con la plantilla");
+  assert.equal(await ctx.count("DietTemplate", { trainerId: trainer._id }), 1, "aplicar no crea plantillas");
 
-  const active = await ctx.get(trainer, `/trainer/clients/${client.id}/nutrition-plans/active`);
-  assert.equal(String(active._id), String(assignment._id));
+  const current = await ctx.get(trainer, `${phasesPath(client)}/current`);
+  assert.equal(String(current._id), String(phase._id));
+  assert.equal(current.stuckDaysCount, 0);
+  await readDay(client, h.day(0));
+  assert.equal((await ctx.get(trainer, `${phasesPath(client)}/current`)).stuckDaysCount, 1, "día abierto sin menú elegido");
+  const full = await ctx.get(trainer, `${phasesPath(client)}/${phase._id}`);
+  assert.deepEqual(full.contents[0].menus.map((m) => m.name), ["Menú A", "Menú B"]);
+  assert.equal(full.contents[0].menus[0].meals[0].alternatives[0].customProducts[0].product.name, "Avena", "con los alimentos poblados");
 });
 
 test("el cliente ve los menús a elegir (con vista previa) y al elegir uno su día se rellena con lo pautado", async () => {
@@ -171,7 +187,7 @@ test("cambiar de menú sustituye lo pautado (sin restos del anterior) y respeta 
   await applyTemplate(trainer, client, await libraryTemplate(trainer));
   const date = h.day(0);
   await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Menú A" });
-  await ctx.post(client, "/dietdays/x", { date, indexMeal: 2, customProduct: { quantity: 30, product: { name: "Pan propio", energyKcal100g: 250 } } });
+  await ctx.post(client, `/dietdays/date/${date}/meals/2/customproducts`, { customProduct: { quantity: 30, product: { name: "Pan propio", energyKcal100g: 250 } } });
 
   await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Menú B" });
   const day = (await readDay(client, date)).dietDay;
@@ -187,22 +203,23 @@ test("menú con opciones: la primera se aplica sola, el cliente puede alternar y
   const date = h.day(0);
   await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Menú B" });
 
-  const [proposal] = await ctx.get(client, `/diets/${date}/meal-proposals`);
-  assert.deepEqual(proposal.alternatives.map((a) => a.label), ["Pollo", "Salmón"]);
-  assert.equal(proposal.chosenIndex, 0);
-
-  await ctx.post(client, `/diets/${date}/meal-proposals/${proposal._id}/choose`, { chosenIndex: 1 });
   let comida = mealBySlot((await readDay(client, date)).dietDay, "Comida");
+  assert.deepEqual(comida.alternatives.map((a) => a.label), ["Pollo", "Salmón"]);
+  assert.equal(comida.chosenAlternativeIndex, 0);
+
+  await ctx.put(client, `/meals/${comida._id}/alternative`, { chosenIndex: 1 });
+  comida = mealBySlot((await readDay(client, date)).dietDay, "Comida");
   assert.deepEqual(productNames(comida), ["Salmón"]);
-  await ctx.post(client, `/diets/${date}/meal-proposals/${proposal._id}/choose`, { chosenIndex: 0 });
-  await ctx.post(client, `/diets/${date}/meal-proposals/${proposal._id}/choose`, { chosenIndex: 0 });
+  assert.equal(comida.chosenAlternativeIndex, 1);
+  await ctx.put(client, `/meals/${comida._id}/alternative`, { chosenIndex: 0 });
+  await ctx.put(client, `/meals/${comida._id}/alternative`, { chosenIndex: 0 });
   comida = mealBySlot((await readDay(client, date)).dietDay, "Comida");
   assert.deepEqual(productNames(comida), ["Pollo"], "sin duplicados al repetir");
-  assert.equal((await ctx.get(client, `/diets/${date}/meal-proposals`))[0].alternatives.length, 2, "las opciones siguen ahí");
+  assert.equal(comida.alternatives.length, 2, "las opciones siguen ahí");
 
-  assert.equal((await ctx.call(client, "POST", `/diets/${date}/meal-proposals/${proposal._id}/choose`, { chosenIndex: 7 })).status, 400);
+  assert.equal((await ctx.call(client, "PUT", `/meals/${comida._id}/alternative`, { chosenIndex: 7 })).status, 400);
   const stranger = await ctx.makeClient();
-  assert.equal((await ctx.call(stranger, "POST", `/diets/${date}/meal-proposals/${proposal._id}/choose`, { chosenIndex: 1 })).status, 404);
+  assert.equal((await ctx.call(stranger, "PUT", `/meals/${comida._id}/alternative`, { chosenIndex: 1 })).status, 400);
 });
 
 test("elegir un menú que no existe o sin plan: 400; fecha inválida: 400", async () => {
@@ -222,7 +239,7 @@ test("salir del menú: quita lo pautado y la elección, conserva lo propio", asy
   await applyTemplate(trainer, client, await libraryTemplate(trainer));
   const date = h.day(0);
   await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Menú A" });
-  await ctx.post(client, "/dietdays/x", { date, indexMeal: 0, customProduct: { quantity: 10, product: { name: "Miel propia" } } });
+  await ctx.post(client, `/dietdays/date/${date}/meals/0/customproducts`, { customProduct: { quantity: 10, product: { name: "Miel propia" } } });
   const left = await ctx.del(client, `/dietdays/date/${date}/menu`);
   assert.equal(left.menuName, null);
   const day = (await readDay(client, date)).dietDay;
@@ -250,9 +267,9 @@ test("editar la PLANTILLA después de asignarla no cambia nada del cliente (copi
   assert.equal((await ctx.get(client, `/dietdays/date/${date}/menu`)).options.length, 2);
 });
 
-test("editar la FASE asignada resincroniza los días ya abiertos del cliente que aún no ha seguido", async () => {
+test("editar el contenido de la fase resincroniza los días ya abiertos del cliente que aún no ha seguido", async () => {
   const { trainer, client } = await setupPair();
-  const assignment = await applyTemplate(trainer, client, await libraryTemplate(trainer));
+  const phase = await applyTemplate(trainer, client, await libraryTemplate(trainer));
   const today = h.day(0);
   const tomorrow = h.day(1);
   await ctx.put(client, `/dietdays/date/${today}/menu`, { menuName: "Menú A" });
@@ -263,7 +280,7 @@ test("editar la FASE asignada resincroniza los días ya abiertos del cliente que
 
   const newMenus = menus();
   newMenus[0].meals[0].alternatives[0].customProducts = [cp(foods.avena, 90)];
-  await ctx.put(trainer, `/trainer/clients/${client.id}/nutrition-plans/${assignment._id}`, { menus: newMenus });
+  await ctx.put(trainer, `${phasesPath(client)}/${phase._id}/contents/${phase.contents[0]._id}`, { menus: newMenus });
 
   const manana = mealBySlot((await readDay(client, tomorrow)).dietDay, "Desayuno");
   assert.deepEqual(manana.customProducts.map((c) => [c.product.name, c.quantity]), [["Avena", 90]], "mañana ya lleva lo nuevo");
@@ -274,16 +291,18 @@ test("editar la FASE asignada resincroniza los días ya abiertos del cliente que
 test("otra fase que empieza hoy: la anterior acaba ayer y cada fecha resuelve con la suya", async () => {
   const { trainer, client } = await setupPair();
   const first = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-5));
-  const second = await ctx.post(trainer, `/trainer/clients/${client.id}/nutrition-plans`, {
+  const second = await ctx.post(trainer, phasesPath(client), {
     name: "Mantenimiento",
     startDate: h.day(0),
     menus: [{ name: "Único", meals: [{ slot: "Cena", alternatives: [{ customProducts: [cp(foods.salmon, 150)] }] }] }],
   });
-  assert.equal(second.status, "active");
-  const history = await ctx.get(trainer, `/trainer/clients/${client.id}/nutrition-plans/history`);
+  assert.equal(second.sourceTemplateId, null);
+  const history = await ctx.get(trainer, phasesPath(client));
+  assert.deepEqual(history.map((p) => [p.name, p.state]), [["Mantenimiento", "current"], ["Definición", "past"]], "una entrada por fase, la más reciente primero");
   const old = history.find((p) => String(p._id) === String(first._id));
-  assert.equal(old.status, "superseded");
   assert.equal(old.endDate, h.day(-1));
+  const stored = await ctx.model("DietPhase").collection.findOne({ _id: ctx.oid(first._id) });
+  assert.deepEqual(["status" in stored, "supersededBy" in stored], [false, false], "el estado de la cadena sale de las fechas");
   assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Único"]);
   assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(-2)}/menu`)).options, ["Menú A", "Menú B"], "el pasado sigue con la anterior");
 });
@@ -291,7 +310,7 @@ test("otra fase que empieza hoy: la anterior acaba ayer y cada fecha resuelve co
 test("sustituir una fase el MISMO día en que empezó: desde hoy manda la nueva", async () => {
   const { trainer, client } = await setupPair();
   await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(0));
-  await ctx.post(trainer, `/trainer/clients/${client.id}/nutrition-plans`, {
+  await ctx.post(trainer, phasesPath(client), {
     name: "Corrección",
     startDate: h.day(0),
     menus: [{ name: "Único", meals: [] }],
@@ -303,48 +322,151 @@ test("una fase futura que pisa otra fase futura ya programada: 409 PLAN_OVERLAP"
   const { trainer, client } = await setupPair();
   const tpl = await libraryTemplate(trainer);
   await applyTemplate(trainer, client, tpl, h.day(10));
-  const clash = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/nutrition-plans/${tpl._id}/apply`, { startDate: h.day(12) });
+  const clash = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: h.day(12) });
   assert.equal(clash.status, 409);
   assert.equal(clash.body.code, "PLAN_OVERLAP");
-  assert.ok(clash.body.conflict.planId);
-  assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/nutrition-plans/${tpl._id}/apply`, { startDate: "mañana" })).status, 400);
+  assert.match(clash.body.message, /Definición/);
+  assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: "mañana" })).status, 400);
+  assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { startDate: h.day(20), menus: [] })).status, 400, "sin plantilla hace falta nombre");
+  const otherTrainer = await ctx.makeTrainer();
+  const foreign = await libraryTemplate(otherTrainer);
+  assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { templateId: foreign._id, startDate: h.day(20) })).status, 404, "solo plantillas propias");
 });
 
 test("quitar la fase vigente reactiva la anterior: el cliente vuelve a ver sus menús", async () => {
   const { trainer, client } = await setupPair();
   const first = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-5));
-  const second = await ctx.post(trainer, `/trainer/clients/${client.id}/nutrition-plans`, {
+  const second = await ctx.post(trainer, phasesPath(client), {
     name: "Corta",
     startDate: h.day(0),
     menus: [{ name: "Solo cena", meals: [] }],
   });
   assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Solo cena"]);
 
-  assert.equal((await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}/nutrition-plans/${second._id}`)).status, 204);
-  const active = await ctx.get(trainer, `/trainer/clients/${client.id}/nutrition-plans/active`);
-  assert.equal(String(active._id), String(first._id));
-  assert.equal(active.endDate, null, "vuelve a ser indefinida");
+  assert.equal((await ctx.call(trainer, "DELETE", `${phasesPath(client)}/${second._id}`)).status, 204);
+  const current = await ctx.get(trainer, `${phasesPath(client)}/current`);
+  assert.equal(String(current._id), String(first._id));
+  assert.equal(current.state, "current");
+  assert.equal(current.endDate, null, "vuelve a ser indefinida");
   assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Menú A", "Menú B"]);
-  assert.equal((await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}/nutrition-plans/${second._id}`)).status, 404);
+  assert.equal((await ctx.call(trainer, "DELETE", `${phasesPath(client)}/${second._id}`)).status, 404);
+});
+
+test("una fase que ya había terminado conserva su fin cuando la siguiente empieza tras un hueco; quitar esa siguiente no la reabre", async () => {
+  const { trainer, client } = await setupPair();
+  const first = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-20));
+  await ctx.patch(trainer, `${phasesPath(client)}/${first._id}`, { endDate: h.day(-10) });
+  const next = await ctx.post(trainer, phasesPath(client), { name: "Tras el hueco", startDate: h.day(0), menus: [{ name: "Único", meals: [] }] });
+  assert.equal((await ctx.model("DietPhase").findById(first._id).lean()).endDate, h.day(-10), "el hueco no se rellena con la fase vieja");
+  assert.equal((await ctx.call(trainer, "DELETE", `${phasesPath(client)}/${next._id}`)).status, 204);
+  assert.equal((await ctx.model("DietPhase").findById(first._id).lean()).endDate, h.day(-10), "no la había cortado: sigue terminada");
+  assert.equal(await ctx.get(trainer, `${phasesPath(client)}/current`), null);
 });
 
 test("quitar una fase deja limpios los días que el cliente ya había resuelto con ella", async () => {
   const { trainer, client } = await setupPair();
-  const assignment = await applyTemplate(trainer, client, await libraryTemplate(trainer));
+  const phase = await applyTemplate(trainer, client, await libraryTemplate(trainer));
   const date = h.day(0);
   await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Menú A" });
-  await ctx.del(trainer, `/trainer/clients/${client.id}/nutrition-plans/${assignment._id}`).catch(() => null);
+  assert.equal((await ctx.call(trainer, "DELETE", `${phasesPath(client)}/${phase._id}`)).status, 204);
   const read = await readDay(client, date);
   assert.equal(read.plannedTarget, null);
   assert.equal(mealBySlot(read.dietDay, "Desayuno").customProducts.length, 0);
 });
 
-test("una copia asignada no se puede borrar por la ruta de plantillas de biblioteca", async () => {
+test("una fase no se borra por la ruta de plantillas de biblioteca", async () => {
   const { trainer, client } = await setupPair();
-  const assignment = await applyTemplate(trainer, client, await libraryTemplate(trainer));
-  const res = await ctx.call(trainer, "DELETE", `/trainer/diet-templates/${assignment._id}`);
+  const phase = await applyTemplate(trainer, client, await libraryTemplate(trainer));
+  const res = await ctx.call(trainer, "DELETE", `/trainer/diet-templates/${phase._id}`);
   assert.equal(res.status, 404);
-  assert.ok(await ctx.model("DietTemplate").exists({ _id: assignment._id }));
+  assert.ok(await ctx.model("DietPhase").exists({ _id: phase._id }));
+});
+
+// --- Semanas, fechas y nombre de la fase -------------------------------------------------
+
+test("preparar la semana siguiente añade una versión del contenido DENTRO de la fase, desde su lunes; descartarla vuelve a heredar", async () => {
+  const { trainer, client } = await setupPair();
+  const phase = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(0), {
+    name: "Bloque 1",
+    target: { kcal: 2100, protein: 150, carbs: 220, fat: 70 },
+  });
+  assert.equal(phase.name, "Bloque 1");
+  assert.equal(phase.target.kcal, 2100);
+  const weeksPath = `${phasesPath(client)}/${phase._id}/weeks`;
+
+  const weeks = await ctx.get(trainer, weeksPath);
+  assert.equal(weeks.phaseName, "Bloque 1");
+  assert.equal(weeks.current.number, 1);
+  assert.equal(weeks.next.content, null, "nada preparado: hereda");
+  assert.equal(weeks.next.inherits.id, String(phase.contents[0]._id));
+
+  const scaled = await ctx.post(trainer, `${weeksPath}/next/scale`, { kcal: weeks.current.content.profile.kcal * 2 });
+  assert.equal(scaled.factor, 2);
+  assert.equal(scaled.menus[0].meals[0].alternatives[0].customProducts[0].quantity, 120, "avena 60 g x 2");
+
+  // Mismo contenido que el que heredaría: no se guarda nada.
+  assert.equal((await ctx.call(trainer, "PUT", `${weeksPath}/next`, { menus: menus() })).status, 204);
+
+  const lighter = menus();
+  lighter[0].meals[0].alternatives[0].customProducts = [cp(foods.avena, 40)];
+  const prepared = await ctx.put(trainer, `${weeksPath}/next`, { menus: lighter });
+  assert.deepEqual(prepared.contents.map((c) => c.startDate), [h.day(0), weeks.next.start]);
+  assert.equal(await ctx.count("DietPhase", { clientId: client._id }), 1, "sigue siendo una sola fase");
+
+  // El cliente, ese lunes, come lo nuevo; hoy, lo de siempre.
+  await ctx.put(client, `/dietdays/date/${weeks.next.start}/menu`, { menuName: "Menú A" });
+  const monday = mealBySlot((await readDay(client, weeks.next.start)).dietDay, "Desayuno");
+  assert.deepEqual(monday.customProducts.map((c) => [c.product.name, c.quantity]), [["Avena", 40]]);
+  assert.equal((await ctx.get(trainer, weeksPath)).next.content.id, String(prepared.contents[1]._id));
+
+  assert.equal((await ctx.call(trainer, "DELETE", `${weeksPath}/next`)).status, 204);
+  assert.equal((await ctx.get(trainer, `${phasesPath(client)}/${phase._id}`)).contents.length, 1);
+  const back = mealBySlot((await readDay(client, weeks.next.start)).dietDay, "Desayuno");
+  assert.deepEqual(back.customProducts.map((c) => [c.product.name, c.quantity]), [["Avena", 60], ["Leche", 250]], "vuelve a heredar");
+
+  const need = await ctx.get(trainer, `${weeksPath}/1/need`);
+  assert.equal(need.weekNumber, 1);
+  assert.equal(need.target.kcal, 2100);
+  assert.equal((await ctx.call(trainer, "GET", `${weeksPath}/0/need`)).status, 400);
+  assert.equal((await ctx.call(trainer, "GET", `${weeksPath}/99/need`)).status, 404);
+});
+
+test("renombrar y mover las fechas de una fase: el contenido se mueve con ella y no puede pisar otra", async () => {
+  const { trainer, client } = await setupPair();
+  const tpl = await libraryTemplate(trainer);
+  const phase = await applyTemplate(trainer, client, tpl, h.day(2));
+  const later = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: h.day(30) });
+  assert.equal(later.status, 409, "programar encima de una fase abierta se rechaza");
+
+  const renamed = await ctx.patch(trainer, `${phasesPath(client)}/${phase._id}`, { name: "Arranque" });
+  assert.equal(renamed.name, "Arranque");
+  assert.equal((await ctx.call(trainer, "PATCH", `${phasesPath(client)}/${phase._id}`, { name: " " })).status, 400);
+
+  const moved = await ctx.patch(trainer, `${phasesPath(client)}/${phase._id}`, { startDate: h.day(4), endDate: h.day(20) });
+  assert.deepEqual([moved.startDate, moved.endDate], [h.day(4), h.day(20)]);
+  assert.deepEqual(moved.contents.map((c) => c.startDate), [h.day(4)], "el contenido empieza con la fase");
+  assert.equal((await ctx.call(trainer, "PATCH", `${phasesPath(client)}/${phase._id}`, { startDate: h.day(10), endDate: h.day(5) })).status, 409);
+
+  const next = await applyTemplate(trainer, client, tpl, h.day(21));
+  const clash = await ctx.call(trainer, "PATCH", `${phasesPath(client)}/${phase._id}`, { endDate: h.day(25) });
+  assert.equal(clash.status, 409);
+  assert.equal(clash.body.code, "PLAN_OVERLAP");
+  assert.ok(next._id);
+});
+
+test("historial y calendario de nutrición: una fase con sus semanas", async () => {
+  const { trainer, client } = await setupPair();
+  const phase = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-10));
+  const history = await ctx.get(trainer, `/trainer/clients/${client.id}/nutrition-history`);
+  assert.ok(history.events.some((e) => e.type === "phase_started" && e.phaseId === String(phase._id)));
+  const weekEvents = history.events.filter((e) => e.type === "week");
+  assert.ok(weekEvents.length >= 2);
+  assert.ok(weekEvents.every((e) => e.contentId === String(phase.contents[0]._id)));
+
+  const timeline = await ctx.get(trainer, `/trainer/clients/${client.id}/diet-timeline?from=${h.day(-20)}&to=${h.day(5)}`);
+  assert.deepEqual(timeline.phases.map((p) => [p.id, p.name, p.start]), [[String(phase._id), "Definición", h.day(-10)]]);
+  assert.ok(timeline.weeks.length >= 2);
+  assert.deepEqual(await ctx.get(client, `/dietdays/timeline?from=${h.day(-20)}&to=${h.day(5)}`), timeline);
 });
 
 // --- Días saltados ---------------------------------------------------------------------
@@ -354,7 +476,7 @@ test("día saltado: el profesional lo vacía de lo pautado (lo propio se queda),
   await applyTemplate(trainer, client, await libraryTemplate(trainer));
   const date = h.day(0);
   await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Menú A" });
-  await ctx.post(client, "/dietdays/x", { date, indexMeal: 4, customProduct: { quantity: 100, product: { name: "Pizza de cumpleaños" } } });
+  await ctx.post(client, `/dietdays/date/${date}/meals/4/customproducts`, { customProduct: { quantity: 100, product: { name: "Pizza de cumpleaños" } } });
 
   // El profesional mira ese día en la ficha y lo marca saltado.
   await ctx.get(trainer, `/trainer/clients/${client.id}/diet?date=${date}`);
@@ -387,7 +509,7 @@ test("pautar una comida (reemplazar): queda bloqueada para el cliente, avisa y l
   const date = h.day(2);
   const day = await ctx.get(trainer, `/trainer/clients/${client.id}/diet?date=${date}`);
   const comida = mealBySlot(day, "Comida");
-  await ctx.post(client, "/dietdays/x", { date, indexMeal: 2, customProduct: { quantity: 50, product: { name: "Lo mío" } } });
+  await ctx.post(client, `/dietdays/date/${date}/meals/2/customproducts`, { customProduct: { quantity: 50, product: { name: "Lo mío" } } });
 
   await ctx.post(trainer, `/trainer/clients/${client.id}/diet-days/${date}/meals/${comida._id}/prescribe`, {
     customProducts: [cp(foods.pollo, 150)],
@@ -398,7 +520,7 @@ test("pautar una comida (reemplazar): queda bloqueada para el cliente, avisa y l
   assert.deepEqual(productNames(meal), ["Pollo"], "reemplazar se lleva lo anterior");
   assert.equal(String(meal.assignedByTrainerId), trainer.id);
   assert.equal(read.plannedTarget.kcal, Math.round(165 * 1.5));
-  assert.equal((await ctx.call(client, "DELETE", `/meals/${meal._id}/${meal.customProducts[0]._id}`)).body.code, "MEAL_PROTECTED");
+  assert.equal((await ctx.call(client, "DELETE", `/meals/${meal._id}/customproducts/${meal.customProducts[0]._id}`)).body.code, "MEAL_PROTECTED");
 
   const notes = await ctx.get(client, "/notifications/mine");
   assert.ok((Array.isArray(notes) ? notes : notes.notifications || []).some((n) => n.type === "meal_prescribed"));
@@ -410,7 +532,7 @@ test("pautar una comida (reemplazar): queda bloqueada para el cliente, avisa y l
 test("pautar una comida (combinar): conserva lo del cliente y la comida NO se bloquea entera", async () => {
   const { trainer, client } = await setupPair();
   const date = h.day(3);
-  await ctx.post(client, "/dietdays/x", { date, indexMeal: 0, customProduct: { quantity: 20, product: { name: "Café propio" } } });
+  await ctx.post(client, `/dietdays/date/${date}/meals/0/customproducts`, { customProduct: { quantity: 20, product: { name: "Café propio" } } });
   const day = await ctx.get(trainer, `/trainer/clients/${client.id}/diet?date=${date}`);
   const desayuno = mealBySlot(day, "Desayuno");
   await ctx.post(trainer, `/trainer/clients/${client.id}/diet-days/${date}/meals/${desayuno._id}/prescribe`, {
@@ -421,7 +543,7 @@ test("pautar una comida (combinar): conserva lo del cliente y la comida NO se bl
   assert.deepEqual(productNames(meal), ["Avena", "Café propio"]);
   assert.equal(meal.assignedByTrainerId ?? null, null);
   const own = meal.customProducts.find((c) => c.product.name === "Café propio");
-  assert.equal((await ctx.call(client, "DELETE", `/meals/${meal._id}/${own._id}`)).status, 200);
+  assert.equal((await ctx.call(client, "DELETE", `/meals/${meal._id}/customproducts/${own._id}`)).status, 200);
 });
 
 test("pautar en una comida que no es de ese cliente/fecha: rechazado", async () => {
@@ -432,7 +554,7 @@ test("pautar en una comida que no es de ese cliente/fecha: rechazado", async () 
     customProducts: [cp(foods.pollo, 100)],
   });
   assert.ok(res.status >= 400, String(res.status));
-  assert.equal((await ctx.model("Meal").findById(otherDay.meals[0]._id).lean()).customProducts.length, 0);
+  assert.equal((await ctx.findMeal(otherDay.meals[0]._id)).customProducts.length, 0);
 });
 
 // --- Lista de la compra ------------------------------------------------------------------

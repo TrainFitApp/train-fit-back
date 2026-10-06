@@ -10,8 +10,16 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const userSchema = require("./schema");
-const userDao = require("./dao");
+const userSchema = require("./user-schema");
+const userDao = require("./user-dao");
+const userService = require("./user-service");
+
+// El código lo genera el servicio: se lee del "fake mongo" tras reenviar.
+async function resend(store) {
+  await userService.resendVerificationCode("test@example.com");
+  return store.getDoc().hash;
+}
+const verify = (code) => userService.verifyActivationCode("test@example.com", code);
 const mail = require("../util/mail");
 
 function matchesFilter(doc, filter) {
@@ -56,10 +64,12 @@ function applyUpdate(doc, update) {
 }
 
 function queryResult(doc) {
-  return {
-    select: async () => (doc ? { ...doc } : null),
+  const query = {
+    select: () => query,
+    lean: () => query,
     then: (resolve, reject) => Promise.resolve(doc ? { ...doc } : null).then(resolve, reject),
   };
+  return query;
 }
 
 function installFakeUserStore(initialDoc) {
@@ -68,6 +78,7 @@ function installFakeUserStore(initialDoc) {
   const originalFindOne = userSchema.findOne;
   const originalFindOneAndUpdate = userSchema.findOneAndUpdate;
   const originalFindByIdAndUpdate = userSchema.findByIdAndUpdate;
+  const originalUpdateOne = userSchema.updateOne;
   const originalValidateEmailExists = mail.validateEmailExists;
   const originalSendMailSES = mail.sendTransactionalMail;
   const originalGenerateHashMail = mail.generateHashMail;
@@ -88,6 +99,12 @@ function installFakeUserStore(initialDoc) {
     return { ...doc };
   };
 
+  userSchema.updateOne = async (filter, update) => {
+    if (!matchesFilter(doc, filter)) return { matchedCount: 0 };
+    applyUpdate(doc, update);
+    return { matchedCount: 1 };
+  };
+
   mail.validateEmailExists = async () => true;
   mail.sendTransactionalMail = async (email, subject, html) => {
     sentEmails.push({ email, subject, html });
@@ -105,6 +122,7 @@ function installFakeUserStore(initialDoc) {
       userSchema.findOne = originalFindOne;
       userSchema.findOneAndUpdate = originalFindOneAndUpdate;
       userSchema.findByIdAndUpdate = originalFindByIdAndUpdate;
+      userSchema.updateOne = originalUpdateOne;
       mail.validateEmailExists = originalValidateEmailExists;
       mail.sendTransactionalMail = originalSendMailSES;
       mail.generateHashMail = originalGenerateHashMail;
@@ -129,7 +147,7 @@ test("caso 1: el primer código funciona", async (t) => {
   const store = installFakeUserStore(baseUser({ hash: "111111" }));
   t.after(store.restore);
 
-  const activated = await userDao.verifyActivationHash("test@example.com", "111111");
+  const activated = await verify("111111");
   assert.equal(activated.hash, undefined);
 });
 
@@ -137,15 +155,12 @@ test("caso 2 y 3: reenviar genera un código nuevo y el anterior deja de servir"
   const store = installFakeUserStore(baseUser({ hash: "111111" }));
   t.after(store.restore);
 
-  await userDao.resendVerificationHash("test@example.com", "222222", new Date(Date.now() + 15 * 60 * 1000));
-  assert.equal(store.getDoc().hash, "222222");
+  const code = await resend(store);
+  assert.notEqual(code, "111111");
 
-  await assert.rejects(
-    () => userDao.verifyActivationHash("test@example.com", "111111"),
-    (err) => err.message === "INVALID_CODE",
-  );
+  await assert.rejects(() => verify("111111"), (err) => err.code === "INVALID_CODE");
 
-  const activated = await userDao.verifyActivationHash("test@example.com", "222222");
+  const activated = await verify(code);
   assert.equal(activated.hash, undefined);
 });
 
@@ -155,15 +170,16 @@ test("caso 3b: dos reenvíos seguidos, solo el último código sirve", async (t)
   );
   t.after(store.restore);
 
-  await userDao.resendVerificationHash("test@example.com", "222222", new Date(Date.now() + 15 * 60 * 1000));
+  const middle = await resend(store);
 
   // Simula que pasó el cooldown de 60s antes del segundo reenvío.
   store.mutate({ lastHashSentAt: new Date(Date.now() - 120 * 1000) });
-  await userDao.resendVerificationHash("test@example.com", "333333", new Date(Date.now() + 15 * 60 * 1000));
+  const last = await resend(store);
 
-  await assert.rejects(() => userDao.verifyActivationHash("test@example.com", "111111"));
-  // El código intermedio (222222) también debe quedar invalidado por el último reenvío.
-  await assert.rejects(() => userDao.verifyActivationHash("test@example.com", "222222"));
+  await assert.rejects(() => verify("111111"));
+  // El código intermedio también queda invalidado por el último reenvío.
+  if (middle !== last) await assert.rejects(() => verify(middle));
+  assert.ok(await verify(last));
 });
 
 test("caso 5: reenvíos rápidos consecutivos están protegidos por cooldown atómico", async (t) => {
@@ -173,8 +189,8 @@ test("caso 5: reenvíos rápidos consecutivos están protegidos por cooldown at�
   t.after(store.restore);
 
   await assert.rejects(
-    () => userDao.resendVerificationHash("test@example.com", "999999", new Date(Date.now() + 15 * 60 * 1000)),
-    (err) => err.message === "COOLDOWN_ACTIVE",
+    () => userService.resendVerificationCode("test@example.com"),
+    (err) => err.code === "COOLDOWN_ACTIVE",
   );
 
   // El código original sigue siendo el válido: el reenvío bloqueado no debe
@@ -190,8 +206,8 @@ test("caso 6: código expirado falla aunque sea el último enviado", async (t) =
   t.after(store.restore);
 
   await assert.rejects(
-    () => userDao.verifyActivationHash("test@example.com", "111111"),
-    (err) => err.message === "CODE_EXPIRED",
+    () => verify("111111"),
+    (err) => err.code === "CODE_EXPIRED",
   );
 });
 
@@ -199,7 +215,7 @@ test("caso 7: un código válido verifica correctamente al usuario", async (t) =
   const store = installFakeUserStore(baseUser({ hash: "654321" }));
   t.after(store.restore);
 
-  const activated = await userDao.verifyActivationHash("test@example.com", "654321");
+  const activated = await verify("654321");
   assert.equal(activated._id, "user1");
   assert.equal(activated.hash, undefined);
   assert.equal(activated.hashExpiresAt, undefined);
@@ -210,11 +226,11 @@ test("caso 8: reutilizar un código ya usado falla", async (t) => {
   const store = installFakeUserStore(baseUser({ hash: "654321" }));
   t.after(store.restore);
 
-  await userDao.verifyActivationHash("test@example.com", "654321");
+  await verify("654321");
 
   await assert.rejects(
-    () => userDao.verifyActivationHash("test@example.com", "654321"),
-    (err) => err.message === "ALREADY_VERIFIED",
+    () => verify("654321"),
+    (err) => err.code === "ALREADY_VERIFIED",
   );
 });
 
@@ -222,11 +238,11 @@ test("caso 9: reenviar después de verificar con éxito no genera un hash fantas
   const store = installFakeUserStore(baseUser({ hash: "654321" }));
   t.after(store.restore);
 
-  await userDao.verifyActivationHash("test@example.com", "654321");
+  await verify("654321");
 
   await assert.rejects(
-    () => userDao.resendVerificationHash("test@example.com", "999999", new Date()),
-    (err) => err.message === "ALREADY_VERIFIED",
+    () => userService.resendVerificationCode("test@example.com"),
+    (err) => err.code === "ALREADY_VERIFIED",
   );
   assert.equal(store.sentEmails.length, 0);
 });
@@ -237,10 +253,10 @@ test("caso 10: la fuente de verdad es la BD, no el estado en memoria del cliente
 
   // Dos llamadas independientes (equivalente a cerrar/reabrir la app) deben
   // leer siempre el estado actual de la BD, no un valor cacheado.
-  const first = await userDao.verifyActivationHash("test@example.com", "wrong-code".slice(0, 6)).catch((e) => e);
+  const first = await verify("wrong-code".slice(0, 6)).catch((e) => e);
   assert.ok(first instanceof Error);
 
-  const activated = await userDao.verifyActivationHash("test@example.com", "777777");
+  const activated = await verify("777777");
   assert.equal(activated.hash, undefined);
 });
 
@@ -250,26 +266,26 @@ test("intentos fallidos: se bloquea tras 5 intentos incorrectos", async (t) => {
 
   for (let i = 0; i < 5; i++) {
     await assert.rejects(
-      () => userDao.verifyActivationHash("test@example.com", "000000"),
-      (err) => err.message === "INVALID_CODE",
+      () => verify("000000"),
+      (err) => err.code === "INVALID_CODE",
     );
   }
 
   assert.equal(store.getDoc().hashFailedAttempts, 5);
 
   await assert.rejects(
-    () => userDao.verifyActivationHash("test@example.com", "111111"),
-    (err) => err.message === "TOO_MANY_ATTEMPTS",
+    () => verify("111111"),
+    (err) => err.code === "TOO_MANY_ATTEMPTS",
   );
 });
 
-test("resendVerificationHash reinicia los intentos fallidos del código anterior", async (t) => {
+test("resendVerificationCode reinicia los intentos fallidos del código anterior", async (t) => {
   const store = installFakeUserStore(
     baseUser({ hash: "111111", hashFailedAttempts: 3, lastHashSentAt: new Date(Date.now() - 120 * 1000) }),
   );
   t.after(store.restore);
 
-  await userDao.resendVerificationHash("test@example.com", "222222", new Date(Date.now() + 15 * 60 * 1000));
+  await resend(store);
   assert.equal(store.getDoc().hashFailedAttempts, 0);
 });
 
@@ -285,15 +301,15 @@ test("updateVerificationHash (regeneración desde login) también fija expiraci�
   assert.equal(updated.hashExpiresAt.getTime(), newExpiresAt.getTime());
 });
 
-test("resendVerificationHash envía por email exactamente el código guardado en BD", async (t) => {
+test("resendVerificationCode envía por email exactamente el código guardado en BD", async (t) => {
   const store = installFakeUserStore(
     baseUser({ hash: "111111", lastHashSentAt: new Date(Date.now() - 120 * 1000) }),
   );
   t.after(store.restore);
 
-  await userDao.resendVerificationHash("test@example.com", "555555", new Date(Date.now() + 15 * 60 * 1000));
+  const code = await resend(store);
 
   assert.equal(store.sentEmails.length, 1);
-  assert.match(store.sentEmails[0].html, /555555/);
-  assert.equal(store.getDoc().hash, "555555");
+  assert.match(store.sentEmails[0].html, new RegExp(code));
+  assert.notEqual(code, "111111");
 });

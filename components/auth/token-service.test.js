@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
-const TokenService = require('./token.service');
+const TokenService = require('./token-service');
 const token = (aud) => jwt.sign({ aud, type: 'refresh', sub: 'test-user', sid: 'test-session', pver: 0 }, 'fixture-secret');
 const request = (family, cookies) => ({ headers: { 'x-client-family': family, cookie: Object.entries(cookies).map(([key,value]) => `${key}=${value}`).join('; ') } });
 
@@ -13,7 +13,7 @@ test('cookies de cliente, management y trainers no se pisan', () => {
   for (const family of families) assert.equal(jwt.decode(TokenService.extractRefreshToken(request(family,jar)).token).aud, family);
 });
 
-test('prefiere cookie aislada aunque la antigua pertenezca a otra app', () => {
+test('lee solo la cookie de su app aunque haya otra sin familia', () => {
   const trainer = token('trainfit-trainers');
   const result = TokenService.extractRefreshToken(request('trainfit-trainers', {
     [TokenService.getRefreshCookieName()]: token('trainfit-front'),
@@ -22,11 +22,9 @@ test('prefiere cookie aislada aunque la antigua pertenezca a otra app', () => {
   assert.equal(result.token, trainer);
 });
 
-test('migra cookie antigua solo para su audiencia', () => {
-  const legacy = token('trainfit-trainers');
-  const jar = {[TokenService.getRefreshCookieName()]:legacy};
-  assert.equal(TokenService.extractRefreshToken(request('trainfit-trainers',jar)).token, legacy);
-  assert.equal(TokenService.extractRefreshToken(request('trainfit-front',jar)).token, null);
+test('una cookie sin app (nombre sin familia) no sirve a ninguna app', () => {
+  const jar = {[TokenService.getRefreshCookieName()]: token('trainfit-trainers')};
+  assert.equal(TokenService.extractRefreshToken(request('trainfit-trainers',jar)).token, null);
 });
 
 test('logout borra solo la cookie de la app solicitada', () => {

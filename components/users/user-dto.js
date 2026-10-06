@@ -1,4 +1,4 @@
-const featureAccessService = require("../billing/feature-access-service");
+const featureAccess = require("../billing/feature-access");
 const billingService = require("../billing/billing-service");
 
 // Cualquier respuesta que serialice un User pasa por aquí (login, refresh de
@@ -9,7 +9,7 @@ function resolvePremium(resource) {
   const premium = resource?.premium;
   if (!premium) return premium;
 
-  const effectiveEntitled = featureAccessService.isEffectivelyEntitled(premium);
+  const effectiveEntitled = featureAccess.isEffectivelyEntitled(premium);
   if (premium.entitled && !effectiveEntitled) {
     void billingService.reconcileExpiredPremiumIfNeeded(resource);
   }
@@ -23,7 +23,11 @@ function resolvePremium(resource) {
   };
 }
 
-const single = async (resource, authUser) => ({
+// Lo que el usuario no guarda tal cual lo calcula users/user-service.js#view y llega
+// aquí: `weight`, el último peso de sus medidas, y `routine`, la rutina y la
+// sesión que tiene en uso (routineAssignments/routine-in-use.js). Sin ellos
+// no se sirven: nunca salen los punteros guardados a pelo.
+const single = async (resource, authUser, { weight, routine } = {}) => ({
   _id: resource._id,
   name: resource.name,
   lastname: resource.lastname,
@@ -35,21 +39,15 @@ const single = async (resource, authUser) => ({
   steps: resource.steps,
   training: resource.training,
   height: resource.height,
-  weight: resource.weight,
+  ...(weight !== undefined ? { weight } : {}),
   goalInUse: resource.goalInUse,
-  workoutInUse: resource.workoutInUse,
-  // Refactor nutrición (2026-09) — `dietInUse` (puntero al wrapper Diet) ya
-  // no existe. Se sigue enviando como booleano-compatible para que las apps
-  // instaladas, que solo lo usan como "¿tiene dieta activa?", no dejen de
-  // pintar la sección de dieta de golpe.
-  dietInUse: resource.dietEnabled === false ? null : resource._id,
-  dietEnabled: resource.dietEnabled !== false,
+  ...(routine ? { tableInUse: routine.tableInUse, workoutInUse: routine.workoutInUse } : {}),
   dietPinnedNote: resource.dietPinnedNote,
-  tableInUse: resource.tableInUse,
-  tables: resource.tables,
-  archivedProducts: resource.archivedProducts,
-  archivedExercises: resource.archivedExercises,
-  archivedRecipes: resource.archivedRecipes,
+  favorites: {
+    products: resource.favorites?.products || [],
+    recipes: resource.favorites?.recipes || [],
+    exercises: resource.favorites?.exercises || [],
+  },
   birth: resource.birth,
   // `hash` (código de activación pendiente) no sale nunca: ninguna pantalla
   // lo necesita y es justo el secreto que activa la cuenta.

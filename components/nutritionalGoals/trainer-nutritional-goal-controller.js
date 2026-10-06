@@ -8,13 +8,6 @@
 // deja de pisarlo, porque alguien decidió esas kcal a propósito.
 
 const nutritionalGoalService = require("./nutritional-goal-service");
-const nutritionalGoalDao = require("./nutritional-goal-dao");
-const userSchema = require("../users/schema");
-const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
-const { resolveClientNutritionTarget } = require("./nutrition-target-resolver");
-const { stepsFromHabit } = require("../planAssignments/week-need");
-const { addDaysToIsoDate } = require("../util/date-util");
-const { todayForUser } = require("../users/user-time-zone");
 
 function round1(value) {
   const n = Number(value);
@@ -36,32 +29,12 @@ function goalResponse(goal) {
   };
 }
 
-// La referencia calculada con los ÚLTIMOS datos: último peso registrado y
-// los pasos de su hábito en las dos últimas semanas.
-async function computeReference(clientId) {
-  const today = await todayForUser(clientId);
-  const window = { start: addDaysToIsoDate(today, -14), end: today };
-  const task = await trainerTaskDao.findActiveStepsTask(clientId);
-  const completions = task
-    ? await trainerTaskDao.listCompletionsForTasksInRange([task._id], window.start, window.end)
-    : [];
-  const steps = stepsFromHabit(task, completions.length, window, today);
-  const resolved = await resolveClientNutritionTarget(clientId, 0, {}, {
-    stepsRangeKey: steps?.key || null,
-    useClientObjetive: true,
-  });
-  return { resolved, steps };
-}
-
 module.exports = {
   // GET /trainer/clients/:clientId/nutritional-goal
   // El objetivo vigente del cliente + cómo se calcularía hoy (inputs y
   // desglose), que es lo que pinta el bloque "cómo se ha calculado".
   async getForClient(req, res) {
-    const { clientId } = req.params;
-    const user = await userSchema.findById(clientId).select("goalInUse").lean();
-    const goal = user?.goalInUse ? await nutritionalGoalDao.findById(user.goalInUse) : null;
-    const { resolved, steps } = await computeReference(clientId);
+    const { goal, resolved, steps } = await nutritionalGoalService.clientGoalView(req.params.clientId);
 
     return res.send({
       goal: goalResponse(goal),
@@ -85,14 +58,7 @@ module.exports = {
     const { clientId } = req.params;
 
     if (req.body?.recalculate) {
-      // Vuelve a "calculated" y recalcula: el objetivo manual deja de mandar
-      // porque el profesional lo ha soltado a propósito.
-      const user = await userSchema.findById(clientId).select("goalInUse").lean();
-      if (user?.goalInUse) {
-        await nutritionalGoalDao.update(user.goalInUse, { source: "calculated", updatedByTrainerId: null });
-      }
-      const goalId = await nutritionalGoalService.recomputeDefaultForClient(clientId);
-      const goal = goalId ? await nutritionalGoalDao.findById(goalId) : null;
+      const goal = await nutritionalGoalService.recalculateForClient(clientId);
       if (!goal) {
         return res.status(422).send({
           message: "Faltan datos del cliente para calcular su objetivo",

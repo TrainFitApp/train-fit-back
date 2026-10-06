@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
-const TrainerClient = require("../trainerClients/trainer-client-schema");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { relationState } = require("../trainerClients/pair-state");
 const seatService = require("../trainerClients/trainer-seat-service");
 
 // Autorización FINANCIERA acotada para /trainer/payments/clients/:clientId/*.
@@ -25,10 +26,7 @@ function requirePaymentsAccess({ allowFormer = false, write = false } = {}) {
       if (!mongoose.isValidObjectId(clientId) || String(clientId) === String(trainerId)) {
         return res.status(403).send({ code: "NO_RELATION", message: "No tienes relación con este cliente." });
       }
-      const relations = await TrainerClient.find({ trainerId, clientId }).select("status").lean();
-      let access = null;
-      if (relations.some((relation) => relation.status === "active")) access = "active";
-      else if (relations.some((relation) => relation.status === "revoked")) access = "former";
+      const access = relationState(await trainerClientDao.findPair(trainerId, clientId));
       if (!access) return res.status(403).send({ code: "NO_RELATION", message: "No tienes relación con este cliente." });
       if (access === "former" && !allowFormer) {
         return res.status(403).send({

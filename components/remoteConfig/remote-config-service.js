@@ -1,4 +1,5 @@
 const semver = require("semver");
+const { badRequest } = require("../util/http-error");
 const dao = require("./remote-config-dao");
 
 const CACHE_TTL_MS = 45 * 1000;
@@ -143,17 +144,11 @@ function validateConfigPatch(patch) {
 
 async function updateConfig(patch, updatedByIdentity) {
   const errors = validateConfigPatch(patch);
-  if (errors.length > 0) {
-    const error = new Error("Invalid remote config");
-    error.statusCode = 400;
-    error.errors = errors;
-    throw error;
-  }
+  if (errors.length > 0) throw badRequest("Configuración no válida", "INVALID_REMOTE_CONFIG", { errors });
 
   const saved = await dao.saveConfig({
     ...patch,
     updatedBy: updatedByIdentity || "",
-    updatedAt: new Date(),
   });
   invalidateCache();
   return saved;

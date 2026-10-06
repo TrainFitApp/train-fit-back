@@ -19,37 +19,33 @@ async function catalogExercise(name) {
 
 /**
  * Rutina completa sembrada directamente en BD (la creación por API se prueba
- * aparte): `shape` = [[nSets por ejercicio…] por workout…] por split.
+ * aparte): `shape` = [[nSets por ejercicio…] por workout…] por split. Los ids
+ * de cada nivel se devuelven aplanados, en orden.
  */
 async function seedRoutine(owner, { name = "Rutina", assignedBy = null, shape = [[[2, 2], [3]]] } = {}) {
-  const Set = ctx.model("Set");
-  const CustomExercise = ctx.model("CustomExercise");
-  const Workout = ctx.model("Workout");
-  const Split = ctx.model("Split");
-  const splitIds = [];
-  const ids = { sets: [], customExercises: [], workouts: [], splits: [] };
+  const splits = [];
   for (const [s, workouts] of shape.entries()) {
-    const workoutIds = [];
+    const workoutDefs = [];
     for (const [w, exercises] of workouts.entries()) {
-      const ceIds = [];
+      const exerciseDefs = [];
       for (const [e, nSets] of exercises.entries()) {
-        const sets = await Set.insertMany(
-          Array.from({ length: nSets }, (_, i) => ({ order: i, expectedReps: [8, 10], expectedRir: [2] })),
-        );
-        ids.sets.push(...sets.map((x) => x._id));
-        const ce = await CustomExercise.create({ exercise: (await catalogExercise())._id, sets: sets.map((x) => x._id), order: e });
-        ceIds.push(ce._id);
+        exerciseDefs.push({
+          exercise: (await catalogExercise())._id,
+          order: e,
+          sets: Array.from({ length: nSets }, (_, i) => ({ order: i, expectedReps: [8, 10], expectedRir: [2] })),
+        });
       }
-      ids.customExercises.push(...ceIds);
-      const workout = await Workout.create({ name: `W${s}.${w}`, order: w, exercises: ceIds });
-      workoutIds.push(workout._id);
+      workoutDefs.push({ name: `W${s}.${w}`, order: w, exercises: exerciseDefs });
     }
-    ids.workouts.push(...workoutIds);
-    const split = await Split.create({ name: `Micro ${s + 1}`, workouts: workoutIds });
-    splitIds.push(split._id);
+    splits.push({ name: `Micro ${s + 1}`, workouts: workoutDefs });
   }
-  ids.splits = splitIds;
-  const table = await ctx.model("Table").create({ name, userId: owner._id, splits: splitIds, assignedByTrainerId: assignedBy?._id || null });
+  const { table, workouts } = await ctx.seedTable({ owner, name, assignedBy, splits });
+  const ids = {
+    splits: table.splits.map((split) => split._id),
+    workouts: workouts.map((workout) => workout._id),
+    customExercises: workouts.flatMap((workout) => workout.exercises.map((exercise) => exercise._id)),
+    sets: workouts.flatMap((workout) => workout.exercises.flatMap((exercise) => exercise.sets.map((set) => set._id))),
+  };
   return { table, ids };
 }
 
@@ -94,12 +90,12 @@ test("premium vigente: varias rutinas; premium caducado vuelve al límite free",
 test("las rutinas que asignó el entrenador no cuentan para el límite mientras la relación de entrenamiento siga activa", async () => {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
-  const relation = await ctx.relate(trainer, client, { scope: "training" });
+  await ctx.relate(trainer, client, { scope: "training" });
   await seedRoutine(client, { name: "Asignada", assignedBy: trainer });
   await ctx.post(client, `/tables/user/${client.id}`, { name: "Mía" });
 
   // Al terminar la relación, la exención se pierde de inmediato.
-  await ctx.model("TrainerClient").updateOne({ _id: relation._id }, { $set: { status: "revoked" } });
+  await ctx.endRelation(trainer, client);
   const res = await ctx.call(client, "POST", `/tables/user/${client.id}`, { name: "Otra mía" });
   assert.equal(res.status, 403);
   assert.equal(res.body.code, "PREMIUM_LIMIT_ROUTINES");
@@ -146,7 +142,7 @@ test("leer rutina: dueño sí, otro usuario no, entrenador solo con relación de
   await ctx.relate(trainer, owner, { scope: "training" });
   await ctx.relate(nutritionist, owner, { scope: "nutrition" });
   await ctx.relate(exTrainer, owner, { scope: "training", status: "revoked" });
-  const { table } = await seedRoutine(owner);
+  const { table, ids } = await seedRoutine(owner);
 
   assert.equal((await ctx.call(owner, "GET", `/tables/${table._id}`)).status, 200);
   assert.equal((await ctx.call(trainer, "GET", `/tables/${table._id}`)).status, 200);
@@ -156,7 +152,7 @@ test("leer rutina: dueño sí, otro usuario no, entrenador solo con relación de
   assert.equal((await ctx.call(owner, "GET", `/tables/${ctx.oid()}`)).status, 404);
 
   // Lo mismo bajando de nivel: workout, ejercicio y serie.
-  const workoutId = table.splits.length && (await ctx.model("Split").findById(table.splits[0]).lean()).workouts[0];
+  const workoutId = ids.workouts[0];
   assert.equal((await ctx.call(stranger, "GET", `/workouts/${workoutId}`)).status, 403);
   assert.equal((await ctx.call(owner, "GET", `/workouts/${workoutId}`)).status, 200);
 });
@@ -193,7 +189,7 @@ test("rutina asignada: el cliente NO puede cambiar su estructura (TABLE_ASSIGNED
 
   const attempts = [
     ["PUT", "/tables", { _id: table._id, name: "Mía" }],
-    ["DELETE", `/tables/${client.id}/${table._id}`],
+    ["DELETE", `/tables/${table._id}`],
     ["POST", `/splits/blank/${table._id}`, { name: "Extra" }],
     ["DELETE", `/splits/${table._id}/${split1}`],
     ["PUT", `/splits/rows/order/${table._id}`, { splitIdsOrder: [split1, split0] }],
@@ -210,7 +206,7 @@ test("rutina asignada: el cliente NO puede cambiar su estructura (TABLE_ASSIGNED
   }
   assert.ok(await ctx.model("Table").exists({ _id: table._id }));
   assert.equal((await ctx.model("Table").findById(table._id).lean()).splits.length, 2);
-  assert.ok(await ctx.model("Set").exists({ _id: set }));
+  assert.ok(await ctx.findSet(set));
 });
 
 test("rutina asignada: el cliente SÍ registra su entreno (series hechas, notas propias, sensaciones)", async () => {
@@ -221,14 +217,14 @@ test("rutina asignada: el cliente SÍ registra su entreno (series hechas, notas 
   const set = ids.sets[0];
 
   await ctx.put(client, "/sets", { _id: set, reps: 9, weight: 82.5, rir: [1], doned: true });
-  const stored = await ctx.model("Set").findById(set).lean();
+  const stored = await ctx.findSet(set);
   assert.equal(stored.reps, 9);
   assert.equal(stored.weight, 82.5);
   assert.deepEqual(stored.expectedReps, [8, 10], "lo prescrito no se toca al registrar");
   assert.ok(stored.donedAt instanceof Date);
 
   await ctx.put(client, `/customexercises/${ids.customExercises[0]}/client-notes`, { clientNotes: "Molestia en hombro" });
-  assert.equal((await ctx.model("CustomExercise").findById(ids.customExercises[0]).lean()).clientNotes, "Molestia en hombro");
+  assert.equal((await ctx.findCustomExercise(ids.customExercises[0])).clientNotes, "Molestia en hombro");
 
   await ctx.put(client, "/workouts/modify/one/simple/save", { _id: ids.workouts[0], readinessPre: 4, sorenessPre: [{ muscle: "chest", level: 2 }, { muscle: "inventado", level: 9 }] });
   const workout = await ctx.model("Workout").findById(ids.workouts[0]).lean();
@@ -242,7 +238,7 @@ test("rutina asignada: el cliente no puede reescribir lo PRESCRITO de una serie"
   await ctx.relate(trainer, client, { scope: "training" });
   const { ids } = await seedRoutine(client, { assignedBy: trainer });
   await ctx.call(client, "PUT", "/sets", { _id: ids.sets[0], expectedReps: [20], expectedRir: [5] });
-  const stored = await ctx.model("Set").findById(ids.sets[0]).lean();
+  const stored = await ctx.findSet(ids.sets[0]);
   assert.deepEqual(stored.expectedReps, [8, 10]);
   assert.deepEqual(stored.expectedRir, [2]);
 });
@@ -263,16 +259,16 @@ test("serie: marcar hecha fija donedAt en el servidor; desmarcar lo limpia; vaci
   const { ids } = await seedRoutine(user);
   const set = ids.sets[0];
   await ctx.put(user, "/sets", { _id: set, doned: true, reps: 10, donedAt: "2001-01-01T00:00:00Z" });
-  let stored = await ctx.model("Set").findById(set).lean();
+  let stored = await ctx.findSet(set);
   assert.ok(Math.abs(new Date(stored.donedAt).getTime() - Date.now()) < 60000, "donedAt del servidor, no del cliente");
   const firstDone = stored.donedAt;
 
   await ctx.put(user, "/sets", { _id: set, doned: true, weight: 50 });
-  stored = await ctx.model("Set").findById(set).lean();
+  stored = await ctx.findSet(set);
   assert.equal(String(stored.donedAt), String(firstDone), "re-guardar una serie hecha no mueve donedAt");
 
   await ctx.put(user, "/sets", { _id: set, doned: false, rir: [] });
-  stored = await ctx.model("Set").findById(set).lean();
+  stored = await ctx.findSet(set);
   assert.equal(stored.donedAt, undefined);
   assert.equal(stored.rir, undefined);
   assert.deepEqual(stored.expectedRir, [2]);
@@ -283,16 +279,16 @@ test("serie: RIR -1 (fallo) y 0 (cero real) se guardan tal cual, distintos de 's
   const { ids } = await seedRoutine(user, { shape: [[[3]]] });
   await ctx.put(user, "/sets", { _id: ids.sets[0], rir: [-1] });
   await ctx.put(user, "/sets", { _id: ids.sets[1], rir: [0] });
-  assert.deepEqual((await ctx.model("Set").findById(ids.sets[0]).lean()).rir, [-1]);
-  assert.deepEqual((await ctx.model("Set").findById(ids.sets[1]).lean()).rir, [0]);
-  assert.deepEqual((await ctx.model("Set").findById(ids.sets[2]).lean()).rir ?? [], [], "sin dato = vacío, no 0");
+  assert.deepEqual((await ctx.findSet(ids.sets[0])).rir, [-1]);
+  assert.deepEqual((await ctx.findSet(ids.sets[1])).rir, [0]);
+  assert.deepEqual((await ctx.findSet(ids.sets[2])).rir ?? [], [], "sin dato = vacío, no 0");
 });
 
 test("serie: valores fuera de rango del schema (reps > 999, peso negativo) se rechazan también al EDITAR", async () => {
   const user = await ctx.makeClient();
   const { ids } = await seedRoutine(user);
   await ctx.call(user, "PUT", "/sets", { _id: ids.sets[0], reps: 5000, weight: -20 });
-  const stored = await ctx.model("Set").findById(ids.sets[0]).lean();
+  const stored = await ctx.findSet(ids.sets[0]);
   assert.notEqual(stored.reps, 5000);
   assert.notEqual(stored.weight, -20);
 });
@@ -301,10 +297,9 @@ test("borrar una serie renumera el orden de las que quedan", async () => {
   const user = await ctx.makeClient();
   const { ids } = await seedRoutine(user, { shape: [[[4]]] });
   await ctx.call(user, "DELETE", `/sets/${ids.sets[1]}`);
-  const ce = await ctx.model("CustomExercise").findById(ids.customExercises[0]).lean();
+  const ce = await ctx.findCustomExercise(ids.customExercises[0]);
   assert.equal(ce.sets.length, 3);
-  const orders = (await ctx.model("Set").find({ _id: { $in: ce.sets } }).lean()).map((s) => s.order).sort();
-  assert.deepEqual(orders, [0, 1, 2]);
+  assert.deepEqual(ce.sets.map((s) => s.order), [0, 1, 2]);
 });
 
 // --- Copias y borrados -------------------------------------------------------------
@@ -335,27 +330,27 @@ test("duplicar rutina: copia profunda con ids nuevos en TODOS los niveles e inde
 
   // Cambiar la copia no toca el original.
   await ctx.put(user, "/sets", { _id: copiedSets[0]._id, expectedReps: [3] });
-  assert.deepEqual((await ctx.model("Set").findById(ids.sets[0]).lean()).expectedReps, [8, 10]);
+  assert.deepEqual((await ctx.findSet(ids.sets[0])).expectedReps, [8, 10]);
 });
 
 test("borrar rutina propia: cascada completa (micros, entrenos, ejercicios, series, notas fijadas)", async () => {
   const user = await ctx.makeClient();
   const { table, ids } = await seedRoutine(user, { shape: [[[2, 2], [1]], [[3]]] });
-  await ctx.model("PinnedExerciseNote").create({ userId: user._id, tableId: table._id, exerciseId: ctx.oid(), text: "Codo pegado" }).catch(() => null);
+  await ctx.post(user, `/pinned-exercise-notes/table/${table._id}/workout/0/exercise/0`, { notes: "Codo pegado" });
+  assert.equal((await ctx.model("Table").findById(table._id).lean()).pinnedNotes.length, 1);
 
-  assert.equal((await ctx.call(user, "DELETE", `/tables/${user.id}/${table._id}`)).status, 204);
+  assert.equal((await ctx.call(user, "DELETE", `/tables/${table._id}`)).status, 204);
   assert.equal(await ctx.count("Table", { _id: table._id }), 0);
-  assert.equal(await ctx.count("Split", { _id: { $in: ids.splits } }), 0);
+  assert.equal(await ctx.countSplits(ids.splits), 0);
   assert.equal(await ctx.count("Workout", { _id: { $in: ids.workouts } }), 0);
-  assert.equal(await ctx.count("CustomExercise", { _id: { $in: ids.customExercises } }), 0);
-  assert.equal(await ctx.count("Set", { _id: { $in: ids.sets } }), 0);
-  assert.equal(await ctx.count("PinnedExerciseNote", { tableId: table._id }), 0);
+  assert.equal(await ctx.countCustomExercises(ids.customExercises), 0);
+  assert.equal(await ctx.countSets(ids.sets), 0);
 });
 
 test("borrar la rutina EN USO la quita del perfil (sin puntero a una rutina que ya no existe)", async () => {
   const user = await ctx.makeClient();
   const table = await ctx.post(user, `/tables/user/${user.id}`, { name: "En uso" });
-  assert.equal((await ctx.call(user, "DELETE", `/tables/${user.id}/${table._id}`)).status, 204);
+  assert.equal((await ctx.call(user, "DELETE", `/tables/${table._id}`)).status, 204);
   assert.equal((await ctx.get(user, "/auth/me")).user.tableInUse ?? null, null);
 });
 
@@ -365,10 +360,10 @@ test("borrar un microciclo arrastra sus entrenos y deja el resto", async () => {
   const res = await ctx.call(user, "DELETE", `/splits/${table._id}/${ids.splits[0]}`);
   assert.equal(res.status, 204);
   const stored = await ctx.model("Table").findById(table._id).lean();
-  assert.deepEqual(stored.splits.map(String), [String(ids.splits[1])]);
-  assert.equal(await ctx.count("Split", { _id: ids.splits[0] }), 0);
+  assert.deepEqual(stored.splits.map((split) => String(split._id)), [String(ids.splits[1])]);
+  assert.equal(await ctx.countSplits([ids.splits[0]]), 0);
   assert.equal(await ctx.count("Workout", { _id: ids.workouts[0] }), 0);
-  assert.equal(await ctx.count("Set", { _id: ids.sets[0] }), 0);
+  assert.equal(await ctx.countSets([ids.sets[0]]), 0);
   assert.ok(await ctx.model("Workout").exists({ _id: ids.workouts[1] }));
 });
 
@@ -380,7 +375,7 @@ test("borrar varios microciclos: rechaza ids que no son de esa rutina", async ()
   assert.equal(bad.status, 400);
   assert.equal((await ctx.call(user, "DELETE", `/splits/${table._id}`, { splitIds: [] })).status, 400);
   assert.equal((await ctx.call(user, "DELETE", "/splits/no-es-id", { splitIds: [ids.splits[0]] })).status, 400);
-  assert.ok(await ctx.model("Split").exists({ _id: other.ids.splits[0] }));
+  assert.ok(await ctx.findSplit(other.ids.splits[0]));
 });
 
 test("editar un microciclo (nombre/objetivo) desde el Planificador funciona y lo ve el cliente", async () => {
@@ -390,7 +385,7 @@ test("editar un microciclo (nombre/objetivo) desde el Planificador funciona y lo
   const { ids } = await seedRoutine(client, { assignedBy: trainer });
   const res = await ctx.call(trainer, "PUT", `/splits/${ids.splits[0]}`, { name: "Bloque de fuerza", objective: "Fuerza" });
   assert.equal(res.status, 204, JSON.stringify(res.body));
-  assert.equal((await ctx.model("Split").findById(ids.splits[0]).lean()).name, "Bloque de fuerza");
+  assert.equal((await ctx.findSplit(ids.splits[0])).name, "Bloque de fuerza");
   // Y el cliente sigue sin poder hacerlo en su rutina asignada.
   assert.equal((await ctx.call(client, "PUT", `/splits/${ids.splits[0]}`, { name: "Mío" })).status, 403);
 });
@@ -400,6 +395,6 @@ test("reordenar microciclos: el orden nuevo persiste; un orden incompleto da 400
   const { table, ids } = await seedRoutine(user, { shape: [[[1]], [[1]], [[1]]] });
   const [a, b, c] = ids.splits.map(String);
   await ctx.put(user, `/splits/rows/order/${table._id}`, { splitIdsOrder: [c, a, b] });
-  assert.deepEqual((await ctx.model("Table").findById(table._id).lean()).splits.map(String), [c, a, b]);
+  assert.deepEqual((await ctx.model("Table").findById(table._id).lean()).splits.map((split) => String(split._id)), [c, a, b]);
   assert.equal((await ctx.call(user, "PUT", `/splits/rows/order/${table._id}`, { splitIdsOrder: [a, b] })).status, 400);
 });

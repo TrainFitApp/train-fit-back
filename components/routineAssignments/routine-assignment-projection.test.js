@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { addDaysToIsoDate } = require("../util/period-util");
+const { addDaysToIsoDate } = require("../util/date-util");
 const {
   projectSchedule,
   projectionInRange,

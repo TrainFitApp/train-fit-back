@@ -53,10 +53,8 @@ const ProgressMediaDaySchema = new Schema(
       ],
       default: [],
     },
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
   },
-  { collection: "progressmediadays" }
+  { collection: "progressmediadays", timestamps: true }
 );
 
 ProgressMediaDaySchema.index({ userId: 1, date: -1 }, { unique: true });
@@ -91,5 +89,7 @@ ProgressMediaDaySchema.pre("deleteOne", { document: false, query: true }, async 
     next(error);
   }
 });
+
+ProgressMediaDaySchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"], authorship: ["checkins.trainerId"] });
 
 module.exports = mongoose.model("ProgressMediaDay", ProgressMediaDaySchema);

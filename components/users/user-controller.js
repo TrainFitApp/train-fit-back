@@ -1,25 +1,8 @@
-const userModel = require("./model");
-const userDto = require("./dto");
-const recipeModel = require("../recipes/recipe-model");
+const userService = require("./user-service");
 const tableService = require("../tables/table-service");
-const userSchema = require("../users/schema");
-const bcrypt = require("../util/bcrypt");
 const mail = require("./../util/mail");
-const jwt = require("jsonwebtoken");
 const { normalizeEmail } = require("../util/normalize-email");
-const { generateVerificationCode } = require("../util/verification-code");
-
-const PASSWORD_RESET_REQUEST_RESPONSE = {
-  message:
-    "Si existe una cuenta con ese correo, enviaremos un codigo de verificacion.",
-};
-const PASSWORD_RESET_INVALID_CODE_RESPONSE = {
-  message: "Codigo invalido o expirado",
-};
-
-async function generateAndSetTokens(user, res) {
-  throw new Error("Auth endpoint moved to /api/auth");
-}
+const { badRequest, forbidden, notFound } = require("../util/http-error");
 
 const htmlFinalResponse1 = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html dir="ltr" lang="es">
@@ -79,1095 +62,131 @@ function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
 }
 
-function canActOnUser(req, targetUserId) {
-  return isAdmin(req) || String(req.user?.id) === String(targetUserId);
+function assertCanActOnUser(req, targetUserId, message = "No tienes permiso para esta acción") {
+  if (!isAdmin(req) && String(req.user?.id) !== String(targetUserId)) throw forbidden(message);
 }
 
-function notifyUserRegistered(user, req, source, provider) {
+function notifyUserRegistered(user, req, source) {
   mail.notifyUserRegistered(user, {
     source,
-    provider: provider || user?.provider || "email",
+    provider: user?.provider || "email",
     ip: req.ip,
     userAgent: req.headers?.["user-agent"],
   });
 }
 
-async function clearUserAuth(userId) {
-  if (!userId) return null;
-  return userSchema.findByIdAndUpdate(userId, { $unset: { auth: 1 } });
-}
+const ROLES_ASSIGNABLE = ["user", "admin"];
 
 module.exports = {
   async countUsers(req, res) {
-    const count = await userModel.countUsers();
-    return res.send(count);
+    res.send(await userService.countUsers());
   },
 
+  // Público. Un registro social a medias (cuenta sin nombre) no cuenta: ese
+  // correo todavía puede completar el alta.
   async checkEmail(req, res) {
-    try {
-      const email = normalizeEmail(req.params?.email);
-      if (!email) {
-        return res.status(400).send({ message: "Email requerido" });
-      }
-      const user = await userModel.getUserByEmail(email);
-      // Si el usuario existe pero no tiene nombre (registro social incompleto), permitimos el email
-      if (user && !user.name) {
-        return res.send({ emailExist: false });
-      }
-      return res.send({ emailExist: !!user });
-    } catch (err) {
-      console.error("Error al comprobar email:", err);
-      return res.status(500).send({ message: "No se pudo comprobar el email" });
-    }
+    const email = normalizeEmail(req.params?.email);
+    if (!email) throw badRequest("Email requerido");
+    const user = await userService.getUserByEmail(email);
+    res.send({ emailExist: Boolean(user?.name) });
   },
 
   // Las apps solo lo usan para cargar el usuario PROPIO (user-loader,
   // sign-in, onboarding-status): el perfil de otra cuenta responde 404, como
-  // si no existiera (antes devolvía el de cualquiera, código de activación
-  // incluido).
+  // si no existiera.
   async getUserByEmail(req, res) {
     const email = normalizeEmail(req.params.email);
-    if (!isAdmin(req) && email !== normalizeEmail(req.user?.email)) {
-      return res.status(404).send({ message: "Usuario no encontrado" });
-    }
-    if (email === normalizeEmail(req.user?.email)) await userModel.syncScheduledRoutine(req.user.id);
-    const user = await userDto.single(await userModel.getUserByEmail(email));
-    return res.send(user);
+    if (!isAdmin(req) && email !== normalizeEmail(req.user?.email)) throw notFound("Usuario no encontrado");
+    res.send(await userService.view(await userService.getUserByEmail(email)));
   },
 
   async searchUsers(req, res) {
-    const page = req.body.page;
-    const limit = 10;
-    const search = req.body.search;
-    const filters = req.body.filters || {};
-
-    const result = await userModel.searchUsers(page, limit, search, filters);
-    // El listado sale de un aggregate (sin DTO): el premium caducado tiene que
-    // salir como no premium igual que en el resto de respuestas.
-    return res.send({
-      ...result,
-      users: (result.users || []).map((user) => ({ ...user, premium: userDto.resolvePremium(user) })),
-    });
+    const { page, search, filters } = req.body;
+    res.send(await userService.searchUsers(page, 10, search, filters || {}));
   },
 
   async createUser(req, res) {
-    try {
-      const email = normalizeEmail(req.body?.user?.email);
-      if (!email) {
-        return res.status(400).send({ message: "Email requerido" });
-      }
-
-      // Validar que el email existe (DNS/MX) ANTES de crear usuario
-      const emailExists = await mail.validateEmailExists(email);
-      if (!emailExists) {
-        return res.status(400).send({
-          message: "El correo no existe",
-        });
-      }
-
-      const userExist = await userModel.getUserByEmail(email);
-      if (userExist && userExist.name) {
-        return res
-          .status(409)
-          .send({ message: "Este usuario ya está registrado" });
-      }
-
-      const hashTemp = generateVerificationCode();
-
-      const user = await userModel.createUser(
-        {
-          name: req.body.user.name,
-          lastname: req.body.user.lastname,
-          password: req.body.user.password,
-          activity: req.body.user.activity,
-          steps: req.body.user.steps,
-          sex: req.body.user.sex,
-          height: req.body.user.height,
-          weight: req.body.user.weight,
-          training: req.body.user.training,
-          objetive: req.body.user.objetive,
-          birth: req.body.user.birth,
-          kcalTotal: req.body.user.kcalTotal,
-          proteinsGTotal: req.body.user.proteinsGTotal,
-          carbohydratesGTotal: req.body.user.carbohydratesGTotal,
-          fatGTotal: req.body.user.fatGTotal,
-          email: email,
-          roles: ["user"],
-          hash: hashTemp,
-        },
-        req.body.date,
-      );
-
-      notifyUserRegistered(user, req, "users.createUser", "email");
-
-      // ---- Cabeceras y textos del NUEVO correo de activación ----
-      const header1 = `Hola ${req.body.user.name}, verifique su cuenta`;
-      const description =
-        "Introduce el siguiente código en la aplicación para finalizar el registro.";
-
-      // Generar HTML con el nuevo template de hash
-      const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-
-      await mail.sendTransactionalMail(
-        user.email,
-        "Verificación de cuenta - TrainFit",
-        htmlMail,
-      );
-
-      return res.send(await userDto.single(user, req.user));
-    } catch (err) {
-      // Manejo de clave duplicada (race condition) y errores genéricos
-      const isDup =
-        err?.code === 11000 ||
-        (typeof err?.message === "string" &&
-          err.message.toLowerCase().includes("duplicate key"));
-      if (isDup) {
-        return res
-          .status(409)
-          .send({ message: "Este usuario ya está registrado" });
-      }
-      // Errores de validación con mensaje público (p. ej. edad mínima): al errorHandler.
-      if (err?.status >= 400 && err.status < 500) throw err;
-      console.error("Error al crear usuario:", err);
-      return res.status(500).send({ message: "No se pudo crear el usuario" });
-    }
+    const user = await userService.registerClient(normalizeEmail(req.body?.user?.email), req.body.user);
+    notifyUserRegistered(user, req, "users.createUser");
+    res.send(await userService.view(user, req.user));
   },
 
-  /**
-   * Registro de profesional (TrainFit: Entrenadores) — F01. A propósito NO
-   * reutiliza userModel.createUser/userDao.createUser: esa función crea
-   * automáticamente una Diet/DietDay por defecto (comportamiento correcto para
-   * un cliente consumidor, pero incorrecto aquí — un profesional no es
-   * necesariamente cliente de TrainFit). Sigue el mismo patrón limpio que ya
-   * usa el registro social (userSchema.create directo, sin efectos
-   * secundarios de dominio de consumidor).
-   *
-   * POST /api/users/professional
-   * Body: { name, lastname, email, password }
-   */
+  // Alta de profesional (TrainFit: Entrenadores). No reutiliza el alta de
+  // cliente (objetivo inicial y peso): un profesional no es necesariamente
+  // cliente de TrainFit.
   async createProfessionalUser(req, res) {
-    try {
-      const { name, lastname, email: emailRaw, password } = req.body || {};
-      const email = String(emailRaw || "").trim().toLowerCase();
-
-      if (!name || !lastname || !email || !password) {
-        return res.status(400).send({ message: "Nombre, apellidos, email y contraseña son obligatorios" });
-      }
-
-      const emailExists = await mail.validateEmailExists(email);
-      if (!emailExists) {
-        return res.status(400).send({ message: "El correo no existe" });
-      }
-
-      const userExist = await userModel.getUserByEmail(email);
-      if (userExist && userExist.name) {
-        return res.status(409).send({ message: "Este usuario ya está registrado" });
-      }
-
-      const hashTemp = Math.floor(100000 + Math.random() * 900000).toString();
-
-      const user = await userSchema.create({
-        name,
-        lastname,
-        email,
-        password,
-        roles: ["trainer"],
-        hash: hashTemp,
-      });
-
-      notifyUserRegistered(user, req, "users.createProfessionalUser", "email");
-
-      const header1 = `Hola ${name}, verifica tu cuenta`;
-      const description = "Introduce el siguiente código en la aplicación para finalizar el registro.";
-      const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-      await mail.sendTransactionalMail(user.email, "Verificación de cuenta - TrainFit Entrenadores", htmlMail);
-
-      return res.status(201).send(await userDto.single(user, req.user));
-    } catch (err) {
-      const isDup =
-        err?.code === 11000 ||
-        (typeof err?.message === "string" && err.message.toLowerCase().includes("duplicate key"));
-      if (isDup) {
-        return res.status(409).send({ message: "Este usuario ya está registrado" });
-      }
-      console.error("Error al crear usuario profesional:", err);
-      return res.status(500).send({ message: "No se pudo crear el usuario" });
-    }
-  },
-
-  /**
-   * Crea un usuario nuevo desde Google Sign-In
-   * Solo se crea con email, los demás datos se completan después en updateGoogleUser
-   *
-   * POST /users/google
-   * Body: { user: { email } }
-   * Response: { user, access_token, token_type }
-   */
-  async createSocialUser(req, res) {
-    try {
-      let email = req.body?.user?.email?.toLowerCase();
-      const provider = req.body?.provider; // 'google' or 'apple'
-      let appleId = null;
-
-      if (!provider || !["google", "apple"].includes(provider)) {
-        return res
-          .status(400)
-          .send({ message: "Proveedor inválido o requerido" });
-      }
-
-      // Validación específica para Apple
-      if (provider === "apple") {
-        const { tokenApple } = req.body;
-        if (!tokenApple) {
-          return res.status(400).send({ message: "Token de Apple requerido" });
-        }
-
-        try {
-          const payload = await userModel.validateAppleToken(tokenApple);
-          appleId = payload?.sub;
-          const tokenEmail = payload?.email?.toLowerCase();
-
-          // Priorizar email del token si existe (es el verificado por Apple), sino usar el del body
-          if (tokenEmail) {
-            email = tokenEmail;
-          }
-
-          if (!email || !appleId) {
-            return res.status(400).send({
-              message: "Datos de usuario incompletos de Apple.",
-              details: { hasAppleId: !!appleId, hasEmail: !!email },
-            });
-          }
-        } catch (error) {
-          console.error("Error validando token Apple en creación:", error);
-          return res.status(401).send({ message: "Token de Apple inválido" });
-        }
-      }
-
-      if (!email) {
-        return res.status(400).send({ message: "Email requerido" });
-      }
-
-      // Verificar que no exista por email
-      let userExist = await userModel.getUserByEmail(email);
-
-      // Si es Apple, verificar también por appleId si no se encontró por email
-      if (!userExist && appleId) {
-        userExist = await userModel.getUserByAppleId(appleId);
-      }
-
-      if (userExist) {
-        return res
-          .status(409)
-          .send({ message: "Este usuario ya está registrado" });
-      }
-
-      // Preparar objeto de usuario
-      const newUser = {
-        email,
-        roles: ["user"],
-        provider: provider,
-      };
-
-      // Añadir appleId si corresponde
-      if (provider === "apple" && appleId) {
-        newUser.appleId = appleId;
-      }
-
-      // Crear usuario
-      // Nota: insertMany es rápido, pero para Apple usábamos createUserWithApple en DAO.
-      // Sin embargo, insertMany es suficiente si pasamos los campos correctos.
-      let user = await userSchema.insertMany([newUser]);
-      user = user[0];
-
-      notifyUserRegistered(user, req, "users.createSocialUser", provider);
-
-      // Generar tokens y configurar cookie
-      const { accessToken } = await generateAndSetTokens(user, res);
-
-      return res.status(201).send({
-        user: user,
-        access_token: accessToken,
-        token_type: "bearer",
-      });
-    } catch (err) {
-      const isDup =
-        err?.code === 11000 ||
-        (typeof err?.message === "string" &&
-          err.message.toLowerCase().includes("duplicate key"));
-      if (isDup) {
-        return res
-          .status(409)
-          .send({ message: "Este usuario ya está registrado" });
-      }
-      console.error(`Error al crear usuario con ${req.body?.provider}:`, err);
-      return res.status(500).send({ message: "No se pudo crear el usuario" });
-    }
-  },
-
-  async login(req, res) {
-    try {
-      const { email, password } = req.body;
-
-      if (!email || !password) {
-        return res
-          .status(400)
-          .send({ message: "Email y contraseña requeridos" });
-      }
-
-      const user = await userModel.getUserByEmail(email);
-
-      if (!user) {
-        return res.status(404).send({ message: "Este usuario no existe" });
-      }
-
-      if (user.hash) {
-        // Generar nuevo codigo y enviar correo
-        const hashTemp = generateVerificationCode();
-        const hashExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-        // Actualizar user hash en BD
-        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
-
-        // Send mail
-        const header1 = `Hola ${user.name}, verifique su cuenta`;
-        const description =
-          "Introduce el siguiente código en la aplicación para finalizar el registro.";
-        const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendTransactionalMail(
-          user.email,
-          "Verificación de cuenta - TrainFit",
-          htmlMail,
-        );
-
-        return res.status(403).send({
-          error: "ACCOUNT_NOT_VERIFIED",
-          message: "Cuenta no verificada. Se ha enviado un nuevo código.",
-          email: user.email,
-        });
-      }
-
-      const isMatch = bcrypt.comparePasswords(password, user.password);
-      if (!isMatch) {
-        return res.status(401).send({ message: "Contraseña incorrecta" });
-      }
-
-      // Generar tokens y configurar cookie
-      const { accessToken } = await generateAndSetTokens(user, res);
-
-      return res.status(200).send({
-        access_token: accessToken,
-        token_type: "bearer",
-        theme: user.theme,
-      });
-    } catch (error) {
-      console.error("Error in login:", error);
-      return res.status(500).send({ message: "Error al iniciar sesión" });
-    }
-  },
-
-  async refreshToken(req, res) {
-    return res.status(410).send({
-      message: "Auth endpoint moved to /api/auth",
-      code: "AUTH_ENDPOINT_GONE",
-    });
-  },
-
-  async logout(req, res) {
-    return res.status(410).send({
-      message: "Auth endpoint moved to /api/auth",
-      code: "AUTH_ENDPOINT_GONE",
-    });
-  },
-
-  /**
-   * Verifica un usuario existente con Google Sign-In
-   * Si el usuario existe, valida el token de Google y devuelve tokens JWT
-   *
-   * POST /users/auth/verify-google
-   * Body: { email, tokenGoogle }
-   * Response: { user, access_token, token_type }
-   */
-  async verifyGoogle(req, res) {
-    const { tokenGoogle, email } = req.body;
-
-    if (!tokenGoogle || !email) {
-      return res.status(400).send({ message: "Token y email requeridos" });
-    }
-
-    // PASO 1: Buscar usuario existente PRIMERO (sin verificar token aún)
-    // Si el usuario no existe → siempre 404 (independiente del token)
-    let user;
-    try {
-      user = await userModel.getUserByEmail(email.toLowerCase());
-    } catch (dbError) {
-      console.error("Error al buscar usuario Google:", dbError);
-      return res.status(500).send({ message: "Error al buscar usuario" });
-    }
-
-    if (!user) {
-      // Usuario no existe en la BD → debe ir al formulario de registro
-      return res.status(404).send({ message: "Usuario no encontrado" });
-    }
-
-    // PASO 2: Solo si el usuario existe, validar el token de Google
-    try {
-      await userModel.validateGoogleToken(tokenGoogle);
-    } catch (tokenError) {
-      console.error("Error validando token de Google:", tokenError);
-      return res
-        .status(401)
-        .send({ message: "Token de Google inválido o expirado" });
-    }
-
-    // PASO 3: Generar tokens JWT y configurar cookie
-    try {
-      const { accessToken } = await generateAndSetTokens(user, res);
-      return res.status(200).send({
-        user: user,
-        access_token: accessToken,
-        token_type: "bearer",
-      });
-    } catch (error) {
-      console.error("Error generando tokens Google:", error);
-      return res.status(500).send({ message: "Error al generar tokens" });
-    }
-  },
-
-  async verifyApple(req, res) {
-    const { tokenApple, email } = req.body;
-
-    if (!tokenApple) {
-      return res.status(400).send({ message: "Token requerido" });
-    }
-
-    // PASO 1: Decodificar el token SIN verificar la firma para obtener appleId/email
-    // Esto es seguro porque solo usamos los datos para buscar al usuario.
-    // La validación criptográfica completa se hace en el Paso 3 si el usuario existe.
-    let appleId = null;
-    let tokenEmail = null;
-    try {
-      const decoded = jwt.decode(tokenApple, { complete: true });
-      if (!decoded || !decoded.payload) {
-        return res.status(400).send({ message: "Token de Apple malformado" });
-      }
-      appleId = decoded.payload?.sub;
-      tokenEmail = decoded.payload?.email?.toLowerCase();
-    } catch (decodeError) {
-      console.error("Error decodificando token Apple:", decodeError);
-      return res.status(400).send({ message: "Token de Apple inválido" });
-    }
-
-    const normalizedEmail = email?.toLowerCase() || tokenEmail;
-
-    // PASO 2: Buscar el usuario PRIMERO (sin validar firm del token aún)
-    // Si el usuario no existe → siempre 404 (para redirigir al registro)
-    let user = null;
-    try {
-      if (appleId) {
-        user = await userModel.getUserByAppleId(appleId);
-      }
-      if (!user && normalizedEmail) {
-        user = await userModel.getUserByEmail(normalizedEmail);
-      }
-    } catch (dbError) {
-      console.error("Error al buscar usuario Apple:", dbError);
-      return res.status(500).send({ message: "Error al buscar usuario" });
-    }
-
-    if (!user) {
-      // Usuario no existe en la BD → debe ir al formulario de registro
-      return res.status(404).send({ message: "Usuario no encontrado" });
-    }
-
-    // PASO 3: Solo si el usuario existe, validar la firma completa del token
-    try {
-      await userModel.validateAppleToken(tokenApple);
-    } catch (tokenError) {
-      console.error("Error validando firma del token Apple:", tokenError);
-      return res
-        .status(401)
-        .send({ message: "Token de Apple inválido o expirado" });
-    }
-
-    // PASO 4: Actualizar appleId si no lo tenía y generar tokens
-    try {
-      if (!user.appleId && appleId) {
-        user = await userSchema.findByIdAndUpdate(
-          user._id,
-          { appleId: appleId },
-          { new: true },
-        );
-      }
-
-      const { accessToken } = await generateAndSetTokens(user, res);
-
-      return res.status(200).send({
-        user: user,
-        access_token: accessToken,
-        token_type: "bearer",
-      });
-    } catch (error) {
-      console.error("Error generando tokens Apple:", error);
-      return res.status(500).send({ message: "Error al generar tokens" });
-    }
-  },
-
-  async createUserApple(req, res) {
-    try {
-      const { user: userToCreate, date, tokenApple } = req.body;
-      console.log(
-        "Creando usuario Apple. Email proporcionado:",
-        userToCreate?.email,
-      );
-
-      if (!tokenApple) {
-        return res.status(400).send({ message: "Token de Apple requerido" });
-      }
-
-      const payload = await userModel.validateAppleToken(tokenApple);
-      const appleId = payload?.sub;
-      const tokenEmail = payload?.email?.toLowerCase();
-      const email = userToCreate?.email?.toLowerCase() || tokenEmail;
-
-      console.log(
-        "Payload Apple decodificado. appleId:",
-        appleId,
-        "tokenEmail:",
-        tokenEmail,
-      );
-
-      if (!email || !appleId) {
-        return res.status(400).send({
-          message:
-            "Datos de usuario incompletos de Apple. No se pudo obtener el email.",
-          details: { hasAppleId: !!appleId, hasEmail: !!email },
-        });
-      }
-
-      let existingUser = await userModel.getUserByAppleId(appleId);
-      if (!existingUser) {
-        existingUser = await userModel.getUserByEmail(email);
-      }
-
-      if (existingUser) {
-        return res
-          .status(409)
-          .send({ message: "Este usuario ya está registrado" });
-      }
-
-      const newUser = {
-        ...(userToCreate || {}),
-        email: email,
-        appleId: appleId,
-        roles: ["user"],
-        provider: "apple",
-      };
-
-      // Crear usuario
-      const user = await userModel.createUserApple(newUser, date);
-
-      notifyUserRegistered(user, req, "users.createUserApple", "apple");
-
-      // Generar tokens y configurar cookie
-      const { accessToken } = await generateAndSetTokens(user, res);
-
-      return res.status(201).send({
-        user: user,
-        access_token: accessToken,
-        token_type: "bearer",
-      });
-    } catch (err) {
-      const isDup =
-        err?.code === 11000 ||
-        (typeof err?.message === "string" &&
-          err.message.toLowerCase().includes("duplicate key"));
-      if (isDup) {
-        return res
-          .status(409)
-          .send({ message: "Este usuario ya está registrado" });
-      }
-      console.error("Error al crear usuario con Apple:", err);
-      return res.status(500).send({ message: "No se pudo crear el usuario" });
-    }
-  },
-
-  async updateAppleUser(req, res) {
-    try {
-      const { user: userUpdate, date } = req.body;
-      if (!userUpdate || !userUpdate.email) {
-        return res.status(400).send({ message: "Email requerido" });
-      }
-
-      const userCurr = await userModel.getUserByEmail(userUpdate.email);
-      if (userCurr && userCurr.name && userCurr.lastname) {
-        return res
-          .status(400)
-          .send({ message: "Este perfil de Apple ya está completo" });
-      }
-
-      const user = await userModel.updateAppleUser(userUpdate, date);
-      const { accessToken } = await generateAndSetTokens(user, res);
-
-      return res.send({
-        access_token: accessToken,
-        token_type: "bearer",
-        user: user,
-      });
-    } catch (err) {
-      if (err?.status >= 400 && err.status < 500) throw err;
-      console.error("Error al actualizar usuario con Apple:", err);
-      return res
-        .status(500)
-        .send({ message: "No se pudo actualizar el usuario" });
-    }
-  },
-
-  async searchArchivedsByFilter(req, res) {
-    const user = await userModel.searchArchivedsByFilter(
-      req.user.id,
-      req.body.node,
-      req.body.nodeArchived,
-      req.body.search,
-    );
-
-    return res.send(user);
-  },
-
-  async addUserDiet(req, res) {
-    if (!canActOnUser(req, req.params.idUser)) {
-      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
-    }
-
-    const user = await userModel.addUserDiet(
-      req.params.idUser,
-      req.params.idDiet,
-    );
-
-    return res.send(user);
+    const { name, lastname, email, password } = req.body || {};
+    const user = await userService.createProfessional({ name, lastname, email: normalizeEmail(email), password });
+    notifyUserRegistered(user, req, "users.createProfessionalUser");
+    res.status(201).send(await userService.view(user, req.user));
   },
 
   async addUserTable(req, res) {
-    if (!canActOnUser(req, req.params.idUser)) {
-      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
-    }
-    // Solo se pone en uso una rutina del propio usuario (antes, cualquier id).
+    assertCanActOnUser(req, req.params.idUser);
+    // Solo se pone en uso una rutina del propio usuario.
     const table = await tableService.getTableForClient(req.params.idTable, req.params.idUser);
-    if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
-
-    const user = await userModel.addUserTable(
-      req.params.idUser,
-      req.params.idTable,
-    );
-
-    return res.send(user);
+    if (!table) throw notFound("Rutina no encontrada");
+    res.send(await userService.addUserTable(req.params.idUser, req.params.idTable));
   },
 
   async updateUser(req, res) {
-    if (!req.body?._id) {
-      return res.status(400).send({ message: "ID de usuario requerido" });
-    }
-    if (!canActOnUser(req, req.body._id.toString())) {
-      return res.status(403).send({ message: "No tienes permiso para actualizar este usuario" });
-    }
-
-    const user = await userModel.updateUser(req.body);
-    return res.send(user);
-  },
-
-  async updateSocialUser(req, res) {
-    const userCurr = await userModel.getUserByEmail(req.body.user.email);
-    // Verificación más robusta: si tiene nombre y apellido, ya está registrado
-    if (userCurr && userCurr.name && userCurr.lastname)
-      return res
-        .status(409) // Conflict es más apropiado que 500
-        .send({ message: "El usuario ya ha completado su registro" });
-
-    // Determinar método de actualización según proveedor
-    let user;
-    if (userCurr.provider === "apple") {
-      user = await userModel.updateAppleUser(req.body.user, req.body.date);
-    } else {
-      user = await userModel.updateGoogleUser(req.body.user, req.body.date);
-    }
-
-    const { accessToken } = await generateAndSetTokens(user, res);
-
-    return res.send({
-      access_token: accessToken,
-      token_type: "bearer",
-      user: user,
-    });
-  },
-
-  async playStopDiet(req, res) {
-    if (!req.params.idUser) return res.sendStatus(400);
-    if (!canActOnUser(req, req.params.idUser)) {
-      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
-    }
-
-    const user = await userModel.getUserById(req.params.idUser);
-
-    // La ruta antigua traía el id del wrapper en :idDietInUse (presente =
-    // activar, ausente = parar). Ahora es un booleano: se acepta el body
-    // {enabled} si viene, y si no se conserva el gesto de siempre —
-    // alternar respecto al estado actual.
-    const enabled =
-      typeof req.body?.enabled === "boolean"
-        ? req.body.enabled
-        : !(user?.dietEnabled ?? true);
-
-    await userModel.playStopDiet(req.params.idUser, enabled);
-
-    const user2 = await userModel.getUserById(req.params.idUser);
-
-    return res.send(user2);
-  },
-
-  // TODO: Optimizar
-  async addFavoriteProduct(req, res) {
-    if (!req.body.idProduct) return res.sendStatus(400);
-    if (!req.body.idUser) return res.sendStatus(400);
-    if (!canActOnUser(req, req.body.idUser)) {
-      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
-    }
-
-    const user = await userModel.getUserById(req.body.idUser);
-
-    const productExist = !!user.archivedProducts.find((apTemp) => {
-      const id = apTemp.toString().match(/^[0-9a-fA-F]{24}$/);
-      return id && id[0] === req.body.idProduct;
-    });
-
-    const newUser = await userModel.addFavouriteProduct(
-      req.body.idUser,
-      req.body.idProduct,
-      productExist,
-    );
-
-    return res.send({
-      isFavorite: !productExist,
-      message: !productExist
-        ? "Product added to favorites"
-        : "Product removed from favorites",
-    });
-  },
-
-  async addFavoriteRecipe(req, res) {
-    if (!req.body.idRecipe) return res.sendStatus(400);
-    if (!req.body.idUser) return res.sendStatus(400);
-    if (!canActOnUser(req, req.body.idUser)) {
-      return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
-    }
-
-    let user = await userModel.getUserById(req.body.idUser);
-
-    const recipeExist = !!user.archivedRecipes.find((apTemp) => {
-      const id = apTemp.toString().match(/^[0-9a-fA-F]{24}$/);
-      return id && id[0] === req.body.idRecipe;
-    });
-
-    // Mismo criterio que POST /recipes/:id/archive: solo se marca como
-    // favorita una receta que el usuario puede leer (las favoritas se listan
-    // por id, así que si no, servían para leer recetas privadas ajenas).
-    // Quitarla siempre se puede.
-    if (!recipeExist && !isAdmin(req)) {
-      const recipe = await recipeModel.getRecipeById(req.body.idRecipe);
-      if (!recipe || !(await recipeModel.canUserReadRecipe(recipe, req.body.idUser))) {
-        return res.status(404).send({ message: "Receta no encontrada" });
-      }
-    }
-
-    user = await userModel.addFavouriteRecipe(
-      req.body.idUser,
-      req.body.idRecipe,
-      req.body.isOwn,
-      recipeExist,
-    );
-
-    return res.send({
-      isFavorite: !recipeExist,
-      message: !recipeExist
-        ? "Recipe added to favorites"
-        : "Recipe removed from favorites",
-    });
-  },
-
-  async updatePassword(req, res) {
-    const user = await userModel.updatePassword(req.params.email, req.params.password);
-    if (user?._id) {
-      await clearUserAuth(user._id);
-    }
-    return res.send(
-      htmlFinalResponse1 + "Contraseña actualizada" + htmlFinalResponse2,
-    );
+    if (!req.body?._id) throw badRequest("ID de usuario requerido");
+    assertCanActOnUser(req, req.body._id.toString(), "No tienes permiso para actualizar este usuario");
+    // Solo el perfil (lista blanca, users/user-profile.js) y, si viene, el
+    // peso de hoy. La respuesta es el DTO: nunca el documento crudo.
+    const user = await userService.updateUser(req.body);
+    res.send(await userService.view(user, req.user));
   },
 
   async sendMailCode(req, res) {
-    try {
-      await userModel.sendMailCode(normalizeEmail(req.params.email));
-      return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
-    } catch (error) {
-      switch (error?.message) {
-        case "COOLDOWN_ACTIVE":
-          return res.status(429).send({
-            message: "Espera unos segundos antes de solicitar un nuevo código",
-          });
-        case "DAILY_LIMIT_REACHED":
-          return res.status(429).send({
-            message: "Has alcanzado el límite diario de códigos. Intenta de nuevo mañana.",
-          });
-        case "USER_NOT_FOUND":
-        case "INVALID_EMAIL":
-          // Anti-enumeración deliberada: mismo 200 genérico que en éxito,
-          // para no revelar si el email existe. El cooldown y el límite
-          // diario de arriba SÍ se exponen porque el usuario legítimo
-          // necesita saber que su reenvío no se ha realizado.
-          return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
-        default:
-          console.warn("[AUTH] password_reset_code_request_not_completed", {
-            reason: error?.message || "unknown",
-          });
-          return res.status(200).send(PASSWORD_RESET_REQUEST_RESPONSE);
-      }
-    }
+    await userService.sendMailCode(normalizeEmail(req.params.email));
+    res.send({ message: "Si existe una cuenta con ese correo, enviaremos un codigo de verificacion." });
   },
 
-  // Responde solo { ok: true }: restore-password.page.ts no usa el cuerpo, y
-  // antes salía el User entero (contraseña cifrada, sesión, refreshTokenHash…).
+  // Solo { ok: true }: la app no usa el cuerpo.
   async checkRestoreCode(req, res) {
-    try {
-      const response = await userModel.checkRestoreCode(
-        normalizeEmail(req.body.email),
-        req.body.password,
-        req.body.hash,
-      );
-      if (response?._id) {
-        await clearUserAuth(response._id);
-      }
-      return res.send({ ok: true });
-    } catch (error) {
-      console.warn("[AUTH] password_reset_code_rejected", {
-        reason: error?.message || "unknown",
-      });
-      return res.status(400).send(PASSWORD_RESET_INVALID_CODE_RESPONSE);
-    }
+    await userService.checkRestoreCode(normalizeEmail(req.body.email), req.body.password, req.body.hash);
+    res.send({ ok: true });
   },
 
   async sendSuggestions(req, res) {
-    try {
-      await userModel.sendSuggestions(req.body.email, req.body.suggestions);
-      return res.sendStatus(204);
-    } catch (error) {
-      console.error("Error al enviar sugerencia por email:", error);
-      return res.status(503).send({
-        message: "No se pudo enviar el correo de sugerencia. Verifica la configuración SMTP.",
-        error: error.message,
-      });
-    }
-  },
-
-  async verifyPassword(req, res) {
-    try {
-      const { password } = req.body || {};
-      if (!password) {
-        return res.status(400).send({ message: "Contraseña requerida" });
-      }
-
-      // Siempre sobre el usuario autenticado (del token), nunca sobre un id
-      // arbitrario del body/params, para que no se pueda usar para tantear
-      // la contraseña de otra cuenta.
-      const user = await userModel.getUserById(req.user.id);
-      if (!user) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      if (!user.password) {
-        // Cuenta social (Google/Apple) sin contraseña propia: nada que verificar.
-        return res.status(400).send({
-          message: "Esta cuenta no tiene contraseña configurada",
-          code: "NO_PASSWORD_SET",
-        });
-      }
-
-      const isMatch = bcrypt.comparePasswords(password, user.password);
-      if (!isMatch) {
-        return res.status(401).send({ message: "Contraseña incorrecta" });
-      }
-
-      return res.status(200).send({ valid: true });
-    } catch (error) {
-      console.error("Error al verificar la contraseña:", error);
-      return res
-        .status(500)
-        .send({ message: "Error al verificar la contraseña" });
-    }
-  },
-
-  async deleteUser(req, res) {
-    if (!req.user?.roles?.includes("admin") && String(req.user?._id) !== String(req.params.id)) {
-      return res.status(403).send({ code: "FORBIDDEN", message: "No puedes eliminar otra cuenta." });
-    }
-    await userModel.deleteUser(req.params.id);
+    await userService.sendSuggestions(req.body.email, req.body.suggestions);
     res.sendStatus(204);
   },
 
+  async verifyPassword(req, res) {
+    await userService.verifyOwnPassword(req.user.id, req.body?.password);
+    res.send({ valid: true });
+  },
+
+  async deleteUser(req, res) {
+    if (!isAdmin(req) && String(req.user?._id) !== String(req.params.id)) {
+      throw forbidden("No puedes eliminar otra cuenta.", "FORBIDDEN");
+    }
+    await userService.deleteUser(req.params.id);
+    res.sendStatus(204);
+  },
+
+  // Enlace de activación del correo: página HTML.
   async checkHash(req, res) {
-    const user = await userModel.checkHash(req.params.id, req.params.hash);
-
-    // Generar HTML dinámicamente con el título correcto
+    const user = await userService.checkHash(req.params.id, req.params.hash);
     const headerMessage = user ? "¡Cuenta activada!" : "Ha habido un problema";
-    const message = user ? htmlFinalContent1 : htmlFinalContent2;
-
-    // Reemplazar placeholder con el mensaje correcto
-    const finalHTML =
-      htmlFinalResponse1.replace("{{HEADER_MESSAGE}}", headerMessage) +
-      message +
-      htmlFinalResponse2;
-
-    res.send(finalHTML);
-  },
-
-  async impersonateUser(req, res) {
-    try {
-      const adminRoles = req.userData?.roles || [];
-      if (!adminRoles.includes("admin")) {
-        return res.status(403).send({
-          message: "Solo administradores pueden usar esta función",
-        });
-      }
-
-      const targetUserId = req.body?.userId;
-      if (!targetUserId) {
-        return res.status(400).send({ message: "userId requerido" });
-      }
-
-      const targetUser = await userSchema.findById(targetUserId);
-      if (!targetUser) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      targetUser.lastLogin = new Date();
-      await targetUser.save();
-
-      const { accessToken } = await generateAndSetTokens(targetUser, res);
-
-      return res.send({
-        access_token: accessToken,
-        user: await userDto.single(targetUser),
-      });
-    } catch (error) {
-      console.error("Error en impersonateUser:", error);
-      return res.status(500).send({
-        message: "Error al impersonar usuario",
-      });
-    }
-  },
-
-  async logoutUser(req, res) {
-    try {
-      const { userId } = req.body;
-
-      if (!userId) {
-        return res.status(400).send({ message: "userId es requerido" });
-      }
-
-      const result = await userSchema.findById(userId);
-
-      if (!result) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      await clearUserAuth(userId);
-
-      return res.send({
-        message: "Sesión cerrada correctamente",
-        userId: result._id,
-      });
-    } catch (error) {
-      console.error("Error al cerrar sesión del usuario:", error);
-      return res.status(500).send({
-        message: "Error al cerrar sesión del usuario",
-      });
-    }
-  },
-  async activateAccount(req, res) {
-    try {
-      const { email, code } = req.body;
-      if (!email || !code) {
-        return res.status(400).send({ message: "Faltan datos requeridos" });
-      }
-
-      const user = await userModel.getUserByEmail(email);
-      if (!user) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      if (user.hash !== code) {
-        return res.status(400).send({ message: "Código incorrecto" });
-      }
-
-      // Eliminar el hash y generar tokens con el método encapsulado
-      await userSchema.findByIdAndUpdate(user._id, {
-        $unset: { hash: 1 },
-      });
-
-      const { accessToken } = await generateAndSetTokens(user, res);
-
-      return res.status(200).send({
-        message: "Cuenta activada correctamente",
-        access_token: accessToken,
-        token_type: "bearer",
-        theme: user.theme,
-      });
-    } catch (error) {
-      console.error("Error al activar cuenta:", error);
-      return res.status(500).send({ message: "Error interno del servidor" });
-    }
+    const content = user ? htmlFinalContent1 : htmlFinalContent2;
+    res.send(htmlFinalResponse1.replace("{{HEADER_MESSAGE}}", headerMessage) + content + htmlFinalResponse2);
   },
 
   async clearUserHash(req, res) {
-    try {
-      const { id } = req.params;
-      if (!id) {
-        return res.status(400).send({ message: "ID de usuario requerido" });
-      }
-
-      const user = await userModel.clearUserHash(id);
-      if (!user) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      return res.status(200).send({ message: "Hash eliminado correctamente" });
-    } catch (error) {
-      console.error("Error al eliminar hash del usuario:", error);
-      return res.status(500).send({ message: "Error interno del servidor" });
-    }
+    if (!(await userService.clearUserHash(req.params.id))) throw notFound("Usuario no encontrado");
+    res.send({ message: "Hash eliminado correctamente" });
   },
 
   async updateRoles(req, res) {
-    try {
-      const { id } = req.params;
-      const { roles } = req.body;
-
-      if (!id) {
-        return res.status(400).send({ message: "ID de usuario requerido" });
-      }
-
-      if (!Array.isArray(roles) || !roles.every((r) => ["user", "admin"].includes(r))) {
-        return res.status(400).send({ message: "Roles inválidos. Valores permitidos: user, admin" });
-      }
-
-      const user = await userSchema.findByIdAndUpdate(id, { roles }, { new: true });
-      if (!user) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      return res.send({ message: "Roles actualizados", roles: user.roles });
-    } catch (error) {
-      console.error("Error al actualizar roles:", error);
-      return res.status(500).send({ message: "Error interno del servidor" });
+    const { roles } = req.body;
+    if (!Array.isArray(roles) || !roles.every((role) => ROLES_ASSIGNABLE.includes(role))) {
+      throw badRequest("Roles inválidos. Valores permitidos: user, admin");
     }
+    const user = await userService.setRoles(req.params.id, roles);
+    if (!user) throw notFound("Usuario no encontrado");
+    res.send({ message: "Roles actualizados", roles: user.roles });
   },
-
 };

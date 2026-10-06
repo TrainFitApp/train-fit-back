@@ -4,11 +4,11 @@
 //   npm run rebuild:search-indexes:dry-run   # solo dice qué haría
 //   npm run rebuild:search-indexes           # aplica
 //
-// Flags: --dry-run, --skip-backfill, --skip-indexes, --keep-legacy
+// Flags: --dry-run, --skip-backfill, --skip-indexes
 //
 // Qué hace, en este orden:
 //   1. Rellena `nameNormalized`, `brandNormalized` y `searchTokens`, y quita
-//      de los documentos `namePrefixes`/`brandPrefixes` (salvo --keep-legacy).
+//      de los documentos `namePrefixes`/`brandPrefixes`.
 //   2. Crea los índices que falten (los que ya están correctos no se tocan).
 //   3. Borra los que ya no se usan, de uno en uno y por nombre.
 //
@@ -39,7 +39,6 @@ const hasFlag = (flag) => process.argv.includes(flag);
 const DRY_RUN = hasFlag("--dry-run");
 const SKIP_BACKFILL = hasFlag("--skip-backfill");
 const SKIP_INDEXES = hasFlag("--skip-indexes");
-const KEEP_LEGACY = hasFlag("--keep-legacy");
 
 const LOG_PREFIX = "[rebuild-search-indexes]";
 const log = (...args) => console.log(LOG_PREFIX, ...args);
@@ -111,6 +110,11 @@ const RECIPE_INDEXES = [
   },
   // TASK-046 — las etiquetas se filtran con $in.
   { keys: { tags: 1 }, options: { name: "idx_recipes_tags" } },
+  // 2026-10 — ingredientes embebidos: qué recetas usan un producto (borrar
+  // un producto convierte esos ingredientes en adición rápida) y localizar
+  // un ingrediente por su id.
+  { keys: { "customProducts.product": 1 }, options: { name: "idx_recipes_customProducts_product" } },
+  { keys: { "customProducts._id": 1 }, options: { name: "idx_recipes_customProducts_id" } },
   {
     keys: { name: "text" },
     options: {
@@ -156,7 +160,7 @@ function matchesExisting(definition, existing) {
   return sameKeys(definition.keys, existing.key);
 }
 
-async function syncIndexes(collection, label, definitions) {
+async function syncIndexes(collection, label, definitions, { dryRun = DRY_RUN } = {}) {
   const existing = await collection.indexes();
   const keep = new Set(["_id_"]);
   const toCreate = [];
@@ -188,12 +192,12 @@ async function syncIndexes(collection, label, definitions) {
 
   for (const index of blocking) {
     log(`${label}: borrar ${index.name} (estorba a uno nuevo)`);
-    if (!DRY_RUN) await collection.dropIndex(index.name);
+    if (!dryRun) await collection.dropIndex(index.name);
   }
 
   for (const definition of toCreate) {
     log(`${label}: crear ${definition.options.name} ${JSON.stringify(definition.keys)}`);
-    if (!DRY_RUN) await collection.createIndex(definition.keys, definition.options);
+    if (!dryRun) await collection.createIndex(definition.keys, definition.options);
   }
 
   const blockingNames = new Set(blocking.map((index) => index.name));
@@ -208,7 +212,7 @@ async function syncIndexes(collection, label, definitions) {
     .map((index) => index.name)
     .join(", ")}`);
 
-  if (!DRY_RUN) {
+  if (!dryRun) {
     for (const index of rest) {
       await collection.dropIndex(index.name);
     }
@@ -226,7 +230,7 @@ function areStringArraysEqual(left, right) {
   return true;
 }
 
-async function backfill(model, label, { withBrand }) {
+async function backfill(model, label, { withBrand, dryRun = DRY_RUN }) {
   log(`${label}: rellenando campos de búsqueda`);
 
   const projection = {
@@ -235,7 +239,8 @@ async function backfill(model, label, { withBrand }) {
     nameNormalized: 1,
     searchTokens: 1,
     ...(withBrand ? { brand: 1, brandNormalized: 1 } : {}),
-    ...(KEEP_LEGACY ? {} : { namePrefixes: 1, brandPrefixes: 1 }),
+    namePrefixes: 1,
+    brandPrefixes: 1,
   };
 
   const cursor = model.find({}, projection).lean().cursor();
@@ -246,7 +251,7 @@ async function backfill(model, label, { withBrand }) {
 
   const flush = async () => {
     if (!ops.length) return;
-    if (DRY_RUN) {
+    if (dryRun) {
       updated += ops.length;
     } else {
       // Por la colección cruda, no por el modelo: mongoose castea el update
@@ -274,10 +279,8 @@ async function backfill(model, label, { withBrand }) {
     }
 
     const unset = {};
-    if (!KEEP_LEGACY) {
-      for (const field of LEGACY_FIELDS) {
-        if (doc[field] !== undefined) unset[field] = "";
-      }
+    for (const field of LEGACY_FIELDS) {
+      if (doc[field] !== undefined) unset[field] = "";
     }
 
     if (!Object.keys(set).length && !Object.keys(unset).length) continue;
@@ -307,7 +310,7 @@ async function main() {
   const mongoUri = buildMongoUri();
   log(`conectando ${redactMongoUri(mongoUri)}`);
   log(
-    `flags dryRun=${DRY_RUN} skipBackfill=${SKIP_BACKFILL} skipIndexes=${SKIP_INDEXES} keepLegacy=${KEEP_LEGACY}`,
+    `flags dryRun=${DRY_RUN} skipBackfill=${SKIP_BACKFILL} skipIndexes=${SKIP_INDEXES}`,
   );
 
   await mongoose.connect(mongoUri);

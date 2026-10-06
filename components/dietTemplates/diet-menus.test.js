@@ -4,12 +4,12 @@ const {
   sanitizeAlternatives,
   sanitizeMeals,
   sanitizeMenus,
-} = require("./diet-template-controller");
+} = require("./diet-menus");
 
-// Estas funciones son la única barrera entre lo que manda el cliente
-// (trainer app) y lo que se guarda en DietTemplate. Una regresión aquí deja
-// pasar un slot inválido hasta el resolver (plan-resolver.js), o dos menús
-// con el mismo nombre — y el nombre es la clave con la que el cliente elige.
+// Estas funciones son la única barrera entre lo que manda la app de
+// entrenadores y lo que se guarda en un plan (plantilla o fase). Una regresión
+// aquí deja pasar un slot inválido hasta el resolver del día, o dos menús con
+// el mismo nombre — y el nombre es la clave con la que el cliente elige.
 test("sanitizeAlternatives", async (t) => {
   await t.test("recorta a MAX_ALTERNATIVES (4)", () => {
     const input = Array.from({ length: 6 }, (_, i) => ({ label: `alt${i}` }));

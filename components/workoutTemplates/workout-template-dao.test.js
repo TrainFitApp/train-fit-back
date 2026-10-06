@@ -36,7 +36,7 @@ test("materializeBlocksAsExercises", async (t) => {
     assert.equal(customExercisesToCreate[1].exercise, "second");
   });
 
-  await t.test("cada set de la plantilla genera un Set real vinculado por _id", () => {
+  await t.test("cada set de la plantilla queda embebido en su ejercicio, con su _id y su orden", () => {
     const blocks = [
       {
         order: 0,
@@ -52,17 +52,18 @@ test("materializeBlocksAsExercises", async (t) => {
         ],
       },
     ];
-    const { customExercisesToCreate, setsToCreate } = materializeBlocksAsExercises(blocks);
-    assert.equal(setsToCreate.length, 2);
-    assert.deepEqual(customExercisesToCreate[0].sets, [setsToCreate[0]._id, setsToCreate[1]._id]);
-    assert.deepEqual(setsToCreate[0].expectedReps, [8, 8]);
-    assert.deepEqual(setsToCreate[1].expectedReps, [6]);
+    const { customExercisesToCreate } = materializeBlocksAsExercises(blocks);
+    const sets = customExercisesToCreate[0].sets;
+    assert.equal(sets.length, 2);
+    assert.ok(sets.every((set) => set._id));
+    assert.deepEqual(sets.map((set) => set.order), [0, 1]);
+    assert.deepEqual(sets[0].expectedReps, [8, 8]);
+    assert.deepEqual(sets[1].expectedReps, [6]);
   });
 
   await t.test("sin bloques -> arrays vacíos, no lanza", () => {
     const result = materializeBlocksAsExercises([]);
     assert.deepEqual(result.customExercisesToCreate, []);
-    assert.deepEqual(result.setsToCreate, []);
     assert.deepEqual(result.workoutBlocksToCreate, []);
     assert.deepEqual(materializeBlocksAsExercises(undefined).customExercisesToCreate, []);
   });

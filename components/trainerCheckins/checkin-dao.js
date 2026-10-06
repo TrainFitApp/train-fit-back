@@ -3,6 +3,29 @@ const CheckinTemplateDefinition = require("./checkin-template-definition-schema"
 const CheckinResponse = require("./checkin-response-schema");
 
 module.exports = {
+  // Respuestas que casan con `filter` (agenda de check-ins).
+  listResponsesWhere(filter, fields = null) {
+    const query = CheckinResponse.find(filter);
+    if (fields) query.select(fields);
+    return query.lean();
+  },
+
+  // La respuesta de una ocurrencia (programación + fecha), si la hay.
+  findOccurrenceResponse(scheduleId, occurrenceDate, fields = null) {
+    const query = CheckinResponse.findOne({ scheduleId, occurrenceDate });
+    if (fields) query.select(fields);
+    return query.lean();
+  },
+
+  // Responder (o reescribir) una ocurrencia: una respuesta por ocurrencia.
+  upsertOccurrenceResponse(scheduleId, occurrenceDate, update) {
+    return CheckinResponse.findOneAndUpdate({ scheduleId, occurrenceDate }, update, {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }).lean();
+  },
+
   // --- CheckinTemplateDefinition (plantillas maestras del profesional) ---
   async createDefinition(trainerId, name, enabledFields, customQuestions = [], requiredFields = []) {
     return CheckinTemplateDefinition.create({

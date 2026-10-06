@@ -6,3 +6,6 @@ file.log
 bash.exe.stackdump
 scripts/backups/
 .media-local/
+
+# Informes y copias que generan las migraciones al ejecutarse (datos de una base real)
+scripts/exports/

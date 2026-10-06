@@ -8,7 +8,6 @@ const router = express.Router();
 // Listado global (find({}) paginado): solo admin, devuelve entrenos de todos.
 router.getAsync("/", auth(["admin"]), controller.getWorkouts);
 router.getAsync("/:id", auth(["admin", "user", "trainer"]), controller.getWorkoutById);
-router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createWorkout);
 router.postAsync(
   "/add-data-exercise/:idWorkout",
   auth(["admin", "user", "trainer"]),
@@ -29,11 +28,6 @@ router.postAsync(
   auth(["admin", "user", "trainer"]),
   controller.addWorkoutsToSplits,
 );
-router.postAsync(
-  "/date/:id",
-  auth(["admin", "user", "trainer"]),
-  controller.getWorkoutByIdAndDate,
-);
 router.putAsync(
   "/names/:idTable/:idWorkout",
   auth(["admin", "user", "trainer"]),
@@ -44,18 +38,10 @@ router.putAsync(
   auth(["admin", "user", "trainer"]),
   controller.reorderWorkoutRows,
 );
-// Debe declararse ANTES de /:idTable/:idExercise/:workoutOrder (3 segmentos
-// todo-parámetro, más abajo) — si no, esa ruta genérica intercepta cualquier
-// PUT de 3 segmentos, incluida esta, antes de que Express la alcance.
 router.putAsync(
   "/split/:idSplit/order",
   auth(["admin", "user", "trainer"]),
   controller.reorderWorkoutsInSplit,
-);
-router.putAsync(
-  "/:idTable/:idExercise/:workoutOrder",
-  auth(["admin", "user", "trainer"]),
-  controller.addWorkoutsExercises,
 );
 router.putAsync(
   "/modify/one/simple/save",
@@ -92,11 +78,6 @@ router.putAsync("/deletes", auth(["admin", "user", "trainer"]), controller.delet
 router.putAsync("/paste", auth(["admin", "user", "trainer"]), controller.pasteWorkout);
 router.putAsync("/paste-exercises", auth(["admin", "user", "trainer"]), controller.pasteExercises);
 router.deleteAsync("/:id", auth(["admin", "user", "trainer"]), controller.deleteWorkout);
-router.deleteAsync(
-  "/:idWorkout/:idExercise",
-  auth(["admin", "user", "trainer"]),
-  controller.deleteWorkoutExercise,
-);
 router.deleteAsync(
   "/all/deletes/:id",
   auth(["admin", "user", "trainer"]),

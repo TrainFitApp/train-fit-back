@@ -1,7 +1,6 @@
 const express = require("@awaitjs/express");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./diet-days-controller");
-const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
@@ -19,58 +18,23 @@ router.getAsync("/timeline", auth(["admin", "user"]), controller.getMyDietTimeli
 
 // Listado global (find({}) paginado, días de todos los usuarios): solo admin.
 router.getAsync("/", auth(["admin"]), controller.getDietDays);
-// Las rutas que llevaban el id de la Diet en la URL (:id / :dietInUseId /
-// :idDiet) lo conservan a propósito aunque ya no se use: así las apps ya
-// instaladas siguen funcionando tras el refactor. El dueño sale del token.
+// Los días del propio usuario en un rango (calendario y peso diario).
+router.getAsync("/range", auth(["admin", "user"]), controller.getMyDietDaysInRange);
+// Pin de la dieta.
+router.putAsync("/pinned-note", auth(["admin", "user"]), controller.setPinnedNote);
+
+// "El día de tal fecha" del usuario del token: la fecha es la clave del
+// módulo (un día por usuario y fecha). Todas las escrituras aseguran el día
+// de esa fecha dentro de la MISMA llamada (ver diet-days-controller.js), así
+// que nunca pueden dejar dos DietDay con la misma fecha.
+router.postAsync("/date/:date", auth(["admin", "user"]), controller.getDay);
+router.deleteAsync("/date/:date", auth(["admin", "user"]), controller.deleteDay);
+router.putAsync("/date/:date/notes", auth(["admin", "user"]), controller.setNotes);
+router.putAsync("/date/:date/paste", auth(["admin", "user"]), controller.pasteDay);
 router.postAsync(
-  "/between/:id",
+  "/date/:date/meals/:mealIndex/customproducts",
   auth(["admin", "user"]),
-  controller.getDietDaysBetweenDatesByUser,
-);
-router.postAsync(
-  "/date/:id",
-  auth(["admin", "user"]),
-  controller.getDietDayByIdDietAndDate,
-);
-// Todas las rutas de "crear algo en un día" aseguran el día de esa fecha
-// dentro de la MISMA llamada (ver diet-days-controller.js): nunca crean un
-// día a ciegas, así que no pueden dejar dos DietDay con la misma fecha.
-router.postAsync("/", auth(["admin", "user"]), controller.createDietDay);
-router.postAsync(
-  "/create/on/new/:dietInUseId",
-  auth(["admin", "user"]),
-  controller.createDayWeightOnNewDietDay,
-);
-router.postAsync(
-  "/create/recipe/new/:dietInUseId",
-  auth(["admin", "user"]),
-  controller.createCustomRecipeOnNewDietDay,
-);
-router.postAsync(
-  "/:dietInUseId",
-  auth(["admin", "user"]),
-  controller.createCustomProductOnNewDietDay,
-);
-// La nota del día por fecha (el :id de la variante de abajo se ignora: el día
-// se resuelve por dueño + fecha). Lo específico primero.
-router.putAsync("/date/:date", auth(["admin", "user"]), controller.updateDietDay);
-router.putAsync("/:id", auth(["admin", "user"]), controller.updateDietDay);
-// Engancha una comida suelta a un día por ids, sin comprobar dueños. Ninguna
-// app la usa: solo admin (con "user" metía comidas en el día de cualquiera).
-router.putAsync(
-  "/:idDietDay/:idMeal",
-  auth(["admin"]),
-  controller.addDietDayMeal,
-);
-router.putAsync(
-  "/copy/paste/:id",
-  auth(["admin", "user"]),
-  controller.pasteDietDayByUser,
-);
-router.deleteAsync(
-  "/:idDiet/:idDietDay",
-  auth(["admin", "user"]),
-  controller.deleteDietDay,
+  controller.addCustomProductToDay,
 );
 
 // El cliente elige, para una fecha concreta, cuál de los menús del plan le

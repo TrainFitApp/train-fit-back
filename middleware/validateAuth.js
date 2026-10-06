@@ -1,5 +1,5 @@
-const userSchema = require("../components/users/schema");
-const TokenService = require("../services/token.service");
+const userDao = require("../components/users/user-dao");
+const TokenService = require("../components/auth/token-service");
 const { normalizeTimeZone, timeZoneOf } = require("../components/util/date-util");
 
 // La app manda su zona horaria en cada petición. Se guarda en el usuario solo
@@ -8,11 +8,21 @@ const { normalizeTimeZone, timeZoneOf } = require("../components/util/date-util"
 async function resolveTimeZone(req, user) {
   const fromHeader = normalizeTimeZone(String(req.headers?.["x-timezone"] || "").trim());
   if (fromHeader && fromHeader !== user.timezone) {
-    await userSchema.updateOne({ _id: user._id }, { $set: { timezone: fromHeader } });
+    await userDao.setTimeZone(user._id, fromHeader);
     user.timezone = fromHeader;
   }
   return timeZoneOf(user);
 }
+
+// Esta lectura se hace en CADA petición autenticada y el resultado viaja como
+// `req.user`. Se excluye lo que puede crecer y ninguna petición necesita de
+// aquí: listas de favoritos, preferencias de nutrición, ajustes del
+// entrenador y recientes ocultos (cada servicio que los usa los lee aparte).
+// Exclusión y no lista blanca: los servicios que reciben `req.user` leen
+// premium, roles, consentimientos, zona horaria… y una lista blanca rompería
+// el primero que se olvide.
+const REQUEST_USER_EXCLUDED_FIELDS =
+  "-favorites -nutritionPreferences -trainerSettings -hiddenRecentFoods -nutritionalGoals";
 
 function resolveClientFamily(req) {
   return String(req.headers?.["x-client-family"] || "").trim() || "trainfit-front";
@@ -80,7 +90,7 @@ const auth = (permissions) => {
         });
       }
 
-      const user = await userSchema.findById(decoded.sub);
+      const user = await userDao.findForRequest(decoded.sub, REQUEST_USER_EXCLUDED_FIELDS);
       if (!user) {
         return res.status(401).send({
           message: "User not found",
@@ -110,7 +120,7 @@ const auth = (permissions) => {
         currentAuth.refreshExpiresAt &&
         new Date(currentAuth.refreshExpiresAt) <= new Date()
       ) {
-        await userSchema.findByIdAndUpdate(user._id, { $unset: { auth: 1 } });
+        await userDao.clearSession(user._id);
         return res.status(401).send({
           message: "Refresh session expired",
           code: "REFRESH_EXPIRED",
@@ -119,7 +129,7 @@ const auth = (permissions) => {
       }
 
       if ((user.passwordVersion || 0) !== (decoded.pver || 0)) {
-        await userSchema.findByIdAndUpdate(user._id, { $unset: { auth: 1 } });
+        await userDao.clearSession(user._id);
         return res.status(401).send({
           message: "Session expired by password change",
           code: "PASSWORD_CHANGED",

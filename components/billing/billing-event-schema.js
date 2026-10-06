@@ -16,4 +16,6 @@ const BillingEventSchema = new mongoose.Schema(
   },
 );
 
+BillingEventSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"] });
+
 module.exports = mongoose.model("BillingEvent", BillingEventSchema);

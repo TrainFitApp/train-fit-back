@@ -5,15 +5,16 @@
 // cumplió y qué días se saltó (dentro de su semana). Los check-ins no van
 // aquí: tienen su propio historial.
 //
-// PURO: recibe los datos ya cargados (fase, contenidos persistidos, ventanas
-// de semana, DietDays y días saltados) y la fecha de hoy. La E/S vive en
-// plan-assignment-service.js#getNutritionHistory.
+// PURO: recibe los datos ya cargados (fase con su contenido, ventanas de
+// semana, DietDays y días saltados) y la fecha de hoy. La E/S vive en
+// diet-phase-service.js#getNutritionHistory.
 
 const { computeRangeAdherence } = require("../dietDays/diet-days-nutrition-util");
 const { contentMacroProfile } = require("../dietTemplates/diet-macro-profile");
 const { LOW_ADHERENCE_PCT } = require("./week-progression");
-const { overrideAt } = require("./week-content");
+const { contentAt } = require("./week-content");
 const { daysInRange } = require("../util/date-util");
+const { cutEndDate } = require("../util/phase-chain");
 
 // Tipos ordenados de "más envolvente" a "más puntual": con la misma fecha,
 // primero va lo que cierra (fin de fase), luego la semana y por último el
@@ -38,34 +39,30 @@ function weekStatus({ end, today, adherencePct }) {
 /**
  * Eventos de UNA fase.
  *
- * @param head       doc cabecera de la fase (phaseId = self)
- * @param members    docs persistidos de la fase (head incluido), por startDate asc.
- *                   El fin de la fase es el endDate del ÚLTIMO.
+ * @param phase      DietPhase con su contenido (contents por startDate asc)
+ * @param successor  la fase siguiente en la cadena, o null (util/phase-chain.js)
  * @param weeks      ventanas de semana ya calculadas (week-window.js)
- * @param days       DietDays del cliente entre head.startDate y hoy (o fin de fase)
+ * @param days       DietDays del cliente entre el inicio de la fase y hoy (o su fin)
  * @param skippedDates fechas saltadas del cliente (todas; se filtran aquí)
  * @param today      "YYYY-MM-DD"
  */
-function buildPhaseEvents({ head, members, weeks, days, skippedDates, today }) {
-  if (!head?.startDate || head.startDate > today) return [];
+function buildPhaseEvents({ phase, successor = null, weeks, days, skippedDates, today }) {
+  if (!phase?.startDate || phase.startDate > today) return [];
 
-  const phaseId = String(head._id);
-  const phaseName = head.phaseName || head.name || null;
-  const base = { phaseId, phaseName };
+  const base = { phaseId: String(phase._id), phaseName: phase.name };
 
   // Una fase cortada acaba en su endDate real; sus ventanas se calculan
   // hasta ahí y la última se recorta (la semana que estaba en marcha cuando
   // la sustituyeron no llegó a completarse).
-  const tip = members[members.length - 1] || head;
-  const phaseEnd = tip.endDate && tip.endDate < today ? tip.endDate : null;
+  const phaseEnd = phase.endDate && phase.endDate < today ? phase.endDate : null;
   const until = phaseEnd || today;
   const windows = (weeks || []).filter((w) => w.start <= until);
 
   const dayList = days || [];
-  const skippedList = (skippedDates || []).filter((date) => date >= head.startDate && date <= until);
+  const skippedList = (skippedDates || []).filter((date) => date >= phase.startDate && date <= until);
 
   const events = [];
-  events.push({ type: "phase_started", date: head.startDate, ...base });
+  events.push({ type: "phase_started", date: phase.startDate, ...base });
 
   let previousKcal = null;
   for (const w of windows) {
@@ -73,8 +70,8 @@ function buildPhaseEvents({ head, members, weeks, days, skippedDates, today }) {
     const measuredUntil = end < today ? end : today;
     const inWindow = dayList.filter((d) => d.date >= w.start && d.date <= measuredUntil);
     const adherence = computeRangeAdherence(inWindow, daysInRange(w.start, measuredUntil));
-    const override = overrideAt(members, w.start) || head;
-    const profile = profileOf(override);
+    const content = contentAt(phase.contents, w.start);
+    const profile = profileOf(content);
     const weekSkipped = skippedList.filter((date) => date >= w.start && date <= end);
 
     events.push({
@@ -85,7 +82,7 @@ function buildPhaseEvents({ head, members, weeks, days, skippedDates, today }) {
       start: w.start,
       end,
       truncated: end !== w.end,
-      overrideId: String(override._id),
+      contentId: String(content._id),
       profile,
       kcalDelta: previousKcal == null ? null : Math.round(profile.kcal - previousKcal),
       adherencePct: adherence.percentage,
@@ -102,7 +99,8 @@ function buildPhaseEvents({ head, members, weeks, days, skippedDates, today }) {
       type: "phase_ended",
       date: phaseEnd,
       ...base,
-      status: tip.status === "superseded" ? "superseded" : "finished",
+      // Sustituida si la cortó la siguiente; terminada si acabó por su fecha.
+      status: successor && phase.endDate === cutEndDate(phase, successor.startDate) ? "superseded" : "finished",
       weeksCount: windows.length,
     });
   }

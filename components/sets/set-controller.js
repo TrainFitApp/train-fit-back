@@ -1,11 +1,8 @@
-const setModel = require("./set-service");
+const setService = require("./set-service");
 const tableAccess = require("../tables/table-access");
 
-// Replanteamiento MVP (rutinas) — igual que en workout/customExercise, se
-// cierra el hueco de propiedad al abrir el módulo a "trainer". createSet/
-// createSets quedan sin comprobación: crean un documento Set aislado, sin
-// dueño hasta que se adjunta a un CustomExercise vía
-// addSetToCustomExercise (ya protegido en custom-exercise-controller.js).
+// Toda serie vive dentro de una sesión de una rutina: el permiso es el de
+// esa rutina (mismo criterio que sesiones y ejercicios).
 async function assertCanAccessSetId(req, res, idSet) {
   const table = await tableAccess.findTableOwningSet(idSet);
   if (!table) {
@@ -27,8 +24,6 @@ const PRESCRIBED_SET_FIELDS = [
   "expectedRir",
   "expectedTime",
   "expectedDistance",
-  "expectedMin",
-  "expectedSec",
 ];
 
 function stripPrescribedFieldsForAssignedOwner(req, table, body) {
@@ -42,25 +37,6 @@ function stripPrescribedFieldsForAssignedOwner(req, table, body) {
 }
 
 module.exports = {
-  // NOTA: setModel.getSetById no existe (ni en set-service.js ni en
-  // set-dao.js) — este endpoint ya fallaba con 500 antes de este cambio,
-  // preexistente y fuera de alcance. La comprobación de propiedad se añade
-  // igualmente por consistencia con el resto del módulo.
-  async getSetById(req, res) {
-    if (!(await assertCanAccessSetId(req, res, req.params.id))) return;
-    const set = await setModel.getSetById(req.params.id);
-    return res.send(set);
-  },
-
-  async createSet(req, res) {
-    const set = await setModel.createSet(req.body);
-    return res.send(set);
-  },
-  async createSets(req, res) {
-    const sets = await setModel.createSets(req.body);
-    return res.send(sets);
-  },
-
   // 2026-09 — SIN rejectIfAssignedTableLockedForOwner a propósito, a
   // diferencia del resto de módulos de esta cadena. `setService.updateSet`
   // es como el cliente registra lo que REALMENTE hizo (reps/peso reales,
@@ -85,7 +61,8 @@ module.exports = {
   async updateSet(req, res) {
     const table = await assertCanAccessSetId(req, res, req.body?._id);
     if (!table) return;
-    const set = await setModel.updateSet(stripPrescribedFieldsForAssignedOwner(req, table, req.body));
+    const set = await setService.updateSet(stripPrescribedFieldsForAssignedOwner(req, table, req.body));
+    if (!set) return res.status(404).send({ message: "Serie no encontrada" });
     return res.send(set);
   },
 
@@ -98,7 +75,7 @@ module.exports = {
     const table = await assertCanAccessSetId(req, res, req.params.id);
     if (!table) return;
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    await setModel.deleteSet(req.params.id);
+    await setService.deleteSet(req.params.id);
     res.sendStatus(204);
   },
 };

@@ -8,6 +8,22 @@ const CoachAlert = require("./coach-alert-schema");
 const PRIORITY_RANK = { high: 0, medium: 1, low: 2 };
 
 module.exports = {
+  // Alertas abiertas por cliente de la cartera ({ total, high }): un recuento
+  // en Mongo, sin traer los documentos.
+  async countOpenByClient(trainerId) {
+    const rows = await CoachAlert.aggregate([
+      { $match: { trainerId: new mongoose.Types.ObjectId(String(trainerId)), status: "open" } },
+      {
+        $group: {
+          _id: "$clientId",
+          total: { $sum: 1 },
+          high: { $sum: { $cond: [{ $eq: ["$priority", "high"] }, 1, 0] } },
+        },
+      },
+    ]);
+    return new Map(rows.map((row) => [String(row._id), { total: row.total, high: row.high }]));
+  },
+
   // Abiertas del profesional en UN ámbito, como dedupeKey -> _id: lo que
   // planAlertWrites necesita para decidir entre insertar y refrescar. Una
   // consulta por evaluación en vez de una por alerta candidata.

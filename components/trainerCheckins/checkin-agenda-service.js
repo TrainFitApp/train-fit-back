@@ -7,16 +7,17 @@
 // su día hasta la víspera de la siguiente — dentro de esa ventana el cliente
 // puede escribirla y reescribirla; fuera, ni entrar.
 
-const Schedule = require("./checkin-schedule-schema");
-const Response = require("./checkin-response-schema");
+const checkinDao = require("./checkin-dao");
+const checkinScheduleDao = require("./checkin-schedule-dao");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { ownViews, checkinWritableFields } = require("../anthropometry/anthropometry-origin");
 const notificationDao = require("../notifications/notification-dao");
 const { CHECKIN_FIELDS_BY_KEY, isPlausibleValue, scaleLevelsFor } = require("./checkin-field-catalog");
-const { validateCustomAnswer, normalizeCustomAnswer } = require("./checkin-custom-question");
+const { validateCustomAnswer, normalizeCustomAnswer } = require("../forms/custom-question");
 const { prefillWindow, anthropometryPrefill, changedAnthropometryFields } = require("./checkin-prefill");
 const { occurrenceDatesBetween, occurrenceCovering, historyOccurrences } = require("./checkin-schedule-dates");
 const { addDaysToIsoDate } = require("../util/date-util");
+const { todayForUser } = require("../users/user-time-zone");
 
 // `today` en todas las funciones = hoy en la zona horaria del CLIENTE (es su
 // check-in): lo resuelve quien llama, ver util/date-util.js.
@@ -89,8 +90,8 @@ function entryOfResponse(response) {
 /** Agenda de un cliente entre dos fechas, con las respuestas ya unidas. */
 async function agendaFor(trainerId, clientId, from, to, today) {
   const filtro = trainerId ? { trainerId, clientId } : { clientId };
-  const schedules = await Schedule.find(filtro).sort({ createdAt: 1 }).lean();
-  const responses = await Response.find({ ...filtro, occurrenceDate: { $gte: from, $lte: to } }).lean();
+  const schedules = await checkinScheduleDao.listWhere(filtro);
+  const responses = await checkinDao.listResponsesWhere({ ...filtro, occurrenceDate: { $gte: from, $lte: to } });
   const byKey = new Map(responses.map((r) => [`${r.scheduleId}:${r.occurrenceDate}`, r]));
 
   const entries = [];
@@ -115,10 +116,10 @@ async function scheduleHistory(schedule, { before = null, limit = 50, today } = 
   const { occurrences, nextBefore, total } = historyOccurrences(schedule, { before, limit, today });
   if (!occurrences.length) return { entries: [], nextBefore: null, total };
 
-  const responses = await Response.find({
+  const responses = await checkinDao.listResponsesWhere({
     scheduleId: schedule._id,
     occurrenceDate: { $gte: occurrences[occurrences.length - 1].date, $lte: occurrences[0].date },
-  }).lean();
+  });
   const byDate = new Map(responses.map((r) => [r.occurrenceDate, r]));
 
   return {
@@ -135,12 +136,12 @@ async function scheduleHistory(schedule, { before = null, limit = 50, today } = 
 async function openForClient(clientId, today, trainerIds = null) {
   const filtro = { clientId, active: true };
   if (trainerIds) filtro.trainerId = { $in: trainerIds };
-  const schedules = await Schedule.find(filtro).sort({ createdAt: 1 }).lean();
+  const schedules = await checkinScheduleDao.listWhere(filtro);
   const out = [];
   for (const schedule of schedules) {
     const occurrence = occurrenceCovering(schedule, today);
     if (!occurrence || !isOpen(occurrence, today)) continue;
-    const response = await Response.findOne({ scheduleId: schedule._id, occurrenceDate: occurrence.date }).lean();
+    const response = await checkinDao.findOccurrenceResponse(schedule._id, occurrence.date);
     out.push({ schedule, occurrence, response, entry: entryOf(schedule, occurrence, response, today) });
   }
   return out;
@@ -199,14 +200,11 @@ function missedOccurrences(schedules, answered, today, sinceDays = 60) {
 
 /** Abiertas y cerradas sin respuesta de un cliente en los últimos `sinceDays`. */
 async function summaryFor(trainerId, clientId, sinceDays, today) {
-  const schedules = await Schedule.find({ trainerId, clientId }).lean();
-  const responses = await Response.find({
-    trainerId,
-    clientId,
-    occurrenceDate: { $gte: addDaysToIsoDate(today, -sinceDays) },
-  })
-    .select("scheduleId occurrenceDate")
-    .lean();
+  const schedules = await checkinScheduleDao.listWhere({ trainerId, clientId });
+  const responses = await checkinDao.listResponsesWhere(
+    { trainerId, clientId, occurrenceDate: { $gte: addDaysToIsoDate(today, -sinceDays) } },
+    "scheduleId occurrenceDate",
+  );
   const answered = new Set(responses.map((r) => `${r.scheduleId}:${r.occurrenceDate}`));
   const { open, missed } = missedOccurrences(schedules, answered, today, sinceDays);
   return { open, missed };
@@ -216,7 +214,7 @@ async function summaryFor(trainerId, clientId, sinceDays, today) {
 async function openUnanswered(schedule, today) {
   const occurrence = occurrenceCovering(schedule, today);
   if (!occurrence || !isOpen(occurrence, today)) return null;
-  const answered = await Response.exists({ scheduleId: schedule._id, occurrenceDate: occurrence.date });
+  const answered = await checkinDao.findOccurrenceResponse(schedule._id, occurrence.date, "_id");
   return answered ? null : occurrence;
 }
 
@@ -310,37 +308,33 @@ async function validatePhotoAnswers(clientId, values) {
  * composición corporal.
  */
 async function saveResponse({ schedule, occurrence, values, today }) {
-  const { weekForClientAt } = require("../planAssignments/week-service");
+  const { weekForClientAt } = require("../dietPhases/week-service");
   const week = await weekForClientAt(schedule.clientId, occurrence.date);
   const prefill = await prefillFor(schedule.clientId, schedule, occurrence, today);
   const now = new Date();
 
-  const previous = await Response.findOne({ scheduleId: schedule._id, occurrenceDate: occurrence.date }).lean();
-  const response = await Response.findOneAndUpdate(
-    { scheduleId: schedule._id, occurrenceDate: occurrence.date },
-    {
-      $set: {
-        values,
-        updatedAt: now,
-        seenByTrainer: false,
-        status: "responded",
-        reviewedAt: null,
-        name: schedule.name,
-        enabledFields: schedule.enabledFields || [],
-        requiredFields: schedule.requiredFields || [],
-        customQuestions: schedule.customQuestions || [],
-        ...(week
-          ? { week: { phaseId: week.phaseId, number: week.number, start: week.start, end: week.end } }
-          : { week: undefined }),
-      },
-      $setOnInsert: {
-        trainerId: schedule.trainerId,
-        clientId: schedule.clientId,
-        respondedAt: now,
-      },
+  const previous = await checkinDao.findOccurrenceResponse(schedule._id, occurrence.date);
+  const response = await checkinDao.upsertOccurrenceResponse(schedule._id, occurrence.date, {
+    $set: {
+      values,
+      updatedAt: now,
+      seenByTrainer: false,
+      status: "responded",
+      reviewedAt: null,
+      name: schedule.name,
+      enabledFields: schedule.enabledFields || [],
+      requiredFields: schedule.requiredFields || [],
+      customQuestions: schedule.customQuestions || [],
+      ...(week
+        ? { week: { phaseId: week.phaseId, number: week.number, start: week.start, end: week.end } }
+        : { week: undefined }),
     },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
-  ).lean();
+    $setOnInsert: {
+      trainerId: schedule.trainerId,
+      clientId: schedule.clientId,
+      respondedAt: now,
+    },
+  });
 
   // La composición corporal alimenta las gráficas de peso: se escribe con la
   // fecha en que se responde, no con la de la solicitud. Lo que llegó del
@@ -371,7 +365,27 @@ async function saveResponse({ schedule, occurrence, values, today }) {
   return { response, anthropometry, updated: !!previous };
 }
 
+/**
+ * La agenda de un cliente para la ficha: programaciones (con su próxima
+ * fecha), ocurrencias del rango y todas sus respuestas. Las respuestas viajan
+ * con la MISMA forma que las entradas de la agenda (no el documento crudo):
+ * "Por revisar" y la comparación entre respuestas leen `responseId`/`date`
+ * igual que el calendario.
+ */
+async function agendaView(trainerId, clientId, from, to) {
+  const today = await todayForUser(clientId);
+  const { schedules, entries } = await agendaFor(trainerId, clientId, from, to, today);
+  const responses = (await checkinDao.listResponses(trainerId, clientId)).map(entryOfResponse);
+  return {
+    schedules: schedules.map((schedule) => ({ ...schedule, nextDate: nextDateOf(schedule, today) })),
+    entries,
+    responses,
+    reviewCount: responses.filter((response) => response.status === "responded").length,
+  };
+}
+
 module.exports = {
+  agendaView,
   missedOccurrences,
   summaryFor,
   openUnanswered,

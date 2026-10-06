@@ -10,7 +10,7 @@ const h = require("./support/harness");
 
 const ctx = h.setup();
 
-const searchFoods = (user, body) => ctx.post(user, "/meals/search/all", { page: 0, ...body });
+const searchFoods = (user, body) => ctx.post(user, "/meals/search", { page: 0, ...body });
 const searchProducts = (user, search, page = 0) => ctx.post(user, `/products/search?page=${page}&limit=10`, { search });
 const names = (list) => list.map((p) => p.name);
 
@@ -128,7 +128,7 @@ test("un producto ajeno que el usuario ya usa (reciente) o marcó favorito SÍ s
   const asRecent = names(await searchFoods(user, { search: "batido coach", userId: user.id, recentIds: [String(trainerFood._id)] }));
   assert.deepEqual(asRecent, ["Batido del coach"]);
 
-  await ctx.put(user, "/users/favProduct", { idUser: user.id, idProduct: String(trainerFood._id) });
+  await ctx.call(user, "PUT", `/favorites/products/${trainerFood._id}`);
   assert.deepEqual(names(await searchFoods(user, { search: "batido coach", userId: user.id })), ["Batido del coach"]);
   // Y en el filtro de favoritos.
   assert.deepEqual(names(await searchFoods(user, { search: "", userId: user.id, favFilter: true })), ["Batido del coach"]);
@@ -136,7 +136,7 @@ test("un producto ajeno que el usuario ya usa (reciente) o marcó favorito SÍ s
 
 test("recentIds basura o de más se ignoran sin romper la búsqueda", async () => {
   const user = await ctx.makeClient();
-  const res = await ctx.call(user, "POST", "/meals/search/all", {
+  const res = await ctx.call(user, "POST", "/meals/search", {
     search: "leche",
     userId: user.id,
     recentIds: ["no-es-id", { $gt: "" }, ...Array.from({ length: 80 }, () => String(ctx.oid()))],
@@ -264,45 +264,64 @@ test("código de barras: primero el propio, después el global", async () => {
   const user = await ctx.makeClient();
   const code = "8412345678905";
   await Product.create({ name: "Galletas globales", code });
-  let res = await ctx.get(user, `/products/code/${user.id}/${code}`);
+  let res = await ctx.get(user, `/products/code/${code}`);
   assert.equal(res.product.name, "Galletas globales");
   assert.equal(res.isOwn, false);
   await Product.create({ name: "Mis galletas", code, userId: user._id });
-  res = await ctx.get(user, `/products/code/${user.id}/${code}`);
+  res = await ctx.get(user, `/products/code/${code}`);
   assert.equal(res.product.name, "Mis galletas");
   assert.equal(res.isOwn, true);
-  res = await ctx.get(user, `/products/code/${user.id}/0000000000000`);
+  res = await ctx.get(user, `/products/code/0000000000000`);
   assert.equal(res.product, null);
 });
 
-test("borrar un producto propio lo quita de comidas, recetas, plantillas de dieta y favoritos", async () => {
+// Decisión 2026-10: borrar un producto no borra historial. Cada alimento que
+// lo usaba (diario, recetas, plantillas) se queda como adición rápida con el
+// nombre y los valores de ese momento; lo que ya sobrescribía manda.
+test("borrar un producto propio: sale de favoritos y donde se usaba queda como adición rápida con sus valores", async () => {
   const user = await ctx.makeClient();
-  const created = await ctx.post(user, "/products", { name: "Producto efímero", userId: user.id, energyKcal100g: 10 });
-  await ctx.put(user, "/users/favProduct", { idUser: user.id, idProduct: String(created._id) });
-  // En el diario.
-  await ctx.post(user, "/dietdays/x", { date: "2026-02-01", indexMeal: 0, customProduct: { quantity: 50, product: { _id: String(created._id), name: created.name } } });
-  // En una receta y en una plantilla de dieta (arrays anidados).
-  const CustomProduct = ctx.model("CustomProduct");
-  const inRecipe = await CustomProduct.create({ product: created._id, quantity: 20 });
-  const recipe = await ctx.model("Recipe").create({ name: "Receta con efímero", userId: user._id, customProducts: [inRecipe._id] });
-  const inTemplate = await CustomProduct.create({ product: created._id, quantity: 30 });
-  const keeper = await CustomProduct.create({ product: (await Product.findOne({ name: "Pollo" }))._id, quantity: 150 });
+  const created = await ctx.post(user, "/products", { name: "Producto efímero", userId: user.id, energyKcal100g: 10, protein100g: 3 });
+  await ctx.call(user, "PUT", `/favorites/products/${created._id}`);
+  // En el diario, con un valor propio.
+  await ctx.post(user, `/dietdays/date/2026-02-01/meals/0/customproducts`, { customProduct: { quantity: 50, energyKcal100g: 12, product: { _id: String(created._id), name: created.name } } });
+  // En una receta y en una plantilla de dieta (arrays anidados, embebidos).
+  const pollo = await Product.findOne({ name: "Pollo" });
+  const recipe = await ctx.model("Recipe").create({ name: "Receta con efímero", userId: user._id, customProducts: [{ product: created._id, quantity: 20 }] });
   const template = await ctx.model("DietTemplate").create({
     trainerId: ctx.oid(),
     name: "Plantilla con efímero",
-    menus: [{ name: "Menú 1", meals: [{ slot: "Desayuno", alternatives: [{ label: "A", customProducts: [inTemplate._id, keeper._id] }] }] }],
+    menus: [{ name: "Menú 1", meals: [{ slot: "Desayuno", alternatives: [{ label: "A", customProducts: [{ product: created._id, quantity: 30 }, { product: pollo._id, quantity: 150 }] }] }] }],
+  });
+  // Y en la fase de dieta de un cliente (contenido versionado dentro).
+  const phase = await ctx.model("DietPhase").create({
+    clientId: user._id,
+    name: "Fase con efímero",
+    startDate: "2026-02-01",
+    contents: [{ startDate: "2026-02-01", menus: [{ name: "Menú 1", meals: [{ slot: "Cena", alternatives: [{ label: "", customProducts: [{ product: created._id, quantity: 40 }] }] }] }] }],
   });
 
   assert.equal((await ctx.call(user, "DELETE", `/products/${created._id}`)).status, 204);
+  assert.equal(await Product.countDocuments({ _id: created._id }), 0);
 
-  const day = (await ctx.post(user, "/dietdays/date/x", { date: "2026-02-01" })).dietDay;
-  assert.equal(day.meals[0].customProducts.length, 0, "sale del diario");
-  assert.equal(await CustomProduct.countDocuments({ product: created._id }), 0, "sus envoltorios se borran");
-  assert.deepEqual((await ctx.model("Recipe").findById(recipe._id).lean()).customProducts, []);
-  const storedTemplate = await ctx.model("DietTemplate").findById(template._id).lean();
-  assert.deepEqual(storedTemplate.menus[0].meals[0].alternatives[0].customProducts.map(String), [String(keeper._id)],
-    "sale de la plantilla y lo demás se queda");
-  assert.deepEqual((await ctx.get(user, "/auth/me")).user.archivedProducts, []);
+  const day = (await ctx.post(user, `/dietdays/date/2026-02-01`, {})).dietDay;
+  const kept = day.meals[0].customProducts[0];
+  assert.equal(kept.quickAdd, true, "sigue en el diario como adición rápida");
+  assert.equal(kept.product ?? null, null);
+  assert.equal(kept.name, "Producto efímero");
+  assert.equal(kept.energyKcal100g, 12, "lo que ya sobrescribía manda");
+  assert.equal(kept.protein100g, 3, "lo demás, del producto en el momento de borrarlo");
+  assert.equal(kept.quantity, 50);
+
+  const storedRecipe = await ctx.model("Recipe").findById(recipe._id).lean();
+  assert.equal(storedRecipe.customProducts[0].quickAdd, true);
+  assert.equal(storedRecipe.customProducts[0].name, "Producto efímero");
+  const alternative = (await ctx.model("DietTemplate").findById(template._id).lean()).menus[0].meals[0].alternatives[0];
+  assert.equal(alternative.customProducts[0].quickAdd, true);
+  assert.equal(String(alternative.customProducts[1].product), String(pollo._id), "lo demás de la plantilla no se toca");
+  const inPhase = (await ctx.model("DietPhase").findById(phase._id).lean()).contents[0].menus[0].meals[0].alternatives[0].customProducts[0];
+  assert.equal(inPhase.quickAdd, true);
+  assert.equal(inPhase.name, "Producto efímero");
+  assert.deepEqual((await ctx.get(user, "/auth/me")).user.favorites.products, []);
 });
 
 // --- Recetas -----------------------------------------------------------------------
@@ -344,7 +363,7 @@ test("crear y apuntar una receta en una fecha nueva en una sola llamada estrena 
   const user = await ctx.makeClient();
   const result = await composeRecipe(user, "Gachas", { customRecipe: { quantity: 250 }, context: { indexMeal: 0, currentDate: "2026-02-10", dietInUseId: String(ctx.oid()) } });
   assert.ok(result.dietDay);
-  const day = (await ctx.post(user, "/dietdays/date/x", { date: "2026-02-10" })).dietDay;
+  const day = (await ctx.post(user, `/dietdays/date/2026-02-10`, {})).dietDay;
   assert.equal(day.meals[0].customRecipes.length, 1);
   assert.equal(day.meals[0].customRecipes[0].recipe.name, "Gachas");
   assert.equal(await ctx.count("DietDay", { userId: user._id }), 1, "sin día huérfano con otro dueño");
@@ -372,13 +391,15 @@ test("el admin crea recetas verificadas (globales) también desde /recipes/compo
   assert.equal(recipe.userId ?? null, null);
 });
 
-test("receta favorita: alternar desde cualquier rol y verla en la pestaña de favoritas", async () => {
+test("receta favorita: marcar y desmarcar, y verla en la pestaña de favoritas", async () => {
   const user = await ctx.makeClient();
   const recipe = (await composeRecipe(user, "Bowl favorito")).recipe;
-  assert.equal((await ctx.post(user, `/recipes/${recipe._id}/archive`)).isFavorite, true);
-  assert.deepEqual(names(await ctx.get(user, "/recipes/archived")), ["Bowl favorito"]);
-  assert.equal((await ctx.post(user, `/recipes/${recipe._id}/archive`)).isFavorite, false);
-  assert.deepEqual(await ctx.get(user, "/recipes/archived"), []);
+  assert.equal((await ctx.call(user, "PUT", `/favorites/recipes/${recipe._id}`)).status, 204);
+  assert.equal((await ctx.call(user, "PUT", `/favorites/recipes/${recipe._id}`)).status, 204, "idempotente");
+  assert.deepEqual((await ctx.get(user, "/auth/me")).user.favorites.recipes.map(String), [String(recipe._id)]);
+  assert.deepEqual(names(await ctx.get(user, "/recipes/search?fav=true")), ["Bowl favorito"]);
+  assert.equal((await ctx.call(user, "DELETE", `/favorites/recipes/${recipe._id}`)).status, 204);
+  assert.deepEqual(await ctx.get(user, "/recipes/search?fav=true"), []);
 });
 
 test("una receta del entrenador marcada como favorita por el cliente sale en sus favoritas", async () => {
@@ -388,8 +409,8 @@ test("una receta del entrenador marcada como favorita por el cliente sale en sus
   // leer (si no, las favoritas servirían para leer recetas privadas ajenas).
   await ctx.relate(trainer, client, { scope: "nutrition" });
   const recipe = (await composeRecipe(trainer, "Receta del coach")).recipe;
-  await ctx.post(client, `/recipes/${recipe._id}/archive`);
-  assert.deepEqual(names(await ctx.get(client, "/recipes/archived")), ["Receta del coach"]);
+  await ctx.call(client, "PUT", `/favorites/recipes/${recipe._id}`);
+  assert.deepEqual(names(await ctx.get(client, "/recipes/search?fav=true")), ["Receta del coach"]);
 });
 
 test("editar receta: solo su dueño (o admin); el cambio de ingredientes se ve en la receta", async () => {
@@ -403,21 +424,30 @@ test("editar receta: solo su dueño (o admin); el cambio de ingredientes se ve e
   assert.equal((await ctx.call(owner, "PUT", `/recipes/${ctx.oid()}`, { name: "x" })).status, 404);
 });
 
-test("borrar receta: la quita del diario y de los favoritos, y borra sus ingredientes", async () => {
-  const user = await ctx.makeClient();
+// Decisión 2026-10: una receta que alguien tiene en un plato no se borra:
+// queda sin dueño ni verificar (no sale en búsquedas) y esos platos se siguen
+// pintando. Sin uso, se borra de verdad.
+test("borrar receta: sale de favoritos; usada en el diario se queda sin dueño y el plato sigue; sin uso se borra", async () => {
+  const user = await ctx.makeClient({ fields: { premium: { entitled: true, plan: "monthly", expiresAt: new Date(Date.now() + 86400000) } } });
   const { recipe } = await composeRecipe(user, "Receta a borrar", { customRecipe: { quantity: 100 }, context: { indexMeal: 1, currentDate: "2026-02-20" } });
-  await ctx.post(user, `/recipes/${recipe._id}/archive`);
-  const ingredientIds = (await ctx.model("Recipe").findById(recipe._id).lean()).customProducts;
+  await ctx.call(user, "PUT", `/favorites/recipes/${recipe._id}`);
 
   const other = await ctx.makeClient();
   assert.equal((await ctx.call(other, "DELETE", `/recipes/${recipe._id}`)).status, 403);
   assert.equal((await ctx.call(user, "DELETE", `/recipes/${recipe._id}`)).status, 200);
 
-  const day = (await ctx.post(user, "/dietdays/date/x", { date: "2026-02-20" })).dietDay;
-  assert.equal(day.meals[1].customRecipes.length, 0);
-  assert.equal(await ctx.count("CustomRecipe", { recipe: recipe._id }), 0);
-  assert.equal(await ctx.count("CustomProduct", { _id: { $in: ingredientIds } }), 0);
-  assert.deepEqual((await ctx.get(user, "/auth/me")).user.archivedRecipes, []);
+  const day = (await ctx.post(user, `/dietdays/date/2026-02-20`, {})).dietDay;
+  assert.equal(day.meals[1].customRecipes.length, 1, "el plato del historial sigue");
+  assert.equal(day.meals[1].customRecipes[0].recipe.name, "Receta a borrar");
+  const stored = await ctx.model("Recipe").findById(recipe._id).lean();
+  assert.equal(stored.userId, undefined, "sin dueño");
+  assert.equal(stored.verified, false);
+  assert.ok(!names(await ctx.get(user, "/recipes/search?search=borrar")).includes("Receta a borrar"));
+  assert.deepEqual((await ctx.get(user, "/auth/me")).user.favorites.recipes, []);
+
+  const unused = (await composeRecipe(user, "Receta sin uso")).recipe;
+  assert.equal((await ctx.call(user, "DELETE", `/recipes/${unused._id}`)).status, 200);
+  assert.equal(await ctx.count("Recipe", { _id: unused._id }), 0);
 });
 
 test("nadie más que el dueño puede añadir o quitar ingredientes de una receta (ni de una verificada)", async () => {
@@ -425,24 +455,26 @@ test("nadie más que el dueño puede añadir o quitar ingredientes de una receta
   const attacker = await ctx.makeClient();
   const recipe = (await composeRecipe(owner, "Receta blindada")).recipe;
   const ingredient = (await ctx.model("Recipe").findById(recipe._id).lean()).customProducts[0];
-  await ctx.call(attacker, "DELETE", `/recipes/${recipe._id}/customproducts/${ingredient}`);
-  await ctx.call(attacker, "POST", `/recipes/${recipe._id}/customproducts/${ctx.oid()}`);
+  await ctx.call(attacker, "DELETE", `/recipes/${recipe._id}/customproducts/${ingredient._id}`);
+  // Añadir un ingrediente "por id" ya no existe: van dentro de la receta.
+  assert.equal((await ctx.call(attacker, "POST", `/recipes/${recipe._id}/customproducts/${ctx.oid()}`)).status, 404);
   const stored = await ctx.model("Recipe").findById(recipe._id).lean();
-  assert.deepEqual(stored.customProducts.map(String), [String(ingredient)]);
+  assert.deepEqual(stored.customProducts.map((item) => String(item._id)), [String(ingredient._id)]);
 });
 
-test("borrar una receta global usada en una plantilla de dieta no deja referencias rotas en la plantilla", async () => {
+test("borrar una receta global usada en una plantilla de dieta: la plantilla la sigue pintando", async () => {
   const admin = await ctx.makeAdmin({ roles: ["admin", "user"] });
   const recipe = await ctx.post(admin, "/recipes", { name: "Global en plantilla", verified: true });
-  const cr = await ctx.model("CustomRecipe").create({ recipe: recipe._id, quantity: 100 });
   const template = await ctx.model("DietTemplate").create({
     trainerId: ctx.oid(),
     name: "Usa receta global",
-    menus: [{ name: "M", meals: [{ slot: "Comida", alternatives: [{ label: "A", customRecipes: [cr._id] }] }] }],
+    menus: [{ name: "M", meals: [{ slot: "Comida", alternatives: [{ label: "A", customRecipes: [{ recipe: recipe._id, quantity: 100 }] }] }] }],
   });
   await ctx.del(admin, `/recipes/${recipe._id}`);
-  const stored = await ctx.model("DietTemplate").findById(template._id).lean();
-  assert.deepEqual(stored.menus[0].meals[0].alternatives[0].customRecipes, []);
+  const stored = await ctx.model("DietTemplate").findById(template._id);
+  const customRecipe = stored.menus[0].meals[0].alternatives[0].customRecipes[0];
+  assert.equal(customRecipe.recipe.name, "Global en plantilla", "sin referencias rotas");
+  assert.equal((await ctx.model("Recipe").findById(recipe._id).lean()).verified, false, "ya no es del catálogo");
 });
 
 // --- Script de índices --------------------------------------------------------------

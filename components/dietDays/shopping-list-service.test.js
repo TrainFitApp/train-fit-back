@@ -30,8 +30,9 @@ function menu(name, meals) {
   return { name, meals };
 }
 
+// Una fase con una sola versión de contenido (la del inicio).
 function plan(_id, startDate, endDate, menus) {
-  return { _id, name: `Plan ${_id}`, startDate, endDate, menus };
+  return { _id, name: `Plan ${_id}`, startDate, endDate, contents: [{ _id, startDate, menus }] };
 }
 
 const POLLO = product("Pollo", 150, "p1");
@@ -46,8 +47,8 @@ function oneMenuPlan() {
 
 test("buildShoppingList", async (t) => {
   await t.test("1 semana = cantidad por día × 7, y 2 semanas el doble", () => {
-    const week = buildShoppingList({ from: "2026-09-28", to: "2026-10-04", plans: [oneMenuPlan()], marks: [] });
-    const twoWeeks = buildShoppingList({ from: "2026-09-28", to: "2026-10-11", plans: [oneMenuPlan()], marks: [] });
+    const week = buildShoppingList({ from: "2026-09-28", to: "2026-10-04", phases: [oneMenuPlan()], marks: [] });
+    const twoWeeks = buildShoppingList({ from: "2026-09-28", to: "2026-10-11", phases: [oneMenuPlan()], marks: [] });
 
     assert.deepEqual(week.items, [
       { name: "Pollo", quantity: 1050, dayCount: 7 },
@@ -59,16 +60,16 @@ test("buildShoppingList", async (t) => {
 
   await t.test("no hace falta que el cliente haya elegido menú: sale del plan", () => {
     // Con los DietDay materializados, los días sin menú elegido salían vacíos.
-    const { daysWithPlan } = buildShoppingList({ from: "2026-09-28", to: "2026-09-30", plans: [oneMenuPlan()], marks: [] });
+    const { daysWithPlan } = buildShoppingList({ from: "2026-09-28", to: "2026-09-30", phases: [oneMenuPlan()], marks: [] });
     assert.equal(daysWithPlan, 3);
   });
 
   await t.test("los días saltados y los que no cubre ningún plan no se compran", () => {
-    const late = plan("A", "2026-09-30", null, oneMenuPlan().menus);
+    const late = plan("A", "2026-09-30", null, oneMenuPlan().contents[0].menus);
     const { daysWithPlan, items } = buildShoppingList({
       from: "2026-09-28",
       to: "2026-10-04",
-      plans: [late],
+      phases: [late],
       marks: [{ date: "2026-10-01", skipped: true }],
     });
     // 30/09..04/10 = 5 días, menos el saltado.
@@ -77,7 +78,7 @@ test("buildShoppingList", async (t) => {
   });
 
   await t.test("sin plan devuelve una lista vacía, no revienta", () => {
-    assert.deepEqual(buildShoppingList({ from: "2026-09-28", to: "2026-09-28", plans: [], marks: [] }), {
+    assert.deepEqual(buildShoppingList({ from: "2026-09-28", to: "2026-09-28", phases: [], marks: [] }), {
       items: [],
       daysWithPlan: 0,
       segments: [],
@@ -87,14 +88,16 @@ test("buildShoppingList", async (t) => {
 
 test("buildShoppingSegments", async (t) => {
   await t.test("una semana preparada tapa al contenido abierto desde su lunes", () => {
-    const open = oneMenuPlan();
-    const nextWeek = plan("B", "2026-10-05", null, [
-      menu("Menú 1", [{ slot: "Comida", alternatives: [alt([PAVO])] }]),
-    ]);
-    const segments = buildShoppingSegments({ from: "2026-09-28", to: "2026-10-11", plans: [open, nextWeek], marks: [] });
+    const phase = oneMenuPlan();
+    phase.contents.push({
+      _id: "B",
+      startDate: "2026-10-05",
+      menus: [menu("Menú 1", [{ slot: "Comida", alternatives: [alt([PAVO])] }])],
+    });
+    const segments = buildShoppingSegments({ from: "2026-09-28", to: "2026-10-11", phases: [phase], marks: [] });
 
     assert.deepEqual(
-      segments.map((s) => [s.planId, s.from, s.to, s.days]),
+      segments.map((s) => [s.id, s.from, s.to, s.days]),
       [
         ["A", "2026-09-28", "2026-10-04", 7],
         ["B", "2026-10-05", "2026-10-11", 7],
@@ -110,7 +113,7 @@ test("buildShoppingSegments", async (t) => {
     const [segment] = buildShoppingSegments({
       from: "2026-09-28",
       to: "2026-10-04",
-      plans: [twoMenus],
+      phases: [twoMenus],
       marks: [
         { date: "2026-09-28", menuName: "M2" },
         { date: "2026-09-29", menuName: "M2" },
@@ -133,7 +136,7 @@ test("buildShoppingSegments", async (t) => {
         { slot: "Comida", alternatives: [alt([POLLO], { label: "Pollo" }), alt([]), alt([PAVO], { label: "Pavo" })] },
       ]),
     ]);
-    const [segment] = buildShoppingSegments({ from: "2026-09-28", to: "2026-09-28", plans: [withEmpty], marks: [] });
+    const [segment] = buildShoppingSegments({ from: "2026-09-28", to: "2026-09-28", phases: [withEmpty], marks: [] });
     assert.deepEqual(segment.menus[0].meals.map((m) => m.slot), ["Comida"]);
     assert.deepEqual(segment.menus[0].meals[0].alternatives.map((a) => a.label), ["Pollo", "Pavo"]);
   });
@@ -147,7 +150,7 @@ test("aggregateShopping", async (t) => {
     ]),
     menu("M2", [{ slot: "Comida", alternatives: [alt([ARROZ])] }]),
   ]);
-  const segments = () => buildShoppingSegments({ from: "2026-09-28", to: "2026-10-04", plans: [twoMenus], marks: [] });
+  const segments = () => buildShoppingSegments({ from: "2026-09-28", to: "2026-10-04", phases: [twoMenus], marks: [] });
 
   await t.test("aplica los días elegidos por menú y la alternativa de cada comida", () => {
     const items = aggregateShopping(segments(), {

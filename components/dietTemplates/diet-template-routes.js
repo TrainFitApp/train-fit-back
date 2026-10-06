@@ -23,9 +23,6 @@ router.postAsync(
   suggestionController.suggest
 );
 
-// Aplicar una plantilla a un cliente concreto vive ahora en
-// planAssignments/plan-assignment-routes.js (Fase 8) — este router ya no
-// registra esa ruta legacy (leía customProducts/customRecipes sueltos, shape
-// sustituido por alternatives[] en la Fase 9).
+// Aplicar una plantilla a un cliente es crear una fase: dietPhases/diet-phase-routes.js.
 
 module.exports = router;

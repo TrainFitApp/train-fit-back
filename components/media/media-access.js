@@ -7,7 +7,7 @@
 const { isoDateInZone } = require("../util/date-util");
 
 // La regla de quién sube vive con el resto de límites de plan.
-const { canUploadMedia } = require("../billing/feature-access-service");
+const { canUploadMedia } = require("../billing/feature-access");
 
 // Versión del texto del consentimiento de fotos y vídeos que enseña la app
 // (MediaConsentSheetComponent). Si cambia lo que se le cuenta al usuario, se
@@ -23,18 +23,6 @@ function hasMediaConsent(user) {
 function uploadBlockReason(user, hasActiveTrainerRelation = false) {
   if (canUploadMedia(user, hasActiveTrainerRelation)) return null;
   return "premium_required";
-}
-
-/**
- * Inicio de la relación de un profesional con el cliente: la aceptación más
- * antigua entre sus relaciones activas (hay una por scope).
- */
-function relationStartOf(relations) {
-  const dates = (relations || [])
-    .map((relation) => relation.respondedAt || relation.invitedAt)
-    .filter(Boolean)
-    .map((date) => new Date(date).getTime());
-  return dates.length ? new Date(Math.min(...dates)) : null;
 }
 
 /**
@@ -70,7 +58,6 @@ module.exports = {
   hasMediaConsent,
   canUploadMedia,
   uploadBlockReason,
-  relationStartOf,
   trainerCanSeeProgressDay,
   adminCanSeeContent,
 };

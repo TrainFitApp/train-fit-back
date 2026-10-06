@@ -67,4 +67,6 @@ const PlanChangeSchema = new Schema(
 PlanChangeSchema.index({ clientId: 1, createdAt: -1 });
 PlanChangeSchema.index({ trainerId: 1, createdAt: -1 });
 
+PlanChangeSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });
+
 module.exports = mongoose.model("PlanChange", PlanChangeSchema);

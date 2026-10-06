@@ -17,7 +17,7 @@ function matches(doc, clause) {
 
 function origins(doc, sources) {
   const filter = rankableFilter(TRAINER, CLIENT, sources);
-  return filter.clientId === null && filter.$or.some((c) => matches(doc, c));
+  return filter.$or.some((c) => matches(doc, c));
 }
 
 const DOCS = {
@@ -57,10 +57,6 @@ test("rankableFilter", async (t) => {
     assert.deepEqual(pick(["nope"]), todas);
     assert.deepEqual(pick(["general", "client", "verified"]), todas);
   });
-
-  await t.test("nunca copias congeladas: clientId null siempre", () => {
-    assert.equal(rankableFilter(TRAINER, CLIENT, ["client"]).clientId, null);
-  });
 });
 
 test("readableFilter", async (t) => {
@@ -69,17 +65,16 @@ test("readableFilter", async (t) => {
     return doc._id === filter._id && filter.$or.some((c) => matches(doc, c));
   };
 
-  await t.test("las mías, de biblioteca o copia asignada", () => {
-    assert.equal(readable({ _id: "a", trainerId: TRAINER, clientId: null }), true);
-    assert.equal(readable({ _id: "b", trainerId: TRAINER, clientId: CLIENT }), true);
+  await t.test("las mías", () => {
+    assert.equal(readable({ _id: "a", trainerId: TRAINER }), true);
+    assert.equal(readable({ _id: "b", trainerId: TRAINER, ownerClientId: CLIENT }), true);
   });
 
   await t.test("las de fábrica de cualquiera", () => {
-    assert.equal(readable({ _id: "c", trainerId: "admin", clientId: null, verified: true }), true);
+    assert.equal(readable({ _id: "c", trainerId: "admin", verified: true }), true);
   });
 
-  await t.test("ni las ajenas ni las copias asignadas de otro, aunque hereden verified", () => {
-    assert.equal(readable({ _id: "d", trainerId: "otro", clientId: null }), false);
-    assert.equal(readable({ _id: "e", trainerId: "admin", clientId: "client-9", verified: true }), false);
+  await t.test("no las ajenas", () => {
+    assert.equal(readable({ _id: "d", trainerId: "otro" }), false);
   });
 });

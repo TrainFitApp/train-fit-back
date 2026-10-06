@@ -1,6 +1,6 @@
 const dietDaySchema = require("./diet-days-schema");
 const mealDao = require("../meals/meal-dao");
-const mealProposalDao = require("../mealProposals/meal-proposal-dao");
+const mealAlternatives = require("../meals/meal-alternatives");
 
 // Días SALTADOS: "este día el cliente no sigue el plan".
 //
@@ -28,7 +28,7 @@ async function clearPlannedDay(userId, date, dietDay) {
     if (mealId) await mealDao.removePlannedItems(mealId);
   }
   await dietDaySchema.findByIdAndUpdate(dietDay._id, { $set: { menuName: null } });
-  await mealProposalDao.clearForDate(userId, date);
+  await mealAlternatives.clearForDate(userId, date);
 }
 
 /**

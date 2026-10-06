@@ -4,8 +4,8 @@
 // trainer elige cuáles activar, no puede inventar campos libres nuevos
 // (evita el mismo problema de fondo que resolvió el catálogo cerrado de
 // check-in — un campo custom sin tipo/validación es un problema distinto y
-// mayor). Los 5 primeros viven en ClientIntake; los 4 últimos son en
-// realidad ClientNutritionPreferences (F29), reutilizados aquí — ver
+// mayor). Los 5 primeros son respuestas del cuestionario (TrainerClient.intake);
+// los de nutrición van a User.nutritionPreferences — ver
 // trainer-client-service.js#submitIntake.
 const INTAKE_FIELD_KEYS = [
   "goals",
@@ -18,7 +18,7 @@ const INTAKE_FIELD_KEYS = [
   "dislikedFoods",
   "cooksAtHome",
   // Restricciones dietéticas estructuradas (vegano / sin gluten / ...) →
-  // ClientNutritionPreferences.dietaryFlags. No es un campo que el
+  // User.nutritionPreferences.dietaryFlags. No es un campo que el
   // entrenador active/desactive: getOnboardingStatus lo fuerza siempre que
   // la relación es de scope "nutrition" (es esencial para pautar, no
   // opcional). Por eso NO aparece en el panel de checkboxes de invites.
@@ -27,7 +27,7 @@ const INTAKE_FIELD_KEYS = [
   // confirma/actualiza y los reescribe en `User`. También forzados (no
   // toggleables), para toda relación: el entrenador siempre los necesita
   // para calcular objetivo/carga.
-  //   profileBiometrics -> User.weight/height/sex/birth
+  //   profileBiometrics -> peso (medida de hoy) y User.height/sex/birth
   //   activityProfile   -> User.steps/activity/training
   //   objective         -> User.objetive (déficit / mantenimiento / superávit)
   "profileBiometrics",
@@ -35,12 +35,12 @@ const INTAKE_FIELD_KEYS = [
   "objective",
 ];
 
-// Claves que se reescriben en `User` (no en ClientIntake ni en
-// ClientNutritionPreferences). Ver trainer-client-service.js#submitIntake.
+// Claves que se reescriben en `User` (ni en el cuestionario ni en las
+// preferencias de nutrición). Ver trainer-client-service.js#submitIntake.
 const USER_PROFILE_KEYS = ["profileBiometrics", "activityProfile", "objective"];
 
-// Los que van a ClientNutritionPreferences (F29), no a ClientIntake — el
-// resto viven en ClientIntake. Ver trainer-client-service.js#submitIntake.
+// Los que van a User.nutritionPreferences, no al cuestionario. Ver
+// trainer-client-service.js#submitIntake.
 const NUTRITION_PREFERENCE_KEYS = [
   "allergies",
   "favoriteFoods",

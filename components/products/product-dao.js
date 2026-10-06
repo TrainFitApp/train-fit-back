@@ -1,5 +1,5 @@
 const productSchema = require("./product-schema");
-const userSchema = require("../users/schema");
+const userSchema = require("../users/user-schema");
 const mongoose = require("mongoose");
 const {
   PRODUCT_SEARCH_CONFIG,
@@ -162,6 +162,12 @@ module.exports = {
       .limit(limitValue)
       .lean()
       .exec();
+  },
+
+  // Varios productos por id, en plano (para comparar contra su base).
+  async findManyByIds(ids) {
+    if (!ids?.length) return [];
+    return productSchema.find({ _id: { $in: ids } }).lean();
   },
 
   async getProduct(id) {
@@ -342,13 +348,6 @@ module.exports = {
     } catch (err) {
       throw err;
     }
-  },
-
-  async addFavoriteProduct(idUser, idProduct, productExist) {
-    const query = productExist
-      ? { $pull: { archivedProducts: idProduct } }
-      : { $push: { archivedProducts: idProduct } };
-    return await userSchema.findByIdAndUpdate(idUser, query, { new: true });
   },
 
   async deleteProduct(id) {

@@ -67,7 +67,7 @@ function duplicate(error: unknown): boolean {
 export class MongoRepository implements Repository {
   private initialization?: Promise<unknown>;
   // Sandbox y real conviven en la misma base sin mezclarse: cuentas, eventos y casos van por modo,
-  // y el cupo solo acepta proyecciones del modo de la clave del servidor (feature-access-service).
+  // y el cupo solo acepta proyecciones del modo de la clave del servidor (feature-access).
   constructor(private users: UserStore, private mode: Mode = "test") {}
   async init(): Promise<void> {
     if (mongoose.connection.readyState !== 1) throw new BillingError("DATABASE_UNAVAILABLE", "La base de datos no está disponible.", 503);

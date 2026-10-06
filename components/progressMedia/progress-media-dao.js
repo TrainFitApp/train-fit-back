@@ -35,7 +35,7 @@ module.exports = {
     photos.push({ pose, assetId });
     const day = await ProgressMediaDay.findOneAndUpdate(
       { userId, date },
-      { $set: { photos, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { $set: { photos } },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
     return { day, replacedAssetId: replaced };
@@ -47,7 +47,7 @@ module.exports = {
     if (!removed) return { day: existing, removedAssetId: null };
     const day = await ProgressMediaDay.findOneAndUpdate(
       { userId, date },
-      { $pull: { photos: { pose } }, $set: { updatedAt: new Date() } },
+      { $pull: { photos: { pose } } },
       { new: true }
     ).lean();
     return { day, removedAssetId: removed };
@@ -58,8 +58,6 @@ module.exports = {
       { userId, date },
       {
         $push: { videos: { assetId, note: note || "", createdAt: new Date() } },
-        $set: { updatedAt: new Date() },
-        $setOnInsert: { createdAt: new Date() },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
@@ -68,7 +66,7 @@ module.exports = {
   async removeVideo(userId, date, assetId) {
     return ProgressMediaDay.findOneAndUpdate(
       { userId, date },
-      { $pull: { videos: { assetId } }, $set: { updatedAt: new Date() } },
+      { $pull: { videos: { assetId } } },
       { new: true }
     ).lean();
   },
@@ -76,7 +74,7 @@ module.exports = {
   async updateMeta(userId, date, set) {
     return ProgressMediaDay.findOneAndUpdate(
       { userId, date },
-      { $set: { ...set, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { $set: set },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
   },

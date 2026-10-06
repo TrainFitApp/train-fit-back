@@ -1,12 +1,34 @@
-const userSchema = require("../users/schema");
+const userSchema = require("../users/user-schema");
 const tableSchema = require("./table-schema");
 const { default: mongoose } = require("mongoose");
-const splitSchema = require("../splits/split-schema");
-const setSchema = require("../sets/set-schema");
-const customExerciseSchema = require("../customExercises/custom-exercise-schema");
 const workoutSchema = require("../workouts/workout-schema");
 const routineAssignmentDao = require("../routineAssignments/routine-assignment-dao");
 const { stripExecutionForTemplate } = require("./table-template-copy");
+const { cloneWorkout, newId, plain } = require("../workouts/workout-tree");
+
+// Sesiones de las rutinas de uno o varios usuarios, una fila por sesión con
+// su microciclo (`splits`, ya desenrollado) y la sesión (`workoutDocs`). Los
+// microciclos van embebidos en la tabla (2026-10): un solo $lookup.
+function sessionsPipeline(match) {
+  return [
+    { $match: match },
+    { $project: { userId: 1, splits: 1 } },
+    { $unwind: "$splits" },
+    { $lookup: { from: "workouts", localField: "splits.workouts", foreignField: "_id", as: "workoutDocs" } },
+    { $unwind: "$workoutDocs" },
+  ];
+}
+
+// Sesiones con fecha en el rango que no son descanso.
+function completedSessionsMatch(fromDate, toDate) {
+  return {
+    $match: {
+      "workoutDocs.date": { $gte: fromDate, $lte: toDate },
+      "workoutDocs.rest": { $ne: true },
+      "workoutDocs.isPlannedRestDay": { $ne: true },
+    },
+  };
+}
 
 // 2026-09, revertido 2026-09 bis — "Mis rutinas" enseñaba TODO lo que un
 // entrenador hubiera creado alguna vez para el cliente (borradores nunca
@@ -19,7 +41,7 @@ const { stripExecutionForTemplate } = require("./table-template-copy");
 // decidir qué enseñar: colaría también las copias que el entrenador dejó a
 // medias y nunca llegó a aplicar.
 //
-// listByClient trae TODAS las fases (activa, superseded, ended) — el
+// listByClient trae TODAS las fases (pasadas, en curso y programadas) — el
 // denominador correcto de "asignado de verdad alguna vez" es "tiene fila en
 // RoutineAssignment", no "está vigente ahora": eso es justo lo que separa
 // un borrador nunca aplicado (sin fila, se sigue sin ver) de una fase ya
@@ -60,45 +82,22 @@ async function buildOwnTablesMatch(idUser) {
   };
 }
 
-function normalizeSetForTemplateCopy(setTemp) {
-  delete setTemp.doned;
-  // Mismo criterio que split-dao.js: técnica (drop/restPause/FALLO) es de
-  // esa copia concreta, no algo que deba heredar la tabla duplicada.
-  delete setTemp.drop;
-  delete setTemp.restPause;
-  if (Array.isArray(setTemp.expectedRir) && setTemp.expectedRir.includes(-1)) {
-    setTemp.expectedRir = [];
-  }
-}
-
+// Copia una rutina entera: microciclos y sesiones con ids nuevos. Cada
+// sesión conserva su estado (como hizo siempre la copia de rutinas); sus
+// series pierden "hecha" y técnica (workout-tree.js#cloneSet). Las notas
+// ancladas no viajan con la copia (nunca lo hicieron: pueden ser del
+// cliente).
 async function copyHierarchy(tableDoc) {
-  const splits = [];
   const workouts = [];
-  const customExercises = [];
-  const sets = [];
-
-  tableDoc.splits.forEach((splitTemp) => {
-    splitTemp._id = new mongoose.Types.ObjectId();
-    splits.push(splitTemp);
-    splitTemp.workouts.forEach((workoutTemp) => {
-      workoutTemp._id = new mongoose.Types.ObjectId();
-      workouts.push(workoutTemp);
-      workoutTemp.exercises.forEach((customExerciseTemp) => {
-        customExerciseTemp._id = new mongoose.Types.ObjectId();
-        customExercises.push(customExerciseTemp);
-        customExerciseTemp.sets.forEach((setTemp) => {
-          setTemp._id = new mongoose.Types.ObjectId();
-          normalizeSetForTemplateCopy(setTemp);
-          sets.push(setTemp);
-        });
-      });
-    });
+  const splits = (tableDoc.splits || []).map((split) => {
+    const clones = (split.workouts || []).filter(Boolean).map((workout) =>
+      cloneWorkout(workout, { keepExecutionState: true }),
+    );
+    workouts.push(...clones);
+    return { ...plain(split), _id: newId(), workouts: clones.map((workout) => workout._id) };
   });
-
-  await setSchema.insertMany(sets);
-  await customExerciseSchema.insertMany(customExercises);
-  await workoutSchema.insertMany(workouts);
-  await splitSchema.insertMany(splits);
+  if (workouts.length) await workoutSchema.insertMany(workouts);
+  return { splits, pinnedNotes: [] };
 }
 
 module.exports = {
@@ -141,6 +140,17 @@ module.exports = {
       .exec();
   },
 
+  // Solo nombre y quién la asignó (resúmenes como "Tu plan").
+  async findSummary(id) {
+    return tableSchema.findById(id).select("name assignedByTrainerId").lean();
+  },
+
+  // Ids de las rutinas del cliente que le asignaron estos profesionales.
+  async listIdsAssignedBy(clientId, trainerIds) {
+    if (!trainerIds?.length) return [];
+    return tableSchema.find({ userId: clientId, assignedByTrainerId: { $in: trainerIds } }).select("_id").lean();
+  },
+
   async getTableById(id) {
     return tableSchema.findById(id).exec();
   },
@@ -158,7 +168,7 @@ module.exports = {
       if (!tableD) throw new Error("Table not found");
       const tableDoc = tableD.toObject();
 
-      await copyHierarchy(tableDoc);
+      Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
       delete tableDoc._id;
       return await tableSchema.create({
@@ -180,7 +190,7 @@ module.exports = {
       if (!tableD) throw new Error("Table not found");
       const tableDoc = tableD.toObject();
 
-      await copyHierarchy(tableDoc);
+      Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
       delete tableDoc._id;
       return await tableSchema.create({
@@ -201,7 +211,7 @@ module.exports = {
 
       tableDoc.name = tableDoc.name + " copia";
 
-      await copyHierarchy(tableDoc);
+      Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
       delete tableDoc._id;
       return await tableSchema.create({
@@ -233,21 +243,11 @@ module.exports = {
         { $match: { ...baseMatch, ...extraMatch } },
         { $project: { _id: 1, name: 1, urlImage: 1, splits: 1, assignedByTrainerId: 1 } },
         {
-          $lookup: {
-            from: "splits",
-            let: { splitIds: "$splits" },
-            pipeline: [
-              { $match: { $expr: { $in: ["$_id", "$$splitIds"] } } },
-              { $project: { _id: 1, workoutsCount: { $size: "$workouts" } } },
-            ],
-            as: "splitStats",
-          },
-        },
-        {
           $addFields: {
-            microcyclesCount: { $size: "$splits" },
+            microcyclesCount: { $size: { $ifNull: ["$splits", []] } },
+            // Sesiones por microciclo: las del primero.
             workoutsCount: {
-              $ifNull: [{ $arrayElemAt: ["$splitStats.workoutsCount", 0] }, 0],
+              $size: { $ifNull: [{ $arrayElemAt: ["$splits.workouts", 0] }, []] },
             },
           },
         },
@@ -301,8 +301,8 @@ module.exports = {
         userId: idUser,
       });
       const addTableToUser = {
-        $set: { tableInUse: tableDoc._id },
-        $unset: { workoutInUse: "" },
+        $set: { tableInUse: tableDoc._id, tableInUseAt: new Date() },
+        $unset: { workoutInUse: "", workoutInUseAt: "" },
       };
       await userSchema.findByIdAndUpdate(idUser, addTableToUser);
       return tableDoc;
@@ -311,35 +311,23 @@ module.exports = {
     }
   },
 
-  // MVP-trainers — paso 2 de F11 punto 7.7: activar una rutina ya asignada.
-  // Mismo `$set`/`$unset` que ya usa createTableToUser (self-service): fijar
-  // tableInUse SIEMPRE desactiva implícitamente cualquier otra rutina — es
-  // un puntero único en User, no un booleano por Table, así que no hace
-  // falta (ni existe el riesgo de) desincronizar "las demás" al activar una.
+  // El entrenador pone en uso una rutina del cliente: es una elección como
+  // la del propio cliente (users/user-schema.js, tableInUseAt). Mismo `$set`/`$unset`
+  // que createTableToUser.
   async setTableInUseForClient(clientId, tableId) {
     await userSchema.findByIdAndUpdate(clientId, {
-      $set: { tableInUse: tableId },
-      $unset: { workoutInUse: "" },
+      $set: { tableInUse: tableId, tableInUseAt: new Date() },
+      $unset: { workoutInUse: "", workoutInUseAt: "" },
     });
   },
 
-  // Borrado coherente de fases/rutinas — vacía tableInUse/workoutInUse SIN
-  // fijar una tabla nueva, para cuando se quita la fase que el cliente tenía
-  // en curso y no hay ninguna anterior que restaurar (era la primera fase de
-  // su historia). Mismo $unset que ya usa setTableInUseForClient, sin el
-  // $set de una tabla nueva.
-  async clearTableInUseForClient(clientId) {
-    await userSchema.findByIdAndUpdate(clientId, {
-      $unset: { tableInUse: "", workoutInUse: "" },
-    });
-  },
-
-  // Solo si el puntero sigue apuntando a esa tabla: borrar una rutina que no
-  // está en uso no toca la que sí lo está.
+  // Solo si la elección apuntaba a esa tabla: borrar una rutina que no está
+  // elegida no toca la que sí lo está. Sin elección, manda la fase que cubra
+  // hoy (routineAssignments/routine-in-use.js).
   async clearTableInUseIfMatches(userId, tableId) {
     await userSchema.updateOne(
       { _id: userId, tableInUse: tableId },
-      { $unset: { tableInUse: "", workoutInUse: "" } },
+      { $unset: { tableInUse: "", tableInUseAt: "", workoutInUse: "", workoutInUseAt: "" } },
     );
   },
 
@@ -376,7 +364,7 @@ module.exports = {
     if (!tableD) throw new Error("Table not found");
     const tableDoc = stripExecutionForTemplate(tableD.toObject());
 
-    await copyHierarchy(tableDoc);
+    Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
     delete tableDoc._id;
     return tableSchema.create({
@@ -437,18 +425,8 @@ module.exports = {
   async listCompletedWorkoutDates(userId, fromDate, toDate) {
     const { ObjectId } = require("mongoose").Types;
     const rows = await tableSchema.aggregate([
-      { $match: { userId: ObjectId(userId) } },
-      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
-      { $unwind: "$splitDocs" },
-      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
-      { $unwind: "$workoutDocs" },
-      {
-        $match: {
-          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
-          "workoutDocs.rest": { $ne: true },
-          "workoutDocs.isPlannedRestDay": { $ne: true },
-        },
-      },
+      ...sessionsPipeline({ userId: ObjectId(userId) }),
+      completedSessionsMatch(fromDate, toDate),
       { $project: { _id: 0, date: "$workoutDocs.date" } },
     ]);
     return rows.map((row) => row.date);
@@ -456,170 +434,97 @@ module.exports = {
 
   // Fase 6 Coach Pro — la misma consulta que listCompletedWorkoutDates pero
   // para VARIOS clientes de una vez. Es lo que permite que el evaluador
-  // nocturno ofrezca "sesiones entrenadas" como métrica de regla sin pasar
-  // de ~7 consultas por profesional a 7 + N.
+  // ofrezca "sesiones entrenadas" como métrica de regla sin pasar de ~7
+  // consultas por profesional a 7 + N.
   async listCompletedWorkoutDatesForUsers(userIds, fromDate, toDate) {
     const { ObjectId } = require("mongoose").Types;
     if (!userIds?.length) return [];
-    const rows = await tableSchema.aggregate([
-      { $match: { userId: { $in: userIds.map((id) => ObjectId(String(id))) } } },
-      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
-      { $unwind: "$splitDocs" },
-      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
-      { $unwind: "$workoutDocs" },
-      {
-        $match: {
-          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
-          "workoutDocs.rest": { $ne: true },
-          "workoutDocs.isPlannedRestDay": { $ne: true },
-        },
-      },
+    return tableSchema.aggregate([
+      ...sessionsPipeline({ userId: { $in: userIds.map((id) => ObjectId(String(id))) } }),
+      completedSessionsMatch(fromDate, toDate),
       { $project: { _id: 0, userId: 1, date: "$workoutDocs.date" } },
     ]);
-    return rows;
   },
 
   // Fase 6 Coach Pro — cada SERIE COMPLETADA de un cliente en un rango, con
   // su fecha, ejercicio, repeticiones y peso. Es la materia prima de
   // volumen, PRs y evolución de cargas (§17).
   //
-  // Deliberadamente NO se usa en el evaluador nocturno: una serie por
-  // documento significa miles de filas por cliente y trimestre, asequible
-  // para UNA ficha abierta y ruinoso multiplicado por toda la cartera. Las
-  // reglas usan el recuento de sesiones (listCompletedWorkoutDatesForUsers),
-  // que sí es barato.
+  // Deliberadamente NO se usa en el evaluador de reglas: una fila por serie
+  // significa miles de filas por cliente y trimestre, asequible para UNA
+  // ficha abierta y ruinoso multiplicado por toda la cartera. Las reglas
+  // usan el recuento de sesiones (listCompletedWorkoutDatesForUsers).
   //
-  // `sets.doned` filtra a lo realmente hecho: una serie planificada y no
+  // `doned` filtra a lo realmente hecho: una serie planificada y no
   // ejecutada no es volumen.
   async listCompletedSetsForUser(userId, fromDate, toDate) {
     const { ObjectId } = require("mongoose").Types;
     return tableSchema.aggregate([
-      { $match: { userId: ObjectId(String(userId)) } },
-      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
-      { $unwind: "$splitDocs" },
-      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
-      { $unwind: "$workoutDocs" },
-      {
-        $match: {
-          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
-          "workoutDocs.rest": { $ne: true },
-          "workoutDocs.isPlannedRestDay": { $ne: true },
-        },
-      },
-      {
-        $lookup: {
-          from: "customexercises",
-          localField: "workoutDocs.exercises",
-          foreignField: "_id",
-          as: "customExercises",
-        },
-      },
-      { $unwind: "$customExercises" },
+      ...sessionsPipeline({ userId: ObjectId(String(userId)) }),
+      completedSessionsMatch(fromDate, toDate),
+      { $unwind: "$workoutDocs.exercises" },
       {
         $lookup: {
           from: "exercises",
-          localField: "customExercises.exercise",
+          localField: "workoutDocs.exercises.exercise",
           foreignField: "_id",
           as: "exerciseInfo",
         },
       },
       { $unwind: { path: "$exerciseInfo", preserveNullAndEmptyArrays: true } },
-      { $lookup: { from: "sets", localField: "customExercises.sets", foreignField: "_id", as: "setDocs" } },
-      { $unwind: "$setDocs" },
-      { $match: { "setDocs.doned": true } },
+      { $unwind: "$workoutDocs.exercises.sets" },
+      { $match: { "workoutDocs.exercises.sets.doned": true } },
       {
         $project: {
           _id: 0,
           date: "$workoutDocs.date",
           workoutId: "$workoutDocs._id",
-          // Movimiento 3 Coach Pro — a qué microciclo pertenece la serie.
-          // Va en la MISMA agregación (el $unwind de splits ya está hecho
-          // arriba, solo hay que proyectar dos campos más) para que comparar
-          // bloque contra bloque no cueste una segunda consulta cara.
-          splitId: "$splitDocs._id",
-          splitName: "$splitDocs.name",
-          // Tipo de microciclo (split-schema SPLIT_PURPOSES): en una descarga
-          // el volumen baja a propósito y el resumen no debe alarmarse.
-          splitPurpose: "$splitDocs.purpose",
-          // El nombre del ejercicio del catálogo; si el CustomExercise no
-          // apunta a ninguno (ejercicio propio del usuario), se cae a su
-          // propio nombre para no perder la serie del agregado.
-          exerciseName: { $ifNull: ["$exerciseInfo.name", "$customExercises.name"] },
-          reps: "$setDocs.reps",
-          weight: "$setDocs.weight",
-          rir: "$setDocs.rir",
-          // Tarea 4 (2026-09) — grupos musculares implicados, del catálogo.
-          // Solo lo que ya guarda Exercise; no se infiere nada para un
-          // ejercicio propio del cliente sin ficha en el catálogo.
-          muscleGroups1: "$exerciseInfo.muscleGroups1",
-          muscleGroups2: "$exerciseInfo.muscleGroups2",
-          // 2026-09 — músculos con énfasis (ver muscle-catalog.js): el
+          // A qué microciclo pertenece la serie (comparar bloque contra
+          // bloque sin una segunda consulta) y su tipo (split-schema
+          // SPLIT_PURPOSES): en una descarga el volumen baja a propósito.
+          splitId: "$splits._id",
+          splitName: "$splits.name",
+          splitPurpose: "$splits.purpose",
+          exerciseName: "$exerciseInfo.name",
+          reps: "$workoutDocs.exercises.sets.reps",
+          weight: "$workoutDocs.exercises.sets.weight",
+          rir: "$workoutDocs.exercises.sets.rir",
+          // Músculos con énfasis (muscle-catalog.js), del catálogo: el
           // progreso por grupo cuenta igual que el Análisis del Planner.
           muscles: "$exerciseInfo.muscles",
           isCardio: "$exerciseInfo.isCardio",
-          // 2026-09 — pulso de readiness/esfuerzo (1-5) de LA SESIÓN, no de
-          // la serie: se repite en cada set de la misma sesión a propósito
-          // (mismo criterio que splitId/splitName arriba, misma agregación
-          // ya hecha, sin consulta nueva). buildBlockReadiness deduplica por
-          // fecha antes de promediar, igual que buildBlockTraining ya hace
-          // para contar sesiones.
+          // Pulso de readiness/esfuerzo (1-5) de LA SESIÓN, repetido en cada
+          // serie a propósito; buildBlockReadiness deduplica por fecha.
           readinessPre: "$workoutDocs.readinessPre",
           perceivedEffortPost: "$workoutDocs.perceivedEffortPost",
-          // 2026-09 — "elegir el workout a ver": nombre del Workout (p.ej.
-          // "Día de pierna") tal cual está en ESA sesión concreta. Se
-          // empareja por NOMBRE, no por posición en splits[].workouts (que es
-          // el criterio que sí usa el comparador del Planner, ver
-          // planner-compare.ts) — para este selector es el mismo criterio que
-          // ya usa "comparar por ejercicio" (exerciseName), y evita
-          // reconstruir el índice del array dentro de la agregación.
+          // Nombre de la sesión ("Día de pierna") para "elegir el workout a
+          // ver" (se empareja por nombre, como "comparar por ejercicio").
           workoutName: "$workoutDocs.name",
         },
       },
     ]);
   },
 
-  // 2026-09 — una fila por SESIÓN (Workout), con nº total de series y
-  // cuántas se marcaron hechas. Alimenta la métrica "Adherencia" del
-  // comparador de Entrenamiento: a diferencia de listCompletedSetsForUser,
-  // aquí NO se filtra `doned:true` antes de agrupar — hace falta contar
-  // también las series pautadas que no se llegaron a hacer, porque
-  // finishWorkout no exige tenerlas todas para dar la sesión por terminada
-  // (ver current-workout.page.ts#finishWorkout en el frontend).
+  // Una fila por SESIÓN, con nº total de series y cuántas se marcaron
+  // hechas. Alimenta la métrica "Adherencia" del comparador de
+  // Entrenamiento: aquí NO se filtra `doned` antes de agrupar — hace falta
+  // contar también las series pautadas que no se llegaron a hacer.
   async listSessionAdherenceForUser(userId, fromDate, toDate) {
     const { ObjectId } = require("mongoose").Types;
     return tableSchema.aggregate([
-      { $match: { userId: ObjectId(String(userId)) } },
-      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
-      { $unwind: "$splitDocs" },
-      { $lookup: { from: "workouts", localField: "splitDocs.workouts", foreignField: "_id", as: "workoutDocs" } },
-      { $unwind: "$workoutDocs" },
-      {
-        $match: {
-          "workoutDocs.date": { $gte: fromDate, $lte: toDate },
-          "workoutDocs.rest": { $ne: true },
-          "workoutDocs.isPlannedRestDay": { $ne: true },
-        },
-      },
-      {
-        $lookup: {
-          from: "customexercises",
-          localField: "workoutDocs.exercises",
-          foreignField: "_id",
-          as: "customExercises",
-        },
-      },
-      { $unwind: "$customExercises" },
-      { $lookup: { from: "sets", localField: "customExercises.sets", foreignField: "_id", as: "setDocs" } },
-      { $unwind: "$setDocs" },
+      ...sessionsPipeline({ userId: ObjectId(String(userId)) }),
+      completedSessionsMatch(fromDate, toDate),
+      { $unwind: "$workoutDocs.exercises" },
+      { $unwind: "$workoutDocs.exercises.sets" },
       {
         $group: {
           _id: "$workoutDocs._id",
           date: { $first: "$workoutDocs.date" },
-          splitId: { $first: "$splitDocs._id" },
-          splitName: { $first: "$splitDocs.name" },
+          splitId: { $first: "$splits._id" },
+          splitName: { $first: "$splits.name" },
           workoutName: { $first: "$workoutDocs.name" },
           totalSets: { $sum: 1 },
-          donedSets: { $sum: { $cond: ["$setDocs.doned", 1, 0] } },
+          donedSets: { $sum: { $cond: ["$workoutDocs.exercises.sets.doned", 1, 0] } },
         },
       },
     ]);
@@ -636,9 +541,7 @@ module.exports = {
     const [row] = await tableSchema.aggregate([
       { $match: { _id: ObjectId(tableId) } },
       { $project: { lastSplit: { $arrayElemAt: ["$splits", -1] } } },
-      { $lookup: { from: "splits", localField: "lastSplit", foreignField: "_id", as: "splitDoc" } },
-      { $unwind: "$splitDoc" },
-      { $lookup: { from: "workouts", localField: "splitDoc.workouts", foreignField: "_id", as: "workoutDocs" } },
+      { $lookup: { from: "workouts", localField: "lastSplit.workouts", foreignField: "_id", as: "workoutDocs" } },
       {
         $project: {
           _id: 0,
@@ -681,12 +584,11 @@ module.exports = {
     if (!tableIds?.length) return new Map();
     const rows = await tableSchema.aggregate([
       { $match: { _id: { $in: tableIds.map((id) => ObjectId(String(id))) } } },
-      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
       {
         $project: {
           workoutIds: {
             $reduce: {
-              input: "$splitDocs",
+              input: { $ifNull: ["$splits", []] },
               initialValue: [],
               in: { $concatArrays: ["$$value", { $ifNull: ["$$this.workouts", []] }] },
             },
@@ -741,25 +643,30 @@ module.exports = {
   // proyectan también los ids ORDENADOS (splits de la tabla, workouts de
   // cada split — campos reales del documento, no tocados por el $lookup) y
   // se reconstruye el orden en JS con un Map por _id antes de devolver.
+  // Cuántos microciclos tiene cada rutina (panel admin).
+  async countSplitsByTable(tableIds) {
+    if (!tableIds?.length) return new Map();
+    const rows = await tableSchema.aggregate([
+      { $match: { _id: { $in: tableIds.map((id) => new mongoose.Types.ObjectId(String(id))) } } },
+      { $project: { n: { $size: { $ifNull: ["$splits", []] } } } },
+    ]);
+    return new Map(rows.map((row) => [String(row._id), row.n]));
+  },
+
   async getSplitsForTables(tableIds) {
     const { ObjectId } = require("mongoose").Types;
     if (!tableIds?.length) return new Map();
+    // Los microciclos van embebidos y en orden; el $lookup de sesiones no
+    // garantiza el orden de `localField`, así que se reconstruye en JS por
+    // _id (día N de la proyección = posición N en splits[].workouts[]).
     const rows = await tableSchema.aggregate([
       { $match: { _id: { $in: tableIds.map((id) => ObjectId(String(id))) } } },
-      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splitDocs" } },
       {
         $project: {
-          splitIds: "$splits",
-          splitDocs: { _id: 1, workouts: 1 },
-        },
-      },
-      {
-        $project: {
-          splitIds: 1,
-          splitDocs: 1,
+          splits: { _id: 1, workouts: 1 },
           workoutIds: {
             $reduce: {
-              input: "$splitDocs",
+              input: { $ifNull: ["$splits", []] },
               initialValue: [],
               in: { $concatArrays: ["$$value", { $ifNull: ["$$this.workouts", []] }] },
             },
@@ -775,19 +682,15 @@ module.exports = {
           pipeline: [{ $project: { _id: 1, name: 1, isPlannedRestDay: 1, date: 1, rest: 1 } }],
         },
       },
-      { $project: { splitIds: 1, splitDocs: 1, workoutDocs: 1 } },
+      { $project: { splits: 1, workoutDocs: 1 } },
     ]);
 
     return new Map(
       rows.map((row) => {
         const workoutById = new Map((row.workoutDocs || []).map((w) => [String(w._id), w]));
-        const splitById = new Map((row.splitDocs || []).map((s) => [String(s._id), s]));
-        const splits = (row.splitIds || [])
-          .map((id) => splitById.get(String(id)))
-          .filter(Boolean)
-          .map((split) => ({
-            workouts: (split.workouts || []).map((wid) => workoutById.get(String(wid))).filter(Boolean),
-          }));
+        const splits = (row.splits || []).map((split) => ({
+          workouts: (split.workouts || []).map((wid) => workoutById.get(String(wid))).filter(Boolean),
+        }));
         return [String(row._id), { splits }];
       })
     );
@@ -810,16 +713,10 @@ module.exports = {
       : { "exerciseInfo.name": exerciseName };
 
     const pipeline = [
-      { $match: { userId: ObjectId(userId) } },
-      { $lookup: { from: "splits", localField: "splits", foreignField: "_id", as: "splits" } },
-      { $unwind: { path: "$splits", preserveNullAndEmptyArrays: false } },
-      { $lookup: { from: "workouts", localField: "splits.workouts", foreignField: "_id", as: "workouts" } },
-      { $unwind: { path: "$workouts", preserveNullAndEmptyArrays: false } },
-      { $match: { $or: [{ "workouts.rest": { $ne: true } }, { "workouts.rest": { $exists: false } }] } },
-      { $match: { $or: [{ "workouts.isPlannedRestDay": { $ne: true } }, { "workouts.isPlannedRestDay": { $exists: false } }] } },
-      { $lookup: { from: "customexercises", localField: "workouts.exercises", foreignField: "_id", as: "customExercises" } },
-      { $unwind: { path: "$customExercises", preserveNullAndEmptyArrays: false } },
-      { $lookup: { from: "exercises", localField: "customExercises.exercise", foreignField: "_id", as: "exerciseInfo" } },
+      ...sessionsPipeline({ userId: ObjectId(userId) }),
+      { $match: { "workoutDocs.rest": { $ne: true }, "workoutDocs.isPlannedRestDay": { $ne: true } } },
+      { $unwind: "$workoutDocs.exercises" },
+      { $lookup: { from: "exercises", localField: "workoutDocs.exercises.exercise", foreignField: "_id", as: "exerciseInfo" } },
       { $unwind: { path: "$exerciseInfo", preserveNullAndEmptyArrays: true } },
       { $match: matchExercise },
       {
@@ -828,12 +725,13 @@ module.exports = {
             $cond: [{ $ifNull: ["$exerciseInfo.isIsometric", false] }, "isometric",
               { $cond: [{ $ifNull: ["$exerciseInfo.isCardio", false] }, "cardio", "strength"] }
             ]
-          }
+          },
+          sets: "$workoutDocs.exercises.sets",
         }
       },
-      { $lookup: { from: "sets", localField: "customExercises.sets", foreignField: "_id", as: "sets" } },
-      { $unwind: { path: "$sets", preserveNullAndEmptyArrays: false } },
+      { $unwind: "$sets" },
       { $match: { "sets.doned": true } },
+      { $project: { exerciseType: 1, sets: 1 } },
       {
         $group: {
           _id: "$exerciseType",

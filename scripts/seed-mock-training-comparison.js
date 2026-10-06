@@ -24,32 +24,14 @@ function daysAgo(n) {
 }
 
 async function wipeExisting() {
-  const userSchema = require("../components/users/schema");
+  const userSchema = require("../components/users/user-schema");
   const TrainerClient = require("../components/trainerClients/trainer-client-schema");
   const tableSchema = require("../components/tables/table-schema");
-  const splitSchema = require("../components/splits/split-schema");
-  const workoutSchema = require("../components/workouts/workout-schema");
-  const customExerciseSchema = require("../components/customExercises/custom-exercise-schema");
-  const setSchema = require("../components/sets/set-schema");
   const exerciseSchema = require("../components/exercises/exercise-schema");
 
+  // Borrar las rutinas borra sus sesiones (ejercicios y series van dentro).
   const existingClient = await userSchema.findOne({ email: CLIENT_EMAIL });
-  if (existingClient) {
-    const tables = await tableSchema.find({ userId: existingClient._id });
-    for (const table of tables) {
-      const splits = await splitSchema.find({ _id: { $in: table.splits } });
-      const workoutIds = splits.flatMap((s) => s.workouts);
-      const workouts = await workoutSchema.find({ _id: { $in: workoutIds } });
-      const customExerciseIds = workouts.flatMap((w) => w.exercises);
-      const customExercises = await customExerciseSchema.find({ _id: { $in: customExerciseIds } });
-      const setIds = customExercises.flatMap((ce) => ce.sets);
-      await setSchema.deleteMany({ _id: { $in: setIds } });
-      await customExerciseSchema.deleteMany({ _id: { $in: customExerciseIds } });
-      await workoutSchema.deleteMany({ _id: { $in: workoutIds } });
-      await splitSchema.deleteMany({ _id: { $in: table.splits } });
-    }
-    await tableSchema.deleteMany({ userId: existingClient._id });
-  }
+  if (existingClient) await tableSchema.deleteMany({ userId: existingClient._id });
   await exerciseSchema.deleteMany({ name: { $regex: /\(mock\)$/ } });
   await TrainerClient.deleteMany({ clientEmail: CLIENT_EMAIL });
   await userSchema.deleteMany({ email: { $in: [TRAINER_EMAIL, CLIENT_EMAIL] } });
@@ -61,13 +43,10 @@ async function main() {
   await mongoose.connect(mongoUri);
   ok("connected");
 
-  const userSchema = require("../components/users/schema");
+  const userSchema = require("../components/users/user-schema");
   const TrainerClient = require("../components/trainerClients/trainer-client-schema");
   const exerciseSchema = require("../components/exercises/exercise-schema");
-  const setSchema = require("../components/sets/set-schema");
-  const customExerciseSchema = require("../components/customExercises/custom-exercise-schema");
   const workoutSchema = require("../components/workouts/workout-schema");
-  const splitSchema = require("../components/splits/split-schema");
   const tableSchema = require("../components/tables/table-schema");
 
   await wipeExisting();
@@ -93,28 +72,25 @@ async function main() {
     trainerId: trainer._id,
     clientId: client._id,
     clientEmail: client.email,
-    scope: "training",
-    status: "active",
+    scopes: [{ scope: "training", status: "active", respondedAt: new Date() }],
   });
 
-  // Catálogo de ejercicios con grupo muscular real, para la comparación por
-  // grupo. "(mock)" en el nombre para poder limpiar el catálogo si se
-  // reejecuta el script sin arrastrar ejercicios reales de otros clientes.
+  // Catálogo de ejercicios con músculos reales (muscle-catalog.js), para la
+  // comparación por grupo. "(mock)" en el nombre para poder limpiar el
+  // catálogo si se reejecuta el script sin arrastrar ejercicios reales de
+  // otros clientes.
+  const primary = (...ids) => ids.map((muscle) => ({ muscle, role: "primary" }));
+  const secondary = (...ids) => ids.map((muscle) => ({ muscle, role: "secondary" }));
   const catalogDefs = [
-    { name: "Sentadilla (mock)", muscleGroups1: ["Pierna"] },
-    { name: "Peso muerto (mock)", muscleGroups1: ["Espalda"], muscleGroups2: ["Pierna"] },
-    { name: "Press banca (mock)", muscleGroups1: ["Pecho"], muscleGroups2: ["Hombros"] },
-    { name: "Press militar (mock)", muscleGroups1: ["Hombros"] },
-    { name: "Dominadas (mock)", muscleGroups1: ["Espalda"] },
-    { name: "Curl bíceps (mock)", muscleGroups1: ["Pierna"] }, // catálogo real no tiene "Bíceps"; ver nota abajo
-    { name: "Fondos (mock)", muscleGroups1: ["Pecho"] },
-    { name: "Plancha (mock)", muscleGroups1: ["Core"] },
+    { name: "Sentadilla (mock)", muscles: primary("quads", "glutes") },
+    { name: "Peso muerto (mock)", muscles: [...primary("back", "hamstrings"), ...secondary("glutes")] },
+    { name: "Press banca (mock)", muscles: [...primary("chest"), ...secondary("delt_front", "triceps")] },
+    { name: "Press militar (mock)", muscles: [...primary("delt_front"), ...secondary("triceps")] },
+    { name: "Dominadas (mock)", muscles: [...primary("back_lats"), ...secondary("biceps")] },
+    { name: "Curl femoral (mock)", muscles: primary("hamstrings") },
+    { name: "Fondos (mock)", muscles: [...primary("chest_lower"), ...secondary("triceps")] },
+    { name: "Plancha (mock)", muscles: primary("abs") },
   ];
-  // MUSCLE_GROUPS_ES real (shared-ui/constants/muscle-groups.ts) es un
-  // catálogo corto: Pecho/Espalda/Pierna/Core/Hombros. No hay "Bíceps" ni
-  // "Tríceps" — se corrige aquí para no inventar valores fuera de catálogo.
-  catalogDefs[5].muscleGroups1 = ["Pierna"];
-  catalogDefs[5].name = "Curl femoral (mock)";
 
   const catalog = {};
   for (const def of catalogDefs) {
@@ -194,31 +170,23 @@ async function main() {
   for (const micro of MICROS) {
     const workoutIds = [];
     for (const w of micro.workouts) {
-      let exerciseIds = [];
-      if (w.exercises) {
-        for (const [namePrefix, reps, weight] of w.exercises) {
-          const exercise = ex(namePrefix);
-          const sets = await setSchema.insertMany(
-            Array.from({ length: 3 }, (_, i) => ({
-              reps,
-              weight,
-              doned: true,
-              order: i,
-              rir: i === 2 ? [1] : [2, 3],
-            }))
-          );
-          totalSets += sets.length;
-          const customExercise = await customExerciseSchema.create({
-            exercise: exercise._id,
-            sets: sets.map((s) => s._id),
-            order: exerciseIds.length,
-          });
-          exerciseIds.push(customExercise._id);
-        }
-      }
+      const exercises = (w.exercises || []).map(([namePrefix, reps, weight], index) => {
+        totalSets += 3;
+        return {
+          exercise: ex(namePrefix)._id,
+          order: index,
+          sets: Array.from({ length: 3 }, (_, i) => ({
+            reps,
+            weight,
+            doned: true,
+            order: i,
+            rir: i === 2 ? [1] : [2, 3],
+          })),
+        };
+      });
       const workout = await workoutSchema.create({
         name: `Día ${workoutIds.length + 1}`,
-        exercises: exerciseIds,
+        exercises,
         order: workoutIds.length,
         date: w.exercises ? daysAgo(micro.startDaysAgo - w.offset) : null,
         rest: false,
@@ -226,17 +194,16 @@ async function main() {
       workoutIds.push(workout._id);
       if (w.exercises) totalSessions++;
     }
-    const split = await splitSchema.create({ name: micro.name, workouts: workoutIds });
-    micro.splitId = split._id;
+    micro.split = { name: micro.name, workouts: workoutIds };
   }
 
   const table = await tableSchema.create({
     name: "Rutina de fuerza (mock)",
     userId: client._id,
     assignedByTrainerId: trainer._id,
-    splits: MICROS.map((m) => m.splitId),
+    splits: MICROS.map((m) => m.split),
   });
-  await userSchema.findByIdAndUpdate(client._id, { $set: { tableInUse: table._id } });
+  await userSchema.findByIdAndUpdate(client._id, { $set: { tableInUse: table._id, tableInUseAt: new Date() } });
 
   ok(`${MICROS.length} microciclos, ${totalSessions} sesiones completadas, ${totalSets} series`);
   console.log("");

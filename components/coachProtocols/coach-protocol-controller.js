@@ -1,6 +1,4 @@
 const coachProtocolService = require("./coach-protocol-service");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
-const { isReadOnly } = require("../trainerClients/trainer-seat-service");
 const {
   normalizeCheckins,
   validateCheckins,
@@ -65,15 +63,7 @@ module.exports = {
     const error = payloadError(body, payload);
     if (error) return res.status(400).send({ message: error });
 
-    try {
-      const protocol = await coachProtocolService.create(req.auth.userId, payload);
-      return res.status(201).send(protocol);
-    } catch (e) {
-      if (e.code === 11000) {
-        return res.status(409).send({ message: "Ya tienes un protocolo con ese nombre" });
-      }
-      throw e;
-    }
+    return res.status(201).send(await coachProtocolService.create(req.auth.userId, payload));
   },
 
   async update(req, res) {
@@ -85,30 +75,18 @@ module.exports = {
     const error = payloadError(body, payload);
     if (error) return res.status(400).send({ message: error });
 
-    try {
-      const protocol = await coachProtocolService.update(req.auth.userId, req.params.id, payload);
-      if (!protocol) return res.status(404).send({ message: "Protocolo no encontrado" });
-      return res.send(protocol);
-    } catch (e) {
-      if (e.code === 11000) {
-        return res.status(409).send({ message: "Ya tienes un protocolo con ese nombre" });
-      }
-      throw e;
-    }
+    return res.send(await coachProtocolService.update(req.auth.userId, req.params.id, payload));
   },
 
   async remove(req, res) {
-    const protocol = await coachProtocolService.remove(req.auth.userId, req.params.id);
-    if (!protocol) return res.status(404).send({ message: "Protocolo no encontrado" });
+    await coachProtocolService.remove(req.auth.userId, req.params.id);
     return res.sendStatus(204);
   },
 
   // POST /trainer/protocols/:id/apply — body: { clientIds, startDate?, reason? }
   //
-  // Cada cliente se valida por separado y se aplica de forma independiente:
-  // un fallo en uno nunca aborta el resto, y la respuesta dice paso a paso
-  // qué se aplicó a quién. Mismo criterio que las rutas de "aplicar en
-  // bloque" que ya existen (trainer-client-data-controller.js#applyToTargets).
+  // Uno a uno: un fallo en un cliente no aborta el resto
+  // (coach-protocol-service.js#applyToClients).
   async applyToClients(req, res) {
     const trainerId = req.auth.userId;
     const { clientIds, startDate, reason } = req.body || {};
@@ -120,31 +98,6 @@ module.exports = {
       return res.status(400).send({ message: "Fecha de inicio no válida (YYYY-MM-DD)" });
     }
 
-    const protocol = await coachProtocolService.findOwned(trainerId, req.params.id);
-    if (!protocol) return res.status(404).send({ message: "Protocolo no encontrado" });
-
-    const results = [];
-    for (const clientId of clientIds) {
-      const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId);
-      if (!relation) {
-        results.push({ clientId, success: false, error: "Sin relación activa con este cliente" });
-        continue;
-      }
-      if (await isReadOnly(trainerId, clientId)) {
-        results.push({ clientId, success: false, error: "Cliente en solo lectura por el cupo de tu plan" });
-        continue;
-      }
-      try {
-        const applied = await coachProtocolService.applyToClient(trainerId, protocol, clientId, {
-          startDate,
-          reason,
-        });
-        results.push({ clientId, success: true, steps: applied.steps });
-      } catch (error) {
-        results.push({ clientId, success: false, error: error.message });
-      }
-    }
-
-    return res.send(results);
+    return res.send(await coachProtocolService.applyToClients(trainerId, req.params.id, clientIds, { startDate, reason }));
   },
 };

@@ -7,7 +7,7 @@ const assert = require("node:assert/strict");
 // mongoose debe cargarse (e inicializar su driver) antes de tocar sus
 // helpers internos, o castUpdate revienta al resolver el driver.
 require("mongoose");
-const User = require("./schema");
+const User = require("./user-schema");
 const castUpdate = require("mongoose/lib/helpers/query/castUpdate");
 
 test("email field casing/whitespace (signup)", async (t) => {

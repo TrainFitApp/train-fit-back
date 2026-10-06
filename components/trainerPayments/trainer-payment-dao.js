@@ -1,77 +1,41 @@
 const mongoose = require("mongoose");
 const TrainerPayment = require("./trainer-payment-schema");
 const TrainerPaymentProfile = require("./trainer-payment-profile-schema");
-const TrainerPaymentSettings = require("./trainer-payment-settings-schema");
+const User = require("../users/user-schema");
 const mapper = require("./trainer-payment-mapper");
-const { load: core } = require("./core");
 
 const { toOid } = mapper;
 const DUPLICATE_KEY = 11000;
+const SETTINGS_PATH = "trainerSettings.payments";
 
-// Normalización dentro de Mongo para agregar sobre cobros nuevos y antiguos a
-// la vez, con la MISMA semántica que ledger.ts#normalizeCharge (lo comprueba
-// trainer-payments-db.test.js): un cobro antiguo pagado cuenta su importe
-// entero como recibido en el día (Madrid) en que se marcó pagado.
-function normalizeStages(today) {
-  const LEGACY_TIME_ZONE = core().LEGACY_TIME_ZONE;
-  const legacyAmount = { $round: [{ $multiply: [{ $ifNull: ["$amount", 0] }, 100] }, 0] };
-  const legacyPaid = { $ifNull: ["$paidAt", false] };
+function presentSettings(user) {
+  const settings = user?.trainerSettings?.payments;
+  return settings ? { trainerId: user._id, ...settings } : null;
+}
+
+// Campos derivados para agregar en Mongo con la misma semántica que el núcleo
+// (ledger.ts#balanceOf, isForecast y el orden operativo de la lista).
+function derivedStages(today) {
   return [
     {
       $addFields: {
-        _v2: { $gte: [{ $ifNull: ["$schemaVersion", 0] }, 2] },
-        _amountCents: { $ifNull: ["$amountCents", legacyAmount] },
-        _currency: { $toUpper: { $ifNull: ["$currency", "EUR"] } },
-        _dueDay: {
-          $ifNull: ["$dueDay", { $dateToString: { date: "$dueDate", format: "%Y-%m-%d", timezone: LEGACY_TIME_ZONE } }],
-        },
-      },
-    },
-    {
-      $addFields: {
-        _received: { $ifNull: ["$receivedCents", { $cond: [legacyPaid, "$_amountCents", 0] }] },
-        _cancelled: { $ifNull: ["$cancelledCents", 0] },
-        _status: { $ifNull: ["$status", { $cond: [legacyPaid, "settled", "open"] }] },
-        _movements: {
-          $cond: [
-            "$_v2",
-            { $ifNull: ["$payments", []] },
-            {
-              $cond: [
-                legacyPaid,
-                [
-                  {
-                    amountCents: "$_amountCents",
-                    status: "valid",
-                    receivedDay: { $dateToString: { date: "$paidAt", format: "%Y-%m-%d", timezone: LEGACY_TIME_ZONE } },
-                  },
-                ],
-                [],
-              ],
-            },
-          ],
-        },
-      },
-    },
-    {
-      $addFields: {
-        _balance: { $subtract: ["$_amountCents", { $add: ["$_received", "$_cancelled"] }] },
+        _balance: { $subtract: ["$amountCents", { $add: ["$receivedCents", "$cancelledCents"] }] },
         _forecast: {
           $and: [
             { $eq: ["$origin", "recurring"] },
-            { $eq: ["$_status", "open"] },
-            { $gt: ["$_dueDay", today] },
-            { $eq: ["$_received", 0] },
-            { $eq: ["$_cancelled", 0] },
+            { $eq: ["$status", "open"] },
+            { $gt: ["$dueDay", today] },
+            { $eq: ["$receivedCents", 0] },
+            { $eq: ["$cancelledCents", 0] },
           ],
         },
         // Orden operativo: vencidos, hoy, próximos, histórico.
         _group: {
           $switch: {
             branches: [
-              { case: { $ne: ["$_status", "open"] }, then: 3 },
-              { case: { $lt: ["$_dueDay", today] }, then: 0 },
-              { case: { $eq: ["$_dueDay", today] }, then: 1 },
+              { case: { $ne: ["$status", "open"] }, then: 3 },
+              { case: { $lt: ["$dueDay", today] }, then: 0 },
+              { case: { $eq: ["$dueDay", today] }, then: 1 },
             ],
             default: 2,
           },
@@ -80,7 +44,7 @@ function normalizeStages(today) {
     },
     {
       $addFields: {
-        _dayNumber: { $toInt: { $replaceAll: { input: "$_dueDay", find: "-", replacement: "" } } },
+        _dayNumber: { $toInt: { $replaceAll: { input: "$dueDay", find: "-", replacement: "" } } },
       },
     },
     { $addFields: { _sortKey: { $cond: [{ $lt: ["$_group", 3] }, "$_dayNumber", { $multiply: ["$_dayNumber", -1] }] } } },
@@ -90,8 +54,7 @@ function normalizeStages(today) {
 module.exports = {
   TrainerPayment,
   TrainerPaymentProfile,
-  TrainerPaymentSettings,
-  normalizeStages,
+  derivedStages,
   DUPLICATE_KEY,
 
   // --- Cobros ----------------------------------------------------------------
@@ -106,7 +69,7 @@ module.exports = {
   },
 
   async listClientCharges(trainerId, clientId) {
-    return TrainerPayment.find({ trainerId, clientId }).sort({ dueDay: 1, dueDate: 1, _id: 1 }).lean();
+    return TrainerPayment.find({ trainerId, clientId }).sort({ dueDay: 1, _id: 1 }).lean();
   },
 
   async listChargesByIds(ids) {
@@ -149,13 +112,15 @@ module.exports = {
     return TrainerPayment.findOne({ trainerId, createOperationId: operationId }).lean();
   },
 
-  // Compare-and-swap: solo escribe si nadie ha tocado el cobro desde que se
-  // leyó. Un cobro antiguo sin migrar se protege por la ausencia de schemaVersion.
+  // Compare-and-swap: solo escribe si nadie ha tocado el cobro desde que se leyó.
   async casWrite(before, after) {
-    const filter = { _id: toOid(before.id), trainerId: toOid(before.trainerId), clientId: toOid(before.clientId) };
-    if (before.persistedV2) filter.revision = before.revision;
-    else filter.schemaVersion = { $exists: false };
-    const set = mapper.chargeToSet(after, { syncDueDate: before.dueDay !== after.dueDay });
+    const filter = {
+      _id: toOid(before.id),
+      trainerId: toOid(before.trainerId),
+      clientId: toOid(before.clientId),
+      revision: before.revision,
+    };
+    const set = mapper.chargeToSet(after);
     const result = await TrainerPayment.updateOne(filter, { $set: set });
     return result.matchedCount === 1;
   },
@@ -169,10 +134,10 @@ module.exports = {
     return result.modifiedCount === 1;
   },
 
-  // Abiertos (v2) con vencimiento en [fromDay, toDay]. `filter`: un
+  // Abiertos con vencimiento en [fromDay, toDay]. `filter`: un
   // entrenador ({trainerId}) o un cliente ({clientId, trainerId: {$in}}).
   async listOpenDueBetween(filter, fromDay, toDay) {
-    return TrainerPayment.find({ ...filter, schemaVersion: 2, status: "open", dueDay: { $gte: fromDay, $lte: toDay } }).lean();
+    return TrainerPayment.find({ ...filter, status: "open", dueDay: { $gte: fromDay, $lte: toDay } }).lean();
   },
 
   // Pendientes informativos de un cliente con sus profesionales activos.
@@ -181,9 +146,9 @@ module.exports = {
     return TrainerPayment.find({
       clientId,
       trainerId: { $in: trainerIds },
-      $or: [{ schemaVersion: 2, status: "open" }, { schemaVersion: { $exists: false }, paidAt: null }],
+      status: "open",
     })
-      .sort({ dueDay: 1, dueDate: 1 })
+      .sort({ dueDay: 1 })
       .lean();
   },
 
@@ -232,25 +197,38 @@ module.exports = {
   },
 
   // --- Preferencias del entrenador ---------------------------------------------
+  // Viven en User.trainerSettings.payments (2026-10). Se devuelven con
+  // `trainerId`, como el documento de la colección antigua; null sin ajustes.
 
   async findSettings(trainerId) {
-    return TrainerPaymentSettings.findOne({ trainerId }).lean();
+    if (!mongoose.isValidObjectId(trainerId)) return null;
+    const user = await User.findById(trainerId).select(SETTINGS_PATH).lean();
+    return presentSettings(user);
   },
 
   async listSettings(trainerIds) {
     if (!trainerIds.length) return [];
-    return TrainerPaymentSettings.find({ trainerId: { $in: trainerIds } }).lean();
+    const users = await User.find({ _id: { $in: trainerIds }, [SETTINGS_PATH]: { $exists: true } })
+      .select(SETTINGS_PATH)
+      .lean();
+    return users.map(presentSettings).filter(Boolean);
   },
 
   async saveSettings(trainerId, settings, now) {
-    return TrainerPaymentSettings.findOneAndUpdate(
-      { trainerId },
+    const user = await User.findOneAndUpdate(
+      { _id: trainerId },
       {
-        $set: { timeZone: settings.timeZone, time: settings.time, offsets: settings.offsets },
-        $inc: { revision: 1 },
-        $push: { history: { $each: [{ at: now, ...settings }], $slice: -20 } },
+        $set: {
+          [`${SETTINGS_PATH}.timeZone`]: settings.timeZone,
+          [`${SETTINGS_PATH}.time`]: settings.time,
+          [`${SETTINGS_PATH}.offsets`]: settings.offsets,
+          [`${SETTINGS_PATH}.updatedAt`]: now,
+        },
+        $inc: { [`${SETTINGS_PATH}.revision`]: 1 },
+        $push: { [`${SETTINGS_PATH}.history`]: { $each: [{ at: now, ...settings }], $slice: -20 } },
       },
-      { upsert: true, new: true, lean: true }
-    );
+      { new: true, projection: { [SETTINGS_PATH]: 1 } }
+    ).lean();
+    return presentSettings(user);
   },
 };

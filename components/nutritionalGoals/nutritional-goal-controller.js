@@ -1,6 +1,5 @@
 const nutritionalGoalService = require("./nutritional-goal-service");
-const featureAccessService = require("../billing/feature-access-service");
-const userSchema = require("../users/schema");
+const featureAccess = require("../billing/feature-access");
 
 function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
@@ -44,70 +43,41 @@ function getFreeUnlockedGoalId(user, goals) {
 }
 
 async function isGoalLockedForPlan(req, goal) {
-  if (isAdmin(req) || featureAccessService.isPremiumUser(req.user)) {
+  if (isAdmin(req) || featureAccess.isPremiumUser(req.user)) {
     return false;
   }
 
   const goals = await nutritionalGoalService.getByUserId(req.user.id);
-  const limit = featureAccessService.getLimits(req.user).nutritionalGoals;
+  const limit = featureAccess.getLimits(req.user).nutritionalGoals;
   if (goals.length <= limit) return false;
 
   const unlockedGoalId = getFreeUnlockedGoalId(req.user, goals);
   return getGoalId(goal) !== unlockedGoalId;
 }
 
-async function syncActiveGoalAfterDelete(userId, deletedGoalId) {
-  const user = await userSchema.findById(userId).select("goalInUse");
-  const isDeletedGoalActive =
-    String(user?.goalInUse || "") === String(deletedGoalId || "");
-
-  if (!isDeletedGoalActive) {
-    return user?.goalInUse || null;
-  }
-
-  const fallbackGoal = await nutritionalGoalService.getLatestByUserId(userId);
-  if (fallbackGoal?._id) {
-    await userSchema.findByIdAndUpdate(userId, {
-      $set: { goalInUse: fallbackGoal._id },
-    });
-    return fallbackGoal._id;
-  }
-
-  await userSchema.findByIdAndUpdate(userId, { $unset: { goalInUse: 1 } });
-  return null;
-}
-
 const controller = {
   async create(req, res) {
     const used = await nutritionalGoalService.countByUserId(req.user.id);
-    const limits = featureAccessService.getLimits(req.user);
+    const limits = featureAccess.getLimits(req.user);
     const limit = limits.nutritionalGoals;
 
-    if (!featureAccessService.canCreateNutritionalGoal(req.user, used)) {
+    if (!featureAccess.canCreateNutritionalGoal(req.user, used)) {
       return res.status(403).send({
         message: "Has alcanzado el limite de objetivos nutricionales",
         code: "NUTRITIONAL_GOALS_LIMIT_REACHED",
         limit,
         used,
-        isPremium: featureAccessService.isPremiumUser(req.user),
+        isPremium: featureAccess.isPremiumUser(req.user),
       });
     }
 
-    const goal = await nutritionalGoalService.create({
-      userId: req.user.id,
+    const goal = await nutritionalGoalService.createForUser(req.user.id, {
       name: req.body.name || "Default",
       kcalTotal: req.body.kcalTotal || 0,
       proteinsGTotal: req.body.proteinsGTotal || 0,
       carbohydratesGTotal: req.body.carbohydratesGTotal || 0,
       fatGTotal: req.body.fatGTotal || 0,
     });
-
-    if (!req.user.goalInUse) {
-      await userSchema.findByIdAndUpdate(req.user.id, {
-        $set: { goalInUse: goal._id },
-      });
-    }
-
     return res.send(goal);
   },
 
@@ -147,23 +117,8 @@ const controller = {
     if (!currentGoal) return res.sendStatus(404);
     if (!canAccessGoal(req, currentGoal)) return res.sendStatus(404);
 
-    const ownerId = currentGoal.userId;
-    const goalCount = await nutritionalGoalService.countByUserId(ownerId);
-    if (goalCount <= 1) {
-      return res.status(409).send({
-        message: "Debes tener al menos un objetivo nutricional",
-        code: "NUTRITIONAL_GOALS_MINIMUM_ONE",
-      });
-    }
-
-    const deletedGoal = isAdmin(req)
-      ? await nutritionalGoalService.remove(req.params.id)
-      : await nutritionalGoalService.removeByUserId(req.params.id, req.user.id);
-
-    if (!deletedGoal) return res.sendStatus(404);
-
-    const goalInUse = await syncActiveGoalAfterDelete(ownerId, currentGoal._id);
-
+    const goalInUse = await nutritionalGoalService.removeGoal(currentGoal, isAdmin(req) ? null : req.user.id);
+    if (goalInUse === undefined) return res.sendStatus(404);
     return res.send({ goalInUse });
   },
 
@@ -173,10 +128,7 @@ const controller = {
     if (!canAccessGoal(req, goal)) return res.sendStatus(404);
     if (await isGoalLockedForPlan(req, goal)) return sendLockedGoal(res);
 
-    await userSchema.findByIdAndUpdate(goal.userId, {
-      $set: { goalInUse: goal._id },
-    });
-
+    await nutritionalGoalService.activate(goal);
     return res.send({ goalInUse: goal._id, goal });
   },
 };

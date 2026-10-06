@@ -77,4 +77,6 @@ MediaAssetSchema.pre("deleteMany", async function (next) {
   }
 });
 
+MediaAssetSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["ownerId", "subjectId"] });
+
 module.exports = mongoose.model("MediaAsset", MediaAssetSchema);

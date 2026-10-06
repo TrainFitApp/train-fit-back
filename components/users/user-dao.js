@@ -1,70 +1,144 @@
 const mongoose = require("mongoose");
-const userSchema = require("./schema");
-const dietDayUtil = require("../dietDays/diet-days-util");
-const dietDayModel = require("../dietDays/diet-days-service");
-const dietModel = require("../diets/diet-model");
-const aggregateService = require("../util/aggregate-service");
-const mail = require("../util/mail");
-const recipeSchema = require("../recipes/recipe-schema");
-const recipeModel = require("../recipes/recipe-model");
-const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
-const { activePremiumFilter } = require("../billing/feature-access-service");
+const userSchema = require("./user-schema");
+const { activePremiumFilter } = require("../billing/feature-access");
+
+// Recuento de documentos de `from` del usuario sin traérselos.
+const countLookup = (from, as) => ({
+  $lookup: {
+    from,
+    let: { userId: "$_id" },
+    pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$userId"] } } }, { $count: "n" }],
+    as,
+  },
+});
+const firstCount = (field) => ({ $ifNull: [{ $arrayElemAt: [`$${field}.n`, 0] }, 0] });
+
+// Lo que pinta la lista de usuarios del panel admin: datos de cuenta y
+// recuentos. Nunca contraseña, códigos, sesión ni datos personales de salud.
+function adminListStages() {
+  return [
+    countLookup("products", "_products"),
+    countLookup("exercises", "_exercises"),
+    countLookup("dietdays", "_dietDays"),
+    {
+      $project: {
+        name: 1,
+        lastname: 1,
+        email: 1,
+        roles: 1,
+        provider: 1,
+        lastLogin: 1,
+        premium: 1,
+        // Cuenta sin verificar: el panel ofrece borrar el código (no lo ve).
+        pendingActivation: { $gt: [{ $strLenCP: { $ifNull: ["$hash", ""] } }, 0] },
+        productsCount: firstCount("_products"),
+        exercisesCount: firstCount("_exercises"),
+        dietDaysCount: firstCount("_dietDays"),
+      },
+    },
+    { $addFields: { hasDietDays: { $gt: ["$dietDaysCount", 0] } } },
+  ];
+}
 
 module.exports = {
   async getUserById(id) {
-    return new Promise((resolve, reject) =>
-      userSchema.findOne({ _id: id }).exec((err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      }),
-    );
+    return userSchema.findOne({ _id: id });
   },
 
+  // Solo los campos pedidos de un usuario o de varios (nombres para pintar
+  // listas de otro usuario). Nunca el documento entero.
+  async findFields(id, fields) {
+    return userSchema.findById(id).select(fields).lean();
+  },
+
+  async listFields(ids, fields) {
+    if (!ids?.length) return [];
+    return userSchema.find({ _id: { $in: ids } }).select(fields).lean();
+  },
+
+  async findFieldsByEmail(email, fields) {
+    return userSchema.findOne({ email }).select(fields).lean();
+  },
+
+  // De `ids`, los que casan con `pattern` en nombre, apellidos o correo.
+  async filterIdsByText(ids, pattern) {
+    if (!ids?.length) return [];
+    const rows = await userSchema
+      .find({ _id: { $in: ids }, $or: [{ name: pattern }, { lastname: pattern }, { email: pattern }] })
+      .select("_id")
+      .lean();
+    return rows.map((row) => String(row._id));
+  },
+
+  // Plazas activas elegidas por el profesional (trainer-seat-service.js).
+  async setTrainerSeats(trainerId, trainerSeats) {
+    await userSchema.updateOne({ _id: trainerId }, { $set: { trainerSeats } });
+  },
+
+  // Solo lectura: el último acceso lo fija la sesión al emitirse
+  // (auth/session-service.js#issue), no buscar a alguien por su email.
   async findByEmail(email) {
-    try {
-      return await userSchema.findOneAndUpdate(
-        { email: email },
-        { lastLogin: new Date() },
-      );
-    } catch (err) {
-      throw err;
-    }
+    return userSchema.findOne({ email });
   },
 
   async findByAppleId(appleId) {
-    try {
-      return await userSchema.findOne({ appleId: appleId });
-    } catch (err) {
-      throw err;
-    }
+    return userSchema.findOne({ appleId });
   },
 
-  async existsByEmail(email) {
-    try {
-      const exists = await userSchema.exists({ email });
-      return !!exists;
-    } catch (err) {
-      throw err;
-    }
+  // Alta directa (profesional, registro social): el pre("save") cifra la
+  // contraseña si la hay.
+  async create(data) {
+    return userSchema.create(data);
   },
 
+  async linkAppleId(userId, appleId) {
+    return userSchema.findByIdAndUpdate(userId, { $set: { appleId } }, { new: true });
+  },
+
+  async setRoles(userId, roles) {
+    return userSchema.findByIdAndUpdate(userId, { $set: { roles } }, { new: true });
+  },
+
+  // El usuario de cada petición autenticada, sin los campos que no viajan
+  // (validateAuth.js).
+  async findForRequest(userId, excludedFields) {
+    return userSchema.findById(userId).select(excludedFields);
+  },
+
+  async setTimeZone(userId, timezone) {
+    await userSchema.updateOne({ _id: userId }, { $set: { timezone } });
+  },
+
+  // --- Sesión (User.auth: una sola sesión viva por usuario) ---
+  async startSession(userId, auth, at = new Date()) {
+    return userSchema.findByIdAndUpdate(userId, { $set: { lastLogin: at, auth } }, { new: true });
+  },
+
+  async touchSession(userId) {
+    return userSchema.findByIdAndUpdate(userId, { $set: { "auth.lastUsedAt": new Date() } }, { new: true });
+  },
+
+  // Cierra la sesión solo si sigue siendo `sessionId` (otra posterior no se toca).
+  async clearSessionIfCurrent(userId, sessionId) {
+    if (!userId || !sessionId) return null;
+    return userSchema.findOneAndUpdate({ _id: userId, "auth.sessionId": sessionId }, { $unset: { auth: 1 } }, { new: true });
+  },
+
+  async clearSession(userId) {
+    if (!userId) return null;
+    return userSchema.findByIdAndUpdate(userId, { $unset: { auth: 1 } });
+  },
+
+  // Conectados en los últimos 10 minutos y total.
   async countUsers() {
-    try {
-      const userCounts = {
-        online: await userSchema.countDocuments({
-          lastLogin: {
-            $gte: new Date(new Date().getTime() - 10 * 60 * 1000), // Al menos hace 10 minutos
-            $lte: new Date(),
-          },
-        }),
-        total: await userSchema.countDocuments(),
-      };
-
-      return userCounts;
-    } catch (e) {
-      throw e;
-    }
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const [online, total] = await Promise.all([
+      userSchema.countDocuments({ lastLogin: { $gte: tenMinutesAgo, $lte: new Date() } }),
+      userSchema.countDocuments(),
+    ]);
+    return { online, total };
   },
+
 
   async searchUsers(page, limit, searchTerm, filters = {}) {
     try {
@@ -101,33 +175,7 @@ module.exports = {
           { $sort: { lastLogin: -1 } },
           { $skip: page * limit },
           { $limit: limit },
-          { $lookup: { from: "products", localField: "_id", foreignField: "userId", as: "createdProducts" } },
-          { $lookup: { from: "exercises", localField: "_id", foreignField: "userId", as: "createdExercises" } },
-          { $lookup: { from: "tables", localField: "tableInUse", foreignField: "_id", as: "tableInUseDoc" } },
-          { $lookup: { from: "workouts", localField: "workoutInUse", foreignField: "_id", as: "workoutInUseDoc" } },
-          // Refactor nutrición (2026-09) — los días cuelgan del usuario, no de un
-          // wrapper Diet: se cuentan directos por userId.
-          { $lookup: { from: "dietdays", localField: "_id", foreignField: "userId", as: "dietDayDocs" } },
-          {
-            $addFields: {
-              productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
-              exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
-              hasWorkoutInUse: { $gt: ["$workoutInUse", null] },
-              hasTableInUse: { $gt: ["$tableInUse", null] },
-              hasDietInUse: { $gt: [{ $size: { $ifNull: ["$dietDayDocs", []] } }, 0] },
-              tableSplitsCount: {
-                $cond: [
-                  { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
-                  { $size: { $ifNull: [{ $arrayElemAt: ["$tableInUseDoc.splits", 0] }, []] } },
-                  0
-                ]
-              },
-              dietDaysCount: { $size: { $ifNull: ["$dietDayDocs", []] } }
-            }
-          },
-          {
-            $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietDayDocs: 0 }
-          }
+          ...adminListStages(),
         ]);
 
         return { users, total };
@@ -185,33 +233,7 @@ module.exports = {
         { $sort: { matchCount: -1, lastLogin: -1 } },
         { $skip: page * limit },
         { $limit: limit },
-        { $lookup: { from: "products", localField: "_id", foreignField: "userId", as: "createdProducts" } },
-        { $lookup: { from: "exercises", localField: "_id", foreignField: "userId", as: "createdExercises" } },
-        { $lookup: { from: "tables", localField: "tableInUse", foreignField: "_id", as: "tableInUseDoc" } },
-        { $lookup: { from: "workouts", localField: "workoutInUse", foreignField: "_id", as: "workoutInUseDoc" } },
-        // Refactor nutrición (2026-09) — los días cuelgan del usuario, no de un
-          // wrapper Diet: se cuentan directos por userId.
-          { $lookup: { from: "dietdays", localField: "_id", foreignField: "userId", as: "dietDayDocs" } },
-        {
-          $addFields: {
-            productsCount: { $size: { $ifNull: ["$createdProducts", []] } },
-            exercisesCount: { $size: { $ifNull: ["$createdExercises", []] } },
-            hasWorkoutInUse: { $gt: ["$workoutInUse", null] },
-            hasTableInUse: { $gt: ["$tableInUse", null] },
-            hasDietInUse: { $gt: [{ $size: { $ifNull: ["$dietDayDocs", []] } }, 0] },
-            tableSplitsCount: {
-              $cond: [
-                { $gt: [{ $size: { $ifNull: ["$tableInUseDoc", []] } }, 0] },
-                { $size: { $ifNull: [{ $arrayElemAt: ["$tableInUseDoc.splits", 0] }, []] } },
-                0
-              ]
-            },
-            dietDaysCount: { $size: { $ifNull: ["$dietDayDocs", []] } }
-          }
-        },
-        {
-          $project: { createdProducts: 0, createdExercises: 0, tableInUseDoc: 0, workoutInUseDoc: 0, dietDayDocs: 0 }
-        }
+        ...adminListStages(),
       ]);
 
       return { users, total };
@@ -221,666 +243,136 @@ module.exports = {
     }
   },
 
-  async login(user) {
-    return new Promise((resolve, reject) =>
-      userSchema.login(user, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
-  },
-
-  async createUser(user, date) {
-    try {
-      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
-      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
-      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
-      // esta creación temprana no hacía). Aquí, encima, el día se creaba
-      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
-      // dueño.
-
-      // const standardWorkout = workoutUtil.getStandarWorkout(date);
-      // const workout = await workoutService.createWorkout(standardWorkout);
-
-      // const standardSplit = splitUtil.getStandarSplit();
-      // standardSplit.workouts.push(workout._id);
-      // const createdSplit = await splitModel.createSplit(standardSplit);
-
-      // const standardtable = tableUtil.getStandardTable();
-      // standardtable.splits.push(createdSplit._id);
-      // const createdTable = await tableModel.createTable(standardtable);
-
-      // user.tableInUse = createdTable._id;
-
-      let userDoc;
-      if (user) {
-        let existingUser = await userSchema.findOne({ email: user.email });
-        if (existingUser && !existingUser.name) {
-          Object.assign(existingUser, user);
-          userDoc = await existingUser.save();
-        } else {
-          userDoc = await userSchema.create(user);
-        }
-      }
-
-      if (userDoc && (user.kcalTotal || user.proteinsGTotal || user.carbohydratesGTotal || user.fatGTotal)) {
-        const goal = await nutritionalGoalService.create({
-          userId: userDoc._id,
-          name: 'Default',
-          kcalTotal: user.kcalTotal || 0,
-          proteinsGTotal: user.proteinsGTotal || 0,
-          carbohydratesGTotal: user.carbohydratesGTotal || 0,
-          fatGTotal: user.fatGTotal || 0,
-        });
-        userDoc.goalInUse = goal._id;
-        await userDoc.save();
-      }
-
-      return userDoc;
-    } catch (err) {
-      throw err;
+  // Alta por email. Una cuenta que existe sin nombre (empezada por otra vía
+  // y nunca completada) se completa en vez de chocar con el email único.
+  async createOrCompleteByEmail(user) {
+    const existing = await userSchema.findOne({ email: user.email });
+    if (existing && !existing.name) {
+      Object.assign(existing, user);
+      return existing.save();
     }
+    return userSchema.create(user);
   },
 
-  async createUserWithGoogle(user, date) {
-    try {
-      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
-      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
-      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
-      // esta creación temprana no hacía). Aquí, encima, el día se creaba
-      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
-      // dueño.
-
-      const userDoc = await userSchema.create(user);
-
-      return userDoc;
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  async createUserWithApple(user, date) {
-    try {
-      // Refactor nutrición (2026-09) — ya no se crea una Diet + DietDay al
-      // dar de alta al usuario. El día lo crea resolveOwnedDietDay en el
-      // primer acceso, y además le aplica el plan activo si lo hay (cosa que
-      // esta creación temprana no hacía). Aquí, encima, el día se creaba
-      // ANTES de que el usuario existiera, así que ni siquiera podía llevar
-      // dueño.
-
-      const userDoc = await userSchema.create(user);
-
-      return userDoc;
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  async updateGoogleUser(userUpdate) {
-    try {
-      const findUser = await userSchema.findOne({ email: userUpdate.email });
-      if (!findUser) throw new Error("User not found");
-      const idUser = findUser._id;
-      const safeUpdate = { ...userUpdate };
-      [
-        "_id",
-        "isPremium",
-        "premium",
-        "professionalPremium",
-        "roles",
-        "provider",
-        "auth",
-        "refreshToken",
-        "previousRefreshToken",
-        "tokenRotationTimestamp",
-        "hash",
-      ].forEach((field) => delete safeUpdate[field]);
-      Object.keys(safeUpdate).forEach((key) => {
-        if (key.startsWith("$") || key.includes(".")) delete safeUpdate[key];
-      });
-
-      const user = await userSchema.findByIdAndUpdate(idUser, safeUpdate, {
-        new: true,
-      });
-
-      return user;
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  async updateAppleUser(userUpdate) {
-    try {
-      const findUser = await userSchema.findOne({ email: userUpdate.email });
-      if (!findUser) throw new Error("User not found");
-      const idUser = findUser._id;
-      const safeUpdate = { ...userUpdate };
-      [
-        "_id",
-        "isPremium",
-        "premium",
-        "professionalPremium",
-        "roles",
-        "provider",
-        "auth",
-        "refreshToken",
-        "previousRefreshToken",
-        "tokenRotationTimestamp",
-        "hash",
-      ].forEach((field) => delete safeUpdate[field]);
-      Object.keys(safeUpdate).forEach((key) => {
-        if (key.startsWith("$") || key.includes(".")) delete safeUpdate[key];
-      });
-
-      const user = await userSchema.findByIdAndUpdate(idUser, safeUpdate, {
-        new: true,
-      });
-
-      return user;
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  // Busca entre los favoritos del usuario `userId`. `node`/`archivedNode`
-  // vienen del cliente: solo valen las parejas conocidas (antes el $lookup
-  // aceptaba cualquier colección), el texto se escapa antes de ir a $regex y
-  // el $match empieza por el propio usuario (antes devolvía los favoritos del
-  // primero que encontraba).
-  async searchArchivedsByFilter(userId, node, archivedNode, search) {
-    const ALLOWED = { products: "archivedProducts", recipes: "archivedRecipes", exercises: "archivedExercises" };
-    if (!userId || ALLOWED[node] !== archivedNode) return [];
-    const escaped = String(search ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const agg = [
-      {
-        $match: {
-          _id: new mongoose.Types.ObjectId(String(userId)),
-          [`${archivedNode}`]: { $exists: true, $ne: [] },
-        },
-      },
-      {
-        $lookup: {
-          from: node,
-          localField: `${archivedNode}`,
-          foreignField: "_id",
-          as: `${archivedNode}`,
-        },
-      },
-      {
-        $unwind: `$${archivedNode}`,
-      },
-      {
-        $match: {
-          [`${archivedNode}.name`]: { $regex: escaped, $options: "i" },
-        },
-      },
-      {
-        $group: {
-          _id: "$_id",
-          [`${archivedNode}`]: { $push: `$${archivedNode}` },
-        },
-      },
-    ];
-
-    try {
-      return await aggregateService.aggregateFilter(
-        await userSchema.aggregate(agg),
-        archivedNode,
-      );
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  // Refactor nutrición (2026-09) — sin wrapper Diet no hay nada que
-  // "asignar": los días ya cuelgan del usuario. Se mantiene el método (y su
-  // ruta) para no romper las apps instaladas, pero solo devuelve el usuario.
-  async addUserDiet(idUser, _idDiet) {
-    const addDiet = { $set: {} };
-
-    return new Promise((resolve, reject) =>
-      userSchema.findByIdAndUpdate(
-        idUser,
-        addDiet,
-        { new: true },
-        (err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        },
-      ),
-    );
-  },
-
+  // El usuario pone en uso una de sus rutinas (users/user-schema.js, tableInUseAt).
   async addUserTable(idUser, idTable) {
     const addTable = {
-      $set: { tableInUse: idTable },
+      $set: { tableInUse: idTable, tableInUseAt: new Date() },
+      $unset: { workoutInUse: "", workoutInUseAt: "" },
     };
 
-    return new Promise((resolve, reject) =>
-      userSchema.findByIdAndUpdate(
-        idUser,
-        addTable,
-        { new: true },
-        (err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        },
-      ),
-    );
+    return userSchema.findByIdAndUpdate(idUser, addTable, { new: true });
   },
 
-  async updateUser(user) {
-    try {
-      const blockedFields = new Set([
-        "_id",
-        "isPremium",
-        "premium",
-        "professionalPremium",
-        "roles",
-        "provider",
-        "auth",
-        "refreshToken",
-        "previousRefreshToken",
-        "tokenRotationTimestamp",
-        "hash",
-        "appleId",
-        "goalInUse",
-        // Seguridad de la cuenta: cada uno tiene su flujo propio (registro,
-        // cambio y restablecimiento de contraseña, verificación, consentimiento
-        // de media, plazas de Stripe). Antes `password` se guardaba aquí en
-        // claro y el usuario ya no podía entrar.
-        "password",
-        "passwordVersion",
-        "lastPasswordChangeAt",
-        "email",
-        "hashExpiresAt",
-        "hashFailedAttempts",
-        "lastHashSentAt",
-        "restoreCode",
-        "restoreCodeExpiresAt",
-        "restoreFailedAttempts",
-        "lastRestoreCodeSentAt",
-        "restoreCodeDate",
-        "restoreCodeDailyCount",
-        "trainerSeats",
-        "mediaConsentAt",
-        "mediaConsentVersion",
-        "status",
-        "lastLogin",
-      ]);
-
-      const safeInput = {};
-      Object.keys(user || {}).forEach((key) => {
-        if (
-          !blockedFields.has(key) &&
-          !key.startsWith("$") &&
-          !key.includes(".")
-        ) {
-          safeInput[key] = user[key];
-        }
-      });
-
-      const update = { $set: safeInput, $unset: {} };
-      ["tableInUse", "workoutInUse"].forEach((field) => {
-        if (safeInput[field] === null || safeInput[field] === undefined) {
-          update.$unset[field] = 1;
-          delete update.$set[field];
-        }
-      });
-
-      if (Object.keys(update.$set).length === 0) delete update.$set;
-      if (Object.keys(update.$unset).length === 0) delete update.$unset;
-
-      if (!update.$set && !update.$unset) {
-        return await userSchema.findById(user._id);
-      }
-
-      return await userSchema.findByIdAndUpdate(user._id, update, {
-        new: true,
-      });
-    } catch (err) {
-      throw err;
-    }
+  // Campos del perfil ya filtrados (users/user-profile.js#pickProfile y
+  // #pointerChanges) y los que se quitan.
+  async updateProfile(userId, set, unset = []) {
+    const update = {};
+    if (Object.keys(set).length) update.$set = set;
+    if (unset.length) update.$unset = Object.fromEntries(unset.map((field) => [field, ""]));
+    if (!Object.keys(update).length) return userSchema.findById(userId);
+    return userSchema.findByIdAndUpdate(userId, update, { new: true, runValidators: true });
   },
 
   async updateVerificationHash(userId, hash, expiresAt) {
-    try {
-      return await userSchema.findByIdAndUpdate(
-        userId,
-        {
-          $set: {
-            hash,
-            hashExpiresAt: expiresAt,
-            hashFailedAttempts: 0,
-            lastHashSentAt: new Date(),
-          },
-        },
-        { new: true },
-      );
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  // Reenvío explícito del código de verificación de signup (botón "Reenviar
-  // código"). El filtro de cooldown va dentro del propio findOneAndUpdate
-  // para que la comprobación + sobreescritura sea una única operación
-  // atómica a nivel de BD: dos reenvíos concurrentes no pueden colarse los
-  // dos, MongoDB serializa las escrituras sobre el mismo documento y solo
-  // una gana el filtro de cooldown (evita la condición de carrera).
-  async resendVerificationHash(email, hash, expiresAt) {
-    try {
-      const emailExists = await mail.validateEmailExists(email);
-      if (!emailExists) {
-        throw new Error("INVALID_EMAIL");
-      }
-
-      const user = await userSchema
-        .findOne({ email })
-        .select("_id email name hash lastHashSentAt");
-      if (!user) {
-        throw new Error("USER_NOT_FOUND");
-      }
-      if (!user.hash) {
-        throw new Error("ALREADY_VERIFIED");
-      }
-
-      const cooldownCutoff = new Date(Date.now() - 60 * 1000);
-      const updatedUser = await userSchema.findOneAndUpdate(
-        {
-          _id: user._id,
-          $or: [
-            { lastHashSentAt: { $exists: false } },
-            { lastHashSentAt: null },
-            { lastHashSentAt: { $lte: cooldownCutoff } },
-          ],
-        },
-        {
-          $set: {
-            hash,
-            hashExpiresAt: expiresAt,
-            hashFailedAttempts: 0,
-            lastHashSentAt: new Date(),
-          },
-        },
-        { new: true },
-      );
-
-      if (!updatedUser) {
-        throw new Error("COOLDOWN_ACTIVE");
-      }
-
-      const header1 = `Hola ${updatedUser.name}, verifique su cuenta`;
-      const description =
-        "Introduce el siguiente código en la aplicación para finalizar el registro.";
-      const htmlMail = mail.generateHashMail(header1, description, hash);
-      await mail.sendTransactionalMail(
-        updatedUser.email,
-        "Verificación de cuenta - TrainFit",
-        htmlMail,
-      );
-
-      return updatedUser;
-    } catch (e) {
-      throw e;
-    }
-  },
-
-  // Verificación del código de signup. Igual que checkRestoreCode: primero
-  // se comprueban intentos fallidos/expiración, y en caso de código
-  // incorrecto se incrementa el contador; en caso de acierto se invalida el
-  // hash (y el resto de metadatos asociados) atómicamente para que quede
-  // inutilizable de inmediato, aunque no haya expirado.
-  async verifyActivationHash(email, code) {
-    try {
-      const user = await userSchema.findOne({ email });
-      if (!user) {
-        throw new Error("USER_NOT_FOUND");
-      }
-      if (!user.hash) {
-        throw new Error("ALREADY_VERIFIED");
-      }
-      if ((user.hashFailedAttempts || 0) >= 5) {
-        throw new Error("TOO_MANY_ATTEMPTS");
-      }
-      if (user.hashExpiresAt && Date.now() > user.hashExpiresAt.getTime()) {
-        throw new Error("CODE_EXPIRED");
-      }
-      if (user.hash !== code) {
-        await userSchema.findByIdAndUpdate(user._id, {
-          $inc: { hashFailedAttempts: 1 },
-        });
-        throw new Error("INVALID_CODE");
-      }
-
-      return await userSchema.findByIdAndUpdate(
-        user._id,
-        {
-          $unset: {
-            hash: 1,
-            hashExpiresAt: 1,
-            hashFailedAttempts: 1,
-            lastHashSentAt: 1,
-          },
-        },
-        { new: true },
-      );
-    } catch (e) {
-      throw e;
-    }
-  },
-
-  // El segundo parámetro era el id del wrapper (presente = activar, null =
-  // parar). Ahora es directamente el booleano del interruptor.
-  async playStopDiet(id, enabled) {
-    const update = { $set: { dietEnabled: !!enabled } };
-
-    return new Promise((resolve, reject) =>
-      userSchema.findByIdAndUpdate(id, update, { new: true }, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      }),
+    return userSchema.findByIdAndUpdate(
+      userId,
+      { $set: { hash, hashExpiresAt: expiresAt, hashFailedAttempts: 0, lastHashSentAt: new Date() } },
+      { new: true },
     );
   },
 
-  async addFavoriteProduct(idUser, idProduct, productExist) {
-    const query = productExist
-      ? { $pull: { archivedProducts: idProduct } }
-      : { $push: { archivedProducts: idProduct } };
-    const doc = await userSchema.findByIdAndUpdate(idUser, query, {
-      new: true,
-    });
-    return doc;
+  // --- Código de verificación del alta ---
+  async findVerificationState(email) {
+    return userSchema.findOne({ email }).select("_id email name hash hashExpiresAt hashFailedAttempts lastHashSentAt").lean();
   },
 
-  async updatePassword(email, password) {
-    const user = await userSchema.findOne({ email: email });
-    if (!user) throw new Error("User not found.");
-
-    user.password = password; // Update the password directly on the document
-    await user.save(); // Save the updated document with the hashed password
-    return user;
+  // Guarda un código nuevo solo si el último se mandó antes de
+  // `cooldownCutoff`: comprobación y escritura en una sola operación
+  // atómica, así dos reenvíos concurrentes no pueden colarse los dos. null si
+  // no pasó el filtro.
+  async setVerificationCodeIfIdle(userId, hash, expiresAt, cooldownCutoff) {
+    return userSchema.findOneAndUpdate(
+      {
+        _id: userId,
+        $or: [
+          { lastHashSentAt: { $exists: false } },
+          { lastHashSentAt: null },
+          { lastHashSentAt: { $lte: cooldownCutoff } },
+        ],
+      },
+      { $set: { hash, hashExpiresAt: expiresAt, hashFailedAttempts: 0, lastHashSentAt: new Date() } },
+      { new: true },
+    );
   },
 
-  // Igual que resendVerificationHash (signup): la comprobación de cooldown y
-  // la sobreescritura de restoreCode van dentro del mismo findOneAndUpdate,
-  // como una única operación atómica de BD. Antes eran 3 pasos separados
-  // (leer -> comprobar en JS -> escribir con findByIdAndUpdate), lo que
-  // dejaba una ventana de condición de carrera: dos reenvíos casi
-  // simultáneos podían superar los dos la comprobación de cooldown antes de
-  // que ninguno hubiese escrito todavía, generando dos códigos/emails
-  // distintos donde solo el ganador de la escritura en Mongo quedaba activo
-  // (no necesariamente el último correo recibido por el usuario).
-  async sendMailCode(email, hash, expiresAt) {
-    try {
-      // Validar que el email existe (formato + dominio con MX)
-      const emailExists = await mail.validateEmailExists(email);
-      if (!emailExists) {
-        throw new Error("INVALID_EMAIL");
-      }
-
-      // Buscar usuario en BD. OJO: select() debe incluir explícitamente
-      // restoreCodeDate/restoreCodeDailyCount — antes no se seleccionaban y
-      // por tanto currentCount siempre daba 0 y el límite diario nunca se
-      // llegaba a aplicar.
-      const user = await userSchema
-        .findOne({ email })
-        .select("_id email lastRestoreCodeSentAt restoreCodeDate restoreCodeDailyCount");
-      if (!user) {
-        throw new Error("USER_NOT_FOUND");
-      }
-
-      // Daily limit: max 3 códigos por día por email
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const lastReset = user.restoreCodeDate || new Date(0);
-      const isNewDay = lastReset.getTime() < today.getTime();
-      const currentCount = isNewDay ? 0 : (user.restoreCodeDailyCount || 0);
-
-      if (currentCount >= 3) {
-        throw new Error("DAILY_LIMIT_REACHED");
-      }
-
-      const cooldownCutoff = new Date(Date.now() - 60 * 1000);
-      const updatedUser = await userSchema.findOneAndUpdate(
-        {
-          _id: user._id,
-          $or: [
-            { lastRestoreCodeSentAt: { $exists: false } },
-            { lastRestoreCodeSentAt: null },
-            { lastRestoreCodeSentAt: { $lte: cooldownCutoff } },
-          ],
-        },
-        {
-          $set: {
-            restoreCode: hash,
-            restoreCodeExpiresAt: expiresAt,
-            restoreFailedAttempts: 0,
-            lastRestoreCodeSentAt: new Date(),
-            restoreCodeDate: today,
-            restoreCodeDailyCount: currentCount + 1,
-          },
-        },
-        { new: true },
-      );
-
-      if (!updatedUser) {
-        throw new Error("COOLDOWN_ACTIVE");
-      }
-
-      const html = mail.generateHashMail(
-        `Hola ${user.email}`,
-        "Este es tu código de verificación. Copia y pégalo en la app.",
-        hash,
-      );
-      await mail.sendTransactionalMail(user.email, "Código de verificación", html);
-      return updatedUser;
-    } catch (e) {
-      throw e;
-    }
+  async countVerificationFailure(userId) {
+    await userSchema.updateOne({ _id: userId }, { $inc: { hashFailedAttempts: 1 } });
   },
 
-  async checkRestoreCode(email, password, hash) {
-    try {
-      const user = await userSchema.findOne({ email });
-      if (!user) throw new Error("Usuario no encontrado");
-
-      if ((user.restoreFailedAttempts || 0) >= 5) {
-        throw new Error("Demasiados intentos fallidos. Solicita un nuevo código.");
-      }
-
-      if (user.restoreCodeExpiresAt && Date.now() > user.restoreCodeExpiresAt.getTime()) {
-        throw new Error("Código expirado. Solicita uno nuevo.");
-      }
-
-      if (user.restoreCode !== hash) {
-        await userSchema.findByIdAndUpdate(user._id, {
-          $inc: { restoreFailedAttempts: 1 },
-        });
-        throw new Error("Código incorrecto");
-      }
-
-      user.restoreCode = undefined;
-      user.restoreCodeExpiresAt = undefined;
-      user.restoreFailedAttempts = 0;
-      user.lastRestoreCodeSentAt = undefined;
-      user.password = password;
-
-      return await user.save();
-    } catch (e) {
-      throw e;
-    }
+  // Un código acertado deja de valer en el acto, aunque no haya caducado.
+  async clearVerification(userId) {
+    return userSchema.findByIdAndUpdate(
+      userId,
+      { $unset: { hash: 1, hashExpiresAt: 1, hashFailedAttempts: 1, lastHashSentAt: 1 } },
+      { new: true },
+    );
   },
 
-  async addFavoriteRecipe(idUser, idRecipe, isOwn, recipeExist) {
-    let node = "archivedRecipes";
-    let query = recipeExist
-      ? { $pull: { [node]: idRecipe } }
-      : { $push: { [node]: idRecipe } };
-    const doc = await userSchema.findByIdAndUpdate(idUser, query, {
-      new: true,
-    });
-    return doc;
+  // Activación por enlace: solo si el código coincide, en una operación.
+  async activateByHash(userId, hash) {
+    if (!mongoose.isValidObjectId(userId) || typeof hash !== "string" || !hash) return null;
+    return userSchema.findOneAndUpdate({ _id: userId, hash }, { $unset: { hash: "" } }, { new: true });
   },
 
+  // --- Código para restablecer la contraseña ---
+  async findRestoreState(email) {
+    return userSchema
+      .findOne({ email })
+      .select("_id email lastRestoreCodeSentAt restoreCodeDate restoreCodeDailyCount")
+      .lean();
+  },
+
+  // Mismo cerrojo atómico que setVerificationCodeIfIdle. null si no pasó.
+  async setRestoreCodeIfIdle(userId, fields, cooldownCutoff) {
+    return userSchema.findOneAndUpdate(
+      {
+        _id: userId,
+        $or: [
+          { lastRestoreCodeSentAt: { $exists: false } },
+          { lastRestoreCodeSentAt: null },
+          { lastRestoreCodeSentAt: { $lte: cooldownCutoff } },
+        ],
+      },
+      { $set: fields },
+      { new: true },
+    );
+  },
+
+  async findForRestore(email) {
+    return userSchema.findOne({ email });
+  },
+
+  async countRestoreFailure(userId) {
+    await userSchema.updateOne({ _id: userId }, { $inc: { restoreFailedAttempts: 1 } });
+  },
+
+  // Nueva contraseña (la cifra el pre("save") del schema) y fuera el código.
+  async resetPassword(userDoc, password) {
+    userDoc.restoreCode = undefined;
+    userDoc.restoreCodeExpiresAt = undefined;
+    userDoc.restoreFailedAttempts = 0;
+    userDoc.lastRestoreCodeSentAt = undefined;
+    userDoc.password = password;
+    return userDoc.save();
+  },
+
+  // La cascada la hace el hook de borrado del schema (util/account-cascade.js).
   async deleteUser(id) {
-    try {
-      await require("../trainerBilling/adapter").prepareDeletion(id);
-      const ownRecipes = await recipeSchema.find({ userId: id }).select("_id").lean();
-
-      for (const recipe of ownRecipes) {
-        await recipeModel.deleteRecipe(recipe._id);
-      }
-
-      return await userSchema.deleteOne({ _id: id });
-    } catch (e) {
-      throw e;
-    }
-  },
-
-  async checkHash(id, hash) {
-    try {
-      // Buscar usuario con el hash específico
-      const user = await userSchema.findOne({ _id: id, hash: hash });
-
-      if (!user) {
-        console.log(
-          `checkHash: No se encontró usuario con id=${id} y hash=${hash}`,
-        );
-        return null; // Hash inválido o ya usado
-      }
-
-      console.log(
-        `checkHash: Usuario encontrado, activando cuenta para ${user.email}`,
-      );
-
-      // Eliminar el hash para activar la cuenta
-      const updatedUser = await userSchema.findByIdAndUpdate(
-        id,
-        { $unset: { hash: "" } },
-        { new: true },
-      );
-
-      console.log(
-        `checkHash: Cuenta activada exitosamente para ${updatedUser.email}`,
-      );
-      return updatedUser;
-    } catch (err) {
-      console.error("Error en checkHash:", err);
-      return null;
-    }
+    return userSchema.deleteOne({ _id: id });
   },
 
   async clearUserHash(id) {
-    try {
-      return await userSchema.findByIdAndUpdate(
-        id,
-        { $unset: { hash: 1 } },
-        { new: true },
-      );
-    } catch (err) {
-      throw err;
-    }
+    return userSchema.findByIdAndUpdate(id, { $unset: { hash: 1 } }, { new: true });
   },
-
 };

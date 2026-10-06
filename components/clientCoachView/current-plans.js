@@ -8,43 +8,29 @@
 //                   puesto en uso ni la ha programado como fase.
 //   · null        — nada de lo anterior.
 
-function byStartDesc(a, b) {
-  return (
-    String(b.startDate).localeCompare(String(a.startDate)) ||
-    new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-  );
-}
-
-function byStartAsc(a, b) {
-  return byStartDesc(b, a);
-}
+const { coveringPhase, sortChain } = require("../util/phase-chain");
 
 /**
- * Rutina. Manda `tableInUseId` (la que entrena el cliente y la que el
- * entrenador ve como activa). Si no hay, la fase de rutina que cubre hoy:
- * sin cron, tableInUse solo se sincroniza cuando el entrenador abre las
- * rutinas del cliente. Sin ninguna de las dos, la próxima fase programada.
- * Y si tampoco, la última rutina que le asignó el entrenador: "Asignar
- * rutina" (POST /trainer/clients/:id/tables) crea la tabla y avisa al
- * cliente, pero no la pone en uso ni crea fase.
+ * Rutina. Manda la que el cliente tiene en uso (`tableInUseId`, ya calculada
+ * con sus fases: routineAssignments/routine-in-use.js), con el inicio de su
+ * fase si es la de la fase que rige hoy. Sin rutina en uso, la próxima fase
+ * programada. Y si tampoco, la última rutina que le asignó el entrenador:
+ * "Asignar rutina" (POST /trainer/clients/:id/tables) crea la tabla y avisa
+ * al cliente, pero no la pone en uso ni crea fase.
  *
- * `phases`: RoutineAssignment del cliente ({tableId, startDate, status, createdAt}).
+ * `phases`: RoutineAssignment del cliente ({tableId, startDate, createdAt}).
  * `assignedTables`: tablas del cliente asignadas por sus profesionales
  * ({tableId, assignedAt: Date}).
  * Devuelve { status, tableId, startDate } — startDate null si no viene de
  * ninguna fase (el controller usa entonces la fecha de la tabla).
  */
 function pickTrainingPlan({ tableInUseId, phases = [], assignedTables = [], today, now = new Date() }) {
-  const covering = phases.filter((p) => p.startDate && p.startDate <= today).sort(byStartDesc)[0] || null;
-
   if (tableInUseId) {
+    const covering = coveringPhase(phases, today);
     const samePhase = covering && String(covering.tableId) === String(tableInUseId);
     return { status: "active", tableId: String(tableInUseId), startDate: samePhase ? covering.startDate : null };
   }
-  if (covering) {
-    return { status: "active", tableId: String(covering.tableId), startDate: covering.startDate };
-  }
-  const upcoming = phases.filter((p) => p.startDate > today && p.status !== "ended").sort(byStartAsc)[0];
+  const upcoming = sortChain(phases).find((p) => p.startDate > today);
   if (upcoming) {
     return { status: "scheduled", tableId: String(upcoming.tableId), startDate: upcoming.startDate };
   }
@@ -65,22 +51,16 @@ function latestAssigned(tables, now) {
 }
 
 /**
- * Fase de dieta. `docs`: copias asignadas del cliente (DietTemplate con
- * clientId) — {_id, phaseId, phaseName, name, trainerId, startDate, endDate}.
- * Nombre, entrenador y arranque son los de la FASE (su primer documento); la
- * semana en curso es una copia más de la misma cadena.
- * Devuelve { status, head } o null.
+ * Fase de dieta. `phases`: las fases del cliente (DietPhase) —
+ * {_id, name, trainerId, startDate, endDate, createdAt}.
+ * Devuelve { status: "active" | "scheduled", phase } o null.
  */
-function pickNutritionPlan({ docs = [], today }) {
-  const headOf = (doc) => docs.find((d) => doc.phaseId && String(d._id) === String(doc.phaseId)) || doc;
+function pickNutritionPlan({ phases = [], today }) {
+  const covering = coveringPhase(phases, today);
+  if (covering) return { status: "active", phase: covering };
 
-  const covering = docs
-    .filter((d) => d.startDate && d.startDate <= today && (d.endDate == null || d.endDate >= today))
-    .sort(byStartDesc)[0];
-  if (covering) return { status: "active", head: headOf(covering) };
-
-  const upcoming = docs.filter((d) => d.startDate && d.startDate > today).sort(byStartAsc)[0];
-  if (upcoming) return { status: "scheduled", head: headOf(upcoming) };
+  const upcoming = sortChain(phases).find((p) => p.startDate > today);
+  if (upcoming) return { status: "scheduled", phase: upcoming };
 
   return null;
 }

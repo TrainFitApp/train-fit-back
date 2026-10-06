@@ -18,7 +18,7 @@ async function clientOnPlan() {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
   await ctx.relateBoth(trainer, client);
-  await ctx.post(trainer, `/trainer/clients/${client.id}/nutrition-plans`, {
+  await ctx.post(trainer, `/trainer/clients/${client.id}/diet-phases`, {
     name: "Plan",
     startDate: h.day(-3),
     menus: [{ name: "Único", meals: [{ slot: "Comida", alternatives: [{ customProducts: [{ product: String(pollo._id), quantity: 200, energyKcal100g: 165, protein100g: 31, carbohydrates100g: 0, fat100g: 3.6 }] }] }] }],
@@ -28,7 +28,7 @@ async function clientOnPlan() {
 
 async function eatPrescribed(client, date) {
   await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Único" });
-  const day = (await ctx.post(client, "/dietdays/date/x", { date })).dietDay;
+  const day = (await ctx.post(client, `/dietdays/date/${date}`, {})).dietDay;
   const comida = day.meals.find((m) => m.name === "Comida");
   for (const cp of comida.customProducts) {
     await ctx.patch(client, `/meals/${comida._id}/customproducts/${cp._id}/consumed`, { consumed: true });

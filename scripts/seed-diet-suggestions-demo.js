@@ -25,8 +25,8 @@ const { buildSearchFields } = require("../components/util/search-index");
  * PARANOIA (corre contra `pre`, Atlas compartido):
  *   - todo lleva el sufijo " [seed-ds]" en el nombre.
  *   - `--clean` borra EXACTAMENTE lo sembrado, por manifiesto y, de red de
- *     seguridad, por ese sufijo. La cascada de pre('deleteMany') de
- *     DietTemplate se lleva los CustomProduct.
+ *     seguridad, por ese sufijo. El contenido de cada plantilla va dentro
+ *     de ella y se borra con ella.
  *   - la preferencia de Lucía se restaura a como estaba (o se borra el doc
  *     si no existía).
  *
@@ -107,12 +107,13 @@ async function main() {
 
   const dietTemplateDao = require("../components/dietTemplates/diet-template-dao");
   const DietTemplate = require("../components/dietTemplates/diet-template-schema");
-  const NP = require("../components/nutritionPreferences/nutrition-preferences-schema");
   const { contentMacroProfile } = require("../components/dietTemplates/diet-macro-profile");
-  require("../components/users/schema");
+  const User = require("../components/users/user-schema");
+  // Las preferencias de nutrición viven en User.nutritionPreferences.
+  const readPrefs = async () => (await User.findById(LUCIA).select("nutritionPreferences").lean())?.nutritionPreferences || null;
+  const dropPrefs = () => User.updateOne({ _id: LUCIA }, { $unset: { nutritionPreferences: 1 } });
+  const setFlags = (flags) => User.updateOne({ _id: LUCIA }, { $set: { "nutritionPreferences.dietaryFlags": flags } });
   const Product = require("../components/products/product-schema");
-  require("../components/customProducts/custom-product-schema");
-  require("../components/customRecipes/custom-recipe-schema");
   require("../components/recipes/recipe-schema");
 
   if (clean) {
@@ -122,27 +123,26 @@ async function main() {
     const ids = manifest.templateIds || [];
     if (ids.length) {
       await DietTemplate.deleteMany({ _id: { $in: ids } });
-      console.log("[seed-ds] borradas", ids.length, "plantillas por manifiesto (+ CustomProducts en cascada)");
+      console.log("[seed-ds] borradas", ids.length, "plantillas por manifiesto");
     }
     const leftover = await DietTemplate.deleteMany({ name: { $regex: NAME_RX } });
     if (leftover.deletedCount) console.log("[seed-ds] borrados", leftover.deletedCount, "restos por nombre");
 
-    // Después de las plantillas: su cascada ya borró los CustomProduct que
-    // apuntaban a estos alimentos.
+    // Después de las plantillas (su contenido va dentro y se borra con ellas).
     const foods = await Product.deleteMany({ _id: { $in: [...FOODS.values()].map((f) => f._id) } });
     if (foods.deletedCount) console.log("[seed-ds] borrados", foods.deletedCount, "alimentos");
 
     if (manifest.luciaPrefs === "created") {
-      await NP.deleteOne({ clientId: LUCIA });
+      await dropPrefs();
       console.log("[seed-ds] prefs de Lucía borradas (no existían antes)");
     } else if (manifest.luciaPrefs && typeof manifest.luciaPrefs === "object") {
-      await NP.updateOne({ clientId: LUCIA }, { $set: { dietaryFlags: manifest.luciaPrefs.dietaryFlags || [] } });
+      await setFlags(manifest.luciaPrefs.dietaryFlags || []);
       console.log("[seed-ds] dietaryFlags de Lucía restaurados a", JSON.stringify(manifest.luciaPrefs.dietaryFlags || []));
     } else {
       // Sin manifiesto: si el doc parece sembrado (solo dietaryFlags), fuera.
-      const p = await NP.findOne({ clientId: LUCIA }).lean();
+      const p = await readPrefs();
       if (p && JSON.stringify(p.dietaryFlags) === JSON.stringify(["vegetarian"]) && !p.allergies && !p.favoriteFoods && !p.dislikedFoods) {
-        await NP.deleteOne({ clientId: LUCIA });
+        await dropPrefs();
         console.log("[seed-ds] prefs de Lucía borradas (heurística sin manifiesto)");
       }
     }
@@ -163,7 +163,7 @@ async function main() {
 
   const templateIds = [];
   for (const [trainerId, name, menus, ownerClientId, verified] of TEMPLATES) {
-    const created = await dietTemplateDao.create(trainerId, name, menus, ownerClientId, verified);
+    const created = await dietTemplateDao.create(trainerId, { name, menus, ownerClientId, verified });
     templateIds.push(created._id.toString());
     const prof = contentMacroProfile(created.toObject());
     console.log(
@@ -173,21 +173,27 @@ async function main() {
     );
   }
 
-  const existing = await NP.findOne({ clientId: LUCIA }).lean();
+  const existing = await readPrefs();
   let luciaPrefs;
   if (existing) {
     luciaPrefs = { dietaryFlags: existing.dietaryFlags || [] };
-    await NP.updateOne({ clientId: LUCIA }, { $set: { dietaryFlags: ["vegetarian"] } });
+    await setFlags(["vegetarian"]);
     console.log("[seed-ds] Lucía ya tenía prefs; dietaryFlags -> ['vegetarian'] (previo:", JSON.stringify(luciaPrefs.dietaryFlags), ")");
   } else {
     luciaPrefs = "created";
-    await NP.create({
-      clientId: LUCIA,
-      dietaryFlags: ["vegetarian"],
-      requestedBy: SANTIAGO,
-      requestedAt: new Date(),
-      respondedAt: new Date(),
-    });
+    await User.updateOne(
+      { _id: LUCIA },
+      {
+        $set: {
+          nutritionPreferences: {
+            dietaryFlags: ["vegetarian"],
+            requestedBy: SANTIAGO,
+            requestedAt: new Date(),
+            respondedAt: new Date(),
+          },
+        },
+      }
+    );
     console.log("[seed-ds] creadas prefs de Lucía con dietaryFlags ['vegetarian']");
   }
 

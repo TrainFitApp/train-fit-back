@@ -79,4 +79,9 @@ const TrainerPaymentProfileSchema = new Schema(
 TrainerPaymentProfileSchema.index({ trainerId: 1, clientId: 1 }, { unique: true });
 TrainerPaymentProfileSchema.index({ clientId: 1 }); // puesta al día del cliente
 
+TrainerPaymentProfileSchema.plugin(require("../util/account-cascade").accountCascade, {
+  owners: ["trainerId", "clientId"],
+  authorship: ["plan.prices.by", "plan.history.by"],
+});
+
 module.exports = mongoose.model("TrainerPaymentProfile", TrainerPaymentProfileSchema);

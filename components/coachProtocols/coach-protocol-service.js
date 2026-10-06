@@ -1,18 +1,19 @@
-const CoachProtocol = require("./coach-protocol-schema");
+const coachProtocolDao = require("./coach-protocol-dao");
 const checkinDao = require("../trainerCheckins/checkin-dao");
-const CheckinSchedule = require("../trainerCheckins/checkin-schedule-schema");
-const { scheduleContent, hasQuestions } = require("../trainerCheckins/checkin-agenda-controller");
+const checkinScheduleDao = require("../trainerCheckins/checkin-schedule-dao");
+const trainerClientService = require("../trainerClients/trainer-client-service");
+const { notFound, onDuplicate } = require("../util/http-error");
+const { scheduleContent, hasQuestions } = require("../trainerCheckins/checkin-schedule-content");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { protocolCheckins } = require("./protocol-content");
 const { todayForUser } = require("../users/user-time-zone");
-const planAssignmentService = require("../planAssignments/plan-assignment-service");
+const dietPhaseService = require("../dietPhases/diet-phase-service");
 const trainerTaskDao = require("../trainerTasks/trainer-task-dao");
 const tableService = require("../tables/table-service");
 const dietTemplateDao = require("../dietTemplates/diet-template-dao");
 const coachRuleDao = require("../coachRules/coach-rule-dao");
 const planChangeService = require("../planChanges/plan-change-service");
-const notificationDao = require("../notifications/notification-dao");
 
 // Fase 4 Coach Pro — aplicar un protocolo a un cliente.
 //
@@ -60,34 +61,21 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
         frequency: checkin.frequency || "weekly",
         interval: checkin.interval || 1,
       };
-      await CheckinSchedule.findOneAndUpdate(
-        { trainerId, clientId, sourceTemplateId: definition._id },
-        { $set: { ...content, ...timing, active: true }, $inc: { revision: 1 } },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
+      await checkinScheduleDao.upsertFromTemplate(trainerId, clientId, definition._id, { ...content, ...timing, active: true });
       return true;
     });
   }
 
   await step("dietPlan", "Plan de nutrición", async () => {
     if (!protocol.dietTemplateId) return "skipped";
-    const plan = await dietTemplateDao.findOwnedByTrainer(trainerId, protocol.dietTemplateId);
-    if (!plan) return "skipped";
+    const template = await dietTemplateDao.findOwnedByTrainer(trainerId, protocol.dietTemplateId);
+    if (!template) return "skipped";
 
-    const previousAssignment = await planAssignmentService.getActiveForClient(clientId);
-    const assignment = await planAssignmentService.applyPlan({
+    await dietPhaseService.createPhase({
       trainerId,
       clientId,
-      template: plan,
+      templateId: template._id,
       startDate: startDate || today,
-      endMode: "indefinite",
-    });
-    await planChangeService.recordPlanAssignment({
-      trainerId,
-      clientId,
-      previousAssignment,
-      newAssignment: assignment,
-      planName: plan.name,
       reason: reason || `Aplicado el protocolo "${protocol.name}"`,
     });
     return true;
@@ -98,8 +86,7 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
     const target = protocol.nutritionTarget;
     if (!target) return "skipped";
     // Mismo permiso que editar el objetivo en la ficha: llevar la nutrición.
-    const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId, "nutrition");
-    if (!relation) throw new Error("No llevas la nutrición de este cliente");
+    if (!(await trainerClientDao.isActivePair(trainerId, clientId, "nutrition"))) throw new Error("No llevas la nutrición de este cliente");
     await nutritionalGoalService.setManualGoalForClient(trainerId, clientId, {
       kcalTotal: target.kcal,
       proteinsGTotal: target.protein,
@@ -161,25 +148,48 @@ async function applyToClient(trainerId, protocol, clientId, { startDate, reason 
   return { steps };
 }
 
+const duplicateName = onDuplicate("Ya tienes un protocolo con ese nombre");
+const protocolNotFound = () => notFound("Protocolo no encontrado");
+
+// Cada cliente se comprueba y se aplica por separado: un fallo en uno nunca
+// aborta el resto, y la respuesta dice paso a paso qué se aplicó a quién.
+async function applyToClients(trainerId, protocolId, clientIds, { startDate, reason }) {
+  const protocol = await coachProtocolDao.findOwned(trainerId, protocolId);
+  if (!protocol) throw protocolNotFound();
+
+  const results = [];
+  for (const clientId of clientIds) {
+    const block = await trainerClientService.clientWriteBlock(trainerId, clientId);
+    if (block === "no_relation") {
+      results.push({ clientId, success: false, error: "Sin relación activa con este cliente" });
+      continue;
+    }
+    if (block === "read_only") {
+      results.push({ clientId, success: false, error: "Cliente en solo lectura por el cupo de tu plan" });
+      continue;
+    }
+    const applied = await applyToClient(trainerId, protocol, clientId, { startDate, reason }).catch((error) => ({ error }));
+    results.push(
+      applied.error
+        ? { clientId, success: false, error: applied.error.message }
+        : { clientId, success: true, steps: applied.steps },
+    );
+  }
+  return results;
+}
+
 module.exports = {
   applyToClient,
-  async create(trainerId, data) {
-    return CoachProtocol.create({ trainerId, ...data });
-  },
-  async listForTrainer(trainerId) {
-    return CoachProtocol.find({ trainerId }).sort({ name: 1 }).lean();
-  },
-  async findOwned(trainerId, id) {
-    return CoachProtocol.findOne({ _id: id, trainerId }).lean();
-  },
+  applyToClients,
+  create: (trainerId, data) => coachProtocolDao.create(trainerId, data).catch(duplicateName),
+  listForTrainer: (trainerId) => coachProtocolDao.listForTrainer(trainerId),
+  findOwned: (trainerId, id) => coachProtocolDao.findOwned(trainerId, id),
   async update(trainerId, id, updates) {
-    return CoachProtocol.findOneAndUpdate(
-      { _id: id, trainerId },
-      { $set: { ...updates, updatedAt: new Date() } },
-      { new: true, runValidators: true }
-    ).lean();
+    const protocol = await coachProtocolDao.update(trainerId, id, updates).catch(duplicateName);
+    if (!protocol) throw protocolNotFound();
+    return protocol;
   },
   async remove(trainerId, id) {
-    return CoachProtocol.findOneAndDelete({ _id: id, trainerId });
+    if (!(await coachProtocolDao.remove(trainerId, id))) throw protocolNotFound();
   },
 };

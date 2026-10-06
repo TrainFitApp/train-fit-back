@@ -1,96 +1,57 @@
+const favoritesDao = require("../favorites/favorites-dao");
 const exerciseSchema = require("./exercise-schema");
-const customExerciseSchema = require("../customExercises/custom-exercise-schema");
-const workoutSchema = require("../workouts/workout-schema");
-const userSchema = require("../users/schema");
+const WorkoutBase = require("../workouts/workout-base-schema");
 const { Types } = require("mongoose");
 const { cleanObject } = require("../util/clean-data");
-const {
-  normalizeMuscles,
-  toLegacyMuscleGroups,
-  fromLegacyMuscleGroups,
-  expandMuscleFilter,
-} = require("./muscle-catalog");
+const { normalizeMuscles, expandMuscleFilter } = require("./muscle-catalog");
 
-// updateOne no pasa por el hook pre("validate") del schema: la sincronía
-// entre `muscles` y la proyección antigua se hace aquí, con las mismas
-// funciones. Si llega `muscles`, manda; si solo llega el modelo antiguo (la
-// app cliente edita así sus ejercicios propios), se traduce.
+// updateOne no pasa por el hook pre("validate") del schema: `muscles` se
+// deja en forma canónica aquí, con la misma función.
 function withSyncedMuscles(fields) {
-  if (Array.isArray(fields.muscles)) {
-    const muscles = normalizeMuscles(fields.muscles);
-    return { ...fields, muscles, ...toLegacyMuscleGroups(muscles) };
-  }
-  if (Array.isArray(fields.muscleGroups1) || Array.isArray(fields.muscleGroups2)) {
-    const { muscles } = fromLegacyMuscleGroups(fields.muscleGroups1, fields.muscleGroups2);
-    // Solo "Piernas" o "Brazos" no dicen qué músculo es: mejor conservar lo
-    // que ya había que borrarlo.
-    return muscles.length ? { ...fields, muscles } : fields;
-  }
-  return fields;
+  return Array.isArray(fields.muscles) ? { ...fields, muscles: normalizeMuscles(fields.muscles) } : fields;
 }
 
-// trainerId set = plantilla suelta (ver workout-schema.js). Se pasa
-// trainerId:{$ne:null} explícito para saltar el guardarraíl por defecto del
-// schema (que excluye plantillas cuando el caller no filtra por trainerId).
-async function getTemplateExerciseIds() {
-  const templates = await workoutSchema
-    .find({ trainerId: { $ne: null } }, "exercises")
-    .lean();
-  return templates.flatMap((t) => t.exercises || []).map(String);
+// Cuántas veces aparece el ejercicio: en plantillas sueltas del entrenador
+// por un lado y en sesiones de rutinas por otro (las dos en `workouts`).
+async function countExerciseUsage(id) {
+  const exerciseId = new Types.ObjectId(String(id));
+  const [row] = await WorkoutBase.aggregate([
+    { $match: { "exercises.exercise": exerciseId } },
+    { $unwind: "$exercises" },
+    { $match: { "exercises.exercise": exerciseId } },
+    {
+      $group: {
+        _id: null,
+        templates: { $sum: { $cond: [{ $eq: ["$kind", "template"] }, 1, 0] } },
+        sessions: { $sum: { $cond: [{ $eq: ["$kind", "template"] }, 0, 1] } },
+      },
+    },
+  ]);
+  return { templates: row?.templates || 0, sessions: row?.sessions || 0 };
 }
 
 module.exports = {
   async getExercises(page, limit) {
-    return new Promise((resolve, reject) =>
-      exerciseSchema
-        .find({})
-        .skip(page * limit)
-        .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        }),
-    );
+    return exerciseSchema.find({}).skip(page * limit).limit(limit);
   },
 
   async getExerciseByCode(barcode) {
-    return new Promise((resolve, reject) =>
-      exerciseSchema.findOne({ code: barcode }, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      }),
-    );
-  },
-
-  async getExercisesByUser(page, limit) {
-    return new Promise((resolve, reject) =>
-      exerciseSchema
-        .find({})
-        .skip(page * limit)
-        .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        }),
-    );
+    return exerciseSchema.findOne({ code: barcode });
   },
 
   async getExercise(id) {
-    return new Promise((resolve, reject) =>
-      exerciseSchema.findById(id, (err, doc) => {
-        if (err) return reject(err);
-        return resolve(doc);
-      }),
-    );
+    return exerciseSchema.findById(id);
   },
 
+  // Ejercicios propios vivos (los retirados no cuentan para el límite).
   async countByUserId(userId) {
-    return exerciseSchema.countDocuments({ userId });
+    return exerciseSchema.countDocuments({ userId, deletedAt: null });
   },
 
   async getSearchExercise(page, limit, searchExercisesFilterGroup) {
     try {
-      const agg = [];
+      // Los ejercicios retirados (deletedAt) no salen nunca en la búsqueda.
+      const agg = [{ $match: { deletedAt: null } }];
 
       console.log("[EXERCISE-DAO] Filters:", {
         ownFilter: searchExercisesFilterGroup.ownFilter,
@@ -103,11 +64,7 @@ module.exports = {
         searchExercisesFilterGroup.favFilter &&
         searchExercisesFilterGroup.userId
       ) {
-        const user = await userSchema
-          .findById(searchExercisesFilterGroup.userId, { archivedExercises: 1 })
-          .lean();
-        const favIds = user?.archivedExercises || [];
-        console.log("[EXERCISE-DAO] Favorites count:", favIds.length);
+        const favIds = await favoritesDao.list(searchExercisesFilterGroup.userId, "exercises");
         if (favIds.length > 0) {
           agg.push({ $match: { _id: { $in: favIds } } });
         } else {
@@ -152,43 +109,14 @@ module.exports = {
         });
       }
 
-      // Filtro por músculo del catálogo de dos niveles (2026-09): ejercicios
-      // en los que ese músculo es PRINCIPAL. Con secundarios, buscar
-      // "Tríceps" traería todos los presses de pecho. Las versiones de la
-      // app anteriores siguen mandando muscleGroups1/2 y se atienden abajo.
+      // Filtro por músculo del catálogo de dos niveles: ejercicios en los
+      // que ese músculo es PRINCIPAL. Con secundarios, buscar "Tríceps"
+      // traería todos los presses de pecho.
       const muscleIds = expandMuscleFilter(searchExercisesFilterGroup.muscles);
       if (muscleIds.length > 0) {
         agg.push({
           $match: {
             muscles: { $elemMatch: { muscle: { $in: muscleIds }, role: "primary" } },
-          },
-        });
-      }
-
-      // Añade una etapa $match para 'muscleGroups1' si existe en 'searchExercisesFilterGroup'.
-      if (
-        searchExercisesFilterGroup.muscleGroups1 &&
-        searchExercisesFilterGroup.muscleGroups1.length > 0
-      ) {
-        agg.push({
-          $match: {
-            muscleGroups1: {
-              $in: searchExercisesFilterGroup.muscleGroups1,
-            },
-          },
-        });
-      }
-
-      // Añade una etapa $match para 'muscleGroups2' si existe en 'searchExercisesFilterGroup'.
-      if (
-        searchExercisesFilterGroup.muscleGroups2 &&
-        searchExercisesFilterGroup.muscleGroups2.length > 0
-      ) {
-        agg.push({
-          $match: {
-            muscleGroups2: {
-              $in: searchExercisesFilterGroup.muscleGroups2,
-            },
           },
         });
       }
@@ -274,40 +202,7 @@ module.exports = {
   },
 
   async createExercise(exercise) {
-    const cleanedExercise = cleanObject(exercise);
-    return new Promise((resolve, reject) =>
-      exerciseSchema.create(cleanedExercise, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
-  },
-
-  async archiveExercise(idExercise, idUser) {
-    const user = await userSchema.findById(idUser);
-    const exerciseExist = !!user.archivedExercises.includes(idExercise);
-
-    const archiveExercise = exerciseExist
-      ? { $pull: { archivedExercises: idExercise } }
-      : { $push: { archivedExercises: idExercise } };
-
-    try {
-      await userSchema.findByIdAndUpdate(idUser, archiveExercise);
-      return { isFavorite: !exerciseExist };
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  async arhiveExercise(id, exercise) {
-    const update = { $set: exercise };
-
-    return new Promise((resolve, reject) =>
-      exerciseSchema.updateOne({ _id: id }, update, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
+    return exerciseSchema.create(cleanObject(exercise));
   },
 
   async updateExercise(id, exercise) {
@@ -333,49 +228,46 @@ module.exports = {
       return { matchedCount: 0, modifiedCount: 0 };
     }
 
-    return new Promise((resolve, reject) =>
-      exerciseSchema.updateOne({ _id: id }, update, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
+    return exerciseSchema.updateOne({ _id: id }, update);
   },
 
+  // Un ejercicio que alguna sesión usa no se borra: se retira (deletedAt)
+  // para que esas sesiones lo sigan pintando. Solo se borra el que nadie usa.
   async deleteExercise(id) {
-    return new Promise((resolve, reject) =>
-      exerciseSchema.deleteOne({ _id: id }, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
+    const usage = await countExerciseUsage(id);
+    if (usage.templates + usage.sessions > 0) {
+      await exerciseSchema.updateOne({ _id: id }, { $set: { deletedAt: new Date() } });
+      await exerciseSchema.pullFromFavorites([new Types.ObjectId(String(id))]);
+      return { deletedCount: 0, retired: true };
+    }
+    return exerciseSchema.deleteOne({ _id: id });
   },
 
-  // TASK-016 (MASTER_BACKLOG.md) — borrar un Exercise referenciado deja
-  // `exercise: null` tras el autopopulate en CustomExercise, tanto en
-  // rutinas reales de clientes como en plantillas del entrenador (desde la
-  // unificación workoutTemplates -> workouts, ambas son CustomExercise,
-  // distinguibles solo subiendo al Workout padre vía trainerId). Se
-  // comprueba uso real vs. uso en plantilla por separado para no perder la
-  // distinción que ya mostraba el frontend.
+  // Borrado de cuenta (exercise-schema.js, cuando ya no existen las rutinas
+  // ni las plantillas de la propia cuenta): los ejercicios propios que siguen
+  // en sesiones o plantillas de otros (el entrenador que los pautó a sus
+  // clientes) se retiran sin dueño, como deleteExercise, y salen de las
+  // favoritas. Los demás los borra la cascada; antes se borraban todos y el
+  // borrado se llevaba esos ejercicios del historial de los clientes.
+  async releaseOwnExercises(userId) {
+    const own = await exerciseSchema.find({ userId }).distinct("_id");
+    if (!own.length) return;
+    const used = await WorkoutBase.distinct("exercises.exercise", { "exercises.exercise": { $in: own } });
+    const usedIds = own.filter((id) => used.some((usedId) => String(usedId) === String(id)));
+    if (!usedIds.length) return;
+    await exerciseSchema.updateMany({ _id: { $in: usedIds } }, { $set: { userId: null, deletedAt: new Date() } });
+    await exerciseSchema.pullFromFavorites(usedIds);
+  },
+
+  countExerciseUsage,
+
+  // Uso en plantillas del entrenador y en rutinas reales, por separado (el
+  // frontend muestra la distinción).
   async countWorkoutTemplateUsage(id) {
-    const templateExerciseIds = await getTemplateExerciseIds();
-    if (templateExerciseIds.length === 0) return 0;
-    return customExerciseSchema.countDocuments({
-      exercise: id,
-      _id: { $in: templateExerciseIds },
-    });
+    return (await countExerciseUsage(id)).templates;
   },
 
   async countCustomExerciseUsage(id) {
-    const [total, templateExerciseIds] = await Promise.all([
-      customExerciseSchema.countDocuments({ exercise: id }),
-      getTemplateExerciseIds(),
-    ]);
-    if (templateExerciseIds.length === 0) return total;
-    const templateUsage = await customExerciseSchema.countDocuments({
-      exercise: id,
-      _id: { $in: templateExerciseIds },
-    });
-    return total - templateUsage;
+    return (await countExerciseUsage(id)).sessions;
   },
 };

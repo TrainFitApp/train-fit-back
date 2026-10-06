@@ -8,10 +8,6 @@ module.exports = {
     return workoutDao.getWorkoutById(id);
   },
 
-  async getWorkoutByIdAndDate(id, date, timeZone) {
-    return workoutDao.getWorkoutByIdAndDate(id, date, timeZone);
-  },
-
   async pasteWorkout(workoutClipboard, workoutToPaste) {
     return workoutDao.pasteWorkout(workoutClipboard, workoutToPaste);
   },
@@ -32,10 +28,6 @@ module.exports = {
     return workoutDao.reorderWorkoutsInSplit(idSplit, workoutIdsOrder);
   },
 
-  async createWorkout(workout) {
-    return workoutDao.createWorkout(workout);
-  },
-
   async addWorkoutsToSplits(idTable, workout) {
     return workoutDao.addWorkoutsToSplits(idTable, workout);
   },
@@ -44,13 +36,6 @@ module.exports = {
     return workoutDao.addExerciseToWorkouts(workoutIds, exerciseId);
   },
 
-  async addWorkoutExercise(idWorkout, idExercise) {
-    return workoutDao.addWorkoutExercise(idWorkout, idExercise);
-  },
-
-  async addWorkoutsExercises(idTable, idExercise, workoutOrder) {
-    return workoutDao.addWorkoutsExercises(idTable, idExercise, workoutOrder);
-  },
 
   async modifyWorkout(workout) {
     return workoutDao.modifyWorkout(workout);
@@ -108,10 +93,6 @@ module.exports = {
 
   async deleteWorkouts(workouts) {
     return workoutDao.deleteWorkouts(workouts);
-  },
-
-  async deleteWorkoutExercise(idWorkout, idExercise) {
-    return workoutDao.deleteWorkoutExercise(idWorkout, idExercise);
   },
 
   async pasteExercises(tableId, sourceWorkoutId, targetWorkoutId, exercises) {

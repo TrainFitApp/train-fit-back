@@ -30,8 +30,6 @@ const SET_EXECUTION_FIELDS = [
   "donedAt",
   "cronometer",
   "time",
-  "timeMin",
-  "timeSec",
   "distance",
 ];
 

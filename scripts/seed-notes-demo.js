@@ -13,7 +13,7 @@ const { buildMongoUri, redactMongoUri } = require("./_mongo-uri");
  * nota del cliente, para verlos en la app del cliente y en el Planner.
  *
  * Borra TODAS las notas de esa rutina (Workout.notes/clientNotes,
- * CustomExercise.notes/clientNotes y sus PinnedExerciseNote) y siembra los
+ * las notas de sus ejercicios y sus notas ancladas) y siembra los
  * casos. Antes guarda una copia en un JSON (ruta en la salida) para poder
  * volver atrás con --restore. Solo toca la rutina de u2@u asignada por t2@t:
  * si no la encuentra así, no escribe nada.
@@ -91,15 +91,14 @@ async function loadTarget(db) {
     .toArray();
   if (tables.length !== 1) throw new Error(`Esperaba 1 rutina de ${CLIENT_EMAIL} asignada por ${TRAINER_EMAIL}, hay ${tables.length}`);
   const table = tables[0];
-  const splits = await db.collection("splits").find({ _id: { $in: table.splits } }).toArray();
-  const splitsById = new Map(splits.map((split) => [String(split._id), split]));
-  const orderedSplits = table.splits.map((id) => splitsById.get(String(id))).filter(Boolean);
-  const workoutIds = orderedSplits.flatMap((split) => split.workouts);
+  // Microciclos y notas ancladas van dentro de la tabla; ejercicios dentro de
+  // su sesión (modelo embebido, 2026-10).
+  const orderedSplits = table.splits || [];
+  const workoutIds = orderedSplits.flatMap((split) => split.workouts || []);
   const workouts = await db.collection("workouts").find({ _id: { $in: workoutIds } }).toArray();
   const workoutsById = new Map(workouts.map((workout) => [String(workout._id), workout]));
-  const customExerciseIds = workouts.flatMap((workout) => workout.exercises || []);
-  const customExercises = await db.collection("customexercises").find({ _id: { $in: customExerciseIds } }).toArray();
-  const pinned = await db.collection("pinnedexercisenotes").find({ tableId: table._id }).toArray();
+  const customExercises = workouts.flatMap((workout) => workout.exercises || []);
+  const pinned = table.pinnedNotes || [];
   return { table, orderedSplits, workoutsById, customExercises, pinned };
 }
 
@@ -118,20 +117,19 @@ function buildPlan({ table, orderedSplits, workoutsById }) {
         if (workoutCase.clientNotes) $set.clientNotes = workoutCase.clientNotes(micro);
         workoutSets.push({ _id: workout._id, label: `M${micro} D${workoutIndex + 1}`, $set });
       }
-      (workout.exercises || []).forEach((customExerciseId, exerciseIndex) => {
+      (workout.exercises || []).forEach((customExercise, exerciseIndex) => {
         const exerciseCase = EXERCISE_NOTES[`${workoutIndex}:${exerciseIndex}`];
         if (!exerciseCase) return;
         const $set = {};
         if (exerciseCase.notes) $set.notes = exerciseCase.notes;
         if (exerciseCase.clientNotes) $set.clientNotes = exerciseCase.clientNotes(micro);
-        exerciseSets.push({ _id: customExerciseId, label: `M${micro} D${workoutIndex + 1} E${exerciseIndex + 1}`, $set });
+        exerciseSets.push({ _id: customExercise._id, label: `M${micro} D${workoutIndex + 1} E${exerciseIndex + 1}`, $set });
       });
     });
   });
   const now = new Date();
   const pinnedDocs = PINNED.map((pin) => ({
     _id: oid(`pinned:${pin.workoutIndex}:${pin.exerciseIndex}`),
-    tableId: table._id,
     workoutIndex: pin.workoutIndex,
     exerciseIndex: pin.exerciseIndex,
     notes: pin.notes,
@@ -155,13 +153,14 @@ function backupOf({ table, workoutsById, customExercises, pinned }) {
   };
 }
 
-// $set de lo que había y $unset de lo que no, campo a campo.
-function restoreUpdate(doc) {
+// $set de lo que había y $unset de lo que no, campo a campo (`prefix` para
+// los ejercicios, que van dentro de su sesión: "exercises.$.").
+function restoreUpdate(doc, prefix = "") {
   const $set = {};
   const $unset = {};
   for (const field of ["notes", "clientNotes"]) {
-    if (typeof doc[field] === "string" && doc[field] !== "") $set[field] = doc[field];
-    else $unset[field] = 1;
+    if (typeof doc[field] === "string" && doc[field] !== "") $set[`${prefix}${field}`] = doc[field];
+    else $unset[`${prefix}${field}`] = 1;
   }
   const update = {};
   if (Object.keys($set).length) update.$set = $set;
@@ -178,20 +177,23 @@ async function restore(db, file) {
     await db.collection("workouts").updateOne({ _id: new mongoose.Types.ObjectId(workout._id) }, restoreUpdate(workout));
   }
   for (const customExercise of backup.customExercises) {
-    await db.collection("customexercises").updateOne({ _id: new mongoose.Types.ObjectId(customExercise._id) }, restoreUpdate(customExercise));
+    await db
+      .collection("workouts")
+      .updateOne({ "exercises._id": new mongoose.Types.ObjectId(customExercise._id) }, restoreUpdate(customExercise, "exercises.$."));
   }
-  await db.collection("pinnedexercisenotes").deleteMany({ tableId });
-  if (backup.pinned.length) {
-    await db.collection("pinnedexercisenotes").insertMany(
-      backup.pinned.map((pin) => ({
-        ...pin,
-        _id: new mongoose.Types.ObjectId(pin._id),
-        tableId,
-        createdAt: pin.createdAt ? new Date(pin.createdAt) : undefined,
-        updatedAt: pin.updatedAt ? new Date(pin.updatedAt) : undefined,
-      }))
-    );
-  }
+  await db.collection("tables").updateOne(
+    { _id: tableId },
+    {
+      $set: {
+        pinnedNotes: backup.pinned.map((pin) => ({
+          ...pin,
+          _id: new mongoose.Types.ObjectId(pin._id),
+          createdAt: pin.createdAt ? new Date(pin.createdAt) : undefined,
+          updatedAt: pin.updatedAt ? new Date(pin.updatedAt) : undefined,
+        })),
+      },
+    },
+  );
   console.log(`Restaurado desde ${file}`);
 }
 
@@ -233,14 +235,17 @@ async function main() {
     fs.writeFileSync(backupFile, JSON.stringify(backupOf(target), null, 2));
     console.log(`Copia de lo anterior: ${backupFile}`);
 
-    const clearNotes = { $unset: { notes: 1, clientNotes: 1 } };
-    await db.collection("workouts").updateMany({ _id: { $in: workoutIds } }, clearNotes);
-    await db.collection("customexercises").updateMany({ _id: { $in: customExerciseIds } }, clearNotes);
-    await db.collection("pinnedexercisenotes").deleteMany({ tableId: target.table._id });
+    await db.collection("workouts").updateMany({ _id: { $in: workoutIds } }, { $unset: { notes: 1, clientNotes: 1 } });
+    await db
+      .collection("workouts")
+      .updateMany({ _id: { $in: workoutIds } }, { $unset: { "exercises.$[].notes": 1, "exercises.$[].clientNotes": 1 } });
 
     for (const item of plan.workoutSets) await db.collection("workouts").updateOne({ _id: item._id }, { $set: item.$set });
-    for (const item of plan.exerciseSets) await db.collection("customexercises").updateOne({ _id: item._id }, { $set: item.$set });
-    await db.collection("pinnedexercisenotes").insertMany(plan.pinnedDocs);
+    for (const item of plan.exerciseSets) {
+      const $set = Object.fromEntries(Object.entries(item.$set).map(([field, value]) => [`exercises.$.${field}`, value]));
+      await db.collection("workouts").updateOne({ "exercises._id": item._id }, { $set });
+    }
+    await db.collection("tables").updateOne({ _id: target.table._id }, { $set: { pinnedNotes: plan.pinnedDocs } });
     console.log("Hecho.");
   } finally {
     await mongoose.disconnect();

@@ -13,7 +13,7 @@ test("el cliente solo ve lo que apuntó él", async (t) => {
   });
 
   await t.test("las medidas exclusivas de check-in nunca le salen", () => {
-    const doc = { date: "2026-09-10", weight: 70, shoulders: 118, bicepsRelaxedL: 36, muscleMass: 32 };
+    const doc = { date: "2026-09-10", weight: 70, shoulders: 118, quadL: 56, muscleMass: 32 };
     assert.deepEqual(ownView(doc), { date: "2026-09-10", weight: 70 });
     assert.equal(ownView({ date: "2026-09-10", fatMass: 14 }), null);
   });
@@ -29,8 +29,8 @@ test("el cliente solo ve lo que apuntó él", async (t) => {
 
 test("qué puede escribir el cliente", () => {
   assert.deepEqual(
-    pickMeasurements({ weight: 70, calf: 38, shoulders: 118, quadL: 58, userId: "x", neck: "38", hip: null, chest: "" }),
-    { weight: 70, calf: 38, neck: 38 }
+    pickMeasurements({ weight: 70, calfL: 38, calf: 37, shoulders: 118, quadL: 58, userId: "x", neck: "38", hip: null, chest: "" }),
+    { weight: 70, calfL: 38, neck: 38 }
   );
 });
 

@@ -39,8 +39,8 @@ mongoose.set("strictQuery", true);
 let available = false;
 let server = null;
 let baseUrl = "";
-let C, TokenService, User, TrainerClient, Notification, TrainerPayment, TrainerPaymentProfile, TrainerPaymentSettings;
-let reminderService, migration, mapper;
+let C, TokenService, User, TrainerClient, Notification, TrainerPayment, TrainerPaymentProfile;
+let reminderService, mapper;
 
 let memoryServer = null;
 
@@ -64,17 +64,15 @@ test.before(async () => {
     }
   }
   C = require("./core").load();
-  TokenService = require("../../services/token.service");
-  User = require("../users/schema");
+  TokenService = require("../auth/token-service");
+  User = require("../users/user-schema");
   TrainerClient = require("../trainerClients/trainer-client-schema");
   Notification = require("../notifications/notification-schema");
   TrainerPayment = require("./trainer-payment-schema");
   TrainerPaymentProfile = require("./trainer-payment-profile-schema");
-  TrainerPaymentSettings = require("./trainer-payment-settings-schema");
   reminderService = require("./trainer-payment-reminder-service");
-  migration = require("../../scripts/migrate-trainer-payments-v2");
   mapper = require("./trainer-payment-mapper");
-  for (const model of [User, TrainerClient, Notification, TrainerPayment, TrainerPaymentProfile, TrainerPaymentSettings]) {
+  for (const model of [User, TrainerClient, Notification, TrainerPayment, TrainerPaymentProfile]) {
     await model.createIndexes();
   }
   const app = require("../../app");
@@ -101,7 +99,7 @@ let opSeq = 0;
 const op = (label) => `op-${label}-${Date.now()}-${++opSeq}`;
 
 async function reset() {
-  for (const model of [User, TrainerClient, Notification, TrainerPayment, TrainerPaymentProfile, TrainerPaymentSettings]) {
+  for (const model of [User, TrainerClient, Notification, TrainerPayment, TrainerPaymentProfile]) {
     await model.deleteMany({});
   }
 }
@@ -125,17 +123,24 @@ async function makeUser(name, roles, family) {
 let invitedSeq = 0;
 async function relate(trainer, client, status = "active", scope = "training") {
   invitedSeq += 1;
-  await TrainerClient.collection.insertOne({
-    trainerId: new mongoose.Types.ObjectId(trainer.id),
-    clientId: new mongoose.Types.ObjectId(client.id),
-    clientEmail: `${client.name.toLowerCase()}.${client.id}@example.test`,
-    scope,
-    status,
-    intakePending: false,
-    invitedAt: new Date(Date.UTC(2026, 0, 1, 0, invitedSeq)),
-    respondedAt: new Date(),
-    revokedAt: status === "revoked" ? new Date() : null,
-  });
+  // Un documento por par; cada llamada añade la entrada de un scope.
+  await TrainerClient.collection.updateOne(
+    { trainerId: new mongoose.Types.ObjectId(trainer.id), clientEmail: `${client.name.toLowerCase()}.${client.id}@example.test` },
+    {
+      $set: { clientId: new mongoose.Types.ObjectId(client.id), intakePending: false },
+      $push: {
+        scopes: {
+          _id: new mongoose.Types.ObjectId(),
+          scope,
+          status,
+          invitedAt: new Date(Date.UTC(2026, 0, 1, 0, invitedSeq)),
+          respondedAt: new Date(),
+          revokedAt: status === "revoked" ? new Date() : null,
+        },
+      },
+    },
+    { upsert: true }
+  );
 }
 
 async function seed() {
@@ -177,16 +182,37 @@ function pay(trainer, client, chargeId, amount, receivedDay, operationId = op("p
   return call(trainer, "POST", `${clientPath(client)}/charges/${chargeId}/payments`, { amount, receivedDay, method: "bizum", operationId });
 }
 
-async function insertLegacy(trainer, client, fields) {
+// Cobro ya existente (deuda de antes), escrito directamente con su forma.
+async function insertCharge(trainer, client, { amountCents, dueDay, note = null }) {
   const _id = oid();
   await TrainerPayment.collection.insertOne({
     _id,
     trainerId: new mongoose.Types.ObjectId(trainer.id),
     clientId: new mongoose.Types.ObjectId(client.id),
+    origin: "one_off",
+    concept: null,
+    note,
     currency: "EUR",
-    paidAt: null,
+    dueDay,
+    amountCents,
+    originalAmountCents: amountCents,
+    receivedCents: 0,
+    cancelledCents: 0,
+    status: "open",
+    settledAt: null,
+    cancelledAt: null,
+    voidedAt: null,
+    voidReason: null,
+    historical: true,
+    manualOverride: false,
+    payments: [],
+    adjustments: [],
+    operations: [],
+    revision: 1,
+    dueRevision: 1,
+    remindersFrom: new Date("2026-08-01T10:00:00Z"),
+    reminderLog: [],
     createdAt: new Date("2026-08-01T10:00:00Z"),
-    ...fields,
   });
   return String(_id);
 }
@@ -211,7 +237,7 @@ test("permisos: otro entrenador, rol cliente, plaza en solo lectura y antiguo cl
   assert.equal(readOnly.body.code, "CLIENT_READ_ONLY");
 
   // Antiguo cliente con deuda previa: leerla y cerrarla sí; nada más.
-  const legacyId = await insertLegacy(s.A, s.F, { amount: 50, dueDate: new Date("2026-08-05T00:00:00Z"), note: "agosto" });
+  const formerChargeId = await insertCharge(s.A, s.F, { amountCents: 5000, dueDay: "2026-08-05", note: "agosto" });
   const ledger = await call(s.A, "GET", clientPath(s.F));
   assert.equal(ledger.status, 200);
   assert.equal(ledger.body.access, "former");
@@ -220,17 +246,16 @@ test("permisos: otro entrenador, rol cliente, plaza en solo lectura y antiguo cl
   assert.equal(newCharge.body.code, "FORMER_CLIENT_RESTRICTED");
   const plan = await call(s.A, "PUT", `${clientPath(s.F)}/plan`, { amount: 60, unit: "month", interval: 1, nextDueDay: today, operationId: op("fplan") });
   assert.equal(plan.status, 403);
-  const settle = await pay(s.A, s.F, legacyId, 20, today);
+  const settle = await pay(s.A, s.F, formerChargeId, 20, today);
   assert.equal(settle.status, 200);
   assert.equal(settle.body.charge.balanceCents, 3000);
   assert.equal((await call(s.A, "PUT", `${clientPath(s.F)}/preferences`, { clientRemindersEnabled: true })).status, 403);
-  assert.equal((await call(s.A, "GET", `/trainer/clients/${s.F.id}/payments`)).status, 403, "la ficha sigue cerrada");
 
   // El Coach del cliente: saldo restante, sin notas privadas.
   await pay(s.A, s.C1, charge.id, 20, today);
   const coach = await call(s.C1, "GET", "/coach/dashboard");
   assert.equal(coach.status, 200);
-  assert.deepEqual(coach.body.pendingPayments.map((item) => [item.amount, item.concept]), [[40, "Octubre"]]);
+  assert.deepEqual(coach.body.pendingPayments.map((item) => [item.balanceCents, item.concept]), [[4000, "Octubre"]]);
   assert.equal(JSON.stringify(coach.body.pendingPayments).includes("Nota privada"), false);
 });
 
@@ -496,7 +521,7 @@ test("global: totales de todo el conjunto con varias páginas y recibido por fec
   // Pago recibido el mes pasado pero anotado hoy: cuenta en el mes pasado.
   assert.equal((await pay(s.A, ids[0].client, ids[0].id, 5, lastMonthDay)).status, 200);
   assert.equal((await pay(s.A, ids[1].client, ids[1].id, "10.50", today)).status, 200);
-  await insertLegacy(s.A, s.F, { amount: 20, dueDate: new Date(`${C.addDays(today, -40)}T00:00:00Z`) });
+  await insertCharge(s.A, s.F, { amountCents: 2000, dueDay: C.addDays(today, -40) });
 
   const page0 = (await call(s.A, "GET", "/trainer/payments/overview?limit=10&state=all")).body;
   const page2 = (await call(s.A, "GET", "/trainer/payments/overview?limit=10&page=2&state=all")).body;
@@ -520,65 +545,36 @@ test("global: totales de todo el conjunto con varias páginas y recibido por fec
   assert.ok(search.rows.length > 0 && search.rows.every((row) => row.clientId === s.C3.id));
 
   const summary = (await call(s.A, "GET", "/trainer/payments/summary")).body;
-  assert.equal(summary.pendingAmount, expectedPending / 100);
-  assert.equal(summary.seriesBasis, "due_date");
+  assert.equal(summary.pendingCents, expectedPending);
+  assert.equal(summary.dueSeries.length, 6);
+  assert.equal(summary.receivedSeries.at(-1).cents, 1050, "lo recibido este mes, por fecha real");
 });
 
-test("contrato antiguo y migración: PATCH repetido, sin borrar parciales, migración doble sin avisos", async (t) => {
+test("ajustes de cobros: por defecto sin guardar, se guardan en el usuario con revisión e historial", async (t) => {
   if (!available) return t.skip("Mongo local no disponible");
   const s = await seed();
-  const today = todayMadrid();
-  const unpaid = await insertLegacy(s.A, s.C1, { amount: 60, dueDate: new Date("2026-08-05T00:00:00Z"), note: "agosto" });
-  const paid = await insertLegacy(s.A, s.C1, {
-    amount: 45.5,
-    dueDate: new Date("2026-07-04T22:00:00Z"),
-    paidAt: new Date("2026-07-07T09:30:00Z"),
-  });
-  const usd = await insertLegacy(s.A, s.C2, { amount: 20, currency: "USD", dueDate: new Date("2026-08-05T00:00:00Z") });
-  const stranger = await makeUser("Sin", ["user"], "trainfit-front");
-  const orphan = await insertLegacy(s.A, stranger, { amount: 15, dueDate: new Date("2026-08-05T00:00:00Z") });
+  const initial = await call(s.A, "GET", "/trainer/payments/settings");
+  assert.equal(initial.status, 200);
+  assert.equal(initial.body.persisted, false);
+  assert.equal(initial.body.revision, 0);
 
-  let list = (await call(s.A, "GET", `/trainer/clients/${s.C1.id}/payments`)).body;
-  assert.deepEqual(list.map((item) => [item._id, item.amount, Boolean(item.paidAt)]), [[unpaid, 60, false], [paid, 45.5, true]]);
+  const first = await call(s.A, "PUT", "/trainer/payments/settings", { timeZone: "America/Mexico_City", time: "08:30", offsets: [-2, 0] });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.deepEqual([first.body.persisted, first.body.revision, first.body.timeZone, first.body.time], [true, 1, "America/Mexico_City", "08:30"]);
+  assert.deepEqual(first.body.offsets, [-2, 0]);
+  const second = await call(s.A, "PUT", "/trainer/payments/settings", { timeZone: "Europe/Madrid", time: "09:00", offsets: [0] });
+  assert.equal(second.body.revision, 2);
+  assert.equal((await call(s.A, "PUT", "/trainer/payments/settings", { timeZone: "Marte/Olimpo", time: "09:00", offsets: [0] })).status, 400);
 
-  const patch = (id, value) => call(s.A, "PATCH", `/trainer/clients/${s.C1.id}/payments/${id}`, { paid: value });
-  const firstPaid = await patch(unpaid, true);
-  const secondPaid = await patch(unpaid, true);
-  assert.equal(firstPaid.body.paidAt, secondPaid.body.paidAt, "repetir no mueve la fecha");
-  let doc = await TrainerPayment.findById(unpaid).lean();
-  assert.equal(doc.payments.length, 1);
-  assert.equal(doc.payments[0].method, "unknown");
-  assert.equal((await patch(unpaid, false)).body.paidAt, null);
-  doc = await TrainerPayment.findById(unpaid).lean();
-  assert.deepEqual(doc.payments.map((m) => m.status), ["voided"], "deshacer conserva el rastro");
+  // Viven en el propio usuario; otro entrenador sigue con los de defecto.
+  const stored = await User.findById(s.A.id).select("trainerSettings").lean();
+  assert.equal(stored.trainerSettings.payments.timeZone, "Europe/Madrid");
+  assert.equal(stored.trainerSettings.payments.history.length, 2);
+  assert.equal((await call(s.B, "GET", "/trainer/payments/settings")).body.persisted, false);
+  const collections = (await mongoose.connection.db.listCollections({}, { nameOnly: true }).toArray()).map((c) => c.name);
+  assert.ok(!collections.includes("trainerpaymentsettings"));
 
-  // Parcial con la app nueva: el PATCH antiguo no lo borra.
-  assert.equal((await pay(s.A, s.C1, unpaid, 20, today)).status, 200);
-  assert.equal((await patch(unpaid, false)).status, 200);
-  list = (await call(s.A, "GET", `/trainer/clients/${s.C1.id}/payments`)).body;
-  assert.equal(list.find((item) => item._id === unpaid).amount, 40, "saldo real tras el parcial");
-  assert.equal((await patch(unpaid, true)).status, 200);
-  const conflict = await patch(unpaid, false);
-  assert.equal(conflict.status, 409);
-  assert.equal(conflict.body.code, "LEGACY_CONFLICT");
-
-  // Migración: ensayo, real y repetida.
-  const notificationsBefore = await Notification.countDocuments({});
-  const dry = await migration.runMigration({ dryRun: true, now: new Date() });
-  assert.equal(dry.converted, 1, "solo el pagado antiguo sigue sin migrar y está limpio");
-  assert.equal((await TrainerPayment.findById(paid).lean()).schemaVersion, undefined, "el ensayo no escribe");
-  const real = await migration.runMigration({ dryRun: false, now: new Date() });
-  assert.equal(real.converted, 1);
-  assert.equal(real.totalsMatch, true);
-  assert.deepEqual(real.skipped.map((item) => [item.id, item.anomalies]), [[usd, ["non_eur_currency"]]]);
-  assert.deepEqual(real.orphans.map((item) => item.id), [orphan]);
-  const migrated = await TrainerPayment.findById(paid).lean();
-  assert.equal(migrated.dueDay, "2026-07-05", "medianoche de Madrid, no el día UTC");
-  assert.equal(migrated.payments[0].receivedDaySource, "legacy_marked_paid");
-  assert.equal(migrated.paidAt.toISOString(), "2026-07-07T09:30:00.000Z", "paidAt se conserva");
-  const again = await migration.runMigration({ dryRun: false, now: new Date() });
-  assert.equal(again.converted, 0);
-  assert.deepEqual(again.totalsBefore, again.totalsAfter);
-  assert.equal(await Notification.countDocuments({}), notificationsBefore, "la migración no avisa a nadie");
-  assert.equal(await TrainerPaymentProfile.countDocuments({}), 0, "ni deduce cuotas recurrentes");
+  // La hora del entrenador manda en los avisos que calcula el servicio.
+  const settings = await require("./trainer-payment-dao").listSettings([new mongoose.Types.ObjectId(s.A.id), new mongoose.Types.ObjectId(s.B.id)]);
+  assert.deepEqual(settings.map((doc) => [String(doc.trainerId), doc.time]), [[s.A.id, "09:00"]]);
 });

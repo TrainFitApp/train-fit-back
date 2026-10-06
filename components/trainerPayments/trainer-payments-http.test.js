@@ -27,10 +27,10 @@ function fakeRes() {
 }
 
 async function run(middleware, { relations = [], readOnly = false, method = "POST", clientId = CLIENT } = {}) {
-  const originalFind = TrainerClient.find;
+  const originalFindOne = TrainerClient.findOne;
   const originalReject = seatService.rejectIfReadOnly;
   let seatChecked = false;
-  TrainerClient.find = () => ({ select: () => ({ lean: async () => relations.map((status) => ({ status })) }) });
+  TrainerClient.findOne = () => ({ lean: async () => (relations.length ? { scopes: relations.map((status) => ({ status })) } : null) });
   seatService.rejectIfReadOnly = async (req, res) => {
     seatChecked = true;
     if (!readOnly || req.method === "GET") return false;
@@ -43,7 +43,7 @@ async function run(middleware, { relations = [], readOnly = false, method = "POS
   try {
     await middleware(req, res, () => { nextCalled = true; });
   } finally {
-    TrainerClient.find = originalFind;
+    TrainerClient.findOne = originalFindOne;
     seatService.rejectIfReadOnly = originalReject;
   }
   return { req, res, nextCalled, seatChecked };

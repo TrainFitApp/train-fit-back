@@ -24,12 +24,6 @@
 // fraccionales (Pelland et al. 2024): el músculo objetivo suma la serie
 // entera, el que colabora de forma relevante suma media, y el que solo
 // estabiliza se muestra pero no suma volumen.
-//
-// COMPATIBILIDAD
-// muscleGroups1/muscleGroups2 siguen existiendo porque los leen el buscador,
-// la app cliente y el progreso del cliente (training-service.js). Ya no se
-// editan a mano: se proyectan desde `muscles` con toLegacyMuscleGroups, en
-// el vocabulario antiguo que ya traduce es-en-db.map.ts.
 
 const MUSCLE_ROLES = {
   primary: 1,
@@ -39,127 +33,103 @@ const MUSCLE_ROLES = {
 
 const ROLE_IDS = Object.keys(MUSCLE_ROLES);
 
-// `region` es la etiqueta antigua de zona ("Piernas", "Brazos"…) que el
-// buscador y la app cliente siguen usando como primer nivel de filtro.
-// `legacy` es la etiqueta antigua más cercana al grupo o a la porción.
 const MUSCLE_GROUPS = [
   {
     id: "chest",
     label: "Pectoral",
-    region: "Pectoral",
-    legacy: "Pectoral",
     muscles: [
-      { id: "chest_upper", label: "Pectoral superior", legacy: "Pectoral superior" },
-      { id: "chest_middle", label: "Pectoral medio", legacy: "Pectoral" },
-      { id: "chest_lower", label: "Pectoral inferior", legacy: "Pectoral inferior" },
+      { id: "chest_upper", label: "Pectoral superior" },
+      { id: "chest_middle", label: "Pectoral medio" },
+      { id: "chest_lower", label: "Pectoral inferior" },
     ],
   },
   {
     id: "back",
     label: "Espalda",
-    region: "Espalda",
-    legacy: "Espalda alta",
     muscles: [
-      { id: "back_lats", label: "Dorsal ancho", legacy: "Espalda alta" },
-      { id: "back_mid_traps", label: "Trapecio medio y romboides", legacy: "Espalda alta" },
-      { id: "back_upper_traps", label: "Trapecio superior", legacy: "Espalda alta" },
+      { id: "back_lats", label: "Dorsal ancho" },
+      { id: "back_mid_traps", label: "Trapecio medio y romboides" },
+      { id: "back_upper_traps", label: "Trapecio superior" },
     ],
   },
   {
     id: "shoulders",
     label: "Hombro",
-    region: "Hombro",
-    legacy: "Hombro",
     muscles: [
-      { id: "delt_front", label: "Deltoides anterior", legacy: "Deltoides anterior" },
-      { id: "delt_side", label: "Deltoides lateral", legacy: "Deltoides lateral" },
-      { id: "delt_rear", label: "Deltoides posterior", legacy: "Deltoides posterior" },
+      { id: "delt_front", label: "Deltoides anterior" },
+      { id: "delt_side", label: "Deltoides lateral" },
+      { id: "delt_rear", label: "Deltoides posterior" },
     ],
   },
   {
     id: "biceps",
     label: "Bíceps",
-    region: "Brazos",
-    legacy: "Bíceps",
     muscles: [
-      { id: "biceps_long", label: "Cabeza larga", legacy: "Bíceps" },
-      { id: "biceps_short", label: "Cabeza corta", legacy: "Bíceps" },
-      { id: "biceps_brachialis", label: "Braquial y braquiorradial", legacy: "Bíceps" },
+      { id: "biceps_long", label: "Cabeza larga" },
+      { id: "biceps_short", label: "Cabeza corta" },
+      { id: "biceps_brachialis", label: "Braquial y braquiorradial" },
     ],
   },
   {
     id: "triceps",
     label: "Tríceps",
-    region: "Brazos",
-    legacy: "Tríceps",
     muscles: [
-      { id: "triceps_long", label: "Cabeza larga", legacy: "Tríceps" },
-      { id: "triceps_lateral_medial", label: "Cabezas lateral y medial", legacy: "Tríceps" },
+      { id: "triceps_long", label: "Cabeza larga" },
+      { id: "triceps_lateral_medial", label: "Cabezas lateral y medial" },
     ],
   },
   {
     id: "forearms",
     label: "Antebrazo",
-    region: "Brazos",
-    legacy: "Antebrazo",
     muscles: [
-      { id: "forearm_flexors", label: "Flexores y agarre", legacy: "Antebrazo" },
-      { id: "forearm_extensors", label: "Extensores", legacy: "Antebrazo" },
+      { id: "forearm_flexors", label: "Flexores y agarre" },
+      { id: "forearm_extensors", label: "Extensores" },
     ],
   },
   {
     id: "abs",
     label: "Abdomen",
-    region: "Abdomen",
-    legacy: "Abdomen",
     muscles: [
-      { id: "abs_rectus", label: "Recto abdominal", legacy: "Recto abdominal" },
-      { id: "abs_obliques", label: "Oblicuos", legacy: "Oblicuos" },
+      { id: "abs_rectus", label: "Recto abdominal" },
+      { id: "abs_obliques", label: "Oblicuos" },
     ],
   },
-  { id: "lower_back", label: "Lumbar", region: "Espalda", legacy: "Espalda baja", muscles: [] },
+  { id: "lower_back", label: "Lumbar", muscles: [] },
   {
     id: "quads",
     label: "Cuádriceps",
-    region: "Piernas",
-    legacy: "Cuádriceps",
     muscles: [
-      { id: "quads_rectus_femoris", label: "Recto femoral", legacy: "Cuádriceps" },
-      { id: "quads_vasti", label: "Vastos", legacy: "Cuádriceps" },
+      { id: "quads_rectus_femoris", label: "Recto femoral" },
+      { id: "quads_vasti", label: "Vastos" },
     ],
   },
-  { id: "hamstrings", label: "Isquiosurales", region: "Piernas", legacy: "Femoral", muscles: [] },
+  { id: "hamstrings", label: "Isquiosurales", muscles: [] },
   {
     id: "glutes",
     label: "Glúteo",
-    region: "Piernas",
-    legacy: "Glúteo",
     muscles: [
-      { id: "glute_max", label: "Glúteo mayor", legacy: "Glúteo" },
-      { id: "glute_med", label: "Glúteo medio y menor", legacy: "Glúteo" },
+      { id: "glute_max", label: "Glúteo mayor" },
+      { id: "glute_med", label: "Glúteo medio y menor" },
     ],
   },
-  { id: "adductors", label: "Aductores", region: "Piernas", legacy: "Aductor", muscles: [] },
+  { id: "adductors", label: "Aductores", muscles: [] },
   {
     id: "calves",
     label: "Gemelos y sóleo",
-    region: "Piernas",
-    legacy: "Gemelo",
     muscles: [
-      { id: "calves_gastrocnemius", label: "Gemelo", legacy: "Gemelo" },
-      { id: "calves_soleus", label: "Sóleo", legacy: "Sóleo" },
+      { id: "calves_gastrocnemius", label: "Gemelo" },
+      { id: "calves_soleus", label: "Sóleo" },
     ],
   },
-  { id: "neck", label: "Cuello", region: "Cuello", legacy: "Cuello", muscles: [] },
+  { id: "neck", label: "Cuello", muscles: [] },
 ];
 
-// id -> { id, label, legacy, groupId, isGroup }
+// id -> { id, label, groupId, isGroup }
 const NODES = new Map();
 for (const group of MUSCLE_GROUPS) {
   NODES.set(group.id, {
     id: group.id,
     label: group.label,
-    legacy: group.legacy,
     groupId: group.id,
     isGroup: true,
   });
@@ -215,134 +185,6 @@ function normalizeMuscles(input) {
     );
 }
 
-function uniquePush(list, value) {
-  if (value && !list.includes(value)) list.push(value);
-}
-
-/**
- * Proyección al modelo antiguo, con la misma forma que ya tenían los datos:
- * muscleGroups1 = zonas + músculos principales ("Piernas", "Cuádriceps"),
- * muscleGroups2 = secundarios. Los estabilizadores no se proyectan: el
- * modelo antiguo no sabía expresarlos y contarlos como secundarios
- * inflaría el progreso del cliente.
- */
-function toLegacyMuscleGroups(muscles) {
-  const normalized = normalizeMuscles(muscles);
-  const muscleGroups1 = [];
-  const muscleGroups2 = [];
-
-  const primaries = normalized.filter((item) => item.role === "primary");
-  for (const { muscle } of primaries) uniquePush(muscleGroups1, groupOf(muscle).region);
-  for (const { muscle } of primaries) uniquePush(muscleGroups1, getNode(muscle).legacy);
-
-  for (const { muscle } of normalized.filter((item) => item.role === "secondary")) {
-    const legacy = getNode(muscle).legacy;
-    if (!muscleGroups1.includes(legacy)) uniquePush(muscleGroups2, legacy);
-  }
-
-  return { muscleGroups1, muscleGroups2 };
-}
-
-// --- Lectura del vocabulario antiguo ---
-//
-// Los datos antiguos traen erratas ("Delotides", "poterior"), mayúsculas
-// sueltas, espacios y varios valores en una sola cadena ("Espalda, Femoral").
-// Las zonas ("Piernas", "Brazos") no dicen qué músculo es y se descartan: si
-// es lo único que hay, el ejercicio queda para revisión manual.
-
-function normalizeLegacyText(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const LEGACY_TO_MUSCLE = {
-  pectoral: "chest",
-  pecho: "chest",
-  "pectoral superior": "chest_upper",
-  "pectoral inferior": "chest_lower",
-  espalda: "back",
-  "espalda alta": "back",
-  "espalda baja": "lower_back",
-  hombro: "shoulders",
-  hombros: "shoulders",
-  "deltoides anterior": "delt_front",
-  "delotides anterior": "delt_front",
-  "deltoides lateral": "delt_side",
-  "delotides lateral": "delt_side",
-  "deltoides posterior": "delt_rear",
-  "deltoides poterior": "delt_rear",
-  biceps: "biceps",
-  triceps: "triceps",
-  antebrazo: "forearms",
-  abdomen: "abs",
-  core: "abs",
-  "recto abdominal": "abs_rectus",
-  oblicuos: "abs_obliques",
-  gluteo: "glutes",
-  cuadriceps: "quads",
-  femoral: "hamstrings",
-  aductor: "adductors",
-  aductores: "adductors",
-  gemelo: "calves_gastrocnemius",
-  gemelos: "calves_gastrocnemius",
-  soleo: "calves_soleus",
-  cuello: "neck",
-};
-
-const LEGACY_REGIONS = new Set(["piernas", "pierna", "brazos"]);
-
-function splitLegacy(values) {
-  return (Array.isArray(values) ? values : [])
-    .flatMap((value) => String(value || "").split(","))
-    .map(normalizeLegacyText)
-    .filter(Boolean);
-}
-
-/**
- * Traduce muscleGroups1/2 antiguos a `muscles` (principal / secundario).
- * Devuelve también lo que no se pudo interpretar, para que la migración lo
- * liste en vez de perderlo en silencio.
- */
-function fromLegacyMuscleGroups(muscleGroups1, muscleGroups2) {
-  const unknown = [];
-  const collect = (values, role) =>
-    splitLegacy(values).flatMap((text) => {
-      if (LEGACY_REGIONS.has(text)) return [];
-      const muscle = LEGACY_TO_MUSCLE[text];
-      if (!muscle) {
-        unknown.push(text);
-        return [];
-      }
-      return [{ muscle, role }];
-    });
-
-  let muscles = normalizeMuscles([
-    ...collect(muscleGroups1, "primary"),
-    ...collect(muscleGroups2, "secondary"),
-  ]);
-
-  // "Espalda, Espalda alta" o "Pectoral, Pectoral superior": el grupo al
-  // lado de una de sus porciones es la forma antigua de decir "esta
-  // porción"; conservar los dos contaría el grupo dos veces. Solo se quita
-  // el grupo si la porción pesa lo mismo o más: "Pectoral" principal con
-  // "Pectoral superior" secundario sigue siendo pectoral en general.
-  const roleOf = new Map(muscles.map((item) => [item.muscle, item.role]));
-  muscles = muscles.filter(
-    ({ muscle, role }) =>
-      !getNode(muscle).isGroup ||
-      !groupOf(muscle).muscles.some(
-        (child) =>
-          roleOf.has(child.id) && MUSCLE_ROLES[roleOf.get(child.id)] >= MUSCLE_ROLES[role],
-      ),
-  );
-
-  return { muscles, unknown };
-}
-
 /**
  * Ids que casan con un filtro de búsqueda por músculo: un grupo incluye sus
  * porciones ("Pectoral" encuentra el press inclinado, etiquetado como
@@ -370,8 +212,5 @@ module.exports = {
   getNode,
   groupOf,
   normalizeMuscles,
-  toLegacyMuscleGroups,
-  fromLegacyMuscleGroups,
-  normalizeLegacyText,
   expandMuscleFilter,
 };

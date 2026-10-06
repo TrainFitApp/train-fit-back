@@ -1,4 +1,4 @@
-const PlanChange = require("./plan-change-schema");
+const planChangeDao = require("./plan-change-dao");
 
 // Fase 4 Coach Pro — construir y guardar entradas del historial.
 //
@@ -71,7 +71,7 @@ async function record({ trainerId, clientId, entity, entityId, entityName, actio
   // que parece.
   if (!changes?.length && !reason) return null;
 
-  return PlanChange.create({
+  return planChangeDao.create({
     trainerId,
     clientId,
     entity,
@@ -111,9 +111,7 @@ async function recordPlanAssignment({ trainerId, clientId, previousAssignment, n
 }
 
 async function listForClient(trainerId, clientId, { entity, limit = 100 } = {}) {
-  const filter = { trainerId, clientId };
-  if (entity) filter.entity = entity;
-  return PlanChange.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+  return planChangeDao.listForClient(trainerId, clientId, { entity, limit });
 }
 
 module.exports = {

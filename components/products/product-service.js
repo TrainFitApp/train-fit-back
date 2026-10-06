@@ -33,10 +33,6 @@ module.exports = {
     return productDao.promoteToGlobal(id);
   },
 
-  async addFavouriteProduct(idUser, idProduct, productExist) {
-    return productDao.addFavoriteProduct(idUser, idProduct, productExist);
-  },
-
   async deleteProduct(id) {
     return productDao.deleteProduct(id);
   },

@@ -3,7 +3,7 @@ const { load: core } = require("./core");
 const dao = require("./trainer-payment-dao");
 const mapper = require("./trainer-payment-mapper");
 const notificationDao = require("../notifications/notification-dao");
-const TrainerClient = require("../trainerClients/trainer-client-schema");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 // Orquestación del dominio de cobros: lee, pide al núcleo puro el estado
 // siguiente y lo escribe con compare-and-swap. Ninguna regla de negocio vive
@@ -149,7 +149,7 @@ async function withProfile(trainerId, clientId, actorId, compute, { create = fal
 }
 
 async function hasActiveRelation(trainerId, clientId) {
-  return Boolean(await TrainerClient.exists({ trainerId, clientId, status: "active" }));
+  return trainerClientDao.isActivePair(trainerId, clientId);
 }
 
 // Llamado al revocar un scope (y, como red de seguridad, al poner al día los
@@ -239,13 +239,11 @@ async function notifyChargeCreated(charge, ctx) {
       trainerId: charge.trainerId,
       recipient: "client",
       type: "payment_created",
-      // `amount`/`dueDate` para las apps antiguas del cliente; nunca la nota privada.
+      // Nunca la nota privada.
       payload: {
         chargeId: charge.id,
-        amount: charge.amountCents / 100,
         amountCents: charge.amountCents,
         currency: charge.currency,
-        dueDate: core().compatDueDate(charge.dueDay),
         dueDay: charge.dueDay,
         concept: charge.concept,
       },
@@ -424,55 +422,6 @@ async function setPreferences(trainerId, clientId, body, actorId, access) {
   return preferencesView(result.profile, result.settings);
 }
 
-// --- Contratos antiguos ---------------------------------------------------------------------
-
-// Ruta antigua con requireActiveClient(): siempre cliente activo.
-async function listLegacyPayments(trainerId, clientId) {
-  const C = core();
-  await syncProfile(trainerId, clientId, "active", await loadSettings(trainerId));
-  const charges = (await dao.listClientCharges(trainerId, clientId)).map(normalize);
-  return charges
-    .filter((charge) => C.isLegacyListable(charge))
-    .sort((a, b) => (a.dueDay < b.dueDay ? 1 : a.dueDay > b.dueDay ? -1 : 0))
-    .map((charge) => C.legacyListItem(charge));
-}
-
-// POST antiguo {amount, dueDate, note}: pasa por la misma alta nueva. Sin
-// operationId (las apps antiguas no lo mandan) y sin deuda pasada.
-async function createLegacyPayment(trainerId, clientId, body, actorId) {
-  const C = core();
-  const raw = body?.dueDate;
-  let dueDay = raw;
-  if (!C.isCivilDay(raw)) {
-    const parsed = raw ? new Date(raw) : null;
-    dueDay = parsed && !Number.isNaN(parsed.getTime()) ? C.civilDayInZone(parsed, C.LEGACY_TIME_ZONE) : raw;
-  }
-  if (body?.currency && String(body.currency).toUpperCase() !== "EUR") {
-    throw paymentsError("INVALID_CURRENCY", "Los cobros nuevos se registran en euros.", 400);
-  }
-  const result = await createOneOffCharge(
-    trainerId,
-    clientId,
-    { amount: body?.amount, dueDay, note: body?.note, operationId: `legacy-create-${newId()}` },
-    actorId
-  );
-  const doc = await dao.findCharge(trainerId, clientId, result.charge.id);
-  return C.legacyListItem(normalize(doc));
-}
-
-async function legacySetPaid(trainerId, clientId, chargeId, paid, actorId) {
-  const C = core();
-  const result = await mutateCharge(trainerId, clientId, chargeId, actorId, (charge, ctx) => {
-    const decision = C.legacyToggle(charge, paid, ctx.today);
-    if (decision.kind === "noop") return { kind: "noop", charge };
-    if (decision.kind === "pay") {
-      return C.registerPayment(charge, decision.input, ctx, { source: "legacy_toggle", receivedDaySource: "legacy_marked_paid" });
-    }
-    return { kind: "applied", charge: C.unmarkLegacyPayment(charge, decision.movement, ctx) };
-  });
-  return C.legacyListItem(result.after);
-}
-
 // --- Lecturas de otros componentes ----------------------------------------------------------
 
 // Coach del cliente: saldo restante de sus cobros con profesionales activos.
@@ -499,8 +448,7 @@ async function enrichNotifications(notifications, audience, trainerId = null) {
   let activeClients = null;
   if (audience === "trainer" && trainerId) {
     const clientIds = [...new Set(targets.map((item) => String(item.clientId)))];
-    const relations = await TrainerClient.find({ trainerId, clientId: { $in: clientIds }, status: "active" }).select("clientId").lean();
-    activeClients = new Set(relations.map((relation) => String(relation.clientId)));
+    activeClients = await trainerClientDao.findActiveClientIds(trainerId, { clientIds });
   }
   return notifications.map((item) => {
     const charge = item.payload?.chargeId ? byId.get(String(item.payload.chargeId)) : null;
@@ -533,9 +481,6 @@ module.exports = {
   resumePlan,
   endPlan,
   setPreferences,
-  listLegacyPayments,
-  createLegacyPayment,
-  legacySetPaid,
   listCoachPending,
   enrichNotifications,
   afterChargeWrite,

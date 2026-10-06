@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { buildSearchFields } = require("../util/search-index");
+const CustomProductSchema = require("../customProducts/custom-product-schema");
 const Schema = mongoose.Schema;
 
 const RecipeSchema = Schema(
@@ -22,14 +23,10 @@ const RecipeSchema = Schema(
     // por receta, no un enum), para no bloquear al trainer a una taxonomía
     // fija que no encaje con su forma de organizar recetas.
     tags: { type: [String], default: [] },
-    // Array de CustomProducts (referencias inmutables)
-    customProducts: [
-      {
-        type: Schema.Types.ObjectId,
-        ref: "CustomProduct",
-        autopopulate: true,
-      },
-    ],
+    // Ingredientes, EMBEBIDOS (2026-10; antes refs a la colección
+    // customproducts). Cada uno conserva su `_id`: es al que apuntan las
+    // modificaciones de una receta en el diario (baseCustomProductId).
+    customProducts: { type: [CustomProductSchema], default: [] },
     // Si está verificada por admin
     verified: {
       type: Boolean,
@@ -90,5 +87,15 @@ async function syncSearchFieldsOnUpdate() {
 
 RecipeSchema.pre("findOneAndUpdate", syncSearchFieldsOnUpdate);
 RecipeSchema.pre("updateOne", syncSearchFieldsOnUpdate);
+
+// Borrado de cuenta: después del contenido de la propia cuenta, para que solo
+// cuente el uso que hacen otros (recipe-dao.js#releaseOwnRecipes).
+const { accountCascade, STAGE } = require("../util/account-cascade");
+RecipeSchema.plugin(accountCascade, {
+  owners: ["userId"],
+  keep: (userId) => require("./recipe-dao").releaseOwnRecipes(userId),
+  authorship: ["assignedByTrainerId"],
+  stage: STAGE.catalog,
+});
 
 module.exports = mongoose.model("Recipe", RecipeSchema);

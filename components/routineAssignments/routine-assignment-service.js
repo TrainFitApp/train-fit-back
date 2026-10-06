@@ -1,114 +1,105 @@
 const routineAssignmentDao = require("./routine-assignment-dao");
 const tableDao = require("../tables/table-dao");
-const userSchema = require("../users/schema");
+const planChangeService = require("../planChanges/plan-change-service");
+const { projectionAcrossAssignments, getProjectedPhaseEndDate } = require("./routine-assignment-projection");
+const { withStates } = require("../util/phase-chain");
 const { todayForUser } = require("../users/user-time-zone");
+const { badRequest, conflict, notFound } = require("../util/http-error");
 
-// "Hoy" en todo este servicio es el del CLIENTE (su zona horaria): una fase
-// empieza o rige según su calendario, no el del entrenador ni el del servidor.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/**
- * ¿Esta fase existente impide colocar una nueva que empieza en `startDate`?
- *
- * Sin endDate, cada asignación es siempre "abierta" — el equivalente
- * permanente del caso `indefinite` de nutrición. Por eso la regla se reduce
- * a una dimensión: solo bloquea una fase YA PROGRAMADA para MÁS TARDE que
- * la nueva (la nueva la "saltaría", dejándola huérfana). Una fase en curso
- * o del pasado nunca bloquea — se resuelve sustituyéndola.
- */
-function blocksNewPhase(existing, startDate) {
-  return existing.startDate > startDate;
+// Fases de rutina de un cliente. "Hoy" es el del CLIENTE (su zona horaria):
+// una fase empieza o rige según su calendario. Ninguna operación toca la
+// rutina en uso del cliente: se calcula (routine-in-use.js), así que crear,
+// mover o quitar una fase no deja nada que sincronizar.
+
+const phaseNotFound = () => notFound("Fase no encontrada", "ROUTINE_PHASE_NOT_FOUND");
+const plain = (doc) => (typeof doc?.toObject === "function" ? doc.toObject() : doc);
+
+function assertIsoDate(value, field) {
+  if (!ISO_DATE.test(value || "")) throw badRequest(`${field} inválida (YYYY-MM-DD)`);
 }
 
-/**
- * Borrado coherente de fases/rutinas — repara, tras borrar UNA
- * RoutineAssignment ya cargada, las dos invariantes que el resto del
- * sistema da por hechas:
- *
- * 1. El "tip" de la cadena (status:"active" crudo en BD) — qué fase es la
- *    más recientemente aplicada, la usa applyRoutine para saber a quién
- *    marcar "superseded" la próxima vez.
- * 2. Lo que rige HOY (User.tableInUse/workoutInUse) — se calcula por
- *    FECHA (findCoveringDate), nunca por status (mismo criterio que ya
- *    usa syncTableInUseIfDue). Una fase futura ya es "active" en BD en
- *    cuanto se crea, aunque otra siga rigiendo hoy — por eso status y
- *    "qué rige hoy" pueden ser filas distintas y hay que repararlas por
- *    separado.
- *
- * Se recalcula cada invariante desde cero (por fecha / por listado
- * ordenado) en vez de seguir el puntero supersededBy a mano: seguir el
- * puntero se rompe si ya se había borrado un eslabón intermedio de la
- * cadena (el puntero acabaría apuntando a un _id inexistente).
- *
- * No comprueba pertenencia (clientId/assignmentId válidos) — eso lo hace
- * quien llama (cancelPhase, removeAssignmentsForTable).
- */
-async function removeAssignmentAndReconcile(clientId, assignment) {
-  const today = await todayForUser(clientId);
-  const wasCovering = await routineAssignmentDao.findCoveringDate(clientId, today);
-  const isCurrent = !!wasCovering && String(wasCovering._id) === String(assignment._id);
+async function tablesById(assignments) {
+  const tableIds = [...new Set(assignments.map((a) => String(a.tableId)))];
+  const tables = await Promise.all(tableIds.map((id) => tableDao.getTableById(id)));
+  return new Map(tables.filter(Boolean).map((t) => [String(t._id), t]));
+}
 
-  await routineAssignmentDao.deleteById(assignment._id);
+// Historial de cambios del cliente: qué rutina regía y cuál rige, con la
+// fecha de la fase (vive en la fase, no en la rutina).
+async function recordChange({ trainerId, clientId, before, after, reason }) {
+  const [beforeTable, afterTable] = await Promise.all([
+    before ? tableDao.getTableById(before.tableId) : null,
+    after ? tableDao.getTableById(after.tableId) : null,
+  ]);
+  if (!beforeTable && !afterTable) return;
+  await planChangeService.recordRoutineChange({
+    trainerId,
+    clientId,
+    previousTable: beforeTable ? { ...plain(beforeTable), startDate: before.startDate } : null,
+    newTable: afterTable ? { ...plain(afterTable), startDate: after.startDate } : null,
+    reason,
+  });
+}
 
-  // Invariante 1 (tip): solo hace falta reparar si la fase borrada lo era.
-  if (assignment.status === "active") {
-    const [newTip] = await routineAssignmentDao.listByClient(clientId);
-    if (newTip) await routineAssignmentDao.reactivate(newTip._id);
+// Una fase nueva en `startDate` no puede quedar por delante de otra que ya
+// empieza más tarde: la dejaría huérfana en medio de la cadena. Una en curso
+// o del pasado nunca bloquea: la nueva la sustituye.
+async function assertFitsInChain(clientId, startDate, options) {
+  const [clash] = await routineAssignmentDao.findStartingAfter(clientId, startDate, options);
+  if (clash) {
+    throw conflict(`Esa fecha se solapa con otra fase ya programada (${clash.startDate})`, "ROUTINE_OVERLAP", {
+      conflict: { startDate: clash.startDate, tableId: clash.tableId },
+    });
   }
-
-  // Invariante 2 (qué rige hoy): solo se toca si la fase borrada era la
-  // vigente — borrar una fase futura o ya sustituida nunca cambia lo que
-  // el cliente tiene activo ahora mismo.
-  let restored = null;
-  if (isCurrent) {
-    restored = await routineAssignmentDao.findCoveringDate(clientId, today);
-    if (restored) {
-      await tableDao.setTableInUseForClient(clientId, restored.tableId);
-    } else {
-      await tableDao.clearTableInUseForClient(clientId);
-    }
-  }
-
-  return { cancelled: assignment, restored, tableInUseChanged: isCurrent };
 }
 
 module.exports = {
-  // Exportada para test unitario.
-  blocksNewPhase,
-
-  // Crea la asignación y, si el cliente ya tenía una activa, la encadena
-  // (supersededBy) — "aplicar una rutina" y "programar la siguiente fase"
-  // son la MISMA operación, sin perder el historial de la anterior.
-  async applyRoutine({ trainerId, clientId, tableId, startDate }) {
-    const solapadas = await routineAssignmentDao.findOverlapping(clientId, startDate);
-    const bloqueantes = solapadas.filter((fase) => blocksNewPhase(fase, startDate));
-    if (bloqueantes.length) {
-      const choque = bloqueantes[0];
-      const error = new Error(`Esa fecha se solapa con otra fase ya programada (${choque.startDate})`);
-      error.code = "ROUTINE_OVERLAP";
-      error.conflict = { startDate: choque.startDate, tableId: choque.tableId };
-      throw error;
-    }
-
-    const created = await routineAssignmentDao.create({ tableId, clientId, trainerId, startDate });
-
-    const previousActive = await routineAssignmentDao.findActiveForClient(clientId);
-    if (previousActive && String(previousActive._id) !== String(created._id)) {
-      await routineAssignmentDao.markSuperseded(previousActive._id, created._id);
-    }
-
-    // Activación inmediata: si la fase empieza hoy o antes, el puntero se
-    // sincroniza ya mismo. Una fase futura se resuelve más tarde, de forma
-    // perezosa (ver syncTableInUseIfDue).
-    if (startDate <= (await todayForUser(clientId))) {
-      await tableDao.setTableInUseForClient(clientId, tableId);
-      await routineAssignmentDao.markActivated(created._id);
-    }
-
-    return created;
+  // Aplicar una rutina y programar la siguiente fase son la MISMA operación:
+  // la fase nueva sustituye a la anterior desde su fecha.
+  async applyRoutine({ trainerId, clientId, tableId, startDate, reason }) {
+    assertIsoDate(startDate, "startDate");
+    const table = await tableDao.getTableByIdAndUserId(tableId, clientId);
+    if (!table) throw notFound("Rutina no encontrada para este cliente");
+    // La última de la cadena ANTES de aplicar: es la que la nueva sustituye.
+    const previous = await routineAssignmentDao.findLatest(clientId);
+    await assertFitsInChain(clientId, startDate);
+    const assignment = await routineAssignmentDao.create({ tableId, clientId, trainerId, startDate });
+    await recordChange({ trainerId, clientId, before: previous, after: assignment, reason });
+    return assignment;
   },
 
-  async getActiveForClient(clientId) {
-    return routineAssignmentDao.findActiveForClient(clientId);
+  // Todas las fases, de la más reciente a la más antigua, con su estado hoy
+  // ("scheduled" | "current" | "past", util/phase-chain.js), el nombre de la
+  // rutina y su fin previsto.
+  async history(clientId) {
+    const [assignments, today] = await Promise.all([routineAssignmentDao.listByClient(clientId), todayForUser(clientId)]);
+    const tableById = await tablesById(assignments);
+    return withStates(assignments, today).map(({ phase, state }) => {
+      const table = tableById.get(String(phase.tableId));
+      return {
+        ...plain(phase),
+        state,
+        tableName: table?.name || null,
+        estimatedEndDate: table ? getProjectedPhaseEndDate(phase.startDate, table.splits) : null,
+      };
+    });
+  },
+
+  // Lo previsto sobre un rango del calendario: cada día con la sesión que
+  // toca según la fase que lo gobierna (una fase futura no tapa los días que
+  // sigue rigiendo la anterior, ver projectionAcrossAssignments).
+  async schedule(clientId, from, to) {
+    assertIsoDate(from, "from");
+    assertIsoDate(to, "to");
+    const assignments = await routineAssignmentDao.listByClient(clientId);
+    if (!assignments.length) return [];
+    return projectionAcrossAssignments(assignments, await tablesById(assignments), from, to);
+  },
+
+  async getLatestForClient(clientId) {
+    return routineAssignmentDao.findLatest(clientId);
   },
 
   async listForClient(clientId) {
@@ -119,105 +110,44 @@ module.exports = {
     return routineAssignmentDao.findCoveringDate(clientId, date);
   },
 
-  // Resuelve fases futuras cuyo startDate ya ha llegado: sin cron (mismo
-  // criterio que nutrición, que tampoco tiene uno), se comprueba en el
-  // punto de lectura más frecuente del trainer (getClientTables). Si la
-  // asignación vigente hoy apunta a una tabla distinta de tableInUse, se
-  // sincroniza aquí — nunca se sobreescribe una activación manual más
-  // reciente porque siempre se compara contra la asignación que de verdad
-  // rige HOY, no contra "la última creada".
-  //
-  // También se llama al leer el propio perfil del cliente (/auth/me y
-  // GET /users/:email): sin eso, la fase que empezaba hoy no le aparecía
-  // hasta que su entrenador abría la ficha. Como eso pasa en cada arranque de
-  // la app, solo se activa UNA vez cada fase (activatedAt): si después el
-  // cliente cambia de rutina a mano, no se le vuelve a imponer. Las que
-  // empiezan el día en que se aplican nacen ya activadas (applyRoutine).
-  // Devuelve si cambió algo.
-  async syncTableInUseIfDue(clientId) {
-    const covering = await routineAssignmentDao.findCoveringDate(clientId, await todayForUser(clientId));
-    if (!covering || covering.activatedAt) return false;
-
-    await routineAssignmentDao.markActivated(covering._id);
-    const client = await userSchema.findById(clientId).select("tableInUse").lean();
-    if (String(client?.tableInUse || "") === String(covering.tableId)) return false;
-
-    await tableDao.setTableInUseForClient(clientId, covering.tableId);
-    return true;
-  },
-
-  // Tarea 4bis (2026-09, generalizada — borrado coherente de fases/rutinas)
-  // — "me he equivocado" / "el cliente se ha lesionado y hay que replantear
-  // lo que viene": quitar CUALQUIER fase (futura, pasada/sustituida, o la
-  // vigente ahora mismo). Antes solo admitía fases futuras
-  // (ROUTINE_PHASE_ALREADY_STARTED en cualquier otro caso) — ese guard
-  // bloqueaba también fases YA sustituidas por otra más reciente, que nunca
-  // deberían haber contado como "en curso" (bug real: aplicar la rutina A
-  // hoy, luego la B también hoy, dejaba A imposible de quitar aunque B, no
-  // A, fuera la que de verdad regía).
-  async cancelPhase(clientId, assignmentId) {
+  // "Me he equivocado" / "el cliente se ha lesionado": quitar CUALQUIER fase
+  // (futura, pasada o la vigente). Si regía hoy, vuelve a regir la anterior
+  // (`restored`), sin escribir nada más.
+  async cancelPhase({ trainerId, clientId, assignmentId, reason }) {
     const assignment = await routineAssignmentDao.findByIdAndClient(assignmentId, clientId);
-    if (!assignment) {
-      const error = new Error("Fase no encontrada");
-      error.code = "ROUTINE_PHASE_NOT_FOUND";
-      throw error;
-    }
+    if (!assignment) throw phaseNotFound();
 
-    return removeAssignmentAndReconcile(clientId, assignment);
+    const today = await todayForUser(clientId);
+    const covering = await routineAssignmentDao.findCoveringDate(clientId, today);
+    await routineAssignmentDao.deleteById(assignment._id);
+    const wasCurrent = Boolean(covering) && String(covering._id) === String(assignment._id);
+    const restored = wasCurrent ? await routineAssignmentDao.findCoveringDate(clientId, today) : null;
+    await recordChange({ trainerId, clientId, before: assignment, after: restored, reason });
+    return { cancelled: assignment, restored, wasCurrent };
   },
 
-  // Borrado coherente de fases/rutinas — la usa tables/table-service.js
-  // antes de borrar una Table de verdad: limpia TODAS las fases (0, 1 o
-  // varias — la misma tabla se puede reasignar más de una vez) que la
-  // referenciaban para este cliente, con la MISMA lógica que quitar una
-  // fase suelta. Secuencial (no Promise.all): cada borrado depende del
-  // estado que deja el anterior (qué fase queda como tip / qué rige hoy).
+  // Antes de borrar una rutina: fuera sus fases (una rutina se puede asignar
+  // más de una vez). Lo que rija después sale solo del orden.
   async removeAssignmentsForTable(clientId, tableId) {
-    const assignments = await routineAssignmentDao.findByTableAndClient(tableId, clientId);
-    const results = [];
-    for (const assignment of assignments) {
-      results.push(await removeAssignmentAndReconcile(clientId, assignment));
-    }
-    return results;
+    return routineAssignmentDao.deleteByTableAndClient(tableId, clientId);
   },
 
-  // Tarea 4ter (2026-09) — mover la fecha de una fase PROGRAMADA, p.ej. para
-  // alargar la vigencia de la rutina en curso sin cancelar y reprogramar
-  // desde cero. A diferencia de cancelPhase (generalizada para cualquier
-  // fase), esta sigue limitada a fases que TODAVÍA no han empezado (una que
-  // ya rige se cambia aplicando una nueva encima, nunca reescribiendo su
-  // fecha). El supersededBy no se toca — sigue siendo la misma asignación,
-  // solo cambia cuándo entra en vigor.
-  async rescheduleScheduledPhase(clientId, assignmentId, startDate) {
+  // Mover la fecha de una fase PROGRAMADA (aún no en curso), p. ej. para
+  // alargar la rutina actual. Una que ya rige se cambia aplicando otra
+  // encima, nunca reescribiendo su fecha.
+  async rescheduleScheduledPhase({ trainerId, clientId, assignmentId, startDate, reason }) {
+    assertIsoDate(startDate, "startDate");
     const assignment = await routineAssignmentDao.findByIdAndClient(assignmentId, clientId);
-    if (!assignment) {
-      const error = new Error("Fase no encontrada");
-      error.code = "ROUTINE_PHASE_NOT_FOUND";
-      throw error;
-    }
+    if (!assignment) throw phaseNotFound();
     const today = await todayForUser(clientId);
     if (assignment.startDate <= today) {
-      const error = new Error("No se puede modificar una fase que ya ha empezado");
-      error.code = "ROUTINE_PHASE_ALREADY_STARTED";
-      throw error;
+      throw badRequest("No se puede modificar una fase que ya ha empezado", "ROUTINE_PHASE_ALREADY_STARTED");
     }
-    if (startDate < today) {
-      const error = new Error("La fecha no puede ser anterior a hoy");
-      error.code = "ROUTINE_START_IN_PAST";
-      throw error;
-    }
-
-    const solapadas = await routineAssignmentDao.findOverlapping(clientId, startDate, { excludeId: assignmentId });
-    const bloqueantes = solapadas.filter((fase) => blocksNewPhase(fase, startDate));
-    if (bloqueantes.length) {
-      const choque = bloqueantes[0];
-      const error = new Error(`Esa fecha se solapa con otra fase ya programada (${choque.startDate})`);
-      error.code = "ROUTINE_OVERLAP";
-      error.conflict = { startDate: choque.startDate, tableId: choque.tableId };
-      throw error;
-    }
+    if (startDate < today) throw badRequest("La fecha no puede ser anterior a hoy", "ROUTINE_START_IN_PAST");
+    await assertFitsInChain(clientId, startDate, { excludeId: assignmentId });
 
     const updated = await routineAssignmentDao.updateStartDate(assignmentId, startDate);
-    return { before: assignment, after: updated };
+    await recordChange({ trainerId, clientId, before: assignment, after: updated, reason });
+    return updated;
   },
 };

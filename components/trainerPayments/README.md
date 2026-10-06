@@ -30,13 +30,12 @@ propiedades).
   - `money.ts` importes en céntimos (máx. 2 decimales, máx. 1.000.000), idempotencia.
   - `calendar.ts` días civiles, recurrencia (siempre desde el ancla: 31 → 28/29 feb → 31 mar;
     cada N semanas ≠ cada N meses), zonas IANA y cambio de hora.
-  - `ledger.ts` normalización de cobros antiguos, pagos, correcciones, anulación y
+  - `ledger.ts` lectura del documento, pagos, correcciones, anulación y
     recuperación de saldo, edición, previsiones.
   - `plan.ts` cuota: alta, precio por vigencia, recalendarizar, pausa/reanudación, fin,
     materialización y reconciliación de previsiones.
   - `reminders.ts` política de hitos de aviso.
-  - `legacy.ts` adaptador del PATCH `{paid}` antiguo y plan de migración.
-  - `dto.ts` contratos de salida (entrenador, cliente, apps antiguas, tarjeta del Resumen).
+  - `dto.ts` contratos de salida (entrenador, cliente, tarjeta del Resumen).
 - `core.js` carga el núcleo compilado. `*-schema.js`, `trainer-payment-dao.js`,
   `trainer-payment-mapper.js`, `trainer-payment-service.js`,
   `trainer-payment-overview-service.js`, `trainer-payment-reminder-service.js`,
@@ -154,31 +153,32 @@ Errores: `{code, message, details}`; p. ej. `AMOUNT_EXCEEDS_BALANCE` (422, `deta
 `REOPEN_CONFIRMATION_REQUIRED` (409, confirmar `confirmBalanceCents`), `BALANCE_CHANGED`,
 `CHARGE_CLOSED`, `START_OVERLAPS_EXISTING`, `FORMER_CLIENT_RESTRICTED`, `IDEMPOTENCY_CONFLICT`.
 
-**Contratos antiguos** (apps anteriores): `GET/POST /trainer/clients/:id/payments` y
-`PATCH …/payments/:paymentId {paid}` siguen con `requireActiveClient()`. `amount` de un cobro
-abierto es su SALDO; los cancelados no se listan (no son "pagados" ni deuda). `paid:true`
-repetido no añade pagos ni mueve la fecha; `paid:false` solo deshace un "pagado" hecho con el
-contrato booleano (el movimiento queda anulado con motivo, no se borra); con pagos parciales o
-anulaciones → 409 `LEGACY_CONFLICT`. `GET /coach/dashboard` devuelve el saldo restante en `amount`.
+`GET /coach/dashboard` (cliente) devuelve en `pendingPayments` el saldo restante de cada cobro
+(`chargeId`, `balanceCents`, `currency`, `dueDay`, `concept`, `trainerName`); nunca notas ni
+pagos. `GET /trainer/payments/summary` (panel «Hoy») va en céntimos: `pendingCents`,
+`overdueCents`, `dueSeries` (por vencimiento) y `receivedSeries` (por recepción).
 
-## Migración (`scripts/migrate-trainer-payments-v2.js`)
+## Migración (`scripts/migrations/13-trainer-payments.js`)
+
+Es el paso 13 del runner único del modelo de datos:
 
 ```bash
-npm run migrate:trainer-payments:dry-run   # informe, sin escribir
-npm run migrate:trainer-payments
+npm run migrate:modelo-datos:dry-run   # informe, sin escribir
+npm run migrate:modelo-datos
 ```
 
-Aditiva, repetible y sin avisos (los migrados abren su ventana de avisos al migrar). Conserva
-`_id`, `amount`, `dueDate`, `paidAt`, `note` y copia los valores fuente en `legacy.*`. Día civil:
-medianoche UTC → ese día; medianoche de Madrid → ese día; otra hora → día en Madrid, marcado
-ambiguo si difiere del UTC. Pagado → un movimiento `method: unknown`,
-`receivedDaySource: legacy_marked_paid` (cuándo se marcó, no cuándo llegó el dinero), sin
-fecha/autor de anotación inventados. No deduce cuotas. No convierte y **reporta**: otra divisa,
-decimales anómalos, fechas inválidas o ambiguas y relaciones huérfanas (siguen leyéndose como
-antiguos, marcados "Revisar datos"). Compara importe, recibido, pendiente y nº de movimientos
-por entrenador y divisa antes/después; sale con código 1 si no coinciden. Un cobro antiguo sin
-migrar también se lee bien y pasa a la forma nueva la primera vez que se escribe; pero solo
-los migrados (o nuevos) generan avisos.
+Repetible y sin avisos. Lleva toda la colección a la forma de este README (el código ya no lee
+otra): los cobros planos (`amount`/`dueDate`/`paidAt`) se convierten con el mismo `_id`
+(`scripts/lib/trainer-payment-v1.js`). Día civil: medianoche UTC → ese día; medianoche de
+Madrid → ese día; otra hora → día en Madrid, marcado ambiguo si difiere del UTC. Pagado → un
+pago `method: unknown`, `receivedDaySource: marked_paid` (cuándo se marcó, no cuándo llegó el
+dinero), `source: migration`, sin fecha ni autor de anotación inventados. Se convierten TODOS:
+otra divisa, decimales anómalos y fechas inválidas o ambiguas quedan en `anomalies` y la app
+pide revisarlos. No deduce cuotas. También limpia la forma de transición (`origin: legacy`,
+pagos `legacy_toggle`/`legacy_marked_paid`, `schemaVersion`, `legacy`, `amount`, `dueDate`,
+`paidAt`), los avisos de cobro (`payload.amount/dueDate` → `amountCents/dueDay`) y el índice por
+`dueDate`. Compara importe, recibido, pendiente y nº de pagos por entrenador y divisa
+antes/después; sale con código 1 si no coinciden. Test: `scripts/migrate-trainer-payments.test.js`.
 
 ## Tests
 
@@ -188,7 +188,7 @@ los migrados (o nuevos) generan avisos.
   `mongodb://127.0.0.1:27017/trainfit_payments_test_<pid>_<ts>`, que se borra al terminar;
   `TRAINER_PAYMENTS_TEST_MONGO_URI` solo acepta loopback y `trainfit_payments_test*`). Cubre
   HTTP real con tokens firmados en el test, permisos, concurrencia, índices únicos, avisos al
-  leer con reloj inyectado, memoria e invalidación, contrato antiguo y migración doble. Sin Mongo local, se omite.
+  leer con reloj inyectado, memoria e invalidación. Sin Mongo local, se omite.
 
 ## Despliegue
 
@@ -197,15 +197,15 @@ los migrados (o nuevos) generan avisos.
    lo avisa una vez).
 2. Arrancar: Mongoose crea las colecciones nuevas y los índices (parciales, sin conflictos
    con los datos actuales).
-3. `npm run migrate:trainer-payments:dry-run`, revisar anomalías y huérfanos, y después sin `--dry-run`.
-4. Publicar las apps (Trainers, cliente). Las versiones anteriores siguen funcionando con el
-   contrato antiguo.
+3. `npm run migrate:modelo-datos:dry-run`, revisar anomalías y huérfanos del paso 13, y después sin `--dry-run`.
+4. Publicar las apps (Trainers, cliente) a la vez que el back, con actualización forzada: las
+   versiones anteriores usaban rutas y campos que ya no existen.
 
 ## Limitaciones conocidas
 
 - Avisos locales antiguos (Capacitor) programados en otro dispositivo solo se cancelan cuando
   ese dispositivo abre la versión nueva de Trainers; se reconocen por título "TrainFit" y cuerpo
   "Recuerda cobrar a …" (el resto de notificaciones locales se conserva).
-- Solo EUR para cobros nuevos; otras divisas antiguas se muestran aparte y no se suman.
+- Solo EUR para cobros nuevos; otras divisas de cobros convertidos se muestran aparte y no se suman.
 - Los días de aviso configurables en la UI son "N días antes / el día / N días después"; la API
   admite hasta 6 hitos.

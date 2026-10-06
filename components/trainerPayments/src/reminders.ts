@@ -90,7 +90,7 @@ export function decideReminders(
   now: Date,
   windowStart: Date,
 ): ReminderDecision {
-  if (!charge.persistedV2 || charge.status !== "open" || balanceOf(charge) <= 0) return { emit: null, skip: [] };
+  if (charge.status !== "open" || balanceOf(charge) <= 0) return { emit: null, skip: [] };
   const logged = new Set(
     charge.reminderLog
       .filter((entry) => entry.recipient === recipient && entry.dueRevision === charge.dueRevision)

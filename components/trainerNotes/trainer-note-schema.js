@@ -11,4 +11,6 @@ const TrainerNoteSchema = new Schema({
 
 TrainerNoteSchema.index({ trainerId: 1, clientId: 1, createdAt: -1 });
 
+TrainerNoteSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });
+
 module.exports = mongoose.model("TrainerNote", TrainerNoteSchema);

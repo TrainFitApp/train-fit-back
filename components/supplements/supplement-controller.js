@@ -1,7 +1,5 @@
-const supplementDao = require("./supplement-dao");
-const { SUPPLEMENT_TIMINGS } = require("./supplement-schema");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
-const userSchema = require("../users/schema");
+const supplementService = require("./supplement-service");
+const { SUPPLEMENT_TIMINGS } = require("./supplement-catalog");
 const { todayForUser } = require("../users/user-time-zone");
 const { todayIsoDate } = require("../util/date-util");
 
@@ -69,10 +67,7 @@ module.exports = {
 
   // --- Lado profesional ---
   async listForClient(req, res) {
-    const supplements = await supplementDao.listForClient(
-      req.auth.userId,
-      req.params.clientId
-    );
+    const supplements = await supplementService.listForClient(req.auth.userId, req.params.clientId);
     return res.send(supplements);
   },
 
@@ -85,24 +80,8 @@ module.exports = {
       });
     }
 
-    try {
-      const supplement = await supplementDao.create(
-        req.auth.userId,
-        req.params.clientId,
-        data
-      );
-      return res.status(201).send(supplement);
-    } catch (error) {
-      // 11000 = choque con el índice único {trainerId, clientId, name}.
-      // Se traduce a un mensaje que dice qué hacer, en vez de un 500.
-      if (error?.code === 11000) {
-        return res.status(409).send({
-          message: `Ya le has pautado "${data.name}". Edita el que tienes en vez de crear otro.`,
-          code: "SUPPLEMENT_DUPLICATE",
-        });
-      }
-      throw error;
-    }
+    const supplement = await supplementService.create(req.auth.userId, req.params.clientId, data);
+    return res.status(201).send(supplement);
   },
 
   async update(req, res) {
@@ -114,68 +93,22 @@ module.exports = {
       });
     }
 
-    const supplement = await supplementDao.update(
-      req.auth.userId,
-      req.params.clientId,
-      req.params.supplementId,
-      data
-    );
+    const supplement = await supplementService.update(req.auth.userId, req.params.clientId, req.params.supplementId, data);
     if (!supplement) return res.status(404).send({ message: "Suplemento no encontrado" });
     return res.send(supplement);
   },
 
   async remove(req, res) {
-    await supplementDao.remove(
-      req.auth.userId,
-      req.params.clientId,
-      req.params.supplementId
-    );
+    await supplementService.remove(req.auth.userId, req.params.clientId, req.params.supplementId);
     return res.sendStatus(204);
   },
 
   // --- Lado cliente ---
-  // Sus suplementos activos, de CUALQUIER profesional con relación viva. Se
-  // filtra por relación y no por trainerId de la URL: el cliente no elige de
-  // quién los ve, los ve todos — pero solo de quien sigue siendo su
-  // profesional. Mismo criterio que trainer-task-controller#listMine.
+  // Sus suplementos vigentes hoy (o en la fecha que pida la app: la pantalla
+  // de dieta los pinta debajo de las comidas del día que se está mirando),
+  // de cualquier profesional con relación viva.
   async listMine(req, res) {
-    const clientId = req.auth.userId;
-    // Solo los vigentes hoy (o en la fecha que pida la app: la pantalla de
-    // dieta los pinta debajo de las comidas del día que se está mirando).
     const date = sanitizeDate(req.query?.date, todayIsoDate(req.auth.timeZone));
-    const supplements = await supplementDao.listActiveForClient(clientId, date);
-    if (!supplements.length) return res.send([]);
-
-    // Una comprobación por PROFESIONAL, no por suplemento: un cliente con
-    // seis suplementos del mismo entrenador haría seis consultas idénticas.
-    const trainerIds = [...new Set(supplements.map((s) => String(s.trainerId)))];
-    const activeTrainerIds = new Set();
-    for (const trainerId of trainerIds) {
-      const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, clientId);
-      if (relation) activeTrainerIds.add(trainerId);
-    }
-
-    const visible = supplements.filter((s) => activeTrainerIds.has(String(s.trainerId)));
-    if (!visible.length) return res.send([]);
-
-    // Quién se lo pautó: el cliente puede tener entrenador y nutricionista, y
-    // "tómate esto" sin saber de quién viene no se sigue igual.
-    const trainers = await userSchema
-      .find({ _id: { $in: [...activeTrainerIds] } })
-      .select("name lastname")
-      .lean();
-    const trainersById = new Map(trainers.map((t) => [String(t._id), t]));
-
-    return res.send(
-      visible.map((supplement) => {
-        const trainer = trainersById.get(String(supplement.trainerId));
-        return {
-          ...supplement,
-          trainerName: trainer
-            ? `${trainer.name || ""} ${trainer.lastname || ""}`.trim()
-            : "Tu profesional",
-        };
-      })
-    );
+    return res.send(await supplementService.listActiveForClient(req.auth.userId, date));
   },
 };

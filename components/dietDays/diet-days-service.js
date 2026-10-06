@@ -1,6 +1,6 @@
 const dietDayDao = require("./diet-days-dao");
-const anthropometryModel = require("../anthropometry/anthropometry-service");
-const dietTemplateDao = require("../dietTemplates/diet-template-dao");
+const anthropometryService = require("../anthropometry/anthropometry-service");
+const dietPhaseDao = require("../dietPhases/diet-phase-dao");
 const { buildShoppingList } = require("./shopping-list-service");
 
 module.exports = {
@@ -20,7 +20,7 @@ module.exports = {
     
     // Also fetch anthropometry weights for this date range (using userId).
     // Solo lo que apuntó el cliente: lo de check-ins no sale en su calendario.
-    const anthropometries = await anthropometryModel.getAnthropometriesByUserIdBetweenDates(
+    const anthropometries = await anthropometryService.getAnthropometriesByUserIdBetweenDates(
       userId,
       startDate,
       endDate,
@@ -75,11 +75,11 @@ module.exports = {
   // días materializados (ver shopping-list-service.js). La comparten la ruta
   // del cliente y la del entrenador.
   async getShoppingList(userId, from, to) {
-    const [plans, marks] = await Promise.all([
-      dietTemplateDao.listCoveringRange(userId, from, to),
+    const [phases, marks] = await Promise.all([
+      dietPhaseDao.listCoveringRange(userId, from, to),
       dietDayDao.listMenuMarks(userId, from, to),
     ]);
-    return { ...buildShoppingList({ from, to, plans, marks }), period: { from, to } };
+    return { ...buildShoppingList({ from, to, phases, marks }), period: { from, to } };
   },
 
   async countDaysWithoutChoice(userId, startDate, endDate) {
@@ -93,20 +93,8 @@ module.exports = {
     return dietDayDao.ensureDietDay(userId, date);
   },
 
-  async setDayWeight(userId, date, dayWeight) {
-    return anthropometryModel.upsertAnthropometry(userId, date, { weight: dayWeight });
-  },
-
   async addCustomProductToMeal(dietDay, indexMeal, customProduct, userId) {
     return dietDayDao.addCustomProductToMeal(dietDay, indexMeal, customProduct, userId);
-  },
-
-  async addCustomRecipeToMeal(dietDay, indexMeal, customRecipe) {
-    return dietDayDao.addCustomRecipeToMeal(dietDay, indexMeal, customRecipe);
-  },
-
-  async addDietDayMeal(idDietDay, idMeal) {
-    return dietDayDao.addDietDayMeal(idDietDay, idMeal);
   },
 
   async setNotes(userId, date, notes) {
@@ -117,15 +105,16 @@ module.exports = {
     return dietDayDao.setMenuName(dietDayId, menuName);
   },
 
-  async pasteDietDayByUser(userId, dietDayClipboard, dietDayToPaste) {
-    return dietDayDao.pasteDietDayByUser(
-      userId,
-      dietDayClipboard,
-      dietDayToPaste,
-    );
+  async pasteDietDayByUser(userId, dietDayClipboard, date) {
+    return dietDayDao.pasteDietDayByUser(userId, dietDayClipboard, date);
   },
 
-  async deleteDietDay(idDietDay, userId) {
-    return dietDayDao.deleteDietDay(idDietDay, userId);
+  async deleteDietDay(userId, date) {
+    return dietDayDao.deleteDietDay(userId, date);
+  },
+
+  // Nota fijada de la pantalla de dieta (User.dietPinnedNote).
+  async setPinnedNote(userId, notes) {
+    return { pinnedNote: await dietDayDao.setPinnedNote(userId, notes.trim()) };
   },
 };

@@ -1,18 +1,17 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
-// Fase 5 Coach Pro — preguntas propias del coach dentro de un check-in (§7).
+// Preguntas propias del profesional, con tipo: las mismas en los check-ins
+// (plantilla, programación y la copia de cada respuesta) y en el cuestionario
+// de alta (User.trainerSettings.intake.customQuestions).
 //
-// Convive con `enabledFields`, que es y sigue siendo un catálogo CERRADO
-// (checkin-field-catalog.js): esos campos tienen semántica conocida — el
-// peso va a Anthropometry, el estrés alimenta las reglas, los perímetros
-// pintan la evolución. Una pregunta libre no puede hacer nada de eso, y
-// pretenderlo sería el error: aquí solo se guarda la respuesta y se muestra.
-//
-// Mismo patrón que TrainerIntakeConfig.customQuestions (cuestionario
-// inicial), pero CON TIPO: un check-in se responde cada semana, así que un
-// "¿cómo has dormido?" que solo admita texto libre se vuelve inútil para
-// comparar dos semanas. De ahí los seis tipos de §7.
+// Conviven con los campos de catálogo (`enabledFields`), que son CERRADOS
+// porque tienen semántica conocida: el peso va a Anthropometry, el estrés
+// alimenta las reglas, los perímetros pintan la evolución. Una pregunta
+// propia no puede hacer nada de eso: solo se guarda la respuesta y se
+// muestra. El tipo existe para que la respuesta sea comparable y se pueda
+// validar: un "¿cómo has dormido?" que solo admite texto libre no se puede
+// comparar entre dos semanas.
 
 // Las opciones de "frecuencia" son fijas: es una escala ordinal con
 // significado estable, no una lista que cada coach reinventa. Si cada uno
@@ -22,7 +21,7 @@ const FREQUENCY_OPTIONS = ["Nunca", "Rara vez", "A veces", "A menudo", "Siempre"
 
 const CUSTOM_QUESTION_TYPES = ["scale_1_5", "number", "text", "yes_no", "select", "frequency"];
 
-const CustomCheckinQuestionSchema = new Schema({
+const CustomQuestionSchema = new Schema({
   label: { type: String, required: true, trim: true, maxlength: 200 },
   type: { type: String, required: true, enum: CUSTOM_QUESTION_TYPES },
   // Solo para `number` ("horas", "km"...). Puramente informativo.
@@ -38,13 +37,12 @@ const CustomCheckinQuestionSchema = new Schema({
   },
   // Obligatoria = el cliente no puede enviar el check-in sin responderla.
   required: { type: Boolean, default: false },
-  // Desactivar en vez de borrar conserva las respuestas ya recibidas con
-  // su pregunta legible — mismo criterio que TrainerTask.active y que las
-  // preguntas del cuestionario inicial.
+  // Desactivar en vez de borrar deja de pedirla sin perder el texto (y las
+  // respuestas ya recibidas siguen legibles).
   enabled: { type: Boolean, default: true },
 });
 
-// Prefijo de la clave con la que la respuesta viaja dentro de
+// Check-ins: prefijo de la clave con la que la respuesta viaja dentro de
 // CheckinResponse.values. Permite meter las respuestas propias en el MISMO
 // Mixed que ya usan los campos del catálogo, sin colección ni campo aparte:
 // el _id de la pregunta las distingue sin ambigüedad, y ningún campo del
@@ -141,8 +139,83 @@ function validateQuestionDefinition(question) {
   return null;
 }
 
+/**
+ * Respuestas a preguntas propias validadas contra sus preguntas, con el
+ * enunciado, el tipo y la unidad copiados: siguen legibles aunque la
+ * pregunta cambie o se borre después.
+ *
+ * `incoming`: [{ questionId, value }] tal como llega. `requireAll`: exige
+ * las obligatorias y descarta lo anterior (envío del cliente). Sin él
+ * (corrección del profesional), una pregunta sin respuesta nueva conserva la
+ * de `previous`, y las de preguntas que ya no se piden se quedan como estaban.
+ * Puro. Devuelve { answers } o { error }.
+ */
+function buildCustomAnswers(questions, incoming, { previous = [], requireAll = false } = {}) {
+  const sent = new Map(
+    (Array.isArray(incoming) ? incoming : [])
+      .filter((answer) => answer && answer.questionId != null)
+      .map((answer) => [String(answer.questionId), answer.value])
+  );
+  const kept = requireAll ? [] : previous;
+  const answers = [];
+  const asked = new Set();
+  for (const question of (questions || []).filter((q) => q.enabled !== false)) {
+    const id = String(question._id);
+    asked.add(id);
+    if (!sent.has(id) && !requireAll) {
+      const before = kept.find((answer) => answer.questionId === id);
+      if (before) answers.push(before);
+      continue;
+    }
+    const value = sent.get(id);
+    const error = validateCustomAnswer(requireAll ? question : { ...question, required: false }, value);
+    if (error) return { error };
+    if (value === undefined || value === null || value === "") continue;
+    answers.push({
+      questionId: id,
+      label: question.label,
+      type: question.type,
+      unit: question.unit || "",
+      value: normalizeCustomAnswer(question, value),
+    });
+  }
+  for (const answer of kept) if (!asked.has(answer.questionId)) answers.push(answer);
+  return { answers };
+}
+
+const MAX_CUSTOM_QUESTIONS = 20;
+
+/** La lista entera de preguntas de una plantilla o cuestionario: primer error o null. */
+function validateQuestionList(questions) {
+  if (!Array.isArray(questions)) return "Las preguntas propias tienen que ser una lista";
+  if (questions.length > MAX_CUSTOM_QUESTIONS) return `Como mucho ${MAX_CUSTOM_QUESTIONS} preguntas propias`;
+  for (const question of questions) {
+    const error = validateQuestionDefinition(question);
+    if (error) return error;
+  }
+  return null;
+}
+
+/** Forma limpia de una pregunta para guardar (conserva su _id si ya lo tenía). */
+function normalizeQuestionDefinition(question) {
+  const id = question._id || question.id;
+  return {
+    ...(mongoose.isValidObjectId(id) ? { _id: id } : {}),
+    label: String(question.label).trim(),
+    type: question.type,
+    unit: question.type === "number" ? String(question.unit || "").trim().slice(0, 20) : "",
+    options: question.type === "select" ? (question.options || []).map((o) => String(o).trim()).filter(Boolean) : [],
+    required: Boolean(question.required),
+    enabled: question.enabled !== false,
+  };
+}
+
 module.exports = {
-  CustomCheckinQuestionSchema,
+  CustomQuestionSchema,
+  MAX_CUSTOM_QUESTIONS,
+  validateQuestionList,
+  normalizeQuestionDefinition,
+  buildCustomAnswers,
   CUSTOM_QUESTION_TYPES,
   FREQUENCY_OPTIONS,
   CUSTOM_KEY_PREFIX,

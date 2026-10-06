@@ -1,7 +1,6 @@
 const Table = require("./table-schema");
-const Split = require("../splits/split-schema");
 const Workout = require("../workouts/workout-schema");
-const CustomExercise = require("../customExercises/custom-exercise-schema");
+const { isObjectId } = require("../workouts/workout-tree");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { isReadOnly, READ_METHODS } = require("../trainerClients/trainer-seat-service");
 
@@ -30,12 +29,7 @@ async function canAccessUserTable(req, ownerUserId) {
   if (isAdmin(req)) return true;
   if (String(req.user?.id) === String(ownerUserId)) return true;
   if (isTrainer(req)) {
-    const relation = await trainerClientDao.findActiveByTrainerAndClient(
-      req.user.id,
-      ownerUserId,
-      "training",
-    );
-    if (!relation) return false;
+    if (!(await trainerClientDao.isActivePair(req.user.id, ownerUserId, "training"))) return false;
     // Cliente fuera de las plazas activas del plan: solo lectura en el Planner.
     if (!READ_METHODS.has(req.method) && await isReadOnly(req.user.id, ownerUserId)) return false;
     return true;
@@ -43,30 +37,48 @@ async function canAccessUserTable(req, ownerUserId) {
   return false;
 }
 
+const TABLE_ACCESS_FIELDS = "_id userId assignedByTrainerId";
+
+// La tabla con lo que hace falta para decidir el acceso (y sus microciclos,
+// si se piden). null si el id no vale o no existe.
+async function findTableForAccess(tableId, { withSplits = false } = {}) {
+  if (!isObjectId(tableId)) return null;
+  return Table.findById(tableId)
+    .select(withSplits ? `${TABLE_ACCESS_FIELDS} splits._id` : TABLE_ACCESS_FIELDS)
+    .lean();
+}
+
+// MVP-trainers D10/F14: hasta 21 microciclos (no 4) SOLO si la rutina fue
+// asignada por un profesional Y su dueño tiene AHORA relación "training"
+// activa: revierte al terminar la relación. Se mira la relación del DUEÑO de
+// la tabla, no la de quien hace la petición (puede ser su profesional).
+async function isMicrocycleExempt(table) {
+  if (!table?.assignedByTrainerId) return false;
+  return trainerClientDao.hasActiveTrainer(table.userId, "training");
+}
+
 async function findTableOwningSplit(splitId) {
-  if (!splitId) return null;
-  return Table.findOne({ splits: splitId }).select("_id userId assignedByTrainerId");
+  if (!isObjectId(splitId)) return null;
+  return Table.findOne({ "splits._id": splitId }).select(TABLE_ACCESS_FIELDS).lean();
 }
 
 async function findTableOwningWorkout(workoutId) {
-  if (!workoutId) return null;
-  const split = await Split.findOne({ workouts: workoutId }).select("_id");
-  if (!split) return null;
-  return findTableOwningSplit(split._id);
+  if (!isObjectId(workoutId)) return null;
+  return Table.findOne({ "splits.workouts": workoutId }).select(TABLE_ACCESS_FIELDS).lean();
 }
 
 async function findTableOwningCustomExercise(customExerciseId) {
-  if (!customExerciseId) return null;
-  const workout = await Workout.findOne({ exercises: customExerciseId }).select("_id");
+  if (!isObjectId(customExerciseId)) return null;
+  const workout = await Workout.findOne({ "exercises._id": customExerciseId }).select("_id").lean();
   if (!workout) return null;
   return findTableOwningWorkout(workout._id);
 }
 
 async function findTableOwningSet(setId) {
-  if (!setId) return null;
-  const customExercise = await CustomExercise.findOne({ sets: setId }).select("_id");
-  if (!customExercise) return null;
-  return findTableOwningCustomExercise(customExercise._id);
+  if (!isObjectId(setId)) return null;
+  const workout = await Workout.findOne({ "exercises.sets._id": setId }).select("_id").lean();
+  if (!workout) return null;
+  return findTableOwningWorkout(workout._id);
 }
 
 // 2026-09 — hueco real: canAccessUserTable deja mutar al DUEÑO de la tabla
@@ -98,6 +110,8 @@ module.exports = {
   isAdmin,
   isTrainer,
   canAccessUserTable,
+  findTableForAccess,
+  isMicrocycleExempt,
   findTableOwningSplit,
   findTableOwningWorkout,
   findTableOwningCustomExercise,

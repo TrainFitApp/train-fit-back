@@ -1,179 +1,67 @@
-const dietTemplateDao = require("./diet-template-dao");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const dietTemplateService = require("./diet-template-service");
 const { rejectIfReadOnly } = require("../trainerClients/trainer-seat-service");
-const { MEALS } = require("../dietDays/diet-days-util");
-const { contentMacroProfile } = require("./diet-macro-profile");
+const { badRequest } = require("../util/http-error");
 
-const VALID_SLOTS = new Set(Object.values(MEALS));
-const MAX_ALTERNATIVES = 4;
-
-// Mismo criterio que recipe-controller.js#isAdmin — solo un admin puede
-// marcar una plantilla como "de fábrica" (verified).
+// Solo un admin puede marcar una plantilla como "de fábrica" (verified), mismo
+// criterio que recipe-controller.js#isAdmin.
 function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
 }
 
-// Fase 9 — 0 alternativas = comida vacía, 1 = sin elección, 2+ = el cliente
-// elige (ver diet-day-resolver.js#applyResolvedPlanToDietDay).
-function sanitizeAlternatives(alternatives) {
-  return (Array.isArray(alternatives) ? alternatives : [])
-    .slice(0, MAX_ALTERNATIVES)
-    .map((alt) => ({
-      label: (alt?.label || "").toString().trim().slice(0, 100),
-      customProducts: Array.isArray(alt?.customProducts) ? alt.customProducts : [],
-      customRecipes: Array.isArray(alt?.customRecipes) ? alt.customRecipes : [],
-    }));
-}
-
-function sanitizeMeals(meals) {
-  return (Array.isArray(meals) ? meals : [])
-    .filter((meal) => VALID_SLOTS.has(meal?.slot))
-    .map((meal) => ({
-      slot: meal.slot,
-      alternatives: sanitizeAlternatives(meal?.alternatives),
-    }));
-}
-
-// El nombre de un menú es la CLAVE con la que el cliente lo elige (se guarda
-// en DietDay.menuName), así que dos menús de la misma plantilla no pueden
-// llamarse igual: al repetido se le añade un sufijo en vez de rechazar el
-// guardado entero por un detalle que el editor puede arreglar solo.
-function sanitizeMenus(menus) {
-  if (!Array.isArray(menus)) return [];
-  const used = new Set();
-  return menus.map((menu, index) => {
-    const base = (menu?.name || "").toString().trim().slice(0, 50) || `Menú ${index + 1}`;
-    let name = base;
-    let suffix = 2;
-    while (used.has(name)) name = `${base.slice(0, 46)} (${suffix++})`;
-    used.add(name);
-    return { name, meals: sanitizeMeals(menu?.meals) };
-  });
+function requiredName(value) {
+  const name = (value || "").toString().trim();
+  if (!name) throw badRequest("El nombre es obligatorio");
+  return name;
 }
 
 module.exports = {
-  // Funciones puras exportadas para test (diet-template-controller.test.js)
-  // — mismo criterio que assertMealEditable en meal-service.js.
-  sanitizeAlternatives,
-  sanitizeMeals,
-  sanitizeMenus,
-
-  // --- Lado profesional: biblioteca de plantillas propias ---
+  // POST /trainer/diet-templates — body: { name, menus, ownerClientId?, verified? }
   async createTemplate(req, res) {
-    const name = (req.body?.name || "").trim();
-    if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
-
-    // Sugerencias de dieta — dieta de fábrica (verified). Solo admin, mismo
-    // criterio que Recipe (recipe-controller.js#isAdmin && body.verified).
-    const verified = isAdmin(req) && req.body?.verified === true;
-
-    // ownerClientId opcional — plantilla exclusiva de ese cliente (ver
-    // diet-template-schema.js). Se comprueba la relación activa antes de
-    // aceptarlo: sin esto, cualquier profesional podría colgar material de
-    // biblioteca del id de un cliente que no es suyo.
     const ownerClientId = req.body?.ownerClientId || null;
-    if (ownerClientId) {
-      const relation = await trainerClientDao.findActiveByTrainerAndClient(
-        req.auth.userId,
-        ownerClientId
-      );
-      if (!relation) return res.status(403).send({ message: "Ese cliente no es tuyo" });
-      if (await rejectIfReadOnly(req, res, ownerClientId)) return;
-    }
-
-    const template = await dietTemplateDao.create(
-      req.auth.userId,
-      name,
-      sanitizeMenus(req.body?.menus),
+    // Colgarla de un cliente en solo lectura (por encima del cupo) es
+    // modificar su ficha: mismo bloqueo que el resto de escrituras.
+    if (ownerClientId && (await rejectIfReadOnly(req, res, ownerClientId))) return;
+    const template = await dietTemplateService.create(req.auth.userId, {
+      name: requiredName(req.body?.name),
+      menus: req.body?.menus,
       ownerClientId,
-      verified
-    );
-    return res.send(template);
+      verified: isAdmin(req) && req.body?.verified === true,
+    });
+    return res.status(201).send(template);
   },
 
-  // Sin parámetros: solo plantillas generales (lo que esperan protocolos,
-  // plantillas y cualquier selector genérico).
-  // ?forClientId=<id> acota al material aplicable a ese cliente;
-  // &onlyOwned=true deja SOLO las suyas (filtro activo del selector de
-  // "Siguiente fase").
-  // ?includeOwned=true las devuelve TODAS — lo usa la biblioteca, para que
-  // una dieta propia no quede sin sitio donde volver a editarse.
+  // GET /trainer/diet-templates — sin parámetros, solo las generales.
+  // ?forClientId=<id>[&onlyOwned=true] acota a ese cliente; ?includeOwned=true
+  // las devuelve todas (la biblioteca).
   async listTemplates(req, res) {
-    const forClientId = req.query?.forClientId || null;
-    if (forClientId) {
-      const relation = await trainerClientDao.findActiveByTrainerAndClient(
-        req.auth.userId,
-        forClientId
-      );
-      if (!relation) return res.status(403).send({ message: "Ese cliente no es tuyo" });
-    }
-
-    const templates = await dietTemplateDao.listByTrainer(req.auth.userId, {
-      forClientId,
-      onlyOwned: req.query?.onlyOwned === "true",
-      includeOwned: req.query?.includeOwned === "true",
-    });
-    // Perfil de macros de un día tipo — para pintar las cards con kcal/P/C/G
-    // (mismo cálculo que el cajón de sugerencias, sin objetivo de cliente).
     return res.send(
-      templates.map((t) => {
-        const doc = t.toObject ? t.toObject() : t;
-        return { ...doc, macroProfile: contentMacroProfile(doc) };
+      await dietTemplateService.list(req.auth.userId, {
+        forClientId: req.query?.forClientId || null,
+        onlyOwned: req.query?.onlyOwned === "true",
+        includeOwned: req.query?.includeOwned === "true",
       })
     );
   },
 
-  // GET /trainer/diet-templates/:id — una sola plantilla con su contenido
-  // completo (menus). listTemplates ya devuelve esto para TODA la
-  // lista; este endpoint es para cuando el consumidor solo conoce el id de
-  // UNA (p. ej. precargar el builder con la plantilla elegida en el cajón de
-  // sugerencias antes de aplicarla — ver diet-suggestion-drawer). Lee también
-  // las de fábrica de cualquiera (las que salen en el ranking), para la vista
-  // previa; editarlas o borrarlas sigue exigiendo ser el dueño.
+  // GET /trainer/diet-templates/:id
   async getTemplate(req, res) {
-    const template = await dietTemplateDao.findReadableByTrainer(req.auth.userId, req.params.id);
-    if (!template) return res.status(404).send({ message: "Plantilla no encontrada" });
-    const doc = template.toObject ? template.toObject() : template;
-    return res.send({ ...doc, macroProfile: contentMacroProfile(doc) });
+    return res.send(await dietTemplateService.getReadable(req.auth.userId, req.params.id));
   },
 
+  // PUT /trainer/diet-templates/:id — body: { name?, menus?, suitableForOverride?, verified? }
+  // El array derivado (suitableFor) nunca se acepta del body: lo recalcula el DAO.
   async updateTemplate(req, res) {
-    const existing = await dietTemplateDao.findOwnedByTrainer(req.auth.userId, req.params.id);
-    if (!existing) return res.status(404).send({ message: "Plantilla no encontrada" });
-    // Esta ruta es solo para plantillas de BIBLIOTECA. La copia congelada de
-    // un cliente (clientId puesto) se edita por su propio endpoint
-    // (plan-assignment-controller.js#updateContent), que sí exige que
-    // pertenezca a ESE cliente concreto — aquí ni siquiera se comprueba eso,
-    // así que dejarla pasar podría editar la dieta de un cliente por el
-    // camino equivocado.
-    if (existing.clientId) return res.status(404).send({ message: "Plantilla no encontrada" });
-
     const patch = {};
-    if (req.body?.name !== undefined) {
-      const name = (req.body.name || "").trim();
-      if (!name) return res.status(400).send({ message: "El nombre es obligatorio" });
-      patch.name = name;
-    }
-    if (req.body?.menus !== undefined) patch.menus = sanitizeMenus(req.body.menus);
-    // Sugerencias de dieta — aptitudes que el entrenador fuerza a mano
-    // (cuando la deriva no basta por productos sin flag). El array derivado
-    // (suitableFor) NUNCA se acepta del body: lo recalcula el dao.
-    if (Array.isArray(req.body?.suitableForOverride)) {
-      patch.suitableForOverride = req.body.suitableForOverride;
-    }
-    if (isAdmin(req) && typeof req.body?.verified === "boolean") {
-      patch.verified = req.body.verified;
-    }
-
-    const template = await dietTemplateDao.update(req.auth.userId, req.params.id, patch);
-    return res.send(template);
+    if (req.body?.name !== undefined) patch.name = requiredName(req.body.name);
+    if (req.body?.menus !== undefined) patch.menus = req.body.menus;
+    if (Array.isArray(req.body?.suitableForOverride)) patch.suitableForOverride = req.body.suitableForOverride;
+    if (isAdmin(req) && typeof req.body?.verified === "boolean") patch.verified = req.body.verified;
+    return res.send(await dietTemplateService.update(req.auth.userId, req.params.id, patch));
   },
 
+  // DELETE /trainer/diet-templates/:id
   async deleteTemplate(req, res) {
-    const result = await dietTemplateDao.delete(req.auth.userId, req.params.id);
-    if (result.deletedCount === 0) {
-      return res.status(404).send({ message: "Plantilla no encontrada" });
-    }
-    res.sendStatus(204);
+    await dietTemplateService.delete(req.auth.userId, req.params.id);
+    return res.sendStatus(204);
   },
 };

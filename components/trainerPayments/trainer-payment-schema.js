@@ -1,22 +1,16 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
-// MVP-trainers F26 — agenda/ledger MANUAL de cobros: el cliente paga al
-// profesional FUERA de la app (Bizum, transferencia, efectivo). Esta
-// colección NUNCA mueve dinero real, cero integración con pasarelas de pago.
+// Agenda/libro MANUAL de cobros: el cliente paga al profesional FUERA de la
+// app (Bizum, transferencia, efectivo). Esta colección NUNCA mueve dinero
+// real, cero integración con pasarelas de pago.
 //
-// Cobros 2026-09 — cada documento es un COBRO (obligación concreta): puntual,
-// generado por la cuota recurrente o antiguo. Los pagos registrados van
-// embebidos en el propio documento para que registrar un pago, corregirlo o
-// anular el saldo sea UNA escritura atómica (compare-and-swap por `revision`,
-// ver trainer-payment-dao.js#casWrite), sin transacciones. La lógica vive en
-// src/*.ts (núcleo puro); aquí solo la forma persistida.
-//
-// Campos antiguos (amount/currency/dueDate/paidAt/note) se conservan y se
-// mantienen sincronizados para las apps anteriores: amount = amountCents/100,
-// paidAt = liquidado (nunca cancelado), dueDate = mediodía UTC del día civil.
-// Un documento sin `schemaVersion` es un cobro antiguo sin migrar: se lee
-// normalizado (ledger.ts#normalizeCharge) y pasa a la forma nueva al escribirlo.
+// Cada documento es un COBRO (obligación concreta): puntual o generado por la
+// cuota recurrente. Los pagos registrados van embebidos en el propio documento
+// para que registrar un pago, corregirlo o anular el saldo sea UNA escritura
+// atómica (compare-and-swap por `revision`, ver trainer-payment-dao.js#casWrite),
+// sin transacciones. La lógica vive en src/*.ts (núcleo puro); aquí solo la
+// forma persistida.
 
 const METHODS = ["bizum", "transfer", "cash", "card_external", "other", "unknown"];
 
@@ -24,12 +18,13 @@ const MovementSchema = new Schema(
   {
     amountCents: { type: Number, required: true },
     receivedDay: { type: String, required: true }, // día civil real de recepción
-    receivedDaySource: { type: String, enum: ["entered", "legacy_marked_paid"], required: true },
+    // marked_paid: cobro anterior al libro de pagos, el día es cuándo se marcó pagado.
+    receivedDaySource: { type: String, enum: ["entered", "marked_paid"], required: true },
     method: { type: String, enum: METHODS, required: true },
     note: { type: String, maxlength: 500, default: null }, // privada del entrenador
     recordedAt: { type: Date, default: null },
     recordedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
-    source: { type: String, enum: ["app", "legacy_toggle", "migration"], required: true },
+    source: { type: String, enum: ["app", "migration"], required: true },
     operationId: { type: String, required: true },
     payloadHash: { type: String, default: null },
     status: { type: String, enum: ["valid", "voided"], required: true },
@@ -79,63 +74,41 @@ const ReminderLogSchema = new Schema(
   { _id: false }
 );
 
-const LegacySchema = new Schema(
-  {
-    sourceAmount: { type: Number, default: null },
-    sourceCurrency: { type: String, default: null },
-    sourceDueDate: { type: Date, default: null },
-    sourcePaidAt: { type: Date, default: null },
-    dueDaySource: { type: String, default: null },
-    dueDayAmbiguous: { type: Boolean, default: false },
-    timeZone: { type: String, default: null },
-    migratedAt: { type: Date, default: null },
-    migratedBy: { type: String, default: null },
-  },
-  { _id: false }
-);
-
 const TrainerPaymentSchema = new Schema({
   trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
   clientId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-  amount: { type: Number, required: true, min: 0.01 },
-  currency: { type: String, default: "EUR" },
-  dueDate: { type: Date, required: true },
-  paidAt: { type: Date, default: null },
-  note: { type: String, trim: true, maxlength: 500 },
-  createdAt: { type: Date, default: Date.now },
-
-  // --- Cobros 2026-09 ---
-  schemaVersion: { type: Number },
-  origin: { type: String, enum: ["one_off", "recurring", "legacy"] },
+  origin: { type: String, enum: ["one_off", "recurring"], required: true },
   concept: { type: String, trim: true, maxlength: 80, default: null }, // público
-  dueDay: { type: String },
-  amountCents: { type: Number },
-  originalAmountCents: { type: Number },
-  receivedCents: { type: Number },
-  cancelledCents: { type: Number },
-  status: { type: String, enum: ["open", "settled", "cancelled", "void"] },
+  note: { type: String, trim: true, maxlength: 500, default: null }, // privada del entrenador
+  currency: { type: String, default: "EUR" },
+  dueDay: { type: String, required: true }, // día civil "YYYY-MM-DD"
+  amountCents: { type: Number, required: true },
+  originalAmountCents: { type: Number, required: true },
+  receivedCents: { type: Number, default: 0 },
+  cancelledCents: { type: Number, default: 0 },
+  status: { type: String, enum: ["open", "settled", "cancelled", "void"], required: true },
   settledAt: { type: Date, default: null },
   cancelledAt: { type: Date, default: null },
   voidedAt: { type: Date, default: null },
   voidReason: { type: String, enum: ["plan_paused", "plan_ended", "plan_rescheduled", "relation_ended", null], default: null },
-  historical: { type: Boolean },
-  manualOverride: { type: Boolean },
+  historical: { type: Boolean, default: false },
+  manualOverride: { type: Boolean, default: false },
   planOccurrenceKey: { type: String },
   planSegment: { type: Number },
-  payments: { type: [MovementSchema], default: undefined },
-  adjustments: { type: [AdjustmentSchema], default: undefined },
-  operations: { type: [OperationSchema], default: undefined },
-  revision: { type: Number },
-  dueRevision: { type: Number },
-  remindersFrom: { type: Date },
-  reminderLog: { type: [ReminderLogSchema], default: undefined },
+  payments: { type: [MovementSchema], default: () => [] },
+  adjustments: { type: [AdjustmentSchema], default: () => [] },
+  operations: { type: [OperationSchema], default: () => [] },
+  revision: { type: Number, required: true },
+  dueRevision: { type: Number, required: true },
+  remindersFrom: { type: Date, required: true },
+  reminderLog: { type: [ReminderLogSchema], default: () => [] },
   createOperationId: { type: String },
   createPayloadHash: { type: String },
-  legacy: { type: LegacySchema, default: undefined },
+  // Datos dudosos de un cobro convertido (importe, fecha): la app avisa de revisarlos.
   anomalies: { type: [String], default: undefined },
+  createdAt: { type: Date, default: Date.now },
 }, { collection: "trainerpayments" });
 
-TrainerPaymentSchema.index({ trainerId: 1, clientId: 1, dueDate: -1 });
 TrainerPaymentSchema.index({ trainerId: 1, clientId: 1, dueDay: 1 });
 TrainerPaymentSchema.index({ trainerId: 1, status: 1, dueDay: 1 }); // avisos y totales del entrenador
 TrainerPaymentSchema.index({ clientId: 1, status: 1 }); // pendiente del Coach y avisos del cliente
@@ -149,5 +122,12 @@ TrainerPaymentSchema.index(
   { trainerId: 1, createOperationId: 1 },
   { unique: true, partialFilterExpression: { createOperationId: { $type: "string" } } }
 );
+
+// Borrado de cuenta: los cobros se borran con cualquiera de las dos cuentas
+// (decisión vigente; la baja de una relación los conserva). Ver README.md.
+TrainerPaymentSchema.plugin(require("../util/account-cascade").accountCascade, {
+  owners: ["trainerId", "clientId"],
+  authorship: ["payments.recordedBy", "payments.voidedBy", "adjustments.by"],
+});
 
 module.exports = mongoose.model("TrainerPayment", TrainerPaymentSchema);

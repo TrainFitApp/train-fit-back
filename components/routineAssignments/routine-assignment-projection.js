@@ -1,4 +1,4 @@
-const { addDaysToIsoDate } = require("../util/period-util");
+const { addDaysToIsoDate } = require("../util/date-util");
 
 // Tarea 4 (2026-09) — proyección de la rutina sobre el calendario real.
 // Puro: sin BD, sin await, mismo estilo que training-service.js, pero

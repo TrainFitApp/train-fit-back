@@ -1,4 +1,3 @@
-const coachAlertDao = require("./coach-alert-dao");
 const coachAlertService = require("./coach-alert-service");
 
 const LISTABLE_STATUSES = ["open", "resolved", "dismissed"];
@@ -23,7 +22,7 @@ module.exports = {
   async listMine(req, res) {
     const status = LISTABLE_STATUSES.includes(req.query.status) ? req.query.status : "open";
     await coachAlertService.ensureEvaluatedToday(req.auth.userId, { timeZone: req.auth.timeZone });
-    const alerts = await coachAlertDao.listForTrainer(req.auth.userId, { status });
+    const alerts = await coachAlertService.listForTrainer(req.auth.userId, { status });
     return res.send(alerts.map(toDto));
   },
 
@@ -47,14 +46,14 @@ module.exports = {
         .send({ message: `coachNote no puede superar ${MAX_COACH_NOTE_LENGTH} caracteres` });
     }
 
-    const alert = await coachAlertDao.setStatus(req.auth.userId, req.params.id, {
+    const alert = await coachAlertService.setStatus(req.auth.userId, req.params.id, {
       status,
       coachNote: coachNote?.trim(),
       resolvedBy: req.auth.userId,
     });
 
     // 404 y no 403 cuando la alerta es de otro profesional: el filtro por
-    // trainerId del DAO no distingue "no existe" de "no es tuya", y
+    // trainerId no distingue "no existe" de "no es tuya", y
     // distinguirlo aquí confirmaría la existencia de un id ajeno.
     if (!alert) return res.status(404).send({ message: "Alerta no encontrada" });
     return res.send(alert);

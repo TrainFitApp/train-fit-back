@@ -111,7 +111,7 @@ test("las medidas del check-in llegan a la ficha del profesional, NO a las panta
   const trainerView = await ctx.get(trainer, `/trainer/clients/${client.id}/anthropometry`);
   assert.ok(JSON.stringify(trainerView).includes("79.5"), "el profesional ve el peso del check-in");
 
-  const clientDay = await ctx.post(client, "/dietdays/date/x", { date: h.day(0) });
+  const clientDay = await ctx.post(client, `/dietdays/date/${h.day(0)}`, {});
   assert.notEqual(clientDay.anthropometry?.weight, 79.5, "el peso del check-in no aparece como apuntado por el cliente");
 });
 
@@ -150,7 +150,7 @@ test("revisar: el cliente recibe el aviso y lo ve en su historial; otro entrenad
 test("un check-in de un profesional con quien ya no hay relación no se puede responder", async () => {
   const { trainer, client } = await pair();
   const sched = await schedule(trainer, client);
-  await ctx.model("TrainerClient").updateMany({ trainerId: trainer._id, clientId: client._id }, { $set: { status: "revoked" } });
+  await ctx.endRelation(trainer, client);
   assert.equal((await respond(client, sched._id, { weight: 80 })).status, 403);
   assert.deepEqual(await ctx.get(client, "/trainer/checkins/mine"), []);
 });

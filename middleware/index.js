@@ -55,6 +55,13 @@ module.exports.errorHandler = (err, req, res, _next) => {
     ? err
     : {};
 
+  // Un error de negocio (4xx) puede llevar su código ("MEAL_PROTECTED"…)
+  // para que la app decida qué enseñar, y datos para pintarlo (`details`,
+  // p. ej. qué le falta al cliente); los 5xx nunca exponen nada.
+  const isClientError = status < 500;
+  const code = isClientError && typeof err?.code === "string" ? err.code : undefined;
+  const details = isClientError && err?.details && typeof err.details === "object" ? err.details : {};
+
   res.status(status);
-  res.send({ message });
+  res.send({ ...details, message, ...(code ? { code } : {}) });
 };

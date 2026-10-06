@@ -1,4 +1,4 @@
-const userSchema = require("../users/schema");
+const userSchema = require("../users/user-schema");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const checkinDao = require("../trainerCheckins/checkin-dao");
 const checkinAgenda = require("../trainerCheckins/checkin-agenda-service");
@@ -21,11 +21,9 @@ const { todayIsoDate, isoDateInZone, dayRangeInZone } = require("../util/date-ut
 // cualquier fase) no puede desviar en silencio ningún número de adherencia,
 // porque la adherencia nunca mira fases pasadas.
 //
-// `client.tableInUse` no sirve como atajo (puede quedarse desfasado para
-// fases futuras hasta que se abre la pestaña de Tablas — ver
-// routine-assignment-service.js#syncTableInUseIfDue, que aquí no se llama);
-// `findCoveringDate` ya resuelve "qué fase rige HOY" por fecha, igual que ya
-// hace el frontend (client-detail.page.ts#currentRoutinePhase). Sin ninguna
+// Mira la fase que rige HOY (`findCoveringDate`), no la rutina en uso: la
+// adherencia mide el programa del entrenador, aunque el cliente esté
+// entrenando otra rutina por su cuenta. Sin ninguna
 // fase que cubra hoy, plannedTotal sale 0 de forma natural y
 // trainingDimension ya lo resuelve (`applicable:false, reason:"sin_plan"`)
 // sin cambios.
@@ -66,7 +64,7 @@ async function loadClientWindow(trainerId, clientId, { from, to, timeZone }) {
   const workoutRange = dayRangeInZone(from, to, timeZone);
   const client = await userSchema
     .findById(clientId)
-    .select("name lastname tableInUse")
+    .select("name lastname")
     .lean();
 
   if (!client) return null;
@@ -93,7 +91,7 @@ async function loadClientWindow(trainerId, clientId, { from, to, timeZone }) {
     // resuelve además los días sin materializar (sin escribir en BD), dando
     // hasPlan=true/0% consumido en vez de excluirlos del cálculo.
     client._id
-      ? getTrackingDaysForClient(clientId, client._id, from, to)
+      ? getTrackingDaysForClient(clientId, from, to)
       : [],
     tableDao.listCompletedWorkoutDates(clientId, workoutRange.start, workoutRange.end),
     // Progreso de la fase EN CURSO, no de la ventana pedida. Ver

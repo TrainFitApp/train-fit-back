@@ -81,7 +81,7 @@ function purposeOf(id) {
 // Está para frenar abusos, no para cobrar: comprar plazas no amplía la biblioteca. Al bajar de plan
 // no se borra nada: solo se bloquean las subidas nuevas por encima del cupo.
 function libraryBytesFor(user) {
-  const { tier } = require("../billing/feature-access-service").trainerPlan(user);
+  const { tier } = require("../billing/feature-access").trainerPlan(user);
   return require("../../.build/trainer-billing/catalog").libraryBytes(tier);
 }
 

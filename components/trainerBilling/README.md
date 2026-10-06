@@ -57,7 +57,7 @@ Pasos:
 2. `stripe listen --forward-to http://localhost:3000/api/billing/webhooks/stripe` y su `whsec_…` en `STRIPE_WEBHOOK_SECRET`.
 3. Portal: la configuración **predeterminada** de la cuenta, con facturas, método de pago y cancelación a fin de periodo, y sin cambios de plan (el backend lo comprueba).
 4. `npm run billing:preflight` comprueba configuración, precios, portal y webhook sin imprimir secretos.
-5. `npm run migrate:trainer-seats:dry-run` y `npm run migrate:trainer-seats` (una vez por base): borra las proyecciones de RevenueCat de entrenadores y convierte las de Stripe al modelo de plazas.
+5. `npm run migrate:modelo-datos` (paso 12, `scripts/migrations/12-trainer-billing-seats.js`; una vez por base): borra las proyecciones de RevenueCat de entrenadores y convierte las de Stripe al modelo de plazas.
 
 Sandbox y real conviven en la misma base sin mezclarse: cuentas, eventos y casos van por `mode`, y el cupo solo acepta proyecciones del modo de la clave del servidor. Ya no hay lanzador `stripe:local` ni base de datos aislada.
 

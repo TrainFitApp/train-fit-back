@@ -39,23 +39,6 @@ test("summarizeFoodCompliance", async (t) => {
     assert.equal(pollo.consumedDays, 2);
   });
 
-  await t.test("una comida marcada entera cuenta todos sus alimentos como hechos", () => {
-    // El cliente pulsó "comida completa": ningún flag individual está puesto,
-    // pero los dos alimentos cuentan (ver isItemConsumed).
-    const days = [
-      dia("2026-09-01", [
-        {
-          completed: true,
-          customProducts: [pautado({ name: "Arroz" }), pautado({ name: "Atún" })],
-        },
-      ]),
-    ];
-
-    const filas = summarizeFoodCompliance(days);
-    assert.equal(filas.length, 2);
-    assert.ok(filas.every((f) => f.consumedDays === 1));
-  });
-
   await t.test("lo que el cliente añadió por su cuenta no entra", () => {
     // Sin assignedByTrainerId no hay nada que cumplir: isItemConsumed lo daría
     // por consumido siempre y solo ensuciaría la lista con filas al 100%.

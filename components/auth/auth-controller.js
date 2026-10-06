@@ -1,879 +1,103 @@
-const bcrypt = require("../util/bcrypt");
-const userDto = require("../users/dto");
-const userModel = require("../users/model");
-const userSchema = require("../users/schema");
-const TokenService = require("../../services/token.service");
+const sessionService = require("./session-service");
+const TokenService = require("./token-service");
+const userService = require("../users/user-service");
 const mail = require("../util/mail");
 const { normalizeEmail } = require("../util/normalize-email");
-const {
-  generateVerificationCode,
-  isValidVerificationCodeFormat,
-} = require("../util/verification-code");
+const { isValidVerificationCodeFormat } = require("../util/verification-code");
+const { clientContextOf } = require("./client-context");
+const { badRequest } = require("../util/http-error");
 
-const HASH_CODE_TTL_MS = 15 * 60 * 1000;
-
-const LOGIN_INVALID_RESPONSE = {
-  error: "INVALID_CREDENTIALS",
-  message: "Correo o contraseña incorrectos",
-};
-const LOGIN_UNAVAILABLE_RESPONSE = {
-  error: "LOGIN_UNAVAILABLE",
-  message: "Ha ocurrido un error inesperado",
-};
-
-function sendInvalidLoginResponse(res) {
-  return res.status(401).send(LOGIN_INVALID_RESPONSE);
-}
-
-function isPasswordValid(password, encryptedPassword) {
-  if (!password || !encryptedPassword) {
-    return false;
-  }
-
-  try {
-    return bcrypt.comparePasswords(password, encryptedPassword);
-  } catch (error) {
-    console.warn("[AUTH] auth_login_password_compare_failed", {
-      reason: error?.message || "password_compare_failed",
-    });
-    return false;
-  }
-}
-
-// Gate de acceso por app (2026-08) — hasta ahora cualquier cuenta podía
-// iniciar sesión en cualquier app: un trainer entrando a la app de
-// consumidor (o viceversa) solo se enteraba a base de 403 sueltos en cada
-// llamada posterior (ver user-loader.page.ts). Se corta en el login mismo,
-// con un mensaje claro, en vez de dejar que la sesión se cree y falle a
-// trocitos. Roles inclusivos (si algún día una cuenta tiene ambos roles,
-// pasa el check de las dos apps) — nunca exclusivo.
-const CLIENT_FAMILY_ROLE_REQUIREMENTS = {
-  "trainfit-trainers": {
-    requiredRole: "trainer",
-    message: "Esta cuenta no es de un profesional. Inicia sesión en la app TrainFit para clientes.",
-  },
-  "trainfit-front": {
-    requiredRole: "user",
-    message: "Esta es una cuenta de profesional. Inicia sesión en TrainFit Trainers.",
-  },
-};
-
-function checkClientFamilyRoleAccess(user, clientContext) {
-  const requirement = CLIENT_FAMILY_ROLE_REQUIREMENTS[clientContext.clientFamily];
-  if (!requirement) return null;
-  const roles = user.roles || [];
-  if (roles.includes(requirement.requiredRole)) return null;
-  return requirement.message;
-}
-
-function sendWrongAppResponse(res, message) {
-  return res.status(403).send({ error: "WRONG_APP_FOR_ROLE", message });
-}
-
-function resolveClientContext(req) {
-  const platformHeader = String(req.headers?.["x-client-platform"] || "")
-    .trim()
-    .toLowerCase();
-  const clientFamily =
-    String(req.headers?.["x-client-family"] || "").trim() || "trainfit-front";
-
-  const platform = ["web", "ios", "android"].includes(platformHeader)
-    ? platformHeader
-    : "unknown";
-
-  return {
-    platform,
-    clientFamily,
-    audience: clientFamily,
-    isNativeClient: platform === "ios" || platform === "android",
-  };
-}
-
-function generateAccessTokenForSession(user, sessionId, audience, extra = {}) {
-  return TokenService.signAccess(
-    {
-      sub: user._id.toString(),
-      sid: sessionId,
-      roles: user.roles || ["user"],
-      pver: user.passwordVersion || 0,
-      ...extra,
-    },
-    { audience }
-  );
-}
-
-function generateRefreshTokenForSession(user, sessionId, audience) {
-  return TokenService.signRefresh(
-    {
-      sub: user._id.toString(),
-      sid: sessionId,
-      pver: user.passwordVersion || 0,
-    },
-    { audience }
-  );
-}
-
-function isCurrentSession(user, sessionId) {
-  return !!(user?.auth?.sessionId && user.auth.sessionId === sessionId);
-}
-
-async function clearUserAuthIfCurrent(userId, sessionId) {
-  if (!userId || !sessionId) {
-    return null;
-  }
-
-  return userSchema.findOneAndUpdate(
-    { _id: userId, "auth.sessionId": sessionId },
-    { $unset: { auth: 1 } },
-    { new: true }
-  );
-}
-
-function clearRefreshArtifacts(req, res) {
-  const clientContext = resolveClientContext(req);
-  if (!clientContext.isNativeClient) {
-    TokenService.clearRefreshTokenCookie(res, clientContext.clientFamily);
-  }
-}
-
-function buildRefreshResponse(accessToken, user, isImpersonating = false) {
-  return {
-    user,
-    access_token: accessToken,
-    expires_in: TokenService.ACCESS_TOKEN_TTL_SECONDS,
-    token_type: "Bearer",
-    is_impersonating: isImpersonating,
-  };
-}
-
-async function buildAuthResponse({
-  user,
-  accessToken,
-  refreshToken,
-  clientContext,
-  isImpersonating,
-}) {
-  const response = buildRefreshResponse(
-    accessToken,
-    await userDto.single(user),
-    isImpersonating
-  );
-
-  if (clientContext.isNativeClient && refreshToken) {
-    response.refresh_token = refreshToken;
-  }
-
-  return response;
-}
-
-async function issueSession(user, req, res, sessionOptions = {}) {
-  const clientContext = resolveClientContext(req);
-  const sessionId = TokenService.generateSessionId();
-  const refreshToken = generateRefreshTokenForSession(
-    user,
-    sessionId,
-    clientContext.audience
-  );
-  const refreshExpiresAt = TokenService.getExpirationDate(refreshToken);
-  const isImpersonating = !!sessionOptions.impersonatedByUserId;
-  const accessToken = generateAccessTokenForSession(
-    user,
-    sessionId,
-    clientContext.audience,
-    isImpersonating ? { imp: true } : {}
-  );
-  const now = new Date();
-
-  const updatedUser = await userSchema.findByIdAndUpdate(
-    user._id,
-    {
-      $set: {
-        lastLogin: now,
-        auth: {
-          sessionId,
-          refreshTokenHash: TokenService.hashToken(refreshToken),
-          refreshExpiresAt,
-          clientFamily: clientContext.clientFamily,
-          platform: clientContext.platform,
-          issuedAt: now,
-          lastUsedAt: now,
-          impersonatedByUserId: sessionOptions.impersonatedByUserId || null,
-          impersonatedFromSessionId:
-            sessionOptions.impersonatedFromSessionId || null,
-        },
-      },
-      $unset: {
-        refreshToken: 1,
-        previousRefreshToken: 1,
-        tokenRotationTimestamp: 1,
-      },
-    },
-    { new: true }
-  );
-
+// En web el refresh viaja en una cookie httpOnly por app; en nativo, en el
+// cuerpo (session-service.js#issue).
+function sendSession(req, res, { body, refreshToken }, status = 200) {
+  const clientContext = clientContextOf(req);
   if (!clientContext.isNativeClient) {
     TokenService.setRefreshTokenCookie(res, refreshToken, clientContext.clientFamily);
   }
-
-  console.info("[AUTH] auth_session_issued", {
-    userId: user._id.toString(),
-    sessionId,
-    platform: clientContext.platform,
-    clientFamily: clientContext.clientFamily,
-    impersonatedByUserId: sessionOptions.impersonatedByUserId || null,
-  });
-
-  return buildAuthResponse({
-    user: updatedUser,
-    accessToken,
-    refreshToken,
-    clientContext,
-    isImpersonating,
-  });
+  res.status(status).send(body);
 }
 
-function authTerminalResponse(res, status, code, message) {
-  return res.status(status).send({
-    message,
-    code,
-    requiresRelogin: true,
-  });
-}
-
-async function getValidatedGoogleIdentity(tokenGoogle) {
-  const payload = await userModel.validateGoogleToken(tokenGoogle);
-  const email = normalizeEmail(payload?.email);
-
-  if (!email) {
-    throw new Error("Google account email not available");
-  }
-
-  if (!payload?.email_verified) {
-    throw new Error("Google account email is not verified");
-  }
-
-  return {
-    email,
-    provider: "google",
-    payload,
-  };
-}
-
-async function getValidatedAppleIdentity(tokenApple, fallbackEmail = null) {
-  const payload = await userModel.validateAppleToken(tokenApple);
-  const appleId = payload?.sub || null;
-  const email = normalizeEmail(payload?.email) || normalizeEmail(fallbackEmail);
-
-  if (!appleId) {
-    throw new Error("Apple account identifier not available");
-  }
-
-  return {
-    appleId,
-    email,
-    provider: "apple",
-    payload,
-  };
+// Borra la cookie del refresh de esta app (solo web). La usa también
+// auth-routes.js cuando la sesión ha terminado.
+function clearRefreshCookie(req, res) {
+  const clientContext = clientContextOf(req);
+  if (!clientContext.isNativeClient) TokenService.clearRefreshTokenCookie(res, clientContext.clientFamily);
 }
 
 module.exports = {
+  clearRefreshCookie,
+
   async login(req, res) {
-    try {
-      const email = normalizeEmail(req.body?.email);
-      const password = req.body?.password;
-
-      if (!email || !password) {
-        return res.status(400).send({
-          error: "INVALID_LOGIN_REQUEST",
-          message: "Email y contraseña requeridos",
-        });
-      }
-
-      const user = await userModel.getUserByEmail(email);
-      if (!user) {
-        return sendInvalidLoginResponse(res);
-      }
-
-      const isMatch = isPasswordValid(password, user.password);
-      if (!isMatch) {
-        return sendInvalidLoginResponse(res);
-      }
-
-      const roleMismatchMessage = checkClientFamilyRoleAccess(user, resolveClientContext(req));
-      if (roleMismatchMessage) {
-        return sendWrongAppResponse(res, roleMismatchMessage);
-      }
-
-      if (user.hash) {
-        const hashTemp = generateVerificationCode();
-        const hashExpiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
-        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
-
-        const header1 = `Hola ${user.name}, verifique su cuenta`;
-        const description =
-          "Introduce el siguiente código en la aplicación para finalizar el registro.";
-        const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendTransactionalMail(
-          user.email,
-          "Verificación de cuenta - TrainFit",
-          htmlMail
-        );
-
-        return res.status(403).send({
-          error: "ACCOUNT_NOT_VERIFIED",
-          message: "Cuenta no verificada. Se ha enviado un nuevo código.",
-          email: user.email,
-        });
-      }
-
-      return res.status(200).send(await issueSession(user, req, res));
-    } catch (error) {
-      console.error("[AUTH] auth_login_unexpected_error", {
-        message: error?.message,
-        stack: error?.stack,
-      });
-      return res.status(500).send(LOGIN_UNAVAILABLE_RESPONSE);
-    }
+    sendSession(req, res, await sessionService.login(req.body?.email, req.body?.password, clientContextOf(req)));
   },
 
   async refresh(req, res) {
-    try {
-      const extracted = TokenService.extractRefreshToken(req);
-      const clientContext = resolveClientContext(req);
-
-      if (!extracted.token) {
-        clearRefreshArtifacts(req, res);
-        return authTerminalResponse(
-          res,
-          401,
-          "REFRESH_INVALID",
-          "No refresh token"
-        );
-      }
-
-      const verification = TokenService.verifyRefresh(extracted.token, {
-        audiences: [clientContext.audience],
-      });
-      const decoded = verification.payload;
-
-      if (!decoded || decoded.type !== "refresh") {
-        clearRefreshArtifacts(req, res);
-        return authTerminalResponse(
-          res,
-          401,
-          verification.code || "REFRESH_INVALID",
-          verification.code === "REFRESH_EXPIRED"
-            ? "Refresh token expired"
-            : "Invalid refresh token"
-        );
-      }
-
-      if (decoded.aud !== clientContext.audience) {
-        clearRefreshArtifacts(req, res);
-        return authTerminalResponse(
-          res,
-          401,
-          "REFRESH_INVALID",
-          "Invalid refresh token audience"
-        );
-      }
-
-      const user = await userSchema.findById(decoded.sub);
-      if (!user) {
-        clearRefreshArtifacts(req, res);
-        return authTerminalResponse(res, 401, "REFRESH_INVALID", "User not found");
-      }
-
-      const currentAuth = user.auth || {};
-      const currentTokenHash = TokenService.hashToken(extracted.token);
-      if (
-        !currentAuth.sessionId ||
-        currentAuth.sessionId !== decoded.sid ||
-        currentAuth.refreshTokenHash !== currentTokenHash ||
-        currentAuth.clientFamily !== clientContext.clientFamily
-      ) {
-        clearRefreshArtifacts(req, res);
-        return authTerminalResponse(
-          res,
-          401,
-          "SESSION_REPLACED",
-          "Session replaced"
-        );
-      }
-
-      if (
-        currentAuth.refreshExpiresAt &&
-        new Date(currentAuth.refreshExpiresAt) <= new Date()
-      ) {
-        await clearUserAuthIfCurrent(user._id, currentAuth.sessionId);
-        clearRefreshArtifacts(req, res);
-        return authTerminalResponse(
-          res,
-          401,
-          "REFRESH_EXPIRED",
-          "Refresh session expired"
-        );
-      }
-
-      if ((user.passwordVersion || 0) !== (decoded.pver || 0)) {
-        await clearUserAuthIfCurrent(user._id, currentAuth.sessionId);
-        clearRefreshArtifacts(req, res);
-        return authTerminalResponse(
-          res,
-          401,
-          "PASSWORD_CHANGED",
-          "Session expired by password change"
-        );
-      }
-
-      const isImpersonating = !!currentAuth.impersonatedByUserId;
-      const accessToken = generateAccessTokenForSession(
-        user,
-        currentAuth.sessionId,
-        clientContext.audience,
-        isImpersonating ? { imp: true } : {}
-      );
-
-      const refreshedUser = await userSchema.findByIdAndUpdate(
-        user._id,
-        { $set: { "auth.lastUsedAt": new Date() } },
-        { new: true }
-      );
-
-      // Separa cookies entre apps sin rotar ni ampliar la sesión existente.
-      if (!clientContext.isNativeClient) {
-        TokenService.setRefreshTokenCookie(res, extracted.token, clientContext.clientFamily);
-      }
-
-      return res.send(
-        buildRefreshResponse(
-          accessToken,
-          await userDto.single(refreshedUser),
-          isImpersonating
-        )
-      );
-    } catch (error) {
-      console.error("Error in auth/refresh:", error);
-      return res.status(500).send({ message: "Internal server error" });
-    }
+    const { token } = TokenService.extractRefreshToken(req);
+    sendSession(req, res, await sessionService.refresh(token, clientContextOf(req)));
   },
 
   async logout(req, res) {
-    try {
-      const accessToken = TokenService.extractBearerToken(req);
-      const accessPayload = accessToken
-        ? TokenService.verifyAccessToken(accessToken)
-        : null;
-
-      if (accessPayload?.sid && accessPayload?.sub) {
-        await clearUserAuthIfCurrent(accessPayload.sub, accessPayload.sid);
-      } else {
-        const extracted = TokenService.extractRefreshToken(req);
-        if (extracted.token) {
-          const refreshPayload = TokenService.verifyRefreshToken(extracted.token);
-          if (refreshPayload?.sid && refreshPayload?.sub) {
-            await clearUserAuthIfCurrent(refreshPayload.sub, refreshPayload.sid);
-          }
-        }
-      }
-
-      clearRefreshArtifacts(req, res);
-      return res.status(200).send({ ok: true });
-    } catch (error) {
-      console.error("Error in auth/logout:", error);
-      clearRefreshArtifacts(req, res);
-      return res.status(200).send({ ok: true });
-    }
+    await sessionService.logout(TokenService.extractBearerToken(req), TokenService.extractRefreshToken(req).token);
+    clearRefreshCookie(req, res);
+    res.send({ ok: true });
   },
 
   async me(req, res) {
-    const user = (await userModel.syncScheduledRoutine(req.user.id))
-      ? await userSchema.findById(req.user.id)
-      : req.user;
-    return res.send({
-      user: await userDto.single(user),
+    // Lectura completa: `req.user` llega sin las listas que validateAuth no
+    // carga en cada petición (favoritos…), y el perfil sí las devuelve.
+    const user = await userService.getUserById(req.user.id);
+    res.send({
+      user: await userService.view(user),
       is_impersonating: !!req.user?.auth?.impersonatedByUserId,
     });
   },
 
   async activate(req, res) {
-    try {
-      const email = normalizeEmail(req.body?.email);
-      const code = String(req.body?.code || "").trim();
-
-      if (!email || !code) {
-        return res.status(400).send({ message: "Faltan datos requeridos" });
-      }
-
-      // El frontend ya restringe el input a dígitos, pero el backend nunca
-      // debe confiar solo en esa validación: se revalida aquí el formato
-      // exacto antes de tocar la BD.
-      if (!isValidVerificationCodeFormat(code)) {
-        return res.status(400).send({ message: "Código inválido" });
-      }
-
-      const activatedUser = await userModel.verifyActivationCode(email, code);
-
-      return res.status(200).send(await issueSession(activatedUser, req, res));
-    } catch (error) {
-      switch (error?.message) {
-        case "USER_NOT_FOUND":
-          return res.status(404).send({ message: "Usuario no encontrado" });
-        case "ALREADY_VERIFIED":
-          return res
-            .status(400)
-            .send({ message: "Esta cuenta ya ha sido verificada" });
-        case "TOO_MANY_ATTEMPTS":
-          return res.status(429).send({
-            message: "Demasiados intentos fallidos. Solicita un nuevo código.",
-          });
-        case "CODE_EXPIRED":
-          return res
-            .status(400)
-            .send({ message: "Código expirado. Solicita uno nuevo." });
-        case "INVALID_CODE":
-          return res.status(400).send({ message: "Código incorrecto" });
-        default:
-          console.error("Error en auth/activate:", error);
-          return res.status(500).send({ message: "Error interno del servidor" });
-      }
-    }
+    const email = normalizeEmail(req.body?.email);
+    const code = String(req.body?.code || "").trim();
+    if (!email || !code) throw badRequest("Faltan datos requeridos");
+    // La app ya limita el campo a dígitos; aquí se revalida el formato antes
+    // de tocar la base.
+    if (!isValidVerificationCodeFormat(code)) throw badRequest("Código inválido", "INVALID_CODE");
+    const user = await userService.verifyActivationCode(email, code);
+    sendSession(req, res, await sessionService.issueFor(user, clientContextOf(req)));
   },
 
   async resendActivationCode(req, res) {
-    try {
-      const email = normalizeEmail(req.body?.email);
-
-      if (!email) {
-        return res.status(400).send({ message: "Falta el email" });
-      }
-
-      await userModel.resendVerificationCode(email);
-
-      return res.status(200).send({
-        message: "Se ha enviado un nuevo código de verificación.",
-      });
-    } catch (error) {
-      switch (error?.message) {
-        case "USER_NOT_FOUND":
-          return res.status(404).send({ message: "Usuario no encontrado" });
-        case "ALREADY_VERIFIED":
-          return res
-            .status(400)
-            .send({ message: "Esta cuenta ya ha sido verificada" });
-        case "COOLDOWN_ACTIVE":
-          return res.status(429).send({
-            message: "Espera unos segundos antes de solicitar un nuevo código",
-          });
-        case "INVALID_EMAIL":
-          return res.status(400).send({ message: "Email inválido" });
-        default:
-          console.error("Error en auth/resend-code:", error);
-          return res.status(500).send({ message: "Error interno del servidor" });
-      }
-    }
+    const email = normalizeEmail(req.body?.email);
+    if (!email) throw badRequest("Falta el email");
+    await userService.resendVerificationCode(email);
+    res.send({ message: "Se ha enviado un nuevo código de verificación." });
   },
 
   async verifyGoogle(req, res) {
-    try {
-      const tokenGoogle = req.body?.tokenGoogle;
-      if (!tokenGoogle) {
-        return res.status(400).send({ message: "Token requerido" });
-      }
-
-      const identity = await getValidatedGoogleIdentity(tokenGoogle);
-      const user = await userModel.getUserByEmail(identity.email);
-
-      if (!user) {
-        return res.status(404).send({
-          message: "Usuario no encontrado",
-          registrationRequired: true,
-          provider: "google",
-          email: identity.email,
-        });
-      }
-
-      const roleMismatchMessage = checkClientFamilyRoleAccess(user, resolveClientContext(req));
-      if (roleMismatchMessage) {
-        return sendWrongAppResponse(res, roleMismatchMessage);
-      }
-
-      if (user.hash) {
-        const hashTemp = generateVerificationCode();
-        const hashExpiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
-        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
-
-        const header1 = `Hola ${user.name}, verifique su cuenta`;
-        const description =
-          "Introduce el siguiente código en la aplicación para finalizar el registro.";
-        const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendTransactionalMail(
-          user.email,
-          "Verificación de cuenta - TrainFit",
-          htmlMail
-        );
-
-        return res.status(403).send({
-          error: "ACCOUNT_NOT_VERIFIED",
-          message: "Cuenta no verificada. Se ha enviado un nuevo código.",
-          email: user.email,
-        });
-      }
-
-      return res.status(200).send(await issueSession(user, req, res));
-    } catch (error) {
-      console.error("Error en auth/social/google/verify:", error);
-      return res
-        .status(401)
-        .send({ message: "Token de Google inválido o expirado" });
-    }
+    sendSession(req, res, await sessionService.verifyGoogle(req.body?.tokenGoogle, clientContextOf(req)));
   },
 
   async verifyApple(req, res) {
-    try {
-      const tokenApple = req.body?.tokenApple;
-      if (!tokenApple) {
-        return res.status(400).send({ message: "Token requerido" });
-      }
-
-      const identity = await getValidatedAppleIdentity(
-        tokenApple,
-        req.body?.email
-      );
-
-      let user = await userModel.getUserByAppleId(identity.appleId);
-      if (!user && identity.email) {
-        user = await userModel.getUserByEmail(identity.email);
-      }
-
-      if (!user) {
-        return res.status(404).send({
-          message: "Usuario no encontrado",
-          registrationRequired: true,
-          provider: "apple",
-          email: identity.email,
-          appleId: identity.appleId,
-        });
-      }
-
-      const roleMismatchMessage = checkClientFamilyRoleAccess(user, resolveClientContext(req));
-      if (roleMismatchMessage) {
-        return sendWrongAppResponse(res, roleMismatchMessage);
-      }
-
-      if (user.appleId && user.appleId !== identity.appleId) {
-        return res.status(401).send({
-          message: "Apple ID no corresponde al usuario",
-        });
-      }
-
-      if (!user.appleId) {
-        user = await userSchema.findByIdAndUpdate(
-          user._id,
-          { $set: { appleId: identity.appleId } },
-          { new: true }
-        );
-      }
-
-      if (user.hash) {
-        const hashTemp = generateVerificationCode();
-        const hashExpiresAt = new Date(Date.now() + HASH_CODE_TTL_MS);
-        await userModel.updateVerificationHash(user._id, hashTemp, hashExpiresAt);
-
-        const header1 = `Hola ${user.name}, verifique su cuenta`;
-        const description =
-          "Introduce el siguiente código en la aplicación para finalizar el registro.";
-        const htmlMail = mail.generateHashMail(header1, description, hashTemp);
-        await mail.sendTransactionalMail(
-          user.email,
-          "Verificación de cuenta - TrainFit",
-          htmlMail
-        );
-
-        return res.status(403).send({
-          error: "ACCOUNT_NOT_VERIFIED",
-          message: "Cuenta no verificada. Se ha enviado un nuevo código.",
-          email: user.email,
-        });
-      }
-
-      return res.status(200).send(await issueSession(user, req, res));
-    } catch (error) {
-      console.error("Error en auth/social/apple/verify:", error);
-      return res
-        .status(401)
-        .send({ message: "Token de Apple inválido o expirado" });
-    }
+    sendSession(req, res, await sessionService.verifyApple(req.body?.tokenApple, req.body?.email, clientContextOf(req)));
   },
 
   async registerSocial(req, res) {
-    try {
-      const provider = String(req.body?.provider || "").trim().toLowerCase();
-      if (!["google", "apple"].includes(provider)) {
-        return res.status(400).send({ message: "Proveedor inválido" });
-      }
-
-      let identity;
-      if (provider === "google") {
-        identity = await getValidatedGoogleIdentity(req.body?.tokenGoogle);
-      } else {
-        identity = await getValidatedAppleIdentity(
-          req.body?.tokenApple,
-          req.body?.email || req.body?.user?.email
-        );
-      }
-
-      if (!identity.email) {
-        return res.status(400).send({
-          message: "Email requerido para completar el registro social",
-        });
-      }
-
-      let user = null;
-      if (provider === "apple" && identity.appleId) {
-        user = await userModel.getUserByAppleId(identity.appleId);
-      }
-      if (!user && identity.email) {
-        user = await userModel.getUserByEmail(identity.email);
-      }
-
-      if (user && user.name && !user.hash) {
-        return res
-          .status(409)
-          .send({ message: "Este usuario ya está registrado" });
-      }
-
-      if (user && user.hash) {
-        return res.status(403).send({
-          error: "ACCOUNT_NOT_VERIFIED",
-          message: "Cuenta no verificada. Verifica tu email antes de continuar.",
-          email: user.email,
-        });
-      }
-
-      if (
-        provider === "apple" &&
-        user?.appleId &&
-        user.appleId !== identity.appleId
-      ) {
-        return res.status(409).send({
-          message: "Este email ya esta vinculado a otra cuenta de Apple",
-        });
-      }
-
-      if (!user) {
-        user = await userSchema.create({
-          email: identity.email,
-          appleId: identity.appleId || undefined,
-          roles: ["user"],
-          provider,
-        });
-      } else if (provider === "apple" && identity.appleId && !user.appleId) {
-        user = await userSchema.findByIdAndUpdate(
-          user._id,
-          { $set: { appleId: identity.appleId } },
-          { new: true }
-        );
-      }
-
-      return res.status(201).send(await issueSession(user, req, res));
-    } catch (error) {
-      console.error("Error en auth/social/register:", error);
-      return res.status(500).send({ message: "No se pudo crear el usuario" });
-    }
+    sendSession(req, res, await sessionService.registerSocial(req.body, clientContextOf(req)), 201);
   },
 
   async completeSocial(req, res) {
-    try {
-      if (!req.user) {
-        return res.status(401).send({ message: "Usuario no autenticado" });
-      }
-
-      const profile = {
-        ...(req.body || {}),
-        email: req.user.email,
-        _id: req.user._id,
-      };
-
-      let updatedUser;
-      if (req.user.provider === "apple") {
-        updatedUser = await userModel.updateAppleUser(profile, new Date());
-      } else {
-        updatedUser = await userModel.updateGoogleUser(profile, new Date());
-      }
-
-      mail.notifyUserRegistered(updatedUser, {
-        source: "auth.completeSocial",
-        provider: updatedUser.provider,
-        ip: req.ip,
-        userAgent: req.headers?.["user-agent"],
-      });
-
-      return res.send({
-        user: await userDto.single(updatedUser),
-      });
-    } catch (error) {
-      // Errores de validación con mensaje público (p. ej. edad mínima): al errorHandler.
-      if (error?.status >= 400 && error.status < 500) throw error;
-      console.error("Error en auth/social/complete:", error);
-      return res
-        .status(500)
-        .send({ message: "No se pudo completar el perfil social" });
-    }
+    const user = await userService.completeSocialProfile(req.user._id, req.body || {});
+    mail.notifyUserRegistered(user, {
+      source: "auth.completeSocial",
+      provider: user.provider,
+      ip: req.ip,
+      userAgent: req.headers?.["user-agent"],
+    });
+    res.send({ user: await userService.view(user) });
   },
 
   async impersonate(req, res) {
-    try {
-      const targetUserId = req.body?.userId;
-      if (!targetUserId) {
-        return res.status(400).send({ message: "userId requerido" });
-      }
-
-      const targetUser = await userSchema.findById(targetUserId);
-      if (!targetUser) {
-        return res.status(404).send({ message: "Usuario no encontrado" });
-      }
-
-      const response = await issueSession(targetUser, req, res, {
-        impersonatedByUserId: req.user._id,
-        impersonatedFromSessionId: req.auth.sessionId,
-      });
-
-      return res.status(200).send(response);
-    } catch (error) {
-      console.error("Error en auth/impersonate:", error);
-      return res.status(500).send({ message: "Error al impersonar usuario" });
-    }
+    sendSession(req, res, await sessionService.impersonate(req.user, req.auth.sessionId, req.body?.userId, clientContextOf(req)));
   },
 
   async revertImpersonation(req, res) {
-    try {
-      const currentAuth = req.user?.auth || {};
-      if (
-        !currentAuth.sessionId ||
-        currentAuth.sessionId !== req.auth?.sessionId ||
-        !currentAuth.impersonatedByUserId
-      ) {
-        return res.status(400).send({ message: "No active impersonation" });
-      }
-
-      const adminUser = await userSchema.findById(currentAuth.impersonatedByUserId);
-      if (!adminUser || !(adminUser.roles || []).includes("admin")) {
-        return authTerminalResponse(
-          res,
-          401,
-          "SESSION_REPLACED",
-          "Invalid impersonation revert"
-        );
-      }
-
-      await clearUserAuthIfCurrent(req.user._id, currentAuth.sessionId);
-      return res.status(200).send(await issueSession(adminUser, req, res));
-    } catch (error) {
-      console.error("Error en auth/impersonate/revert:", error);
-      return res.status(500).send({
-        message: "Error al volver a la sesion admin",
-      });
-    }
+    sendSession(req, res, await sessionService.revertImpersonation(req.user, req.auth?.sessionId, clientContextOf(req)));
   },
 };

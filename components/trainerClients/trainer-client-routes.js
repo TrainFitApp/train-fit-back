@@ -12,14 +12,11 @@ router.postAsync("/invites", auth(["trainer"]), controller.inviteClient);
 router.getAsync("/invites", auth(["trainer"]), controller.listInvitesByTrainer);
 router.deleteAsync("/invites/:id", auth(["trainer"]), controller.cancelInvite);
 router.getAsync("/clients", auth(["trainer"]), controller.listMyClients);
-router.getAsync("/clients/paginated", auth(["trainer"]), controller.listMyClientsPaginated);
 router.getAsync("/clients/lifetime-count", auth(["trainer"]), controller.getLifetimeClientsCount);
-router.getAsync("/dashboard/attention-items", auth(["trainer"]), controller.getAttentionItems);
 router.getAsync("/clients/check-email", auth(["trainer"]), controller.checkClientEmailStatus);
 router.deleteAsync("/clients/:clientId", auth(["trainer"]), controller.revokeByTrainer);
 
-// --- TAREA 3: cuestionario inicial. Sin requireActiveClient: el controller
-// admite también relaciones antiguas en "en_revision".
+// --- Cuestionario de alta (uno por par). El servicio comprueba la relación.
 router.getAsync("/clients/:clientId/intake", auth(["trainer"]), controller.getClientIntake);
 router.getAsync("/clients/:clientId/intake/status", auth(["trainer"]), controller.getClientIntakeStatus);
 router.putAsync("/clients/:clientId/intake", auth(["trainer"]), requireWritableSeat(), controller.updateClientIntake);
@@ -162,30 +159,6 @@ router.getAsync(
   auth(["trainer"]),
   requireActiveClient("nutrition"),
   dataController.getClientShoppingList
-);
-router.getAsync(
-  "/clients/:clientId/payments",
-  auth(["trainer"]),
-  requireActiveClient(),
-  dataController.listPayments
-);
-router.postAsync(
-  "/clients/:clientId/payments",
-  auth(["trainer"]),
-  requireActiveClient(),
-  dataController.createPayment
-);
-router.patchAsync(
-  "/clients/:clientId/payments/:paymentId",
-  auth(["trainer"]),
-  requireActiveClient(),
-  dataController.setPaymentPaid
-);
-router.postAsync(
-  "/clients/:clientId/diet-days/:date/meals/:mealSlot/propose",
-  auth(["trainer"]),
-  requireActiveClient("nutrition"),
-  dataController.proposeMealAlternatives
 );
 router.getAsync(
   "/clients/:clientId/nutrition-preferences",

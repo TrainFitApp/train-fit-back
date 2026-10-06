@@ -72,7 +72,7 @@ test("hábitos: un hábito ajeno no se puede marcar; al terminar la relación de
   const stranger = await ctx.makeClient();
   assert.equal((await ctx.call(stranger, "POST", `/trainer/tasks/${task._id}/toggle`, {})).status, 404);
 
-  await ctx.model("TrainerClient").updateMany({ trainerId: trainer._id, clientId: client._id }, { $set: { status: "revoked" } });
+  await ctx.endRelation(trainer, client);
   assert.deepEqual(await ctx.get(client, "/trainer/tasks/mine"), []);
   assert.equal((await ctx.call(client, "POST", `/trainer/tasks/${task._id}/toggle`, {})).status, 403);
   assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tasks`, { type: "water", target: 2, unit: "l" })).status, 403);
@@ -115,7 +115,7 @@ test("suplementos: el cliente ve solo los vigentes en la fecha y de profesionale
   const later = await ctx.get(client, `/supplements/mine?date=${h.day(4)}`);
   assert.deepEqual(later.map((s) => s.name).sort(), ["Magnesio", "Vitamina D"]);
 
-  await ctx.model("TrainerClient").updateMany({ clientId: client._id }, { $set: { status: "revoked" } });
+  await ctx.endRelation(trainer, client);
   assert.deepEqual(await ctx.get(client, "/supplements/mine"), []);
 });
 
@@ -157,6 +157,57 @@ test("dolor: el cliente lo apunta por zona y día (sin duplicar), el profesional
   assert.equal((await ctx.call(client, "DELETE", "/pain/mine")).status, 400);
 });
 
+test("dolor: cada profesional tiene su umbral por zona (sin duplicar), y se borra sin tocar el del otro", async () => {
+  const { trainer, client } = await pair("training");
+  const other = await ctx.makeTrainer({ name: "Fisio" });
+  await ctx.relate(other, client, { scope: "nutrition" });
+  const zone = (await ctx.get(client, "/pain/catalog")).zones[0];
+
+  await ctx.put(trainer, `/trainer/clients/${client.id}/pain/thresholds`, { zone, workLevel: 2, painLevel: 5 });
+  await ctx.put(trainer, `/trainer/clients/${client.id}/pain/thresholds`, { zone, workLevel: 3, painLevel: 6, note: "Sin saltos" });
+  await ctx.put(other, `/trainer/clients/${client.id}/pain/thresholds`, { zone, workLevel: 1, painLevel: 2 });
+
+  const mine = (await ctx.get(trainer, `/trainer/clients/${client.id}/pain`)).thresholds;
+  assert.deepEqual(mine.map((t) => [t.zone, t.workLevel, t.painLevel, t.note]), [[zone, 3, 6, "Sin saltos"]], "una por zona: se sustituye");
+  assert.equal((await ctx.pairOf(trainer, client)).painThresholds.length, 1, "vive en el par");
+
+  await ctx.del(trainer, `/trainer/clients/${client.id}/pain/thresholds/${encodeURIComponent(zone)}`);
+  assert.deepEqual((await ctx.get(trainer, `/trainer/clients/${client.id}/pain`)).thresholds, []);
+  assert.equal((await ctx.get(other, `/trainer/clients/${client.id}/pain`)).thresholds.length, 1, "el del otro profesional sigue");
+});
+
+// --- Vídeos de técnica asignados a un cliente ---------------------------------------
+
+test("vídeo de técnica asignado: el cliente lo ve en vez del general, se cambia o quita, y borrar el vídeo quita la asignación", async () => {
+  const { trainer, client } = await pair("training");
+  const Video = ctx.model("TechniqueVideo");
+  const exerciseId = ctx.oid();
+  const general = await Video.create({ trainerId: trainer._id, title: "General", source: "youtube", externalUrl: "https://www.youtube.com/watch?v=general01", exerciseIds: [exerciseId] });
+  const variant = await Video.create({ trainerId: trainer._id, title: "Variante", source: "youtube", externalUrl: "https://www.youtube.com/watch?v=variant01" });
+  const path = `/trainer/clients/${client.id}/technique-videos/${exerciseId}`;
+
+  let mine = await ctx.get(client, "/technique-videos/mine");
+  assert.equal(mine.byExercise[String(exerciseId)]?.assignedToYou, false, "sin asignación ve el general");
+
+  const set = await ctx.put(trainer, path, { techniqueVideoId: String(variant._id) });
+  assert.deepEqual(set.overrides, [{ exerciseId: String(exerciseId), techniqueVideoId: String(variant._id) }]);
+  await ctx.put(trainer, path, { techniqueVideoId: String(variant._id) });
+  assert.equal((await ctx.pairOf(trainer, client)).techniqueOverrides.length, 1, "uno por ejercicio, dentro del par");
+  mine = await ctx.get(client, "/technique-videos/mine");
+  assert.equal(mine.byExercise[String(exerciseId)].assignedToYou, true);
+
+  const stranger = await ctx.makeTrainer();
+  const foreign = await Video.create({ trainerId: stranger._id, title: "Ajeno", source: "youtube", externalUrl: "https://www.youtube.com/watch?v=foreign01" });
+  assert.equal((await ctx.call(trainer, "PUT", path, { techniqueVideoId: String(foreign._id) })).status, 404, "solo vídeos propios");
+
+  await ctx.del(trainer, `/trainer/technique-videos/${variant._id}`);
+  assert.deepEqual((await ctx.get(trainer, `/trainer/clients/${client.id}/technique-videos`)).overrides, [], "borrar el vídeo quita la asignación");
+  assert.equal((await ctx.get(client, "/technique-videos/mine")).byExercise[String(exerciseId)].assignedToYou, false);
+
+  await ctx.put(trainer, path, { techniqueVideoId: String(general._id) });
+  assert.deepEqual((await ctx.put(trainer, path, {})).overrides, [], "sin vídeo = quitar la asignación");
+});
+
 // --- Preferencias de nutrición -----------------------------------------------------
 
 test("preferencias de nutrición: pedirlas avisa al cliente con una notificación", async () => {
@@ -181,6 +232,12 @@ test("preferencias de nutrición: el profesional las pide (pendiente en el panel
   const seen = await ctx.get(trainer, `/trainer/clients/${client.id}/nutrition-preferences`);
   assert.equal(seen.allergies, "Frutos secos");
   assert.deepEqual(seen.dietaryFlags, ["vegetarian"]);
+  assert.equal(String(seen.clientId), client.id, "misma forma que el documento de la colección antigua");
+  assert.equal(seen.favoriteFoods, "", "los campos sin responder llegan con su valor por defecto");
+  // Viven dentro del usuario (2026-10), no en una colección aparte.
+  const stored = await ctx.model("User").findById(client.id).select("nutritionPreferences").lean();
+  assert.equal(stored.nutritionPreferences.cooksAtHome, "sometimes");
+  assert.ok(stored.nutritionPreferences.requestedAt, "la solicitud del profesional se conserva al responder");
   dashboard = await ctx.get(client, "/coach/dashboard");
   assert.equal(dashboard.nutritionPreferences?.pending, false, "respondida: ya no está pendiente");
 });
@@ -189,10 +246,14 @@ test("preferencias de nutrición: el profesional las pide (pendiente en el panel
 
 test("notas del cliente: lo que escribe en su entreno le aparece al profesional como no leído hasta marcarlo", async () => {
   const { trainer, client } = await pair("training");
-  const ce = await ctx.model("CustomExercise").create({ exercise: (await ctx.model("Exercise").create({ name: "Sentadilla" }))._id, sets: [] });
-  const workout = await ctx.model("Workout").create({ name: "Pierna", exercises: [ce._id] });
-  const split = await ctx.model("Split").create({ name: "M1", workouts: [workout._id] });
-  await ctx.model("Table").create({ name: "R", userId: client._id, assignedByTrainerId: trainer._id, splits: [split._id] });
+  const exercise = await ctx.model("Exercise").create({ name: "Sentadilla" });
+  const { workouts } = await ctx.seedTable({
+    owner: client,
+    name: "R",
+    assignedBy: trainer,
+    splits: [{ name: "M1", workouts: [{ name: "Pierna", exercises: [{ exercise: exercise._id, sets: [] }] }] }],
+  });
+  const ce = workouts[0].exercises[0];
 
   await ctx.put(client, `/customexercises/${ce._id}/client-notes`, { clientNotes: "Me molesta la rodilla" });
   const unread = await ctx.get(trainer, `/trainer/clients/${client.id}/client-notes/unread-count`);
@@ -238,14 +299,14 @@ test("recientes del buscador: ocultar uno lo quita de esa comida, volver a añad
   const user = await ctx.makeClient();
   const Product = ctx.model("Product");
   const pan = await Product.create({ name: "Pan integral", verified: true });
-  const add = (date) => ctx.post(user, "/dietdays/x", { date, indexMeal: 0, customProduct: { quantity: 50, product: { _id: String(pan._id), name: pan.name } } });
+  const add = (date) => ctx.post(user, `/dietdays/date/${date}/meals/0/customproducts`, { customProduct: { quantity: 50, product: { _id: String(pan._id), name: pan.name } } });
   await add("2026-05-01");
-  const recents = async () => (await ctx.get(user, `/diets/${user.id}/recent-products?mealIndex=0`)).map((p) => p.name || p.product?.name);
+  const recents = async () => (await ctx.get(user, "/recent-foods/products?mealIndex=0")).map((p) => p.name || p.product?.name);
   assert.ok((await recents()).includes("Pan integral"));
 
   await ctx.post(user, "/recent-foods/hidden", { mealIndex: 0, kind: "product", ids: [String(pan._id)] });
   assert.ok(!(await recents()).includes("Pan integral"));
-  assert.ok(await ctx.model("CustomProduct").exists({ product: pan._id }), "el historial no se borra");
+  assert.ok(await ctx.model("DietDay").exists({ userId: user._id, "meals.customProducts.product": pan._id }), "el historial no se borra");
 
   await new Promise((resolve) => setTimeout(resolve, 1100));
   await add("2026-05-02");
@@ -257,21 +318,23 @@ test("recientes del buscador: ocultar uno lo quita de esa comida, volver a añad
 
 test("los recientes de comida de OTRO usuario no se pueden leer", async () => {
   const victim = await ctx.makeClient();
-  await ctx.post(victim, "/dietdays/x", { date: "2026-05-03", indexMeal: 0, customProduct: { quantity: 10, product: { name: "Secreto del desayuno" } } });
+  await ctx.post(victim, `/dietdays/date/2026-05-03/meals/0/customproducts`, { customProduct: { quantity: 10, product: { name: "Secreto del desayuno" } } });
   const snoop = await ctx.makeClient();
-  const res = await ctx.call(snoop, "GET", `/diets/${victim.id}/recent-products?mealIndex=0`);
-  assert.ok(res.status === 403 || res.status === 404 || !JSON.stringify(res.body).includes("Secreto del desayuno"));
+  const res = await ctx.call(snoop, "GET", `/recent-foods/products?mealIndex=0&userId=${victim.id}`);
+  assert.equal(res.status, 403);
 });
 
-test("la nota fijada de la dieta de OTRO usuario no se puede cambiar", async () => {
+test("la nota fijada de la dieta es siempre la del usuario del token", async () => {
   const victim = await ctx.makeClient();
   const attacker = await ctx.makeClient();
-  await ctx.call(attacker, "PATCH", `/diets/${victim.id}/pinned-note`, { notes: "hackeado" });
+  await ctx.call(attacker, "PUT", "/dietdays/pinned-note", { userId: victim.id, notes: "hackeado" });
   assert.notEqual((await ctx.model("User").findById(victim.id).lean()).dietPinnedNote, "hackeado");
 });
 
-test("la nota fijada propia se guarda y se ve en el perfil", async () => {
+test("la nota fijada propia se guarda, se ve en el perfil y en blanco se borra", async () => {
   const user = await ctx.makeClient();
-  await ctx.patch(user, `/diets/${user.id}/pinned-note`, { notes: "Beber 2 l" });
+  assert.deepEqual(await ctx.put(user, "/dietdays/pinned-note", { notes: "  Beber 2 l " }), { pinnedNote: "Beber 2 l" });
   assert.equal((await ctx.get(user, "/auth/me")).user.dietPinnedNote, "Beber 2 l");
+  assert.deepEqual(await ctx.put(user, "/dietdays/pinned-note", { notes: "" }), { pinnedNote: "" });
+  assert.equal((await ctx.get(user, "/auth/me")).user.dietPinnedNote, undefined);
 });

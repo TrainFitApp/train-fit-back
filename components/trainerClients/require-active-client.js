@@ -32,17 +32,13 @@ function requireActiveClient(requiredScope, { allowReadOnly = false } = {}) {
       // que sea el mismo en los dos únicos chokepoints de autorización del
       // módulo trainer/clients.
       if (String(clientId) === String(trainerId)) {
-        req.trainerClientRelation = null;
+        req.trainerClientPair = null;
         return next();
       }
 
-      const relation = await trainerClientDao.findActiveByTrainerAndClient(
-        trainerId,
-        clientId,
-        requiredScope
-      );
+      const pair = await trainerClientDao.findActivePair(trainerId, clientId, requiredScope);
 
-      if (!relation) {
+      if (!pair) {
         return res.status(403).send({ message: "No tienes una relación activa con este cliente" });
       }
 
@@ -50,7 +46,7 @@ function requireActiveClient(requiredScope, { allowReadOnly = false } = {}) {
       // se pueden consultar pero no modificar (trainer-seat-service.js).
       if (!allowReadOnly && await rejectIfReadOnly(req, res, clientId)) return;
 
-      req.trainerClientRelation = relation;
+      req.trainerClientPair = pair;
       next();
     } catch (e) {
       console.error("Error en requireActiveClient:", e.message);
@@ -59,8 +55,8 @@ function requireActiveClient(requiredScope, { allowReadOnly = false } = {}) {
   };
 }
 
-// Para rutas de alta (cuestionario/confirmación) que actúan antes de que la
-// relación sea "active" y por eso no llevan requireActiveClient.
+// Para rutas que comprueban la relación en su servicio (cuestionario de
+// alta) pero tampoco pueden escribir sobre un cliente en solo lectura.
 function requireWritableSeat() {
   return async (req, res, next) => {
     try {

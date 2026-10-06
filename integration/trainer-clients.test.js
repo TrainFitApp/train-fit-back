@@ -17,10 +17,10 @@ async function inviteAndAccept(trainer, client, scopes = ["training", "nutrition
   assert.equal(res.status, 201, JSON.stringify(res.body));
   for (const r of res.body.results) {
     assert.equal(r.success, true, JSON.stringify(r));
-    const accepted = await ctx.call(client, "POST", `/trainer/invites/${r.relation._id}/accept`);
+    const accepted = await ctx.call(client, "POST", `/trainer/invites/${r.invitation._id}/accept`);
     assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   }
-  return res.body.results.map((r) => r.relation);
+  return res.body.results.map((r) => r.invitation);
 }
 
 const trainerNotifications = async (trainer) => ctx.get(trainer, "/trainer/notifications/mine");
@@ -44,13 +44,16 @@ test("flujo completo: invitar dos scopes, el cliente las ve con datos del entren
   const sent = await ctx.get(trainer, "/trainer/invites");
   assert.equal(sent.filter((i) => i.status === "pending").length, 2);
 
-  for (const r of res.body.results) await ctx.post(client, `/trainer/invites/${r.relation._id}/accept`);
+  for (const r of res.body.results) await ctx.post(client, `/trainer/invites/${r.invitation._id}/accept`);
 
   const clients = await ctx.get(trainer, "/trainer/clients");
   assert.equal(clients.length, 1, "un cliente con dos scopes cuenta como uno");
   const professionals = await ctx.get(client, "/trainer/info");
   assert.equal(professionals.length, 1);
-  assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id, clientId: client._id, status: "active" }), 2);
+  assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id }), 1, "un documento por par");
+  const pair = await ctx.pairOf(trainer, client);
+  assert.deepEqual(pair.scopes.map((link) => [link.scope, link.status]), [["training", "active"], ["nutrition", "active"]]);
+  assert.equal(pair.intakePending, true, "el cuestionario queda pendiente al aceptar");
   assert.deepEqual(await ctx.get(client, "/trainer/invites/mine"), [], "ya no quedan invitaciones pendientes");
   assert.ok(typesOf(await trainerNotifications(trainer)).includes("invite_accepted"));
 });
@@ -71,7 +74,7 @@ test("invitar a alguien sin cuenta todavía: queda pendiente y la acepta al regi
   const [pending] = await ctx.get(client, "/trainer/invites/mine");
   assert.equal(pending.scope, "nutrition");
   await ctx.post(client, `/trainer/invites/${pending._id}/accept`);
-  assert.equal(await ctx.count("TrainerClient", { clientId: client._id, status: "active" }), 1);
+  assert.equal(await ctx.count("TrainerClient", { clientId: client._id, "scopes.status": "active" }), 1);
 });
 
 test("no se puede invitar a una cuenta de profesional (NOT_A_USER_ACCOUNT)", async () => {
@@ -97,6 +100,7 @@ test("invitación duplicada pendiente del mismo scope: no se crea otra", async (
   assert.equal(again.status, 400);
   assert.equal(again.body.results[0].success, false);
   assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id, clientEmail: client.email }), 1);
+  assert.equal((await ctx.model("TrainerClient").findOne({ trainerId: trainer._id }).lean()).scopes.length, 1);
 });
 
 test("solape: un cliente no puede tener dos profesionales activos del mismo scope (al invitar ni al aceptar)", async () => {
@@ -105,7 +109,7 @@ test("solape: un cliente no puede tener dos profesionales activos del mismo scop
   const client = await ctx.makeClient();
 
   // B invita ANTES de que el cliente acepte a A.
-  const fromB = (await invite(b, client, ["training"])).body.results[0].relation;
+  const fromB = (await invite(b, client, ["training"])).body.results[0].invitation;
   await inviteAndAccept(a, client, ["training"]);
 
   const lateAccept = await ctx.call(client, "POST", `/trainer/invites/${fromB._id}/accept`);
@@ -122,7 +126,7 @@ test("aceptar una invitación que no es para mí: 403; inexistente: 404; aceptar
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
   const intruder = await ctx.makeClient();
-  const [relation] = (await invite(trainer, client, ["training"])).body.results.map((r) => r.relation);
+  const [relation] = (await invite(trainer, client, ["training"])).body.results.map((r) => r.invitation);
   assert.equal((await ctx.call(intruder, "POST", `/trainer/invites/${relation._id}/accept`)).status, 403);
   assert.equal((await ctx.call(client, "POST", `/trainer/invites/${ctx.oid()}/accept`)).status, 404);
   await ctx.post(client, `/trainer/invites/${relation._id}/accept`);
@@ -134,18 +138,32 @@ test("aceptar una invitación que no es para mí: 403; inexistente: 404; aceptar
 test("rechazar: la invitación queda 'declined' y el entrenador puede volver a invitar", async () => {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
-  const [relation] = (await invite(trainer, client, ["nutrition"])).body.results.map((r) => r.relation);
+  const [relation] = (await invite(trainer, client, ["nutrition"])).body.results.map((r) => r.invitation);
   const declined = await ctx.post(client, `/trainer/invites/${relation._id}/decline`);
   assert.equal(declined.status, "declined");
   assert.deepEqual(await ctx.get(client, "/trainer/invites/mine"), []);
   assert.equal((await invite(trainer, client, ["nutrition"])).status, 201);
 });
 
+test("rechazar y volver a invitar: la misma persona sigue siendo un solo par, con su historial", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  const [first] = (await invite(trainer, client, ["nutrition"])).body.results.map((r) => r.invitation);
+  await ctx.post(client, `/trainer/invites/${first._id}/decline`);
+  const [second] = (await invite(trainer, client, ["nutrition"])).body.results.map((r) => r.invitation);
+  assert.notEqual(String(second._id), String(first._id), "cada invitación tiene su id");
+  assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id }), 1);
+  await ctx.post(client, `/trainer/invites/${second._id}/accept`);
+  const history = await ctx.get(client, "/trainer/history?asClient=1");
+  assert.deepEqual(history.map((r) => r.status), ["declined"], "el rechazo queda en su historial");
+  assert.equal((await ctx.get(trainer, "/trainer/history")).length, 1);
+});
+
 test("cancelar invitación: solo su entrenador; queda rechazada y desaparece de las pendientes del cliente", async () => {
   const trainer = await ctx.makeTrainer();
   const other = await ctx.makeTrainer();
   const client = await ctx.makeClient();
-  const [relation] = (await invite(trainer, client, ["training"])).body.results.map((r) => r.relation);
+  const [relation] = (await invite(trainer, client, ["training"])).body.results.map((r) => r.invitation);
   assert.equal((await ctx.call(other, "DELETE", `/trainer/invites/${relation._id}`)).status, 404);
   const cancelled = await ctx.del(trainer, `/trainer/invites/${relation._id}`);
   assert.equal(cancelled.status, "declined");
@@ -174,7 +192,7 @@ test("plan free del entrenador: 3 clientes; el 4º da TRAINER_LIMIT_REACHED; el 
 test("las invitaciones canceladas o rechazadas liberan plaza", async () => {
   const trainer = await ctx.makeTrainer();
   const relations = [];
-  for (let i = 0; i < 3; i += 1) relations.push((await invite(trainer, await ctx.makeClient(), ["training"])).body.results[0].relation);
+  for (let i = 0; i < 3; i += 1) relations.push((await invite(trainer, await ctx.makeClient(), ["training"])).body.results[0].invitation);
   await ctx.del(trainer, `/trainer/invites/${relations[0]._id}`);
   assert.equal((await invite(trainer, await ctx.makeClient(), ["training"])).status, 201);
 });
@@ -199,7 +217,7 @@ test("si las plazas bajan, una invitación pendiente no se cancela pero no se pu
   const clients = [];
   for (let i = 0; i < 4; i += 1) clients.push(await ctx.makeClient());
   const relations = [];
-  for (const c of clients) relations.push((await invite(trainer, c, ["training"])).body.results[0].relation);
+  for (const c of clients) relations.push((await invite(trainer, c, ["training"])).body.results[0].invitation);
   // Termina el periodo pagado: vuelve a Free con 3 plazas y 4 invitaciones reservadas.
   await trainer.doc.constructor.updateOne({ _id: trainer._id }, { $set: { "professionalPremium.expiresAt": new Date(Date.now() - 1000) } });
   for (let i = 0; i < 3; i += 1) {
@@ -319,8 +337,9 @@ test("cuestionario: pendiente al aceptar; enviarlo actualiza el perfil, siembra 
   await inviteAndAccept(trainer, client);
 
   let onboarding = await ctx.get(client, "/trainer/onboarding-status");
-  assert.equal(onboarding.blocked, false, "nunca bloquea la app");
-  assert.deepEqual([...new Set(onboarding.relations.map((r) => r.intakeStatus))], ["pending"]);
+  assert.equal(onboarding.professionals.length, 1, "un cuestionario por profesional, no por scope");
+  assert.deepEqual(onboarding.professionals[0].scopes.sort(), ["nutrition", "training"]);
+  assert.equal(onboarding.professionals[0].intakeStatus, "pending");
   assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/intake/reviewed`)).status, 404, "aún no enviado");
 
   await ctx.post(client, "/trainer/intake", { trainerId: trainer.id, weight: 76.5, height: 178, sex: 1, allergies: "gluten", goals: "Perder grasa" });
@@ -328,20 +347,20 @@ test("cuestionario: pendiente al aceptar; enviarlo actualiza el perfil, siembra 
   const me = (await ctx.get(client, "/auth/me")).user;
   assert.equal(me.weight, 76.5);
   assert.equal(me.height, 178);
-  assert.equal((await ctx.model("Anthropometry").findOne({ userId: client._id }).lean()).weight, 76.5, "primer peso sembrado");
+  assert.equal((await ctx.model("Anthropometry").findOne({ userId: client._id, date: h.day(0) }).lean()).weight, 76.5, "el peso del cuestionario es la medida de hoy");
   assert.ok(typesOf(await trainerNotifications(trainer)).includes("intake_submitted_trainer"));
   assert.ok(typesOf(await clientNotifications(client)).includes("intake_submitted"));
   assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id, clientId: client._id, intakePending: true }), 0,
     "uno por par: se da por enviado en TODOS los scopes");
 
   onboarding = await ctx.get(client, "/trainer/onboarding-status");
-  assert.deepEqual([...new Set(onboarding.relations.map((r) => r.intakeStatus))], ["submitted"]);
+  assert.equal(onboarding.professionals[0].intakeStatus, "submitted");
 
   // Reenviar mientras no está revisado: se sobrescribe sin volver a avisar.
   const before = typesOf(await trainerNotifications(trainer)).length;
   await ctx.post(client, "/trainer/intake", { trainerId: trainer.id, weight: 76, goals: "Recomposición" });
   assert.equal(typesOf(await trainerNotifications(trainer)).length, before);
-  assert.equal((await ctx.model("Anthropometry").countDocuments({ userId: client._id })), 1, "no se siembra dos veces");
+  assert.equal((await ctx.model("Anthropometry").countDocuments({ userId: client._id, date: h.day(0) })), 1, "reenviar corrige la medida de hoy, no añade otra");
 
   // El entrenador lo ve y lo marca revisado; a partir de ahí es de solo lectura.
   const seen = await ctx.get(trainer, `/trainer/clients/${client.id}/intake`);
@@ -351,6 +370,97 @@ test("cuestionario: pendiente al aceptar; enviarlo actualiza el perfil, siembra 
   assert.equal(locked.status, 400);
   assert.equal(locked.body.code, "INTAKE_ALREADY_REVIEWED");
   assert.equal((await ctx.get(client, "/auth/me")).user.weight, 76);
+});
+
+test("cuestionario: la configuración del profesional (campos y preguntas propias) se guarda en su usuario y llega al cliente", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  const initial = await ctx.get(trainer, "/trainer/intake-config");
+  assert.deepEqual(initial.enabledFields, initial.catalog, "sin configurar: todos los campos");
+  assert.deepEqual(initial.customQuestions, []);
+
+  const bad = await ctx.call(trainer, "PUT", "/trainer/intake-config", { enabledFields: ["inventado"] });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.code, "INVALID_INTAKE_FIELDS");
+
+  const untyped = await ctx.call(trainer, "PUT", "/trainer/intake-config", { enabledFields: [], customQuestions: [{ label: "Sin tipo" }] });
+  assert.equal(untyped.body.code, "INVALID_CUSTOM_QUESTIONS", "las preguntas llevan tipo, como en los check-ins");
+
+  const saved = await ctx.put(trainer, "/trainer/intake-config", {
+    enabledFields: ["goals", "allergies"],
+    customQuestions: [
+      { label: "¿Turnos de noche?", type: "yes_no", required: true },
+      { label: "Borrador", type: "text", enabled: false },
+    ],
+    lastScopes: ["nutrition"],
+  });
+  assert.deepEqual(saved.enabledFields, ["goals", "allergies"]);
+  assert.equal(saved.customQuestions.length, 2);
+  assert.ok(saved.customQuestions.every((q) => /^[0-9a-f]{24}$/.test(String(q._id))), "cada pregunta con su id");
+  // Volver a guardar conserva los ids (las respuestas ya recibidas los referencian).
+  const resaved = await ctx.put(trainer, "/trainer/intake-config", { ...saved });
+  assert.deepEqual(resaved.customQuestions.map((q) => String(q._id)), saved.customQuestions.map((q) => String(q._id)));
+  const again = await ctx.get(trainer, "/trainer/intake-config");
+  assert.deepEqual(again.customQuestions, saved.customQuestions);
+  assert.deepEqual(again.lastScopes, ["nutrition"]);
+
+  // Vive dentro del usuario del profesional (2026-10), no en una colección aparte.
+  const stored = await ctx.model("User").findById(trainer.id).select("trainerSettings").lean();
+  assert.deepEqual(stored.trainerSettings.intake.enabledFields, ["goals", "allergies"]);
+
+  await inviteAndAccept(trainer, client, ["nutrition"]);
+  const onboarding = await ctx.get(client, "/trainer/onboarding-status");
+  const relation = onboarding.professionals[0];
+  assert.ok(relation.intakeEnabledFields.includes("goals"));
+  assert.ok(!relation.intakeEnabledFields.includes("equipment"), "lo desactivado no se pide");
+  assert.ok(relation.intakeEnabledFields.includes("dietaryFlags"), "forzado en nutrición");
+  assert.deepEqual(
+    relation.intakeCustomQuestions.map((q) => [String(q._id), q.label, q.type, q.required]),
+    [[String(saved.customQuestions[0]._id), "¿Turnos de noche?", "yes_no", true]],
+    "solo las preguntas activas, con su tipo"
+  );
+});
+
+test("cuestionario: las respuestas propias se validan por tipo, se exigen las obligatorias y guardan su enunciado", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  const config = await ctx.put(trainer, "/trainer/intake-config", {
+    enabledFields: ["goals"],
+    customQuestions: [
+      { label: "¿Turnos de noche?", type: "yes_no", required: true },
+      { label: "Horas de sueño", type: "number", unit: "h" },
+      { label: "Deporte", type: "select", options: ["Correr", "Nadar"] },
+    ],
+  });
+  const [nights, sleep, sport] = config.customQuestions.map((q) => String(q._id));
+  await inviteAndAccept(trainer, client, ["training"]);
+
+  const missing = await ctx.call(client, "POST", "/trainer/intake", { trainerId: trainer.id, customAnswers: [{ questionId: sleep, value: 7 }] });
+  assert.equal(missing.status, 400);
+  assert.equal(missing.body.code, "INVALID_CUSTOM_ANSWER", "falta la obligatoria");
+  const wrongType = await ctx.call(client, "POST", "/trainer/intake", {
+    trainerId: trainer.id,
+    customAnswers: [{ questionId: nights, value: "true" }, { questionId: sport, value: "Bailar" }],
+  });
+  assert.equal(wrongType.body.code, "INVALID_CUSTOM_ANSWER", "opción que no existe");
+
+  await ctx.post(client, "/trainer/intake", {
+    trainerId: trainer.id,
+    customAnswers: [{ questionId: nights, value: "true" }, { questionId: sleep, value: "7.5" }, { questionId: "inventada", value: "x" }],
+  });
+  const seen = await ctx.get(trainer, `/trainer/clients/${client.id}/intake`);
+  assert.deepEqual(
+    seen.customAnswers.map((a) => [a.label, a.type, a.unit, a.value]),
+    [["¿Turnos de noche?", "yes_no", "", true], ["Horas de sueño", "number", "h", 7.5]],
+    "valores normalizados por tipo; lo que no es una pregunta suya no se guarda"
+  );
+
+  // El profesional borra una pregunta y corrige otra: lo ya respondido a la
+  // borrada sigue ahí, legible.
+  await ctx.put(trainer, "/trainer/intake-config", { enabledFields: ["goals"], customQuestions: [config.customQuestions[1], config.customQuestions[2]] });
+  const corrected = await ctx.put(trainer, `/trainer/clients/${client.id}/intake`, { goals: "x", customAnswers: [{ questionId: sport, value: "Nadar" }] });
+  assert.deepEqual(corrected.customAnswers.map((a) => [a.label, a.value]),
+    [["Horas de sueño", 7.5], ["Deporte", "Nadar"], ["¿Turnos de noche?", true]]);
 });
 
 test("cuestionario: sin relación activa no se puede enviar; datos fuera de rango no tocan el perfil", async () => {
@@ -375,6 +485,31 @@ test("una relación nueva con un entrenador con quien ya se rellenó el cuestion
   await ctx.post(client, "/trainer/intake", { trainerId: trainer.id, goals: "x" });
   await inviteAndAccept(trainer, client, ["nutrition"]);
   assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id, clientId: client._id, intakePending: true }), 0);
+});
+
+test("cuestionario: lo que rellena el profesional antes no cuenta como enviado; volver tras una baja lo pide otra vez", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  await inviteAndAccept(trainer, client, ["training"]);
+  const edited = await ctx.put(trainer, `/trainer/clients/${client.id}/intake`, { goals: "Lo apunto yo", trainingLocation: "luna" });
+  assert.equal(edited.goals, "Lo apunto yo");
+  assert.equal(edited.trainingLocation, null, "fuera de catálogo no se guarda");
+  assert.equal((await ctx.get(trainer, `/trainer/clients/${client.id}/intake/status`)).status, "pending");
+  assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/intake/reviewed`)).status, 404);
+
+  await ctx.post(client, "/trainer/intake", { trainerId: trainer.id, goals: "Fuerza" });
+  await ctx.post(trainer, `/trainer/clients/${client.id}/intake/reviewed`);
+  assert.equal((await ctx.get(trainer, `/trainer/clients/${client.id}/intake/status`)).status, "reviewed");
+
+  // Baja y vuelta: cuestionario pendiente otra vez y, al reenviarlo, por revisar.
+  await ctx.del(client, "/trainer/link/training");
+  await inviteAndAccept(trainer, client, ["training"]);
+  assert.equal((await ctx.get(trainer, `/trainer/clients/${client.id}/intake/status`)).status, "pending");
+  assert.equal((await ctx.get(client, `/trainer/intake/${trainer.id}`)).goals, "Fuerza", "precarga lo que ya respondió");
+  await ctx.post(client, "/trainer/intake", { trainerId: trainer.id, goals: "Fuerza 2" });
+  assert.equal((await ctx.get(trainer, `/trainer/clients/${client.id}/intake/status`)).status, "submitted");
+  const queue = await ctx.get(trainer, "/trainer/review-queue");
+  assert.equal(queue.counts.intake, 1);
 });
 
 test("ver o editar el cuestionario sin relación: 403", async () => {

@@ -57,8 +57,8 @@ async function access(user) {
   const [hasRelation, hasTraining] = isTrainer
     ? [false, false]
     : await Promise.all([
-        trainerClientDao.hasActiveRelation(user._id),
-        trainerClientDao.hasActiveRelation(user._id, "training"),
+        trainerClientDao.hasActiveTrainer(user._id),
+        trainerClientDao.hasActiveTrainer(user._id, "training"),
       ]);
   return {
     canUpload: canUploadMedia(user, hasRelation),
@@ -159,7 +159,7 @@ module.exports = {
       }
     }
     if (purpose === "form_check") {
-      const hasTraining = await trainerClientDao.hasActiveRelation(user._id, "training");
+      const hasTraining = await trainerClientDao.hasActiveTrainer(user._id, "training");
       if (!hasTraining) {
         return fail(403, "FORM_CHECK_NO_TRAINER", "Necesitas un entrenador activo para enviarle vídeos");
       }

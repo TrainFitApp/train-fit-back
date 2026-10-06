@@ -17,8 +17,8 @@ El lint llegó en 2026-10 (`.eslintrc.json`, `eslint:recommended` a secas, sin
 reglas de estilo). La política error/warn y lo que se arregló para montarlo
 están comentados en el propio fichero de configuración.
 
-`npm test` **descubre los ficheros por glob** (`components/**`, `services/**`,
-`middleware/**`, `scripts/**`). No hay lista a mano que mantener, y
+`npm test` **descubre los ficheros por glob** (`components/**`,
+`middleware/**`, `scripts/**`, `integration/**`). No hay lista a mano que mantener, y
 `components/util/test-discovery.test.js` falla si aparece un test fuera de esas
 raíces o con una extensión que los globs no recogen.
 
@@ -65,10 +65,10 @@ tests de las dos mitades afirman **los mismos números con los mismos datos**:
 Las diferencias que se dejan a propósito están escritas como casos con el
 prefijo `DIFERENCIA CONOCIDA`, para que salten si alguien cambia un lado.
 
-Dentro del propio backend, la fusión de ingredientes de una receta existe dos
-veces (`recipes/recipe-merge.service.js` y `dietDays/diet-days-nutrition-util.js`,
-que es pura a propósito). Un caso de `diet-days-nutrition-util.test.js` compara
-sus listas de campos pisables para que no se separen.
+Dentro del backend, la fusión de ingredientes de una receta existe una sola
+vez (`dietDays/diet-days-nutrition-util.js`, pura). `recipes/recipe-merge.js`
+solo sanea lo que llega; los dos leen los campos pisables del catálogo único
+`util/nutrient-fields.js`.
 
 ## Qué está cubierto
 
@@ -90,14 +90,11 @@ en lo que cuesta dinero o es difícil de deshacer: `trainerBilling`,
 | `progressMedia` | 527 | Qué ve el profesional de las fotos del cliente |
 | `techniqueVideos` | 414 | Biblioteca del profesional |
 | `trainerTasks` | 384 | Tareas y hábitos pautados |
-| `diets` | 355 | Capa de compatibilidad + recientes de una comida |
 | `supplements` | 353 | Pauta de suplementos |
 | `notifications` | 312 | Avisos al cliente |
 | `envManager` | 281 | Operación del servidor |
 | `trainerIntakeConfig` | 267 | Formulario de alta que configura el profesional |
-| `mealProposals` | 241 | Alternativas de comida |
 | `coachTasks` | 234 | Tareas del profesional |
-| `clientIntake` | 183 | Respuestas del alta |
 | `reviewQueue` | 161 | Cola de revisión |
 | `mealSnippets` | 95 | Comidas guardadas |
 | `gitManager`, `trainerNotes`, `serverManager`, `appVersion` | 181 | Piezas pequeñas |

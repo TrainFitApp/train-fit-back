@@ -3,17 +3,13 @@
 // siendo 100% editable: esto es solo el valor inicial del formulario, guardar
 // crea el override real de SIEMPRE (ver exercise-score-controller.js#upsert).
 //
-// POR QUÉ NO SALE DE Exercise.muscleGroups1/2
-// Se probó primero derivarlo del propio catálogo de ejercicios
-// (muscleGroups1/2), pero ese campo usa un vocabulario de solo 5 categorías
-// anchas (Pecho/Espalda/Pierna/Core/Hombros — ver
-// packages/shared-ui/src/app/shared/constants/muscle-groups.ts) mientras que
-// la puntuación usa 16 músculos finos + 8 articulaciones. No hay mapeo fiable
-// entre los dos ("Pierna" no dice si castiga Cuádriceps, Femoral, Glúteo o
-// Aductor; ni siquiera existe categoría para Bíceps/Tríceps). Inventar ese
-// mapeo sería fabricar un dato, justo lo que exercise-score-catalog.js dice
-// explícitamente que esta puntuación NO debe ser ("un criterio oficial que
-// nadie le ha pedido a la aplicación").
+// POR QUÉ NO SALE DE Exercise.muscles
+// La puntuación usa su propio vocabulario (16 músculos finos + 8
+// articulaciones, exercise-score-catalog.js) y mide cuánto CASTIGA el
+// ejercicio, no qué músculos trabaja. Derivarla de los músculos sería
+// fabricar un dato, justo lo que exercise-score-catalog.js dice que esta
+// puntuación NO debe ser ("un criterio oficial que nadie le ha pedido a la
+// aplicación").
 //
 // EN VEZ DE ESO: una biblioteca curada por PATRÓN DE MOVIMIENTO, emparejada
 // por palabras clave contra el NOMBRE real del ejercicio (auditado contra los

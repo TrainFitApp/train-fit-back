@@ -1,18 +1,19 @@
 const dietDaysService = require("./diet-days-service");
 const dietDaysUtil = require("./diet-days-util");
 const dietDaySchema = require("./diet-days-schema");
-const planResolver = require("../planAssignments/plan-resolver");
-const mealProposalDao = require("../mealProposals/meal-proposal-dao");
+const mealStore = require("../meals/meal-store");
+const planResolver = require("../dietPhases/diet-phase-resolver");
+const mealAlternatives = require("../meals/meal-alternatives");
 const { daysInRange, addDaysToIsoDate } = require("../util/date-util");
 
-// Fase 9 — aplica un `resolved` de plan-resolver.js#resolvePlanForDate
+// Fase 9 — aplica un `resolved` de diet-phase-resolver.js#resolvePlanForDate
 // ({slot: {alternatives:[...]}}) sobre un DietDay YA EXISTENTE, comida a
 // comida. Opciones de comida (2026-09): 1 alternativa se pautea directa;
 // 2+ se guardan en la comida con la PRIMERA ya aplicada (el cliente alterna
 // desde el selector de `meal.component.html`, sin estado "pendiente");
 // 0 alternativas (plan sin nada para ese hueco, o excepción "skip") retira
 // lo pautado y el selector. Lo que el cliente añadió por su cuenta nunca se
-// toca (ver meal-proposal-dao.js#applyAlternative). Reutilizable tanto al
+// toca (ver meals/meal-alternatives.js). Reutilizable tanto al
 // crear el día por primera vez como al elegir/cambiar el tipo de día
 // explícitamente (ver diet-days-controller.js#chooseDayType).
 // `clearMissing`: un slot que el plan ya no menciona se trata como vacío
@@ -33,11 +34,11 @@ async function applyResolvedPlanToDietDay(dietDayDoc, date, resolved, trainerId,
       (alt) => (alt.customProducts || []).length || (alt.customRecipes || []).length
     );
     if (!nonEmpty.length) {
-      await mealProposalDao.clearForDateAndSlot(clientId, date, slotName);
+      await mealAlternatives.clearForDateAndSlot(clientId, date, slotName);
       continue;
     }
 
-    await mealProposalDao.create(trainerId, clientId, date, slotName, nonEmpty);
+    await mealAlternatives.applyToSlot(trainerId, clientId, date, slotName, nonEmpty);
     appliedAny = true;
   }
   return appliedAny;
@@ -77,19 +78,13 @@ async function trySyncEmptyDietDayWithActivePlan(dietDayDoc, date, userId) {
   }
 }
 
-// Extraído de trainer-client-data-controller.js (F12) para reutilizarlo
-// también en meal-proposal-controller.js (F28) — resuelve/crea el DietDay de
-// un usuario para una fecha dada, sin asumir que ya existe. Nunca confiar en
-// un mealId/mealSlot suelto sin resolverlo contra el dietInUse real del
-// usuario (ver el IDOR ya documentado en meal-dao.js#pasteMeal).
+// Resuelve/crea el DietDay de un usuario para una fecha dada, sin asumir que
+// ya existe, y le aplica el plan vigente. Nunca confiar en un mealId/mealSlot
+// suelto sin resolverlo contra los días del usuario (ver
+// resolveOwnedMealById). La creación vive entera en ensureDietDay
+// (idempotente y a prueba de carreras); aquí solo queda lo propio del
+// resolver: aplicar el plan activo.
 async function resolveOwnedDietDay(userId, date) {
-  // Refactor nutrición (2026-09) — ya no hay wrapper Diet que crear ni
-  // enganchar: un día pertenece a su usuario por su propio userId, así que
-  // "asegurar que el usuario tiene dieta" deja de existir como paso.
-  //
-  // 2026-10 — la creación vive entera en ensureDietDay (idempotente y a
-  // prueba de carreras); aquí solo queda lo que es propio del resolver:
-  // aplicar el plan activo.
   let { dietDay, created } = await dietDaysService.ensureDietDay(userId, date);
   if (created) {
     // Auditoría de arquitectura (nutrición) — SOLO al crear un día nuevo: si
@@ -100,7 +95,7 @@ async function resolveOwnedDietDay(userId, date) {
     // plan) resolvePlanForDate devuelve null y este bloque no hace nada:
     // comportamiento IDÉNTICO al de antes de esta pieza. Un fallo aquí
     // nunca debe tirar abajo la creación del día ya hecha. Sin menú elegido
-    // todavía (ver plan-resolver.js) esto también devuelve null — el día se
+    // todavía (ver diet-phase-resolver.js) esto también devuelve null — el día se
     // crea vacío hasta que el cliente elija explícitamente.
     const appliedAny = await trySyncEmptyDietDayWithActivePlan(dietDay, date, userId);
     if (appliedAny) {
@@ -122,41 +117,25 @@ async function resolveOwnedDietDay(userId, date) {
 }
 
 // Resuelve un mealId suelto (p. ej. `mealToPaste._id` enviado por el cliente
-// en `PUT /meals/paste`) contra el `dietInUse` REAL del usuario autenticado,
+// en `PUT /meals/paste`) contra los días REALES del usuario autenticado,
 // devolviendo el `Meal` auténtico ya autopoblado desde BD — nunca el objeto
 // que pudiera enviar el cliente en el body. Corrige el IDOR documentado en
 // `meal-dao.js#pasteMeal` (ver `MVP-trainers/funcionalidades/F12-pautar-comida.md`
 // §15): un `mealToPaste`/`customProducts` controlado por el cliente nunca debe
 // usarse para identificar QUÉ comida mutar ni qué productos/recetas borrar.
 async function resolveOwnedMealById(userId, mealId) {
-  // Antes: cargar la Diet entera autopoblada (todos los días, todas las
-  // comidas, todos los productos) y recorrerla en memoria. Ahora la
-  // pertenencia se comprueba con una única consulta indexada: el día que
-  // contiene esa comida Y es de este usuario.
-  const dietDay = await dietDaySchema.findOne({ userId, meals: mealId });
-  const meal = (dietDay?.meals || []).find((m) => String(m._id) === String(mealId));
+  // La comida va embebida en su día: buscarla por (usuario, id de comida) es
+  // a la vez localizarla y comprobar que es suya.
+  const meal = await mealStore.readOwnedDayMeal(userId, mealId);
   if (meal) return meal;
 
   const err = new Error("La comida indicada no pertenece a tu dieta");
   err.code = "MEAL_NOT_FOUND";
+  err.status = 400;
+  err.publicMessage = err.message;
   throw err;
 }
 
-// Opciones de comida (2026-09) — el profesional edita una fase/semana ya
-// asignado (añade una opción, cambia cantidades…) y los días que el cliente
-// YA había abierto no se enteraban: solo se resolvía el plan al crear el día
-// o si seguía vacío. Vuelve a aplicar el plan sobre los DietDay existentes
-// del cliente en [from, to] (to null = sin tope), pasados incluidos: un día
-// sin nada marcado no es histórico real, es un día que el cliente aún no ha
-// seguido. Se salta:
-//   · días con algún alimento pautado ya marcado como consumido (el cliente
-//     ya está siguiendo ese día tal como estaba),
-//   · días para los que el plan no resuelve nada (fuera de plan, o sin menú
-//     elegido).
-// Lo que el cliente añadió por su cuenta se conserva (applyAlternative).
-// Nunca lanza: un fallo aquí no debe tumbar la edición del plan.
-// Un día en el que el cliente ya marcó como tomado algo pautado: ya lo está
-// siguiendo tal como estaba, así que ni se resincroniza ni se vacía.
 function hasConsumedPlanned(day) {
   return (day.meals || []).some(
     (meal) =>
@@ -174,53 +153,39 @@ function findClientDaysInRange(clientId, from, to) {
     .sort({ date: 1 });
 }
 
+/**
+ * Los días que el cliente ya tiene abiertos en [from, to] (null = sin fin)
+ * recogen lo que rige ahora: se llama al empezar, editar, mover o quitar una
+ * fase y al preparar o descartar una semana. Un día con menú elegido se
+ * vuelve a pautar con ese menú; si ese menú ya no existe (o ya no hay fase),
+ * se vacía de lo pautado y vuelve a quedar sin elegir. Lo que el cliente
+ * anotó por su cuenta se queda, y un día en el que ya ha marcado algo pautado
+ * como tomado no se toca: lo está siguiendo. Nunca lanza.
+ */
 async function resyncPlannedDays(clientId, from, to = null) {
   if (!from) return 0;
+  // Import diferido: diet-skips no depende de este módulo, pero así se evita
+  // cualquier ciclo al cargar.
+  const { clearPlannedDay } = require("./diet-skips");
 
   let resynced = 0;
   try {
     const days = await findClientDaysInRange(clientId, from, to);
-
     for (const day of days) {
-      if (hasConsumedPlanned(day)) continue;
+      if (!day.menuName || hasConsumedPlanned(day)) continue;
 
-      const result = await planResolver.resolvePlanForDate(clientId, day.date, {
-        chosenMenuName: day.menuName || undefined,
-      });
-      if (!result) continue;
-
-      await applyResolvedPlanToDietDay(day, day.date, result.resolved, result.trainerId, clientId, {
-        clearMissing: true,
-      });
+      const result = await planResolver.resolvePlanForDate(clientId, day.date, { chosenMenuName: day.menuName });
+      if (result) {
+        await applyResolvedPlanToDietDay(day, day.date, result.resolved, result.trainerId, clientId, { clearMissing: true });
+      } else {
+        await clearPlannedDay(clientId, day.date, day);
+      }
       resynced += 1;
     }
   } catch (e) {
     console.error("[resyncPlannedDays] Error resincronizando días con el plan:", e.message);
   }
   return resynced;
-}
-
-// Quitar una fase: los días que el cliente ya había abierto con ella se
-// vacían de lo pautado (y del menú elegido), salvo los que ya estaba
-// siguiendo, y se vuelven a resolver con lo que rija ahora (la fase que se
-// reactiva, si la hay). resyncPlannedDays solo no basta: cuando el plan ya
-// no resuelve nada para un día, se lo salta y lo pautado se quedaba, con su
-// meta. Nunca lanza, como resyncPlannedDays.
-async function clearAndResyncPlannedDays(clientId, from, to = null) {
-  if (!from) return 0;
-  // Import diferido: diet-skips no depende de este módulo, pero así se evita
-  // cualquier ciclo al cargar.
-  const { clearPlannedDay } = require("./diet-skips");
-  try {
-    const days = await findClientDaysInRange(clientId, from, to);
-    for (const day of days) {
-      if (hasConsumedPlanned(day)) continue;
-      await clearPlannedDay(clientId, day.date, day);
-    }
-  } catch (e) {
-    console.error("[clearAndResyncPlannedDays] Error vaciando días de la fase quitada:", e.message);
-  }
-  return resyncPlannedDays(clientId, from, to);
 }
 
 // F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
@@ -243,10 +208,8 @@ async function clearAndResyncPlannedDays(clientId, from, to = null) {
 // Auditoría 2026-09): el mismo bug de materialización que ya se arregló
 // para "Seguimiento" seguía vivo en el cálculo de adherencia del Resumen,
 // que leía los DietDay materializados directamente sin pasar por aquí.
-async function getTrackingDaysForClient(clientId, dietId, from, to) {
-  const materialized = dietId
-    ? await dietDaysService.getFullyPopulatedDietDaysForUser(dietId, from, to)
-    : [];
+async function getTrackingDaysForClient(clientId, from, to) {
+  const materialized = await dietDaysService.getFullyPopulatedDietDaysForUser(clientId, from, to);
   const materializedDates = new Set(materialized.map((d) => d.date));
 
   const days = [...materialized];
@@ -292,6 +255,5 @@ module.exports = {
   resolveOwnedMealById,
   applyResolvedPlanToDietDay,
   resyncPlannedDays,
-  clearAndResyncPlannedDays,
   getTrackingDaysForClient,
 };

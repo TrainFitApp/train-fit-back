@@ -1,4 +1,4 @@
-const painDao = require("./pain-dao");
+const painService = require("./pain-service");
 const {
   PAIN_ZONES,
   PAIN_BANDS,
@@ -8,8 +8,7 @@ const {
   sanitizePainEntry,
   sanitizeThreshold,
 } = require("./pain-catalog");
-const { todayIsoDate, addDaysToIsoDate } = require("../util/date-util");
-const { todayForUser } = require("../users/user-time-zone");
+const { todayIsoDate } = require("../util/date-util");
 
 // Ventana por defecto del histórico que ve el entrenador. 28 días, el mismo
 // periodo que analizan las alertas y el resumen de la ficha: tres ventanas
@@ -37,7 +36,7 @@ module.exports = {
   // GET /pain/mine?date=YYYY-MM-DD — lo que el cliente apuntó ese día.
   async listMine(req, res) {
     const date = req.query.date || todayIsoDate(req.auth.timeZone);
-    const entries = await painDao.listForDate(req.user.id, date);
+    const entries = await painService.listForDate(req.user.id, date);
     return res.send({ date, entries });
   },
 
@@ -47,12 +46,7 @@ module.exports = {
     // Tope duro: `days` viene del query string, y sin límite una petición
     // podría pedir diez años de registros.
     const safeDays = Math.min(Math.max(days, 1), 365);
-    const today = todayIsoDate(req.auth.timeZone);
-    const entries = await painDao.listForRange(
-      req.user.id,
-      addDaysToIsoDate(today, -(safeDays - 1)),
-      today
-    );
+    const entries = await painService.listLastDays(req.user.id, todayIsoDate(req.auth.timeZone), safeDays);
     return res.send({ days: safeDays, entries });
   },
 
@@ -66,7 +60,7 @@ module.exports = {
         code: "PAIN_INVALID_ENTRY",
       });
     }
-    const saved = await painDao.upsertEntry(req.user.id, date, entry);
+    const saved = await painService.upsertEntry(req.user.id, date, entry);
     return res.send(saved);
   },
 
@@ -77,7 +71,7 @@ module.exports = {
     const date = req.query.date || todayIsoDate(req.auth.timeZone);
     const zone = req.query.zone;
     if (!zone) return res.status(400).send({ message: "Falta la zona" });
-    await painDao.removeEntry(req.user.id, date, zone);
+    await painService.removeEntry(req.user.id, date, zone);
     return res.sendStatus(204);
   },
 
@@ -88,11 +82,7 @@ module.exports = {
   // ficha a hacer dos llamadas para pintar una tarjeta.
   async getClientPain(req, res) {
     const days = Math.min(Math.max(Number(req.query.days) || PAIN_WINDOW_DAYS, 1), 365);
-    const today = await todayForUser(req.params.clientId);
-    const [entries, thresholds] = await Promise.all([
-      painDao.listForRange(req.params.clientId, addDaysToIsoDate(today, -(days - 1)), today),
-      painDao.listThresholds(req.auth.userId, req.params.clientId),
-    ]);
+    const { entries, thresholds } = await painService.clientPain(req.auth.userId, req.params.clientId, days);
     return res.send({ days, entries, thresholds });
   },
 
@@ -106,16 +96,13 @@ module.exports = {
         code: "PAIN_INVALID_THRESHOLD",
       });
     }
-    const saved = await painDao.upsertThreshold(
-      req.auth.userId,
-      req.params.clientId,
-      threshold
-    );
+    const saved = await painService.upsertThreshold(req.auth.userId, req.params.clientId, threshold);
+    if (!saved) return res.status(404).send({ message: "No tienes una relación con este cliente" });
     return res.send(saved);
   },
 
   async removeThreshold(req, res) {
-    await painDao.removeThreshold(req.auth.userId, req.params.clientId, req.params.zone);
+    await painService.removeThreshold(req.auth.userId, req.params.clientId, req.params.zone);
     return res.sendStatus(204);
   },
 };

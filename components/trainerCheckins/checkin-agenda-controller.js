@@ -1,97 +1,22 @@
-const Schedule = require("./checkin-schedule-schema");
-const checkinDao = require("./checkin-dao");
 const agenda = require("./checkin-agenda-service");
-const notificationDao = require("../notifications/notification-dao");
+const scheduleService = require("./checkin-schedule-service");
 const { validateTiming, validDate } = require("./checkin-schedule-dates");
-const { CHECKIN_FIELDS_BY_KEY } = require("./checkin-field-catalog");
 const { todayForUser } = require("../users/user-time-zone");
 
-const scope = (req) => ({ trainerId: req.auth.userId, clientId: req.params.clientId });
 const validId = (id) => typeof id === "string" && /^[a-f\d]{24}$/i.test(id);
 const notFound = (res) => res.status(404).send({ message: "Check-in no encontrado" });
 
 // Tope del resumen de Seguimiento: el chip más largo es "3 años".
 const MAX_SUMMARY_DAYS = 3 * 365;
 
-// Timing por defecto al aplicar una plantilla desde la biblioteca: empieza
-// hoy (el del entrenador, que es quien la aplica), semanal. El entrenador lo
-// afina después en la ficha del cliente — aplicar no debería obligar a
-// rellenar un formulario de fechas.
-function defaultTiming(today) {
-  return { startDate: today, time: "09:00", frequency: "weekly", interval: 1 };
-}
-
-function scheduleContent(definition) {
-  return {
-    name: definition.name,
-    sourceTemplateId: definition._id,
-    enabledFields: definition.enabledFields || [],
-    requiredFields: definition.requiredFields || [],
-    customQuestions: (definition.customQuestions || []).map((q) => (typeof q.toObject === "function" ? q.toObject() : q)),
-  };
-}
-
-// PURO. Preguntas elegidas campo a campo, sin plantilla: solo claves del
-// catálogo, sin repetir, ninguna obligatoria y sin preguntas propias.
-// null si alguna clave no existe.
-function looseContent(fields) {
-  const enabledFields = [...new Set(fields)];
-  if (enabledFields.some((key) => !CHECKIN_FIELDS_BY_KEY.has(key))) return null;
-  return { sourceTemplateId: null, enabledFields, requiredFields: [], customQuestions: [] };
-}
-
-function hasQuestions(content) {
-  return !!content.enabledFields?.length || !!content.customQuestions?.some((q) => q.enabled !== false);
-}
-
-/**
- * Las preguntas que pide el cuerpo de la petición: campos sueltos
- * (`enabledFields`) o una plantilla (`sourceTemplateId`). Al editar, volver a
- * mandar la misma plantilla no la copia otra vez: `content` sale null y las
- * preguntas se quedan como estaban.
- */
-async function requestedContent(req, data, existing) {
-  if (Array.isArray(data.enabledFields)) {
-    const content = looseContent(data.enabledFields);
-    return content ? { content } : { error: "Hay un campo de check-in que no existe" };
-  }
-  if (existing && (!data.sourceTemplateId || String(existing.sourceTemplateId) === data.sourceTemplateId)) {
-    return { content: null };
-  }
-  const definition = validId(data.sourceTemplateId)
-    ? await checkinDao.getDefinitionById(req.auth.userId, data.sourceTemplateId)
-    : null;
-  return definition ? { content: scheduleContent(definition) } : { error: "Selecciona una plantilla disponible" };
-}
-
 module.exports = {
-  scheduleContent,
-  looseContent,
-  hasQuestions,
-  defaultTiming,
-
   // GET /trainer/clients/:clientId/checkin-agenda?from&to
   async agenda(req, res) {
     const { from, to } = req.query;
     if (!validDate(from) || !validDate(to) || from > to || Date.parse(to) - Date.parse(from) > 370 * 86400000) {
       return res.status(400).send({ message: "Elige un rango de hasta un año" });
     }
-    const today = await todayForUser(req.params.clientId);
-    const { schedules, entries } = await agenda.agendaFor(req.auth.userId, req.params.clientId, from, to, today);
-    // Las respuestas viajan con la MISMA forma que las entradas de la agenda
-    // (no el documento crudo): la pestaña "Por revisar" y la comparación
-    // entre respuestas leen `responseId`/`date` igual que en el calendario,
-    // y sin esto el botón de revisar no sabía a qué respuesta apuntaba.
-    const responses = (await checkinDao.listResponses(req.auth.userId, req.params.clientId)).map((response) =>
-      agenda.entryOfResponse(response)
-    );
-    const reviewCount = responses.filter((r) => r.status === "responded").length;
-    return res.send({
-      schedules: schedules.map((schedule) => ({ ...schedule, nextDate: agenda.nextDateOf(schedule, today) })),
-      entries,
-      responses,
-      reviewCount,
-    });
+    return res.send(await agenda.agendaView(req.auth.userId, req.params.clientId, from, to));
   },
 
   // GET /trainer/clients/:clientId/checkin-summary?days=N — de las ocurrencias
@@ -112,7 +37,7 @@ module.exports = {
   // decir "2 check-ins" y abrir el panel. Pedir la agenda entera para esto
   // traería un año de ocurrencias calculadas que nadie va a pintar.
   async listSchedules(req, res) {
-    return res.send(await Schedule.find(scope(req)).sort({ createdAt: 1 }).lean());
+    return res.send(await scheduleService.list(req.auth.userId, req.params.clientId));
   },
 
   // GET /trainer/clients/:clientId/checkin-schedules/:scheduleId/history?before&limit
@@ -130,15 +55,12 @@ module.exports = {
       return res.status(400).send({ message: "limit debe estar entre 1 y 200" });
     }
 
-    const schedule = await Schedule.findOne({ ...scope(req), _id: req.params.scheduleId }).lean();
-    if (!schedule) return notFound(res);
-
-    const history = await agenda.scheduleHistory(schedule, {
-      before: before || null,
-      limit: size,
-      today: await todayForUser(req.params.clientId),
-    });
-    return res.send({ schedule, ...history });
+    return res.send(
+      await scheduleService.history(req.auth.userId, req.params.clientId, req.params.scheduleId, {
+        before: before || null,
+        limit: size,
+      })
+    );
   },
 
   // POST/PUT /trainer/clients/:clientId/checkin-schedules[/:scheduleId]
@@ -150,42 +72,10 @@ module.exports = {
       return res.status(400).send({ message: "Escribe un nombre de hasta 100 caracteres" });
     }
 
-    const existing =
-      req.params.scheduleId && validId(req.params.scheduleId)
-        ? await Schedule.findOne({ ...scope(req), _id: req.params.scheduleId }).lean()
-        : null;
-    if (req.params.scheduleId && !existing) return notFound(res);
+    if (req.params.scheduleId && !validId(req.params.scheduleId)) return notFound(res);
 
-    const timing = {
-      startDate: data.startDate,
-      time: data.time,
-      frequency: data.frequency,
-      interval: data.interval,
-    };
-
-    const { content, error } = await requestedContent(req, data, existing);
-    if (error) return res.status(400).send({ message: error });
-    if (content && !hasQuestions(content)) {
-      return res.status(400).send({ message: "El check-in necesita al menos una pregunta activa" });
-    }
-
-    if (existing) {
-      if (data.revision !== undefined && data.revision !== existing.revision) {
-        return res.status(409).send({ message: "La programación ha cambiado. Recarga antes de guardarla" });
-      }
-      // Cambiar las preguntas no toca lo ya respondido: cada respuesta guarda
-      // una copia de las suyas (checkin-response-schema.js).
-      const updated = await Schedule.findOneAndUpdate(
-        { ...scope(req), _id: existing._id, revision: existing.revision },
-        { $set: { ...content, ...timing, name: data.name.trim() }, $inc: { revision: 1 } },
-        { new: true }
-      ).lean();
-      if (!updated) return res.status(409).send({ message: "La programación está cambiando. Recarga y vuelve a intentarlo" });
-      return res.send(updated);
-    }
-
-    const created = await Schedule.create({ ...scope(req), ...content, ...timing, name: data.name.trim() });
-    return res.status(201).send(created);
+    const { created, schedule } = await scheduleService.save(req.auth.userId, req.params.clientId, req.params.scheduleId, data);
+    return res.status(created ? 201 : 200).send(schedule);
   },
 
   // POST /trainer/clients/:clientId/checkin-schedules/:scheduleId/request —
@@ -195,26 +85,8 @@ module.exports = {
   // hoy ya tiene una abierta sin responder, no se duplica.
   async requestNow(req, res) {
     if (!validId(req.params.scheduleId)) return notFound(res);
-    const schedule = await Schedule.findOne({ ...scope(req), _id: req.params.scheduleId }).lean();
-    if (!schedule) return notFound(res);
-    if (!schedule.active) return res.status(409).send({ message: "Reanuda la programación antes de enviarla" });
-
-    const today = await todayForUser(req.params.clientId);
-    if (await agenda.openUnanswered(schedule, today)) return res.send({ alreadyOpen: true });
-
-    const created = await Schedule.create({
-      ...scope(req),
-      name: schedule.name,
-      sourceTemplateId: schedule.sourceTemplateId,
-      enabledFields: schedule.enabledFields,
-      requiredFields: schedule.requiredFields,
-      customQuestions: schedule.customQuestions,
-      startDate: today,
-      time: schedule.time,
-      frequency: "once",
-      interval: 1,
-    });
-    return res.status(201).send(created);
+    const result = await scheduleService.requestNow(req.auth.userId, req.params.clientId, req.params.scheduleId);
+    return result.alreadyOpen ? res.send(result) : res.status(201).send(result.created);
   },
 
   // PATCH /trainer/clients/:clientId/checkin-schedules/:scheduleId/active
@@ -222,12 +94,7 @@ module.exports = {
     if (!validId(req.params.scheduleId) || typeof req.body?.active !== "boolean") {
       return res.status(400).send({ message: "Programación no válida" });
     }
-    const updated = await Schedule.findOneAndUpdate(
-      { ...scope(req), _id: req.params.scheduleId },
-      { $set: { active: req.body.active }, $inc: { revision: 1 } },
-      { new: true }
-    ).lean();
-    if (!updated) return notFound(res);
+    await scheduleService.setActive(req.auth.userId, req.params.clientId, req.params.scheduleId, req.body.active);
     return res.sendStatus(204);
   },
 
@@ -236,8 +103,7 @@ module.exports = {
   // cliente, no de la programación.
   async deleteSchedule(req, res) {
     if (!validId(req.params.scheduleId)) return notFound(res);
-    const deleted = await Schedule.findOneAndDelete({ ...scope(req), _id: req.params.scheduleId }).lean();
-    if (!deleted) return notFound(res);
+    await scheduleService.remove(req.auth.userId, req.params.clientId, req.params.scheduleId);
     return res.sendStatus(204);
   },
 
@@ -248,21 +114,7 @@ module.exports = {
     if (typeof comment !== "string" || comment.length > 2000) {
       return res.status(400).send({ message: "El comentario admite hasta 2000 caracteres" });
     }
-    const reviewed = await checkinDao.review(
-      req.auth.userId,
-      req.params.clientId,
-      req.params.responseId,
-      comment.trim()
-    );
-    if (!reviewed) return notFound(res);
-
-    // Aviso dentro de la app (no push): el cliente ve que su check-in ya
-    // está revisado la próxima vez que la abre.
-    await notificationDao.create(req.params.clientId, req.auth.userId, "checkin_reviewed", {
-      name: reviewed.name,
-      occurrenceDate: reviewed.occurrenceDate,
-      hasComment: !!reviewed.reviewComment,
-    });
+    const reviewed = await scheduleService.review(req.auth.userId, req.params.clientId, req.params.responseId, comment.trim());
     return res.send(reviewed);
   },
 };

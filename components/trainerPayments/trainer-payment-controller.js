@@ -51,7 +51,7 @@ module.exports = {
   handler,
   write,
   // Global (Configuración > Cobros)
-  getSummary: upToDate((req) => overview.getLegacySummary(trainer(req))),
+  getSummary: upToDate((req) => overview.getDashboardSummary(trainer(req))),
   getOverview: upToDate((req) => overview.getOverview(trainer(req), req.query)),
   getSettings: handler((req) => overview.getSettings(trainer(req))),
   saveSettings: write((req) => overview.saveSettings(trainer(req), req.body)),

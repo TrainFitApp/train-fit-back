@@ -7,5 +7,4 @@ export * from "./calendar";
 export * from "./ledger";
 export * from "./plan";
 export * from "./reminders";
-export * from "./legacy";
 export * from "./dto";

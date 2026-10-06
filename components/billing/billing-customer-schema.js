@@ -23,4 +23,6 @@ const BillingCustomerSchema = new mongoose.Schema(
   },
 );
 
+BillingCustomerSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"] });
+
 module.exports = mongoose.model("BillingCustomer", BillingCustomerSchema);

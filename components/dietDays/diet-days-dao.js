@@ -1,12 +1,13 @@
 const dietDaySchema = require("./diet-days-schema");
-const mealSchema = require("../meals/meal-schema");
-const mealModel = require("../meals/meal-service");
-const customProductSchema = require("../customProducts/custom-product-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const customProductDao = require("../customProducts/custom-product-dao");
+const mealStore = require("../meals/meal-store");
+const { cloneClipboardContent } = require("../meals/meal-dao");
+const { mutateDocument } = require("../util/embedded-store");
 const { default: mongoose } = require("mongoose");
 const dietDaysUtil = require("./diet-days-util");
 
+// Días de dieta con sus comidas, alimentos y recetas EMBEBIDOS (2026-10).
 const DUPLICATE_KEY = 11000;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -19,9 +20,8 @@ const badRequest = (message) => {
   return error;
 };
 
-// `dietDay.meals` llega con ObjectId sueltos cuando el día se acaba de crear
-// y con las Meal ya pobladas (autopopulate) cuando se leyó de BD: el hueco se
-// localiza igual en los dos casos.
+// Id de la comida del hueco `indexMeal` (las comidas van embebidas y en el
+// orden de los huecos).
 const mealIdAt = (dietDay, indexMeal) => {
   const mealRef = (dietDay?.meals || [])[Number(indexMeal)];
   if (!mealRef) throw badRequest("Esa comida no existe en el día indicado");
@@ -37,16 +37,7 @@ const toPlainPayload = (value) => {
 
 module.exports = {
   async findAll(page, limit) {
-    return new Promise((resolve, reject) =>
-      dietDaySchema
-        .find({})
-        .skip(page * limit)
-        .limit(limit)
-        .exec((err, docs) => {
-          if (err) return reject(err);
-          return resolve(docs);
-        }),
-    );
+    return dietDaySchema.find({}).skip(page * limit).limit(limit);
   },
 
   // Refactor nutrición (2026-09) — antes: findById sobre el wrapper Diet, que
@@ -63,49 +54,20 @@ module.exports = {
   // (userId, date), que es justo el índice nuevo — un nivel menos de
   // indirección y sin depender del wrapper. Devuelve la lista de días
   // directamente, no envuelta en {dietDays: [...]}.
+  // Calendario del cliente (y adherencia): solo los macros que guarda cada
+  // alimento, sin poblar nada. Las comidas van embebidas y en su orden.
   async getDietDaysBetweenDatesByUser(userId, startDate, endDate) {
-    const agg = [
+    return dietDaySchema.aggregate([
       {
         $match: {
           userId: new mongoose.Types.ObjectId(userId),
           date: { $gte: startDate, $lte: endDate },
         },
       },
-      {
-        $sort: {
-          date: 1,
-        },
-      },
-      {
-              // MVP-trainers F20 (2026-08-01) — pipeline-lookup (en vez del
-              // localField/foreignField anterior) para poder resolver un
-              // nivel más de profundidad: cada meal.customProducts sigue
-              // siendo un array de ObjectId hasta que se resuelve aquí. Sin
-              // esto, el consumidor de este endpoint (calendario de dieta del
-              // cliente, o el cálculo de adherencia de F20) recibía comidas
-              // sin ningún contenido nutricional, aunque el cliente sí las
-              // tuviera registradas.
-              $lookup: {
-                from: "meals",
-                let: { mealIds: "$meals" },
-                pipeline: [
-                  { $match: { $expr: { $in: ["$_id", "$$mealIds"] } } },
-                  {
-                    $lookup: {
-                      from: "customproducts",
-                      localField: "customProducts",
-                      foreignField: "_id",
-                      as: "customProducts",
-                    },
-                  },
-                ],
-          as: "meals",
-        },
-      },
+      { $sort: { date: 1 } },
       {
         $project: {
           _id: 1,
-          name: 1,
           date: 1,
           notes: 1,
           skipped: 1,
@@ -123,9 +85,7 @@ module.exports = {
           },
         },
       },
-    ];
-
-    return await dietDaySchema.aggregate(agg);
+    ]);
   },
 
   // F20-bis — a diferencia de getDietDaysBetweenDatesByIdDiet (aggregate con
@@ -156,15 +116,14 @@ module.exports = {
   },
 
   // Coach Pro — días de VARIOS usuarios con solo lo que lee
-  // diet-days-nutrition-util#computeRangeAdherence: Meal.completed y, de cada
-  // item, assignedByTrainerId + consumed. Sustituye, para las alertas y la
+  // diet-days-nutrition-util#computeRangeAdherence: de cada item,
+  // assignedByTrainerId + consumed. Sustituye, para las alertas y la
   // Cartera, a un getFullyPopulatedDietDaysForUser por cliente y en serie,
   // que arrastraba el árbol entero de autopopulate (productos, recetas,
   // ingredientes) para contar marcas. Una agregación para toda la cartera.
   // Sin orden: la adherencia de un rango no depende de él.
   async listTrackingDaysForUsers(userIds, startDate, endDate) {
     if (!userIds.length) return [];
-    const itemFields = [{ $project: { assignedByTrainerId: 1, consumed: 1 } }];
     return dietDaySchema.aggregate([
       {
         $match: {
@@ -172,34 +131,15 @@ module.exports = {
           date: { $gte: startDate, $lte: endDate },
         },
       },
-      { $project: { userId: 1, date: 1, meals: 1 } },
       {
-        $lookup: {
-          from: "meals",
-          localField: "meals",
-          foreignField: "_id",
-          as: "meals",
-          pipeline: [
-            { $project: { completed: 1, customProducts: 1, customRecipes: 1 } },
-            {
-              $lookup: {
-                from: "customproducts",
-                localField: "customProducts",
-                foreignField: "_id",
-                as: "customProducts",
-                pipeline: itemFields,
-              },
-            },
-            {
-              $lookup: {
-                from: "customrecipes",
-                localField: "customRecipes",
-                foreignField: "_id",
-                as: "customRecipes",
-                pipeline: itemFields,
-              },
-            },
-          ],
+        $project: {
+          userId: 1,
+          date: 1,
+          meals: {
+            _id: 1,
+            customProducts: { _id: 1, assignedByTrainerId: 1, consumed: 1 },
+            customRecipes: { _id: 1, assignedByTrainerId: 1, consumed: 1 },
+          },
         },
       },
     ]);
@@ -216,7 +156,8 @@ module.exports = {
   // La carrera de verdad (dos peticiones simultáneas del mismo cliente para
   // la misma fecha, p. ej. dos checkbox seguidos del buscador de alimentos) la
   // corta el índice único {userId, date} de diet-days-schema.js: la perdedora
-  // recibe E11000, tira las Meal que acababa de crear y relee la ganadora.
+  // recibe E11000 y relee la ganadora (las comidas van dentro del día: no
+  // queda nada suelto que limpiar).
   async ensureDietDay(userId, date) {
     // Un día con fecha basura dejaría de encontrarse por (userId, date), que
     // es la clave de todo el módulo: se corta aquí, en el único sitio que
@@ -228,18 +169,15 @@ module.exports = {
     const existing = await dietDaySchema.findOne({ userId, date });
     if (existing) return { dietDay: existing, created: false };
 
-    const meals = await mealSchema.insertMany(
-      dietDaysUtil.getStandardDietDay(date).meals,
-    );
-    const mealIds = meals.map((meal) => meal._id);
-
     try {
-      const dietDay = await dietDaySchema.create({ userId, date, meals: mealIds });
+      const dietDay = await dietDaySchema.create({
+        userId,
+        date,
+        meals: dietDaysUtil.getStandardDietDay(date).meals,
+      });
       return { dietDay, created: true };
     } catch (error) {
       if (error?.code !== DUPLICATE_KEY) throw error;
-
-      await mealSchema.deleteMany({ _id: { $in: mealIds } });
       return {
         dietDay: await dietDaySchema.findOne({ userId, date }),
         created: false,
@@ -265,28 +203,13 @@ module.exports = {
   },
 
   // Variante receta de addCustomProductToMeal. La usan tanto la ruta de
-  // dietDays como recipes/recipe-dao.js#composeRecipe (crear receta y
+  // dietDays como recipes/recipe-service.js#composeRecipe (crear receta y
   // pautársela de una sola llamada).
   async addCustomRecipeToMeal(dietDay, indexMeal, customRecipe) {
     const mealId = mealIdAt(dietDay, indexMeal);
-    const customRecipeDoc = await customRecipeDao.createCustomRecipe(
-      toPlainPayload(customRecipe),
-    );
-    await mealModel.addMealCustomRecipe(mealId, customRecipeDoc._id.toString());
+    const built = await customRecipeDao.createCustomRecipe(toPlainPayload(customRecipe));
+    await mealStore.pushToMeal(mealId, "customRecipes", built);
     return dietDaySchema.findById(dietDay._id);
-  },
-
-  async addDietDayMeal(idDietDay, idMeal) {
-    const addMeal = {
-      $push: { meals: idMeal },
-    };
-
-    return new Promise((resolve, reject) =>
-      dietDaySchema.findByIdAndUpdate(idDietDay, addMeal, {}, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      }),
-    );
   },
 
   // Nota del día. Angosto a propósito (2026-10): antes aceptaba `date` y
@@ -320,128 +243,44 @@ module.exports = {
     });
   },
 
-  async pasteDietDayByUser(userId, dietDayClipboard, dietDayToPaste) {
-    // El día destino, primero: así una fecha inválida corta antes de haber
-    // creado nada, y lo que se pega va siempre sobre el día que YA es de esa
-    // fecha (antes se borraba por un _id del body y se creaba otro, con lo que
-    // una fecha que ya tenía día acababa con dos).
-    const { dietDay } = await this.ensureDietDay(userId, dietDayToPaste?.date);
-    const normalizeId = (value) => value?._id || value;
-    const toPlainObject = (value) =>
-      value?.toObject ? value.toObject() : { ...value };
+  async pasteDietDayByUser(userId, dietDayClipboard, date) {
+    // Lo que se pega va siempre sobre el día que YA es de esa fecha.
+    const { dietDay } = await this.ensureDietDay(userId, date);
     // Lo que pega el cliente es suyo: nunca hereda del portapapeles la marca
     // de pautado ni el "tomado" (ver meal-dao.js#pasteMeal).
-    const cloneCustomProductPayload = (value) => {
-      const payload = toPlainObject(value);
-      delete payload._id;
-      delete payload.assignedByTrainerId;
-      delete payload.assignedQuantity;
-      delete payload.consumed;
-      return payload;
-    };
-    const buildCustomRecipeClonePayload = (customRecipeObj) => ({
-      recipe: normalizeId(customRecipeObj.recipe),
-      quantity: customRecipeObj.quantity ?? null,
-      quantityCooked: customRecipeObj.quantityCooked ?? null,
-      addedCustomProducts: (
-        customRecipeObj.addedCustomProducts ||
-        customRecipeObj.additionalCustomProducts ||
-        []
-      ).map(cloneCustomProductPayload),
-      modifiedBaseCustomProducts: (
-        customRecipeObj.modifiedBaseCustomProducts ||
-        customRecipeObj.customProductsOverrides ||
-        []
-      )
-        .map((override) => {
-          const payload = cloneCustomProductPayload(override);
-          payload.baseCustomProductId = normalizeId(
-            payload.baseCustomProductId || payload.customProductId,
-          );
-          delete payload.customProductId;
-          delete payload.removed;
-          return payload;
-        })
-        .filter((override) => override.baseCustomProductId),
-      removedBaseCustomProductIds: (
-        customRecipeObj.removedBaseCustomProductIds ||
-        (customRecipeObj.customProductsOverrides || [])
-          .filter((override) => override.removed)
-          .map((override) => override.customProductId) ||
-        []
-      )
-        .map((removedId) => normalizeId(removedId))
-        .filter(Boolean),
-    });
+    const toPlainObject = (value) => (value?.toObject ? value.toObject() : { ...value });
 
-    const mealsToCreate = [];
-
-    for (const mealRef of dietDayClipboard.meals || []) {
+    const meals = [];
+    for (const mealRef of dietDayClipboard?.meals || []) {
       const mealObj = toPlainObject(mealRef);
-
-      const customProductsToCreate = (mealObj.customProducts || []).map(cloneCustomProductPayload);
-
-      const createdCustomProducts = customProductsToCreate.length
-        ? await customProductSchema.insertMany(customProductsToCreate)
-        : [];
-
-      const createdCustomRecipes = [];
-      const sourceCustomRecipes = mealObj.customRecipes || [];
-
-      for (const customRecipeRef of sourceCustomRecipes) {
-        const customRecipeObj = toPlainObject(customRecipeRef);
-        const recipeId = normalizeId(
-          customRecipeObj.recipe,
-        );
-
-        if (!recipeId) {
-          continue;
-        }
-
-        const newCustomRecipe = await customRecipeDao.createCustomRecipe(
-          buildCustomRecipeClonePayload(customRecipeObj),
-        );
-
-        createdCustomRecipes.push(newCustomRecipe._id);
-      }
-
-      const createdMeal = await mealSchema.create({
-        name: mealObj.name,
-        notes: mealObj.notes,
-        customProducts: createdCustomProducts.map((cp) => cp._id),
-        customRecipes: createdCustomRecipes,
-      });
-
-      mealsToCreate.push(createdMeal._id);
+      const mealId = mealStore.newId();
+      const content = await cloneClipboardContent(mealObj, { mealId });
+      meals.push({ _id: mealId, name: mealObj.name, notes: mealObj.notes, ...content });
     }
 
     // Se le sustituyen las comidas al día destino, que es siempre el mismo
     // documento: no hay duplicado posible, y `menuName`/`skipped` del destino
     // se conservan (no pertenecen al día copiado).
-    const previousMealIds = (dietDay.meals || []).map((meal) => meal._id || meal);
-
-    const pastedNotes = (dietDayClipboard.notes || "").toString().trim();
-    await dietDaySchema.updateOne(
-      { _id: dietDay._id },
-      pastedNotes
-        ? { $set: { meals: mealsToCreate, notes: pastedNotes } }
-        : { $set: { meals: mealsToCreate }, $unset: { notes: "" } },
-    );
-    // Arrastra el contenido de las comidas sustituidas (hook deleteMany de
-    // Meal), igual que hacía el borrado del día entero.
-    await mealSchema.deleteMany({ _id: { $in: previousMealIds } });
+    const pastedNotes = (dietDayClipboard?.notes || "").toString().trim();
+    await mutateDocument(dietDaySchema, { _id: dietDay._id }, () => (pastedNotes ? { meals, notes: pastedNotes } : { meals }));
+    if (!pastedNotes) await dietDaySchema.updateOne({ _id: dietDay._id }, { $unset: { notes: "" }, $inc: { __v: 1 } });
 
     return dietDaySchema.findById(dietDay._id);
   },
 
-  // Sin wrapper no hay que desenganchar de ningún array: borrar el día ES
-  // quitarlo de la dieta del usuario. El hook deleteOne de DietDay sigue
-  // arrastrando sus Meals (y estas su contenido).
-  async deleteDietDay(idDietDay, userId) {
-    try {
-      return await dietDaySchema.deleteOne({ _id: idDietDay, userId });
-    } catch (err) {
-      throw err;
-    }
+  // Nota fijada de la pantalla de dieta: vive en el usuario
+  // (User.dietPinnedNote). Vacía = sin nota.
+  async setPinnedNote(userId, notes) {
+    const user = await mongoose
+      .model("User")
+      .findByIdAndUpdate(userId, notes ? { $set: { dietPinnedNote: notes } } : { $unset: { dietPinnedNote: 1 } }, { new: true })
+      .select("dietPinnedNote")
+      .lean();
+    return user?.dietPinnedNote || "";
+  },
+
+  // Borrar el día ES quitarlo de la dieta del usuario: sus comidas van dentro.
+  async deleteDietDay(userId, date) {
+    return dietDaySchema.deleteOne({ userId, date });
   },
 };

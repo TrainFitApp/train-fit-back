@@ -1,113 +1,99 @@
-const setSchema = require("./set-schema");
-const mealSchema = require("../meals/meal-schema");
-const customExerciseSchema = require("../customExercises/custom-exercise-schema");
+const Workout = require("../workouts/workout-schema");
+const { SET_FIELDS } = require("./set-schema");
 const { normalizeSetsOrder } = require("./set-order-util");
+const { toId, plain, isObjectId } = require("../workouts/workout-tree");
+const { mutateWorkout } = require("../workouts/workout-store");
 
-function getSetId(set) {
-  const id = set?._id ?? set;
-  return id == null ? null : id.toString();
+// Series embebidas en su sesión (Workout.exercises[].sets[], 2026-10). Una
+// serie se localiza por su _id con el índice `exercises.sets._id`; se escribe
+// con arrayFilters, así que cada cambio toca solo esa serie y es atómico.
+
+const SET_PATH = "exercises.$[exercise].sets.$[set]";
+
+function setFilters(setId) {
+  return [{ "exercise.sets._id": setId }, { "set._id": setId }];
 }
 
-async function normalizeCustomExerciseAfterSetDelete(customExercise, deletedSetId) {
-  if (!customExercise) return;
-
-  const normalizedSets = normalizeSetsOrder(
-    (customExercise.sets || []).filter(
-      (setTemp) => getSetId(setTemp) !== deletedSetId.toString(),
-    ),
-  );
-
-  const bulkOps = normalizedSets.map((setTemp) => ({
-    updateOne: {
-      filter: { _id: setTemp._id },
-      update: { $set: { order: setTemp.order } },
-    },
-  }));
-
-  if (bulkOps.length > 0) {
-    await setSchema.bulkWrite(bulkOps);
+function findSetIn(workout, setId) {
+  const id = toId(setId);
+  for (const customExercise of workout?.exercises || []) {
+    const set = (customExercise.sets || []).find((candidate) => toId(candidate) === id);
+    if (set) return { customExercise, set };
   }
+  return null;
+}
 
-  await customExerciseSchema.findByIdAndUpdate(customExercise._id, {
-    $set: { sets: normalizedSets.map((setTemp) => setTemp._id) },
-  });
+// Lo que el cliente manda de una serie, como $set/$unset: null, undefined y
+// [] vacían el campo. `_id` no se toca y `donedAt` nunca se acepta del
+// cliente (deriva de reloj entre dispositivo y servidor).
+function buildSetPatch(set) {
+  const $set = {};
+  const $unset = {};
+  for (const key of Object.keys(set || {})) {
+    if (key === "_id" || key === "donedAt" || !SET_FIELDS.includes(key)) continue;
+    const value = set[key];
+    const isEmptyArray = Array.isArray(value) && value.length === 0;
+    if (value === null || value === undefined || isEmptyArray) $unset[key] = "";
+    else $set[key] = value;
+  }
+  return { $set, $unset };
 }
 
 module.exports = {
-  async createSet(set) {
-    return new Promise((resolve, reject) => {
-      setSchema.create(set, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      });
-    });
-  },
-
-  async createSets(sets) {
-    return new Promise((resolve, reject) => {
-      setSchema.insertMany(sets, (err, docs) => {
-        if (err) return reject(err);
-        return resolve(docs);
-      });
-    });
-  },
-
   async updateSet(set) {
-    try {
-      const updateOperation = {};
-      const unsetOperation = {};
+    const { $set, $unset } = buildSetPatch(set);
 
-      for (const key in set) {
-        // _id no se actualiza. donedAt nunca se confía del cliente (deriva
-        // de reloj entre dispositivo/servidor) — el backend lo calcula abajo.
-        if (key === "_id" || key === "donedAt") continue;
-        const value = set[key];
-        const isEmptyArray = Array.isArray(value) && value.length === 0;
-        if (value === null || value === undefined || isEmptyArray) {
-          unsetOperation[key] = "";
-        } else {
-          updateOperation[key] = value;
-        }
-      }
+    // donedAt: solo se fija en la transición real false->true (comprobando
+    // el valor actual en BD: el frontend manda `doned` en cada guardado, no
+    // solo cuando cambia). Al desmarcar una serie se limpia.
+    if ($set.doned === true) {
+      const workout = await Workout.findOne({ "exercises.sets._id": set._id }).select("exercises.sets._id exercises.sets.doned").lean();
+      if (!findSetIn(workout, set._id)?.set?.doned) $set.donedAt = new Date();
+    } else if ($set.doned === false) {
+      $unset.donedAt = "";
+    }
 
-      // donedAt: solo se fija en la transición real false->true (comprobando
-      // el valor actual en BD, no basta con mirar el payload — el frontend
-      // manda `doned` en cada guardado, no solo cuando cambia). Al desmarcar
-      // una serie se limpia, para no dejar un timestamp obsoleto.
-      if (updateOperation.doned === true) {
-        const current = await setSchema.findById(set._id).select("doned");
-        if (!current?.doned) {
-          updateOperation.donedAt = new Date();
-        }
-      } else if (updateOperation.doned === false) {
-        unsetOperation.donedAt = "";
-      }
+    // $inc de la versión: las escrituras que reescriben la lista de series
+    // (workout-store.js) tienen que notar este cambio.
+    const update = { $inc: { __v: 1 } };
+    if (Object.keys($set).length) {
+      update.$set = Object.fromEntries(Object.entries($set).map(([key, value]) => [`${SET_PATH}.${key}`, value]));
+    }
+    if (Object.keys($unset).length) {
+      update.$unset = Object.fromEntries(Object.keys($unset).map((key) => [`${SET_PATH}.${key}`, ""]));
+    }
 
-      const update = {};
-      if (Object.keys(updateOperation).length > 0) update.$set = updateOperation;
-      if (Object.keys(unsetOperation).length > 0) update.$unset = unsetOperation;
-
-      if (Object.keys(update).length === 0) {
-        return await setSchema.findById(set._id);
-      }
-
+    let workout;
+    if (update.$set || update.$unset) {
       // runValidators: los min/max del schema valen también al editar (un
       // ValidationError acaba en 400 en errorHandler).
-      return await setSchema.findByIdAndUpdate(set._id, update, { new: true, runValidators: true });
-    } catch (err) {
-      throw err;
+      workout = await Workout.findOneAndUpdate({ "exercises.sets._id": set._id }, update, {
+        arrayFilters: setFilters(set._id),
+        new: true,
+        runValidators: true,
+      }).lean();
+    } else {
+      workout = await Workout.findOne({ "exercises.sets._id": set._id }).lean();
     }
+    return findSetIn(workout, set._id)?.set || null;
   },
 
+  // Quita la serie de su ejercicio y renumera el orden de las que quedan.
   async deleteSet(id) {
-    try {
-      const customExercise = await customExerciseSchema.findOne({ sets: id });
-      const result = await setSchema.deleteOne({ _id: id });
-
-      await normalizeCustomExerciseAfterSetDelete(customExercise, id);
-      return result;
-    } catch (err) {
-      throw err;
-    }
+    if (!isObjectId(id)) return { deletedCount: 0 };
+    let deleted = false;
+    await mutateWorkout({ "exercises.sets._id": id }, (workout) => {
+      deleted = false;
+      const exercises = (workout.exercises || []).map((customExercise) => {
+        if (!(customExercise.sets || []).some((set) => toId(set) === toId(id))) return customExercise;
+        deleted = true;
+        const remaining = customExercise.sets.filter((set) => toId(set) !== toId(id)).map(plain);
+        return { ...customExercise, sets: normalizeSetsOrder(remaining) };
+      });
+      return deleted ? { exercises } : null;
+    });
+    return { deletedCount: deleted ? 1 : 0 };
   },
+
+  findSetIn,
 };

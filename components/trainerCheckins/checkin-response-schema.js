@@ -21,7 +21,7 @@ const CheckinResponseSchema = new Schema({
   // puede cambiar después y la respuesta tiene que seguir leyéndose.
   enabledFields: { type: [String], default: [] },
   requiredFields: { type: [String], default: [] },
-  customQuestions: { type: [require("./checkin-custom-question").CustomCheckinQuestionSchema], default: [] },
+  customQuestions: { type: [require("../forms/custom-question").CustomQuestionSchema], default: [] },
   values: { type: Schema.Types.Mixed, required: true }, // { [fieldKey]: number|string }
   respondedAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -34,7 +34,7 @@ const CheckinResponseSchema = new Schema({
   // y su dato es con el que se ajusta la siguiente. Ausente si el cliente no
   // tenía fase de dieta ese día.
   week: {
-    phaseId: { type: Schema.Types.ObjectId, ref: "DietTemplate" },
+    phaseId: { type: Schema.Types.ObjectId, ref: "DietPhase" },
     number: { type: Number },
     start: { type: String },
     end: { type: String },
@@ -45,5 +45,7 @@ const CheckinResponseSchema = new Schema({
 CheckinResponseSchema.index({ scheduleId: 1, occurrenceDate: 1 }, { unique: true });
 CheckinResponseSchema.index({ trainerId: 1, clientId: 1, respondedAt: -1 });
 CheckinResponseSchema.index({ clientId: 1, "week.phaseId": 1, "week.number": 1 });
+
+CheckinResponseSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });
 
 module.exports = mongoose.model("CheckinResponse", CheckinResponseSchema);

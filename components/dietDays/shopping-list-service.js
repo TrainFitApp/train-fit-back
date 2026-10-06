@@ -1,26 +1,26 @@
 const { mergeRecipeIngredients } = require("./diet-days-nutrition-util");
 const { addDaysToIsoDate } = require("../util/date-util");
+const { contentAt } = require("../dietPhases/week-content");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * PURO — la lista de la compra de un rango de días, calculada desde el PLAN.
  *
- * Antes sumaba los DietDay materializados, pero con el modelo de menús un
- * día solo se materializa cuando el cliente elige menú: la lista de "2
- * semanas" salía casi vacía. Ahora cada día del rango se cubre con la copia
- * de dieta que le toca (la misma regla que findCoveringDate) y la compra es
- * cantidad-por-día × días, por eso 2 semanas es el doble que 1.
+ * No suma los DietDay materializados: un día solo se materializa cuando el
+ * cliente elige menú, y la lista de "2 semanas" saldría casi vacía. Cada día
+ * del rango se cubre con el contenido de la fase que le toca (la misma regla
+ * que findCoveringDate) y la compra es cantidad-por-día × días, por eso 2
+ * semanas es el doble que 1.
  *
  * Como el cliente elige menú cada día y cada comida puede tener
  * alternativas, la lista depende de un reparto: cuántos días de cada menú y
  * qué alternativa de cada comida. El servidor da la estructura (`segments`)
- * con un reparto por defecto y la lista ya sumada con él (`items`, lo único
- * que leen las apps ya instaladas). La app recalcula al cambiar el reparto
- * con la misma suma (shared-core shopping-list.util.ts#aggregateShopping):
- * si tocas una, toca la otra.
+ * con un reparto por defecto y la lista ya sumada con él (`items`). La app
+ * recalcula al cambiar el reparto con la misma suma (shared-core
+ * shopping-list.util.ts#aggregateShopping): si tocas una, toca la otra.
  *
- * Sin BD, sin await: entran las copias pobladas y las marcas de DietDay.
+ * Sin BD, sin await: entran las fases pobladas y las marcas de DietDay.
  */
 
 // El nombre que el cliente va a leer en el supermercado. El del catálogo si
@@ -81,22 +81,24 @@ function itemsOfAlternative(alternative) {
   return [...byKey.values()].map((entry) => ({ ...entry, quantity: round1(entry.quantity) }));
 }
 
-// La copia que cubre `date`: la que empieza más tarde de las que la
-// contienen (findCoveringDate ordena igual). Una semana preparada empieza
-// después que el contenido abierto de su fase y lo tapa desde su lunes.
-function coveringPlan(plans, date) {
+// El contenido que rige `date`: el de la fase que la cubre (la que empieza
+// más tarde de las que la contienen; findCoveringDate ordena igual) y, dentro
+// de ella, la última versión que ya empezó (una semana preparada tapa a la
+// anterior desde su lunes).
+function coveringContent(phases, date) {
   let best = null;
-  for (const plan of plans) {
-    if (!plan?.startDate || plan.startDate > date) continue;
-    if (plan.endDate && plan.endDate < date) continue;
+  for (const phase of phases) {
+    if (!phase?.startDate || phase.startDate > date) continue;
+    if (phase.endDate && phase.endDate < date) continue;
     // Mismo desempate que findCoveringDate: a igual inicio, la más reciente.
     if (
       !best ||
-      plan.startDate > best.startDate ||
-      (plan.startDate === best.startDate && new Date(plan.createdAt || 0) > new Date(best.createdAt || 0))
-    ) best = plan;
+      phase.startDate > best.startDate ||
+      (phase.startDate === best.startDate && new Date(phase.createdAt || 0) > new Date(best.createdAt || 0))
+    ) best = phase;
   }
-  return best;
+  const content = best ? contentAt(best.contents, date) : null;
+  return content ? { phase: best, content } : null;
 }
 
 function enumerateDates(from, to) {
@@ -125,32 +127,33 @@ function defaultMenuDays(menus, days) {
 
 /**
  * @param from, to    YYYY-MM-DD, inclusive.
- * @param plans       copias de dieta del cliente que tocan el rango, pobladas.
+ * @param phases      fases de dieta del cliente que tocan el rango, pobladas.
  * @param marks       [{date, menuName, skipped}] de los DietDay del rango.
- * @returns segments: un tramo por copia (una semana nueva o una fase nueva
- *          dentro del rango abre tramo, porque cambia el contenido), cada uno
- *          con sus días y sus menús → comidas → alternativas con lo de 1 día.
+ * @returns segments: un tramo por versión del contenido (una semana nueva o
+ *          una fase nueva dentro del rango abre tramo, porque cambia lo que
+ *          se come), cada uno con sus días y sus menús → comidas →
+ *          alternativas con lo de 1 día.
  */
-function buildShoppingSegments({ from, to, plans, marks }) {
+function buildShoppingSegments({ from, to, phases, marks }) {
   const markByDate = new Map((marks || []).map((mark) => [mark.date, mark]));
-  const byPlan = new Map();
+  const byContent = new Map();
 
   for (const date of enumerateDates(from, to)) {
     const mark = markByDate.get(date);
     // Un día saltado por el profesional no se come del plan: no se compra.
     if (mark?.skipped) continue;
-    const plan = coveringPlan(plans || [], date);
-    if (!plan || !(plan.menus || []).length) continue;
+    const covering = coveringContent(phases || [], date);
+    if (!covering || !(covering.content.menus || []).length) continue;
 
-    const planId = String(plan._id);
-    if (!byPlan.has(planId)) byPlan.set(planId, { plan, dates: [], chosen: {} });
-    const entry = byPlan.get(planId);
+    const id = String(covering.content._id);
+    if (!byContent.has(id)) byContent.set(id, { ...covering, dates: [], chosen: {} });
+    const entry = byContent.get(id);
     entry.dates.push(date);
     if (mark?.menuName) entry.chosen[mark.menuName] = (entry.chosen[mark.menuName] || 0) + 1;
   }
 
-  return [...byPlan.entries()].map(([planId, { plan, dates, chosen }]) => {
-    const menus = plan.menus.map((menu) => ({
+  return [...byContent.entries()].map(([id, { phase, content, dates, chosen }]) => {
+    const menus = content.menus.map((menu) => ({
       name: menu.name,
       chosenDays: chosen[menu.name] || 0,
       meals: (menu.meals || [])
@@ -164,8 +167,8 @@ function buildShoppingSegments({ from, to, plans, marks }) {
     }));
     const defaults = defaultMenuDays(menus, dates.length);
     return {
-      planId,
-      name: plan.name || plan.phaseName || "",
+      id,
+      name: phase.name,
       from: dates[0],
       to: dates[dates.length - 1],
       days: dates.length,
@@ -175,7 +178,7 @@ function buildShoppingSegments({ from, to, plans, marks }) {
 }
 
 /**
- * Suma la compra con un reparto. `selection[planId]` =
+ * Suma la compra con un reparto. `selection[segmentId]` =
  * { menuDays: {menú: días}, alternatives: {"menú|slot": índice} }; lo que
  * falte cae al defecto (defaultDays y la 1ª alternativa, que es la que se
  * pauta al elegir menú).
@@ -183,7 +186,7 @@ function buildShoppingSegments({ from, to, plans, marks }) {
 function aggregateShopping(segments, selection = {}) {
   const byKey = new Map();
   for (const segment of segments || []) {
-    const chosen = selection[segment.planId] || {};
+    const chosen = selection[segment.id] || {};
     for (const menu of segment.menus || []) {
       const days = chosen.menuDays?.[menu.name] ?? menu.defaultDays ?? 0;
       if (!(days > 0)) continue;
@@ -196,7 +199,7 @@ function aggregateShopping(segments, selection = {}) {
           // En cuántos días aparece: distingue el pollo de todos los días
           // del aguacate del domingo. Un producto en dos comidas del mismo
           // menú cuenta sus días una vez.
-          const dayKey = `${segment.planId}|${menu.name}`;
+          const dayKey = `${segment.id}|${menu.name}`;
           if (current.lastDays !== dayKey) current.dayCount += days;
           current.lastDays = dayKey;
           byKey.set(item.key, current);
@@ -220,8 +223,8 @@ function shoppingRange(query = {}, today) {
   return { from, to };
 }
 
-function buildShoppingList({ from, to, plans, marks }) {
-  const segments = buildShoppingSegments({ from, to, plans, marks });
+function buildShoppingList({ from, to, phases, marks }) {
+  const segments = buildShoppingSegments({ from, to, phases, marks });
   return {
     items: aggregateShopping(segments),
     // Días del rango que REALMENTE tienen plan (sin saltados ni huecos entre

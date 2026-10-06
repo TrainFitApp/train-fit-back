@@ -14,19 +14,7 @@ const Schema = mongoose.Schema;
 // nutricional y no lleva macros que cuadrar. Meterla en DietDay la haría
 // aparecer en los totales del día, que es exactamente lo que no debe pasar.
 
-// Cuándo tomarlo. Lista cerrada con las pautas que un entrenador da de
-// verdad; "custom" deja escribir cualquier otra sin abrir la puerta a que
-// cada uno invente su propio vocabulario para lo mismo.
-const SUPPLEMENT_TIMINGS = [
-  { key: "waking", label: "Al levantarme" },
-  { key: "breakfast", label: "Con el desayuno" },
-  { key: "pre_workout", label: "Antes de entrenar" },
-  { key: "intra_workout", label: "Durante el entrenamiento" },
-  { key: "post_workout", label: "Después de entrenar" },
-  { key: "with_meal", label: "Con una comida principal" },
-  { key: "before_bed", label: "Antes de dormir" },
-  { key: "custom", label: "Otro momento" },
-];
+const { SUPPLEMENT_TIMINGS } = require("./supplement-catalog");
 
 const SupplementSchema = new Schema(
   {
@@ -69,7 +57,8 @@ const SupplementSchema = new Schema(
 // cambia la dosis, edita el que hay. El índice lo garantiza.
 SupplementSchema.index({ trainerId: 1, clientId: 1, name: 1 }, { unique: true });
 
+SupplementSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });
+
 module.exports = {
   Supplement: mongoose.model("Supplement", SupplementSchema),
-  SUPPLEMENT_TIMINGS,
 };

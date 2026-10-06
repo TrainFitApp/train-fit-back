@@ -1,6 +1,6 @@
-const coachTaskDao = require("./coach-task-dao");
-const trainerClientDao = require("../trainerClients/trainer-client-dao");
-const { isReadOnly } = require("../trainerClients/trainer-seat-service");
+const coachTaskService = require("./coach-task-service");
+const trainerClientService = require("../trainerClients/trainer-client-service");
+const { forbidden } = require("../util/http-error");
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_NOTES_LENGTH = 1000;
@@ -12,17 +12,9 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 // leer su nombre en el listado, que viene poblado.
 async function resolveClientId(trainerId, rawClientId) {
   if (!rawClientId) return null;
-  const relation = await trainerClientDao.findActiveByTrainerAndClient(trainerId, rawClientId);
-  if (!relation) {
-    const error = new Error("No tienes una relación activa con este cliente");
-    error.code = "NO_RELATION";
-    throw error;
-  }
-  if (await isReadOnly(trainerId, rawClientId)) {
-    const error = new Error("Este cliente está en solo lectura por el cupo de tu plan");
-    error.code = "CLIENT_READ_ONLY";
-    throw error;
-  }
+  const block = await trainerClientService.clientWriteBlock(trainerId, rawClientId);
+  if (block === "no_relation") throw forbidden("No tienes una relación activa con este cliente", "NO_RELATION");
+  if (block === "read_only") throw forbidden("Este cliente está en solo lectura por el cupo de tu plan", "CLIENT_READ_ONLY");
   return rawClientId;
 }
 
@@ -45,7 +37,7 @@ module.exports = {
   // GET /trainer/tasks?status=pending
   async listMine(req, res) {
     const status = ["pending", "done"].includes(req.query.status) ? req.query.status : undefined;
-    const tasks = await coachTaskDao.listForTrainer(req.auth.userId, { status });
+    const tasks = await coachTaskService.listForTrainer(req.auth.userId, { status });
     return res.send(tasks);
   },
 
@@ -57,20 +49,14 @@ module.exports = {
     if (validationError) return res.status(400).send({ message: validationError });
     if (title === undefined) return res.status(400).send({ message: "title es obligatorio" });
 
-    try {
-      const resolvedClientId = await resolveClientId(req.auth.userId, clientId);
-      const task = await coachTaskDao.create(req.auth.userId, {
-        title: title.trim(),
-        notes: (notes || "").trim(),
-        dueDate: dueDate || null,
-        clientId: resolvedClientId,
-        sourceAlertId: sourceAlertId || null,
-      });
-      return res.status(201).send(task);
-    } catch (e) {
-      if (e.code === "NO_RELATION" || e.code === "CLIENT_READ_ONLY") return res.status(403).send({ message: e.message, code: e.code });
-      throw e;
-    }
+    const task = await coachTaskService.create(req.auth.userId, {
+      title: title.trim(),
+      notes: (notes || "").trim(),
+      dueDate: dueDate || null,
+      clientId: await resolveClientId(req.auth.userId, clientId),
+      sourceAlertId: sourceAlertId || null,
+    });
+    return res.status(201).send(task);
   },
 
   // PATCH /trainer/tasks/:id — { title?, notes?, dueDate?, status? }
@@ -92,14 +78,14 @@ module.exports = {
       updates.completedAt = status === "done" ? new Date() : null;
     }
 
-    const task = await coachTaskDao.update(req.auth.userId, req.params.id, updates);
+    const task = await coachTaskService.update(req.auth.userId, req.params.id, updates);
     if (!task) return res.status(404).send({ message: "Tarea no encontrada" });
     return res.send(task);
   },
 
   // DELETE /trainer/tasks/:id
   async remove(req, res) {
-    const task = await coachTaskDao.remove(req.auth.userId, req.params.id);
+    const task = await coachTaskService.remove(req.auth.userId, req.params.id);
     if (!task) return res.status(404).send({ message: "Tarea no encontrada" });
     return res.sendStatus(204);
   },

@@ -16,7 +16,7 @@ async function canActOnSubject(req, subjectId, { trainerScope = null } = {}) {
   if (String(subjectId) === String(requesterId)) return true;
   if (roles.includes("admin")) return true;
   if (trainerScope && roles.includes("trainer")) {
-    return Boolean(await trainerClientDao.findActiveByTrainerAndClient(requesterId, subjectId, trainerScope));
+    return trainerClientDao.isActivePair(requesterId, subjectId, trainerScope);
   }
   return false;
 }

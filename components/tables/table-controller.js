@@ -1,12 +1,12 @@
-const tableModel = require("./table-service");
+const tableService = require("./table-service");
 const tableAccess = require("./table-access");
-const featureAccessService = require("../billing/feature-access-service");
+const featureAccess = require("../billing/feature-access");
 
 // Copiar o duplicar una rutina: la de origen tiene que ser una plantilla
 // pública (sin userId) o una rutina a la que quien llama ya tiene acceso. Sin
 // esto, cualquiera copiaba a su cuenta la rutina privada de otro usuario.
 async function rejectIfSourceTableForbidden(req, res, idTable) {
-  const source = await tableModel.getTableById(idTable);
+  const source = await tableService.getTableById(idTable);
   if (!source) {
     res.status(404).send({ message: "Rutina no encontrada" });
     return true;
@@ -26,7 +26,7 @@ module.exports = {
     const defaultOnly = req.query.defaultOnly === "true";
     const idUser = (own || defaultOnly) ? req.user?.id : null;
 
-    const tables = await tableModel.getTables(page, limit, own, idUser, defaultOnly);
+    const tables = await tableService.getTables(page, limit, own, idUser, defaultOnly);
 
     return res.send(tables);
   },
@@ -35,7 +35,7 @@ module.exports = {
   // propiedad \u2014 cualquier "user"/"admin" autenticado pod\u00eda leer CUALQUIER
   // tabla por ID. Se cierra al abrir el m\u00f3dulo a "trainer".
   async getTableById(req, res) {
-    const table = await tableModel.getTableById(req.params.id);
+    const table = await tableService.getTableById(req.params.id);
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
@@ -50,15 +50,15 @@ module.exports = {
     }
     if (await rejectIfSourceTableForbidden(req, res, req.params.idTable)) return;
 
-    const routineCount = await tableModel.countEffectiveUserTables(idUser);
-    if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
+    const routineCount = await tableService.countEffectiveUserTables(idUser);
+    if (!featureAccess.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",
         message: "L\u00edmite Free alcanzado. Solo puedes tener 1 rutina.",
       });
     }
 
-    const table = await tableModel.copyTable(idUser, req.params.idTable);
+    const table = await tableService.copyTable(idUser, req.params.idTable);
     return res.send(table);
   },
 
@@ -72,15 +72,15 @@ module.exports = {
     }
     if (await rejectIfSourceTableForbidden(req, res, req.params.idTable)) return;
 
-    const routineCount = await tableModel.countEffectiveUserTables(idUser);
-    if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
+    const routineCount = await tableService.countEffectiveUserTables(idUser);
+    if (!featureAccess.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",
         message: "L\u00edmite Free alcanzado. Solo puedes tener 1 rutina.",
       });
     }
 
-    const duplicatedTable = await tableModel.duplicateTable(idUser, req.params.idTable);
+    const duplicatedTable = await tableService.duplicateTable(idUser, req.params.idTable);
     return res.send(duplicatedTable);
   },
 
@@ -93,13 +93,13 @@ module.exports = {
     const idUser = req.body.idUser && (await tableAccess.canAccessUserTable(req, req.body.idUser))
       ? req.body.idUser
       : req.user.id;
-    const tables = await tableModel.getSearchTables(page, limit, search, isOwn, idUser, defaultOnly);
+    const tables = await tableService.getSearchTables(page, limit, search, isOwn, idUser, defaultOnly);
     return res.send(tables);
   },
 
   async createTable(req, res) {
     const userId = req.body.userId || req.user?.id;
-    const table = await tableModel.createTable({
+    const table = await tableService.createTable({
       name: req.body.name,
       type: req.body.type,
       ...(userId && { userId }),
@@ -115,20 +115,20 @@ module.exports = {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
 
-    const routineCount = await tableModel.countEffectiveUserTables(idUser);
-    if (!featureAccessService.canCreateRoutine(req.user, routineCount)) {
+    const routineCount = await tableService.countEffectiveUserTables(idUser);
+    if (!featureAccess.canCreateRoutine(req.user, routineCount)) {
       return res.status(403).send({
         code: "PREMIUM_LIMIT_ROUTINES",
         message: "L\u00edmite Free alcanzado. Solo puedes tener 1 rutina.",
       });
     }
 
-    const table = await tableModel.createTableToUser(idUser, req.body.name);
+    const table = await tableService.createTableToUser(idUser, req.body.name);
     return res.send(table);
   },
 
   async createDefaultTable(req, res) {
-    const table = await tableModel.createDefaultTable(req.body.name);
+    const table = await tableService.createDefaultTable(req.body.name);
     return res.send(table);
   },
 
@@ -144,24 +144,21 @@ module.exports = {
     if (!req.body._id) return res.sendStatus(400);
     if (!req.body.name) return res.sendStatus(400);
 
-    const table = await tableModel.getTableById(req.body._id);
+    const table = await tableService.getTableById(req.body._id);
     if (!table) return res.status(404).send({ message: "Rutina no encontrada" });
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
-    const tableName = await tableModel.updateTable(req.body._id, req.body.name, table.userId, true);
+    const tableName = await tableService.updateTable(req.body._id, req.body.name, table.userId, true);
     return res.send(tableName);
   },
 
-  // El acceso se comprueba contra el dueño REAL de la tabla, no contra el
-  // :idUser de la URL (que solo se conserva por compatibilidad): antes se
-  // validaba :idUser y se borraba :idTable sin filtrar, así que cualquiera
-  // borraba la rutina de otro pasando su propio id. Las plantillas públicas
-  // (sin userId) solo las borra un admin.
+  // El acceso se comprueba contra el dueño REAL de la tabla. Las plantillas
+  // públicas (sin userId) solo las borra un admin.
   async deleteTable(req, res) {
-    const table = await tableModel.getTableById(req.params.idTable);
+    const table = await tableService.getTableById(req.params.idTable);
     if (!table) return res.status(404).send({ message: "Tabla no encontrada o sin permiso" });
     const allowed = table.userId
       ? await tableAccess.canAccessUserTable(req, table.userId)
@@ -171,7 +168,7 @@ module.exports = {
     }
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
-    const result = await tableModel.deleteTable(table.userId, table._id, !table.userId);
+    const result = await tableService.deleteTable(table.userId, table._id, !table.userId);
     if (result.deletedCount === 0) {
       return res.status(404).send({ message: "Tabla no encontrada o sin permiso" });
     }
@@ -188,7 +185,7 @@ module.exports = {
       return res.status(400).send({ message: "exerciseId o exerciseName requerido" });
     }
 
-    const stats = await tableModel.getExerciseHistoryStats(
+    const stats = await tableService.getExerciseHistoryStats(
       userId,
       exerciseId,
       exerciseName
