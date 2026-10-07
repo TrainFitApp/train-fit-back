@@ -15,7 +15,5 @@ morgan.token('user-email', (req) => {
 const logger = morgan(morganFormat, { stream: logStream })
 
 module.exports = (req, res, next) => {
-    logger(req, res, function (err) {
-      return next();
-    })
+    logger(req, res, () => next());
   };

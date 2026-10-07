@@ -91,7 +91,6 @@ test("resumen de la ficha: responde para su cliente y 403 para uno ajeno; el pro
   const { trainer, client } = await clientOnPlan();
   assert.equal((await ctx.call(trainer, "GET", `/trainer/clients/${client.id}/summary`)).status, 200);
   assert.equal((await ctx.call(trainer, "GET", `/trainer/clients/${client.id}/progress`)).status, 200);
-  assert.equal((await ctx.call(trainer, "GET", `/trainer/clients/${client.id}/body-profile`)).status, 200);
   assert.equal((await ctx.call(trainer, "GET", `/trainer/clients/${client.id}/training-progress`)).status, 200);
   const stranger = await ctx.makeClient();
   assert.equal((await ctx.call(trainer, "GET", `/trainer/clients/${stranger.id}/summary`)).status, 403);

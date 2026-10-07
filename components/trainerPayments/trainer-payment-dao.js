@@ -197,8 +197,8 @@ module.exports = {
   },
 
   // --- Preferencias del entrenador ---------------------------------------------
-  // Viven en User.trainerSettings.payments (2026-10). Se devuelven con
-  // `trainerId`, como el documento de la colección antigua; null sin ajustes.
+  // Viven en User.trainerSettings.payments. Se devuelven con el `trainerId`
+  // de su dueño (los recordatorios los agrupan por él); null sin ajustes.
 
   async findSettings(trainerId) {
     if (!mongoose.isValidObjectId(trainerId)) return null;

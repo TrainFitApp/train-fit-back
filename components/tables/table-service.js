@@ -103,18 +103,6 @@ module.exports = {
     return tableDao.getExerciseHistoryStats(userId, exerciseId, exerciseName);
   },
 
-  // MVP-trainers — comprobación de propiedad antes de activar/leer una
-  // tabla concreta de un cliente (nunca confiar en el id de la ruta solo).
-  async getTableForClient(tableId, clientId) {
-    return tableDao.getTableByIdAndUserId(tableId, clientId);
-  },
-
-  // MVP-trainers — paso 2 de F11 punto 7.7: poner en uso una rutina ya
-  // asignada (o cualquier tabla del cliente). No crea ni edita nada.
-  async activateTableForClient(clientId, tableId) {
-    return tableDao.setTableInUseForClient(clientId, tableId);
-  },
-
   // MVP-trainers F11 — Flujo A: crear rutina nueva para el cliente.
   async assignNewRoutineToClient(clientId, name, trainerId) {
     const standardTable = tableUtil.getStandardTable();

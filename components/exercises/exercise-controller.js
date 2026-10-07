@@ -1,5 +1,4 @@
 const exerciseService = require("./exercise-service");
-const exerciseDTO = require("./exercise-dto");
 const featureAccess = require("../billing/feature-access");
 
 function isAdmin(req) {
@@ -7,18 +6,6 @@ function isAdmin(req) {
 }
 
 module.exports = {
-  async getExercises(req, res) {
-    const page = parseInt((req.query.page || 0).toString(), 10);
-    const limit = parseInt((req.query.limit || 10).toString(), 10);
-    const exercises = await exerciseService.getExercises(page, limit);
-    return res.send(exercises);
-  },
-
-  async getExerciseByCode(req, res) {
-    const exercise = await exerciseService.getExerciseByCode(req.params.barcode);
-    return res.send(exercise);
-  },
-
   async getSearchExercise(req, res) {
     const page = parseInt((req.query.page || 0).toString(), 10);
     const limit = parseInt((req.query.limit || 10).toString(), 10);

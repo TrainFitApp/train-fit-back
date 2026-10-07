@@ -21,10 +21,6 @@ function toPositiveNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function ingredientKcal(ingredient) {
-  return ingredientMacros(ingredient).kcal;
-}
-
 // F20-septendecies — BUG real: un CustomProduct no siempre trae su propio
 // snapshot de macros (energyKcal100g/protein100g/...) — muchos solo tienen
 // el producto real POBLADO en `.product` y nada copiado al propio
@@ -128,31 +124,6 @@ function macrosForCustomRecipe(customRecipe) {
   const consumed = toPositiveNumber(customRecipe?.quantity);
   const portionRatio = baseline > 0 && consumed > 0 ? consumed / baseline : 0;
   return scaleMacros(totals, portionRatio);
-}
-
-function kcalForCustomRecipe(customRecipe) {
-  return macrosForCustomRecipe(customRecipe).kcal;
-}
-
-function kcalForMeal(meal) {
-  const productsKcal = (meal?.customProducts || []).reduce(
-    (acc, cp) => acc + ingredientKcal(cp),
-    0,
-  );
-  const recipesKcal = (meal?.customRecipes || []).reduce(
-    (acc, cr) => acc + kcalForCustomRecipe(cr),
-    0,
-  );
-  return productsKcal + recipesKcal;
-}
-
-// Como kcalForMeal pero con los 4 macros — lo usa diet-macro-profile.js para
-// el perfil de una plantilla (sugerencias de dieta).
-function macrosForMeal(meal) {
-  return sumMacroList([
-    ...(meal?.customProducts || []).map(ingredientMacros),
-    ...(meal?.customRecipes || []).map(macrosForCustomRecipe),
-  ]);
 }
 
 // % de items pautados (customProducts + customRecipes de todas las comidas
@@ -288,9 +259,6 @@ module.exports = {
   ingredientMacros,
   macrosForCustomRecipe,
   sumMacroList,
-  kcalForCustomRecipe,
-  kcalForMeal,
-  macrosForMeal,
   countMealItems,
   computeDayCompletion,
   computeDayTracking,

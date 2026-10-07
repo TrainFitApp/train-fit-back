@@ -98,10 +98,6 @@ module.exports = {
     return projectionAcrossAssignments(assignments, await tablesById(assignments), from, to);
   },
 
-  async getLatestForClient(clientId) {
-    return routineAssignmentDao.findLatest(clientId);
-  },
-
   async listForClient(clientId) {
     return routineAssignmentDao.listByClient(clientId);
   },

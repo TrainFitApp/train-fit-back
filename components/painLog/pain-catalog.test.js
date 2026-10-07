@@ -8,7 +8,6 @@ const {
   PAIN_MIN,
   PAIN_MAX,
   PAIN_LIMITING_LEVEL,
-  bandFor,
   sanitizePainEntry,
   sanitizeThreshold,
 } = require("./pain-catalog");
@@ -117,23 +116,10 @@ test("catálogo de dolor", async (t) => {
     }
   });
 
-  await t.test("bandFor devuelve el tramo correcto en los bordes", () => {
-    assert.equal(bandFor(0).label, "Sin dolor");
-    assert.equal(bandFor(4).from, 3);
-    assert.equal(bandFor(5).from, 5);
-    assert.equal(bandFor(10).to, 10);
-  });
-
-  await t.test("fuera de rango no hay tramo", () => {
-    assert.equal(bandFor(-1), null);
-    assert.equal(bandFor(11), null);
-  });
-
   await t.test("el umbral limitante coincide con el inicio de su tramo", () => {
     // Si el aviso saltara en un número que cae a mitad de un tramo, el
     // entrenador vería "moderado" en dos filas y aviso solo en una.
-    const band = bandFor(PAIN_LIMITING_LEVEL);
-    assert.equal(band.from, PAIN_LIMITING_LEVEL);
+    assert.ok(PAIN_BANDS.some((band) => band.from === PAIN_LIMITING_LEVEL));
   });
 });
 

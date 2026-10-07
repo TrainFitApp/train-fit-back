@@ -19,19 +19,6 @@ module.exports = {
     return Supplement.find(filter).sort({ createdAt: 1 }).lean();
   },
 
-  // Los que se solapan con un rango de fechas — para pintarlos en el
-  // calendario del entrenador y del cliente.
-  async listInRange(clientId, from, to) {
-    return Supplement.find({
-      clientId,
-      active: true,
-      startDate: { $lte: to },
-      $or: [{ endDate: null }, { endDate: { $gte: from } }],
-    })
-      .sort({ startDate: 1 })
-      .lean();
-  },
-
   async create(trainerId, clientId, data) {
     return Supplement.create({ ...data, trainerId, clientId });
   },

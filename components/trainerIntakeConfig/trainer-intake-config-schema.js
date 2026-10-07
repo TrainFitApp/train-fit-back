@@ -44,14 +44,10 @@ const enabledFieldsType = {
   },
 };
 
-// TASK-049 (MASTER_BACKLOG.md) — antes el cuestionario inicial era un
-// esquema fijo, idéntico para todos los trainers de la plataforma, sin
-// ningún override posible desde la UI. Uno por trainer (no por cliente — la
-// personalización es del profesional, no por relación individual). Desde
-// 2026-10 vive EMBEBIDO en su usuario (User.trainerSettings.intake): era una
-// colección propia (`trainerintakeconfigs`) con un documento por trainer que
-// solo se leía por `trainerId`. Sin subdocumento todavía = todos los campos
-// activos (retrocompatible).
+// Cuestionario de alta del profesional: uno por profesional (la
+// personalización es suya, no de cada relación), EMBEBIDO en su usuario
+// (User.trainerSettings.intake). Al invitar se copia al par
+// (TrainerClient.intakeForm). Sin subdocumento = todos los campos activos.
 const TrainerIntakeConfigSchema = new Schema(
   {
     enabledFields: enabledFieldsType,

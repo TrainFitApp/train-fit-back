@@ -1,8 +1,7 @@
 const User = require("../users/user-schema");
 
-// La configuración vive en User.trainerSettings.intake (2026-10). Se
-// devuelve con `trainerId`, como el documento de la colección antigua; null
-// sin configuración guardada.
+// La configuración vive en User.trainerSettings.intake. Se devuelve con el
+// `trainerId` de su dueño; null sin configuración guardada.
 const PATH = "trainerSettings.intake";
 
 function present(user) {

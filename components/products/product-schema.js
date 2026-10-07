@@ -21,9 +21,7 @@ const ProductSchema = Schema({
   // Product information
   servingUnit: String,
 
-  // Nutriscore & serving
-  nutriscoreScore: Number,
-  nutriscoreGrade: String,
+  // Ración
   productQuantity: Number,
   servingQuantity: Number,
   verified: Boolean,

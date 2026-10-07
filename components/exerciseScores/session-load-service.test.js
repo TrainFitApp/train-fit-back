@@ -5,7 +5,6 @@ const {
   DEFAULT_REST_SECONDS,
   buildSessionLoad,
   estimateSessionSeconds,
-  formatDuration,
 } = require("./session-load-service");
 
 // Esto es lo que el entrenador mira mientras monta una sesión para decidir
@@ -136,25 +135,6 @@ test("estimateSessionSeconds", async (t) => {
     assert.equal(estimateSessionSeconds([], SCORES), 0);
     assert.equal(estimateSessionSeconds([exercise("press", 0, 90)], SCORES), 0);
     assert.equal(estimateSessionSeconds(null, SCORES), 0);
-  });
-});
-
-test("formatDuration", async (t) => {
-  await t.test("por debajo de una hora, en minutos", () => {
-    assert.equal(formatDuration(45 * 60), "45 min");
-  });
-
-  await t.test("por encima, en horas y minutos", () => {
-    assert.equal(formatDuration(75 * 60), "1 h 15 min");
-  });
-
-  await t.test("una hora justa no dice '1 h 0 min'", () => {
-    assert.equal(formatDuration(60 * 60), "1 h");
-  });
-
-  await t.test("cero no revienta", () => {
-    assert.equal(formatDuration(0), "0 min");
-    assert.equal(formatDuration(null), "0 min");
   });
 });
 

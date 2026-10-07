@@ -1,12 +1,9 @@
 const express = require("@awaitjs/express");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./workout-controller");
-const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-// Listado global (find({}) paginado): solo admin, devuelve entrenos de todos.
-router.getAsync("/", auth(["admin"]), controller.getWorkouts);
 router.getAsync("/:id", auth(["admin", "user", "trainer"]), controller.getWorkoutById);
 router.postAsync(
   "/add-data-exercise/:idWorkout",
@@ -66,7 +63,6 @@ router.putAsync(
   controller.updateWorkoutsOrder,
 );
 router.putAsync("/deletes", auth(["admin", "user", "trainer"]), controller.deleteWorkouts);
-router.putAsync("/paste", auth(["admin", "user", "trainer"]), controller.pasteWorkout);
 router.putAsync("/paste-exercises", auth(["admin", "user", "trainer"]), controller.pasteExercises);
 router.deleteAsync(
   "/all/deletes/:id",

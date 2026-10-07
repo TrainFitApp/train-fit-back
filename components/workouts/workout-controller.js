@@ -111,30 +111,9 @@ module.exports = {
   // Función pura exportada para test (workout-controller.test.js).
   sanitizeWorkoutBlocks,
 
-  async getWorkouts(req, res) {
-    const page = parseInt((req.query.page || 0).toString(), 10);
-    const limit = parseInt((req.query.limit || 10).toString(), 10);
-    const workouts = await workoutService.getWorkouts(
-      page,
-      limit,
-      req.params.search,
-    );
-    return res.send(workouts);
-  },
-
   async getWorkoutById(req, res) {
     if (!(await assertCanAccessWorkoutId(req, res, req.params.id))) return;
     const workout = await workoutService.getWorkoutById(req.params.id);
-    return res.send(workout);
-  },
-
-  async pasteWorkout(req, res) {
-    const table = await assertCanAccessWorkoutId(req, res, req.body?.workoutToPaste?._id);
-    if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    const workout = await withPinnedNotesSync(table._id, () =>
-      workoutService.pasteWorkout(req.body.workoutClipboard, req.body.workoutToPaste),
-    );
     return res.send(workout);
   },
 

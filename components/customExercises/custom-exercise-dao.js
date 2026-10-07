@@ -130,8 +130,8 @@ module.exports = {
       else next.notes = customExercise.notes;
 
       // Nota del CLIENTE: aquí SÍ se mira hasOwnProperty, al revés que
-      // arriba: hay peticiones de versiones anteriores de la app que no la
-      // traen, y cada una la borraría. Para vaciarla se manda "".
+      // arriba: el planificador del profesional guarda el ejercicio sin ella
+      // y no debe borrarla. Para vaciarla se manda "".
       if (Object.prototype.hasOwnProperty.call(customExercise, "clientNotes")) {
         const clientNotes = customExercise.clientNotes;
         if (!clientNotes || String(clientNotes).trim() === "") delete next.clientNotes;

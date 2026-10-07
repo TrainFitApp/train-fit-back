@@ -76,10 +76,6 @@ module.exports = {
     return userDao.getUserById(id);
   },
 
-  async countUsers() {
-    return userDao.countUsers();
-  },
-
   async getUserByEmail(email) {
     return await userDao.findByEmail(email);
   },
@@ -162,10 +158,6 @@ module.exports = {
     }
     await sendVerificationMail(created.email, created.name, code, "Verificación de cuenta - TrainFit");
     return created;
-  },
-
-  async addUserTable(idUser, idTable) {
-    return userDao.addUserTable(idUser, idTable);
   },
 
   // Editor de perfil: solo los campos del perfil (lista blanca) y el peso de

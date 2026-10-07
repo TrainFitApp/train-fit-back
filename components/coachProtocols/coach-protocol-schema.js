@@ -21,9 +21,6 @@ const CoachProtocolSchema = new Schema(
     description: { type: String, trim: true, maxlength: 500, default: "" },
 
     // Plantillas del profesional, reutilizables tal cual.
-    // Solo en protocolos anteriores a `checkins` (se lee como un check-in
-    // semanal, ver protocol-content.js#protocolCheckins). Al guardar queda null.
-    checkinTemplateId: { type: Schema.Types.ObjectId, ref: "CheckinTemplateDefinition", default: null },
     // Check-ins que se programan al aplicar, cada uno con su cadencia
     // (mismos valores que CheckinSchedule). La fecha de inicio es la de
     // aplicar.

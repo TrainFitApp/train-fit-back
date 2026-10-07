@@ -35,16 +35,6 @@ router.getAsync(
   controller.getProgress
 );
 
-// Movimiento 3 Coach Pro — altura, sexo y nacimiento para la calculadora
-// corporal. Mismo requireActiveClient sin scope que sus vecinas: son datos
-// del cliente que cualquiera de los dos ámbitos justifica ver.
-router.getAsync(
-  "/clients/:clientId/body-profile",
-  auth(["trainer"]),
-  requireActiveClient(),
-  controller.getBodyProfile
-);
-
 // Fase 6 — volumen, PRs y evolución de cargas. Ruta aparte por su coste:
 // ver el comentario de getTrainingProgress.
 router.getAsync(

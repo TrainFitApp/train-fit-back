@@ -70,14 +70,10 @@ module.exports = {
     return CheckinResponse.findById(id).lean();
   },
 
-  async findByIdForTrainer(trainerId, clientId, id) {
-    return CheckinResponse.findOne({ _id: id, trainerId, clientId }).lean();
-  },
-
   async review(trainerId, clientId, id, comment) {
     return CheckinResponse.findOneAndUpdate(
       { _id: id, trainerId, clientId },
-      { $set: { status: "reviewed", reviewedAt: new Date(), reviewComment: comment, seenByTrainer: true } },
+      { $set: { status: "reviewed", reviewedAt: new Date(), reviewComment: comment } },
       { new: true }
     ).lean();
   },
@@ -102,14 +98,6 @@ module.exports = {
       .lean();
   },
 
-  async listResponsesForTrainer(trainerId, { limit = 200 } = {}) {
-    return CheckinResponse.find({ trainerId })
-      .sort({ respondedAt: -1 })
-      .limit(limit)
-      .populate("clientId", "name lastname email")
-      .lean();
-  },
-
   // Última respuesta (fecha) de CADA cliente de este trainer, en una sola
   // agregación: con muchos clientes, un limit() global ordenado por fecha
   // dejaría fuera la última respuesta de un cliente poco activo y lo haría
@@ -130,14 +118,6 @@ module.exports = {
       .select("clientId respondedAt values")
       .sort({ respondedAt: 1 })
       .lean();
-  },
-
-  async countUnseenForTrainer(trainerId) {
-    return CheckinResponse.countDocuments({ trainerId, seenByTrainer: false });
-  },
-
-  async markAllSeenForTrainer(trainerId) {
-    return CheckinResponse.updateMany({ trainerId, seenByTrainer: false }, { $set: { seenByTrainer: true } });
   },
 
   // --- Bandeja «Por revisar» y Cartera ---

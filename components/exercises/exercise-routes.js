@@ -1,21 +1,9 @@
 const express = require("@awaitjs/express");
-const { sendYouTubeEmbed } = require("../util/youtube-embed");
 const { auth } = require("../../middleware/validateAuth");
 const controller = require("./exercise-controller");
-const ROLES = require("../users/util/roles");
 
 const router = express.Router();
 
-// Replanteamiento MVP (rutinas) — catálogo global de ejercicios, sin dueño
-// (a diferencia de Table/Split/Workout/...), igual que ya ocurría con
-// ProductAPIService.searchProduct para el buscador de alimentos del
-// entrenador: no hace falta comprobación de relación, solo estar autenticado.
-router.getAsync("/", auth(["admin", "user", "trainer"]), controller.getExercises);
-router.getAsync(
-  "/code/:barcode",
-  auth(["admin", "user", "trainer"]),
-  controller.getExerciseByCode
-);
 router.postAsync(
   "/:search",
   auth(["admin", "user", "trainer"]),
@@ -30,8 +18,6 @@ router.postAsync(
 router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createExercise);
 router.patchAsync("/:id", auth(["admin", "user", "trainer"]), controller.updateExercise);
 
-// Reproductor de YouTube (ver components/util/youtube-embed.js).
-router.getAsync("/youtube-embed", auth(["admin", "user"]), sendYouTubeEmbed);
 router.deleteAsync("/:id", auth(["admin", "user", "trainer"]), controller.deleteExercise);
 
 module.exports = router;

@@ -1,5 +1,4 @@
 const express = require("express");
-const { sendYouTubeEmbed } = require("./components/util/youtube-embed");
 const cookieParser = require("cookie-parser");
 const routes = require("./routes");
 const billingController = require("./components/billing/billing-controller");
@@ -82,9 +81,6 @@ app.use(maintenanceCheck);
 // Compatibilidad: algunos paneles externos se configuran sin prefijo /api.
 app.post("/billing/webhooks/revenuecat", billingController.revenueCatWebhook);
 app.use("/api", routes);
-
-// Reproductor de YouTube para las apps (ver components/util/youtube-embed.js).
-app.get("/youtube-embed.html", sendYouTubeEmbed);
 
 app.use(error404Handler);
 app.use(errorHandler);

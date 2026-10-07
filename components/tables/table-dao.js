@@ -163,21 +163,17 @@ module.exports = {
   },
 
   async copyTable(idUser, idTable) {
-    try {
-      const tableD = await tableSchema.findById(idTable);
-      if (!tableD) throw new Error("Table not found");
-      const tableDoc = tableD.toObject();
+    const tableD = await tableSchema.findById(idTable);
+    if (!tableD) throw new Error("Table not found");
+    const tableDoc = tableD.toObject();
 
-      Object.assign(tableDoc, await copyHierarchy(tableDoc));
+    Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
-      delete tableDoc._id;
-      return await tableSchema.create({
-        ...tableDoc,
-        userId: idUser,
-      });
-    } catch (e) {
-      throw e;
-    }
+    delete tableDoc._id;
+    return await tableSchema.create({
+      ...tableDoc,
+      userId: idUser,
+    });
   },
 
   // MVP-trainers F11: copia una plantilla HACIA un cliente (asignada por su
@@ -185,109 +181,97 @@ module.exports = {
   // deliberadamente, NO toca tableInUse/workoutInUse del cliente — asignar
   // una rutina no la activa sola (ver F11 punto 7.7).
   async copyTableForClient(clientId, idTable, trainerId) {
-    try {
-      const tableD = await tableSchema.findById(idTable);
-      if (!tableD) throw new Error("Table not found");
-      const tableDoc = tableD.toObject();
+    const tableD = await tableSchema.findById(idTable);
+    if (!tableD) throw new Error("Table not found");
+    const tableDoc = tableD.toObject();
 
-      Object.assign(tableDoc, await copyHierarchy(tableDoc));
+    Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
-      delete tableDoc._id;
-      return await tableSchema.create({
-        ...tableDoc,
-        userId: clientId,
-        assignedByTrainerId: trainerId,
-      });
-    } catch (e) {
-      throw e;
-    }
+    delete tableDoc._id;
+    return await tableSchema.create({
+      ...tableDoc,
+      userId: clientId,
+      assignedByTrainerId: trainerId,
+    });
   },
 
   async duplicateTable(idUser, idTable) {
-    try {
-      const tableD = await tableSchema.findById(idTable);
-      if (!tableD) throw new Error("Table not found");
-      const tableDoc = tableD.toObject();
+    const tableD = await tableSchema.findById(idTable);
+    if (!tableD) throw new Error("Table not found");
+    const tableDoc = tableD.toObject();
 
-      tableDoc.name = tableDoc.name + " copia";
+    tableDoc.name = tableDoc.name + " copia";
 
-      Object.assign(tableDoc, await copyHierarchy(tableDoc));
+    Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
-      delete tableDoc._id;
-      return await tableSchema.create({
-        ...tableDoc,
-        userId: idUser,
-      });
-    } catch (e) {
-      throw e;
-    }
+    delete tableDoc._id;
+    return await tableSchema.create({
+      ...tableDoc,
+      userId: idUser,
+    });
   },
 
   async getSearchTables(page, limit, search, isOwn, idUser, defaultOnly = false) {
-    try {
-      const normalizedSearch = (search || "").trim();
-      const searchTerms = normalizedSearch
-        .split(" ")
-        .map((term) => term.trim())
-        .filter(Boolean);
+    const normalizedSearch = (search || "").trim();
+    const searchTerms = normalizedSearch
+      .split(" ")
+      .map((term) => term.trim())
+      .filter(Boolean);
 
-      const baseMatch = {};
+    const baseMatch = {};
 
-      if (searchTerms.length > 0) {
-        baseMatch.$and = searchTerms.map((term) => ({
-          name: { $regex: term, $options: "i" },
-        }));
-      }
-
-      const buildLightSearchPipeline = (extraMatch = {}) => [
-        { $match: { ...baseMatch, ...extraMatch } },
-        { $project: { _id: 1, name: 1, urlImage: 1, splits: 1, assignedByTrainerId: 1 } },
-        {
-          $addFields: {
-            microcyclesCount: { $size: { $ifNull: ["$splits", []] } },
-            // Sesiones por microciclo: las del primero.
-            workoutsCount: {
-              $size: { $ifNull: [{ $arrayElemAt: ["$splits.workouts", 0] }, []] },
-            },
-          },
-        },
-        {
-          $project: {
-            _id: 1,
-            name: 1,
-            urlImage: 1,
-            microcyclesCount: 1,
-            workoutsCount: 1,
-            assignedByTrainerId: 1,
-          },
-        },
-        { $skip: page * limit },
-        { $limit: limit },
-      ];
-
-      if (isOwn) {
-        const ownMatch = await buildOwnTablesMatch(idUser);
-        return await tableSchema.aggregate(buildLightSearchPipeline(ownMatch));
-      }
-
-      if (defaultOnly) {
-        return await tableSchema.aggregate(
-          buildLightSearchPipeline({ userId: { $exists: false } })
-        );
-      }
-
-      // All routines: user's own + public templates
-      return await tableSchema.aggregate(
-        buildLightSearchPipeline({
-          $or: [
-            { userId: mongoose.Types.ObjectId(idUser) },
-            { userId: { $exists: false } }
-          ]
-        })
-      );
-    } catch (e) {
-      throw e;
+    if (searchTerms.length > 0) {
+      baseMatch.$and = searchTerms.map((term) => ({
+        name: { $regex: term, $options: "i" },
+      }));
     }
+
+    const buildLightSearchPipeline = (extraMatch = {}) => [
+      { $match: { ...baseMatch, ...extraMatch } },
+      { $project: { _id: 1, name: 1, urlImage: 1, splits: 1, assignedByTrainerId: 1 } },
+      {
+        $addFields: {
+          microcyclesCount: { $size: { $ifNull: ["$splits", []] } },
+          // Sesiones por microciclo: las del primero.
+          workoutsCount: {
+            $size: { $ifNull: [{ $arrayElemAt: ["$splits.workouts", 0] }, []] },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          name: 1,
+          urlImage: 1,
+          microcyclesCount: 1,
+          workoutsCount: 1,
+          assignedByTrainerId: 1,
+        },
+      },
+      { $skip: page * limit },
+      { $limit: limit },
+    ];
+
+    if (isOwn) {
+      const ownMatch = await buildOwnTablesMatch(idUser);
+      return await tableSchema.aggregate(buildLightSearchPipeline(ownMatch));
+    }
+
+    if (defaultOnly) {
+      return await tableSchema.aggregate(
+        buildLightSearchPipeline({ userId: { $exists: false } })
+      );
+    }
+
+    // All routines: user's own + public templates
+    return await tableSchema.aggregate(
+      buildLightSearchPipeline({
+        $or: [
+          { userId: mongoose.Types.ObjectId(idUser) },
+          { userId: { $exists: false } }
+        ]
+      })
+    );
   },
 
   async createTable(table) {
@@ -295,30 +279,16 @@ module.exports = {
   },
 
   async createTableToUser(idUser, standardTable) {
-    try {
-      const tableDoc = await tableSchema.create({
-        ...standardTable,
-        userId: idUser,
-      });
-      const addTableToUser = {
-        $set: { tableInUse: tableDoc._id, tableInUseAt: new Date() },
-        $unset: { workoutInUse: "", workoutInUseAt: "" },
-      };
-      await userSchema.findByIdAndUpdate(idUser, addTableToUser);
-      return tableDoc;
-    } catch (err) {
-      throw err;
-    }
-  },
-
-  // El entrenador pone en uso una rutina del cliente: es una elección como
-  // la del propio cliente (users/user-schema.js, tableInUseAt). Mismo `$set`/`$unset`
-  // que createTableToUser.
-  async setTableInUseForClient(clientId, tableId) {
-    await userSchema.findByIdAndUpdate(clientId, {
-      $set: { tableInUse: tableId, tableInUseAt: new Date() },
-      $unset: { workoutInUse: "", workoutInUseAt: "" },
+    const tableDoc = await tableSchema.create({
+      ...standardTable,
+      userId: idUser,
     });
+    const addTableToUser = {
+      $set: { tableInUse: tableDoc._id, tableInUseAt: new Date() },
+      $unset: { workoutInUse: "", workoutInUseAt: "" },
+    };
+    await userSchema.findByIdAndUpdate(idUser, addTableToUser);
+    return tableDoc;
   },
 
   // Solo si la elección apuntaba a esa tabla: borrar una rutina que no está
@@ -376,25 +346,17 @@ module.exports = {
 
   async updateTable(id, name, userId, adminMode = false) {
     const update = { $set: { name: name } };
-    try {
-      const query = adminMode ? { _id: id } : { _id: id, userId: userId };
-      const docTable = await tableSchema.findOneAndUpdate(query, update, {
-        new: true,
-      });
-      if (!docTable) throw new Error("Table not found or access denied");
-      return { name: docTable.name };
-    } catch (err) {
-      throw err;
-    }
+    const query = adminMode ? { _id: id } : { _id: id, userId: userId };
+    const docTable = await tableSchema.findOneAndUpdate(query, update, {
+      new: true,
+    });
+    if (!docTable) throw new Error("Table not found or access denied");
+    return { name: docTable.name };
   },
 
   async deleteTable(idUser, idTable, adminMode = false) {
-    try {
-      const query = adminMode ? { _id: idTable } : { _id: idTable, userId: idUser };
-      return await tableSchema.deleteOne(query).exec();
-    } catch (e) {
-      throw e;
-    }
+    const query = adminMode ? { _id: idTable } : { _id: idTable, userId: idUser };
+    return await tableSchema.deleteOne(query).exec();
   },
 
   async countUserTables(userId) {
@@ -579,53 +541,6 @@ module.exports = {
    *
    * Los workouts marcados como descanso (`rest`) no cuentan como sesión.
    */
-  async getPlanSessionProgressForTables(tableIds) {
-    const { ObjectId } = require("mongoose").Types;
-    if (!tableIds?.length) return new Map();
-    const rows = await tableSchema.aggregate([
-      { $match: { _id: { $in: tableIds.map((id) => ObjectId(String(id))) } } },
-      {
-        $project: {
-          workoutIds: {
-            $reduce: {
-              input: { $ifNull: ["$splits", []] },
-              initialValue: [],
-              in: { $concatArrays: ["$$value", { $ifNull: ["$$this.workouts", []] }] },
-            },
-          },
-        },
-      },
-      { $lookup: { from: "workouts", localField: "workoutIds", foreignField: "_id", as: "workoutDocs" } },
-      {
-        $project: {
-          sesiones: {
-            $filter: {
-              input: "$workoutDocs",
-              cond: {
-                $and: [{ $ne: ["$$this.rest", true] }, { $ne: ["$$this.isPlannedRestDay", true] }],
-              },
-            },
-          },
-        },
-      },
-      {
-        $project: {
-          plannedTotal: { $size: "$sesiones" },
-          completedTotal: {
-            $size: {
-              $filter: { input: "$sesiones", cond: { $ne: [{ $ifNull: ["$$this.date", null] }, null] } },
-            },
-          },
-        },
-      },
-    ]);
-    return new Map(
-      rows.map((row) => [
-        String(row._id),
-        { plannedTotal: row.plannedTotal || 0, completedTotal: row.completedTotal || 0 },
-      ])
-    );
-  },
 
   // Tarea 5 (2026-09) — splits+workouts de VARIAS rutinas de una vez, para
   // la adherencia de entrenamiento por ventana+fase (routine-assignment-

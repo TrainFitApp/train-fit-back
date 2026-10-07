@@ -151,18 +151,6 @@ test("pasteExercises pega en toda la fila salvo en la sesión de origen", async 
   assert.notEqual(str(target.exercises[1]), str(sibling.exercises[1]));
 });
 
-test("pasteWorkout suelta los ejercicios cuyo bloque no tiene el destino", async () => {
-  await db.reset();
-  const [press] = await exercises("Press");
-  const { workouts } = await seedRow([[press], [press]]);
-  const clipboard = { exercises: [{ exercise: press._id, blockId: db.oid(), sets: [] }], notes: "copiado" };
-
-  await workoutDao.pasteWorkout(clipboard, { _id: workouts[1]._id });
-  const saved = await load(workouts[1]._id);
-  assert.deepEqual(blockIdsOf(saved), [null]);
-  assert.equal(saved.notes, "copiado");
-});
-
 test("updateWorkoutsOrder no toca un microciclo con otros ejercicios y devuelve los reordenados", async () => {
   await db.reset();
   const [press, row, curl] = await exercises("Press", "Remo", "Curl");

@@ -2,8 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { isSamePermutation } = require("./permutation-util");
 
-// Planificador visual (Fase C) — compartida por split-dao.js (reordenar
-// columnas) y workout-dao.js (reordenar cards dentro de una columna).
+// Compartida por split-dao.js (reordenar microciclos) y workout-dao.js
+// (reordenar los ejercicios de una sesión). Una regresión aquí podría borrar
+// o duplicar microciclos o ejercicios enteros.
 test("isSamePermutation", async (t) => {
   await t.test("misma lista en distinto orden -> válida", () => {
     assert.equal(isSamePermutation(["a", "b", "c"], ["c", "a", "b"]), true);

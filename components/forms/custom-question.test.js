@@ -3,9 +3,8 @@ const assert = require("node:assert/strict");
 const {
   CUSTOM_QUESTION_TYPES,
   FREQUENCY_OPTIONS,
+  CUSTOM_KEY_PREFIX,
   customKeyFor,
-  isCustomKey,
-  questionIdFromKey,
   validateCustomAnswer,
   normalizeCustomAnswer,
   validateQuestionDefinition,
@@ -16,25 +15,16 @@ const { CHECKIN_FIELD_KEYS } = require("../trainerCheckins/checkin-field-catalog
 // y reglas. Una validación laxa mete basura ahí sin ningún error visible.
 
 test("claves de pregunta propia", async (t) => {
-  await t.test("van prefijadas y se pueden volver a leer", () => {
-    const key = customKeyFor("507f1f77bcf86cd799439011");
-    assert.equal(key, "custom:507f1f77bcf86cd799439011");
-    assert.equal(isCustomKey(key), true);
-    assert.equal(questionIdFromKey(key), "507f1f77bcf86cd799439011");
+  await t.test("van prefijadas con el _id de la pregunta", () => {
+    assert.equal(customKeyFor("507f1f77bcf86cd799439011"), "custom:507f1f77bcf86cd799439011");
   });
 
   await t.test("NINGUNA clave del catálogo cerrado puede confundirse con una propia", () => {
     // Si un campo del catálogo empezara por "custom:", el validador lo
     // trataría como pregunta libre y se saltaría su validación de tipo.
     for (const key of CHECKIN_FIELD_KEYS) {
-      assert.equal(isCustomKey(key), false, `${key} colisiona con el prefijo`);
+      assert.equal(key.startsWith(CUSTOM_KEY_PREFIX), false, `${key} colisiona con el prefijo`);
     }
-  });
-
-  await t.test("una clave normal no es de pregunta propia", () => {
-    assert.equal(isCustomKey("weight"), false);
-    assert.equal(questionIdFromKey("weight"), null);
-    assert.equal(isCustomKey(undefined), false);
   });
 });
 

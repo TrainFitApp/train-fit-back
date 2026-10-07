@@ -13,7 +13,7 @@ const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { ownViews, checkinWritableFields } = require("../anthropometry/anthropometry-origin");
 const notificationDao = require("../notifications/notification-dao");
 const { CHECKIN_FIELDS_BY_KEY, isPlausibleValue, scaleLevelsFor } = require("./checkin-field-catalog");
-const { validateCustomAnswer, normalizeCustomAnswer } = require("../forms/custom-question");
+const { customKeyFor, validateCustomAnswer, normalizeCustomAnswer } = require("../forms/custom-question");
 const { prefillWindow, anthropometryPrefill, changedAnthropometryFields } = require("./checkin-prefill");
 const { occurrenceDatesBetween, occurrenceCovering, historyOccurrences } = require("./checkin-schedule-dates");
 const { addDaysToIsoDate } = require("../util/date-util");
@@ -241,7 +241,7 @@ function validateAnswers(schedule, input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { error: "Responde al menos una pregunta" };
   const values = {};
   const questions = new Map(
-    (schedule.customQuestions || []).filter((q) => q.enabled !== false).map((q) => [`custom:${q._id}`, q])
+    (schedule.customQuestions || []).filter((q) => q.enabled !== false).map((q) => [customKeyFor(q._id), q])
   );
 
   for (const key of schedule.requiredFields || []) {
@@ -318,7 +318,6 @@ async function saveResponse({ schedule, occurrence, values, today }) {
     $set: {
       values,
       updatedAt: now,
-      seenByTrainer: false,
       status: "responded",
       reviewedAt: null,
       name: schedule.name,

@@ -5,8 +5,6 @@ const rateLimiter = require("../util/rate-limiter");
 
 const router = express.Router();
 
-// Recuento, listado y búsqueda global de cuentas: solo admin (management).
-router.getAsync("/", auth(["admin"]), controller.countUsers);
 // Público: comprobar si existe un email sin requerir auth
 router.getAsync("/check/:email", controller.checkEmail);
 router.getAsync("/:email", auth(["admin", "user", "trainer"]), controller.getUserByEmail);
@@ -24,11 +22,6 @@ router.getAsync("/hash/:id/:hash", controller.checkHash);
 router.deleteAsync("/hash/:id", auth(["admin"]), controller.clearUserHash);
 router.getAsync("/send/mail/code/:email", rateLimiter, controller.sendMailCode);
 router.postAsync("/send/mail/code", controller.checkRestoreCode);
-router.putAsync(
-  "/addtable/:idUser/:idTable",
-  auth(["admin", "user"]),
-  controller.addUserTable,
-);
 // También el entrenador (Cuenta > Editar perfil daba 403). El controller ya
 // exige que sea la cuenta propia (o admin) y el servicio solo acepta la lista
 // blanca de users/user-profile.js: el email no se cambia por aquí.

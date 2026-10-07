@@ -124,20 +124,9 @@ function estimateSessionSeconds(customExercises, scoresByExerciseId) {
   return Math.max(0, seconds - lastRest);
 }
 
-// "1 h 15 min" — un total en segundos no se lee. Aparte de la estimación
-// para que el test pueda comprobar el número y el formato por separado.
-function formatDuration(totalSeconds) {
-  const minutes = Math.round((totalSeconds || 0) / 60);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? `${hours} h ${rest} min` : `${hours} h`;
-}
-
 module.exports = {
   DEFAULT_SECONDS_PER_SET,
   DEFAULT_REST_SECONDS,
   buildSessionLoad,
   estimateSessionSeconds,
-  formatDuration,
 };

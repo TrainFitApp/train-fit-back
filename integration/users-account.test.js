@@ -196,10 +196,9 @@ test("leer el perfil de otro usuario por email no expone sus datos ni su código
   assert.ok(res.status === 403 || res.status === 404 || (res.body && res.body.hash === undefined && res.body.weight === undefined), JSON.stringify(res.body));
 });
 
-test("listado/búsqueda global de usuarios solo para admin", async () => {
+test("búsqueda global de usuarios solo para admin", async () => {
   const user = await ctx.makeClient();
   assert.equal((await ctx.call(user, "POST", "/users/search", { page: 0, search: "" })).status, 403);
-  assert.equal((await ctx.call(user, "GET", "/users")).status, 403);
 });
 
 test("borrar el código de verificación de OTRA cuenta no está permitido", async () => {

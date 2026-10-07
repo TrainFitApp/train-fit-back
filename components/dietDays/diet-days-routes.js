@@ -16,8 +16,6 @@ router.getAsync("/shopping-list", auth(["admin", "user"]), controller.getMyShopp
 // slider de días de su pantalla de dieta.
 router.getAsync("/timeline", auth(["admin", "user"]), controller.getMyDietTimeline);
 
-// Listado global (find({}) paginado, días de todos los usuarios): solo admin.
-router.getAsync("/", auth(["admin"]), controller.getDietDays);
 // Los días del propio usuario en un rango (calendario y peso diario).
 router.getAsync("/range", auth(["admin", "user"]), controller.getMyDietDaysInRange);
 // Pin de la dieta.

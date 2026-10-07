@@ -109,7 +109,6 @@ const UserSchema = new Schema({
     lockedUntil: Date,
   },
   passwordVersion: { type: Number, default: 0 },
-  lastPasswordChangeAt: Date,
   auth: {
     sessionId: { type: String, default: null, index: true },
     refreshTokenHash: { type: String, default: null },
@@ -170,7 +169,6 @@ UserSchema.plugin(require("mongoose-autopopulate"));
 // emitidos con la anterior dejan de valer).
 UserSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
-  this.lastPasswordChangeAt = new Date();
   this.passwordVersion = this.isNew ? Math.max(this.passwordVersion || 0, 1) : (this.passwordVersion || 0) + 1;
   this.password = await bcrypt.hash(this.password, SALT_WORK_FACTOR);
 });

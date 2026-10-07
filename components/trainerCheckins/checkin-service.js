@@ -71,26 +71,6 @@ module.exports = {
     return { applied, skipped };
   },
 
-  // --- Respuestas, lado profesional ---
-  // "Reportes": las de todos sus clientes, con el cliente poblado y las
-  // preguntas propias resumidas.
-  async listResponsesForTrainer(trainerId) {
-    const responses = await checkinDao.listResponsesForTrainer(trainerId);
-    return responses.map(({ clientId, ...rest }) => ({
-      ...rest,
-      client: clientId && typeof clientId === "object" ? clientId : null,
-      customQuestions: (rest.customQuestions || []).map((question) => ({
-        _id: question._id,
-        label: question.label,
-        type: question.type,
-        unit: question.unit || "",
-        options: question.options || [],
-      })),
-    }));
-  },
-
-  countUnseenForTrainer: (trainerId) => checkinDao.countUnseenForTrainer(trainerId),
-  markAllSeenForTrainer: (trainerId) => checkinDao.markAllSeenForTrainer(trainerId),
   listResponses: (trainerId, clientId) => checkinDao.listResponses(trainerId, clientId),
 
   // --- Lado cliente ---

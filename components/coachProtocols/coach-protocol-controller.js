@@ -21,17 +21,11 @@ function validateDailyTasks(tasks) {
   return null;
 }
 
-// Un check-in suelto en checkinTemplateId (clientes sin actualizar) se
-// guarda ya como lista: el campo antiguo queda null.
 function buildPayload(body) {
-  const checkins = Array.isArray(body.checkins)
-    ? normalizeCheckins(body.checkins)
-    : normalizeCheckins(body.checkinTemplateId ? [{ templateId: body.checkinTemplateId }] : []);
   return {
     name: String(body.name || "").trim(),
     description: String(body.description || "").trim(),
-    checkinTemplateId: null,
-    checkins,
+    checkins: normalizeCheckins(body.checkins),
     dietTemplateId: body.dietTemplateId || null,
     routineTemplateId: body.routineTemplateId || null,
     ruleIds: body.ruleIds || [],

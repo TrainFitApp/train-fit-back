@@ -57,12 +57,6 @@ router.postAsync(
   requireActiveClient("training"),
   dataController.assignTable
 );
-router.putAsync(
-  "/clients/:clientId/tables/:tableId/activate",
-  auth(["trainer"]),
-  requireActiveClient("training"),
-  dataController.activateTable
-);
 router.getAsync(
   "/clients/:clientId/workouts/history",
   auth(["trainer"]),
@@ -204,18 +198,6 @@ router.postAsync(
   auth(["trainer"]),
   requireActiveClient("nutrition"),
   dataController.applyMealToClients
-);
-// TAREA5 (auditoría UX, Fase D) — mismo reparto en bloque que la ruta de
-// arriba, pero SIN cliente origen: la comida se compone una vez desde un
-// punto de entrada propio ("Componer para varios clientes") y se aplica
-// directo a cada destinatario. requireActiveClient no aplica aquí porque no
-// hay un único cliente fijo en la URL — cada targetClientId se valida por
-// separado dentro de applyToTargets(), igual que ya hacían las otras rutas
-// de aplicar en bloque.
-router.postAsync(
-  "/meals/apply-to-clients",
-  auth(["trainer"]),
-  dataController.applyMealToClientsDirect
 );
 
 // --- Lado cliente ---

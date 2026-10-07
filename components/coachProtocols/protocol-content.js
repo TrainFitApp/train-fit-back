@@ -11,16 +11,6 @@ const ID_RE = /^[a-f\d]{24}$/i;
 
 const DEFAULT_CADENCE = { frequency: "weekly", interval: 1, time: "09:00" };
 
-// Los protocolos anteriores guardaban una sola plantilla (checkinTemplateId)
-// sin cadencia: se leen como un check-in semanal, que es lo que programaban.
-function protocolCheckins(protocol) {
-  if (protocol?.checkins?.length) return protocol.checkins;
-  if (protocol?.checkinTemplateId) {
-    return [{ templateId: protocol.checkinTemplateId, ...DEFAULT_CADENCE }];
-  }
-  return [];
-}
-
 function normalizeCheckins(list) {
   return (Array.isArray(list) ? list : []).map((c) => ({
     templateId: c?.templateId ? String(c.templateId) : null,
@@ -78,7 +68,6 @@ function validateNutritionTarget(target) {
 
 module.exports = {
   MACRO_KCAL_TOLERANCE,
-  protocolCheckins,
   normalizeCheckins,
   validateCheckins,
   normalizeNutritionTarget,

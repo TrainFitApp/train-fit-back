@@ -23,10 +23,9 @@ const NutritionPreferencesSchema = new Schema(
     cooksAtHome: { type: String, enum: ["yes", "no", "sometimes", null], default: null },
     // Preferencia de PRESENTACIÓN por cliente: qué slots de los 6 estándar
     // (Desayuno/Almuerzo/Comida/Merienda/Cena/Recena) le aplican de verdad
-    // (ayuno intermitente, 4-5 tomas...) y cómo prefiere llamarlos. Los 6
-    // slots siguen siendo un enum fijo en el resto del sistema.
+    // (ayuno intermitente, 4-5 tomas...). Los 6 slots siguen siendo un enum
+    // fijo en el resto del sistema.
     disabledMealSlots: { type: [String], default: [] },
-    mealSlotLabels: { type: Map, of: String, default: {} },
     requestedAt: { type: Date, default: null },
     requestedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     respondedAt: { type: Date, default: null },

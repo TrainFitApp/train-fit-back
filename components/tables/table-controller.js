@@ -97,18 +97,6 @@ module.exports = {
     return res.send(tables);
   },
 
-  async createTable(req, res) {
-    const userId = req.body.userId || req.user?.id;
-    const table = await tableService.createTable({
-      name: req.body.name,
-      type: req.body.type,
-      ...(userId && { userId }),
-      splits: req.body.splits,
-    });
-
-    return res.send(table);
-  },
-
   async createTableToUser(req, res) {
     const idUser = req.params.idUser || req.body.idUser;
     if (!(await tableAccess.canAccessUserTable(req, idUser))) {

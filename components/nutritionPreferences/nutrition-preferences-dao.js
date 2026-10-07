@@ -1,10 +1,9 @@
 const User = require("../users/user-schema");
 const { DIETARY_FLAGS } = require("./nutrition-preferences-schema");
 
-// Las preferencias viven en User.nutritionPreferences (2026-10). Este DAO
-// devuelve la misma forma que devolvía el documento de la colección antigua
-// (con `clientId` y todos los campos con su valor por defecto) para que
-// controllers, servicios y apps no noten el cambio.
+// Las preferencias viven en User.nutritionPreferences. Se devuelven con el
+// `clientId` de su dueño y todos los campos con su valor por defecto; null si
+// nunca se pidieron ni respondieron.
 
 const DEFAULTS = {
   allergies: "",
@@ -13,11 +12,20 @@ const DEFAULTS = {
   dislikedFoods: "",
   cooksAtHome: null,
   disabledMealSlots: [],
-  mealSlotLabels: {},
   requestedAt: null,
   requestedBy: null,
   respondedAt: null,
   updatedAt: null,
+};
+
+// Lo que el cliente responde, normalizado: vacío = "" / null / [].
+const RESPONSE_FIELDS = {
+  allergies: (value) => value || "",
+  favoriteFoods: (value) => value || "",
+  dislikedFoods: (value) => value || "",
+  cooksAtHome: (value) => value || null,
+  dietaryFlags: (value) => (value || []).filter((flag) => DIETARY_FLAGS.includes(flag)),
+  disabledMealSlots: (value) => value || [],
 };
 
 const PATH = "nutritionPreferences";
@@ -44,34 +52,13 @@ module.exports = {
     return user ? present(user._id, user[PATH]) : null;
   },
 
-  async upsertOwnResponse(
-    clientId,
-    {
-      allergies,
-      favoriteFoods,
-      dislikedFoods,
-      cooksAtHome,
-      dietaryFlags,
-      disabledMealSlots,
-      mealSlotLabels,
-    }
-  ) {
-    const set = {
-      allergies: allergies || "",
-      favoriteFoods: favoriteFoods || "",
-      dislikedFoods: dislikedFoods || "",
-      cooksAtHome: cooksAtHome || null,
-      disabledMealSlots: disabledMealSlots || [],
-      respondedAt: new Date(),
-      updatedAt: new Date(),
-    };
-    // Los formularios ya no renombran comidas: si no llega, se conserva lo
-    // guardado (versiones antiguas de la app aún lo mandan).
-    if (mealSlotLabels != null) set.mealSlotLabels = mealSlotLabels;
-    // Solo se pisa si viene en la petición: versiones antiguas de la app
-    // del cliente no mandan dietaryFlags.
-    if (Array.isArray(dietaryFlags)) {
-      set.dietaryFlags = dietaryFlags.filter((f) => DIETARY_FLAGS.includes(f));
+  // Escribe los campos que llegan; uno ausente no se toca. Los formularios de
+  // preferencias los mandan todos; el cuestionario de alta, solo los suyos
+  // (nunca las comidas desactivadas, que no pregunta).
+  async upsertOwnResponse(clientId, fields) {
+    const set = { respondedAt: new Date(), updatedAt: new Date() };
+    for (const [field, normalize] of Object.entries(RESPONSE_FIELDS)) {
+      if (fields?.[field] !== undefined) set[field] = normalize(fields[field]);
     }
     return update(clientId, set);
   },

@@ -60,13 +60,6 @@ const controller = {
     return res.send(await dietPhaseService.getDietTimeline(req.user.id, from, to));
   },
 
-  async getDietDays(req, res) {
-    const page = parseInt((req.query.page || 0).toString(), 10);
-    const limit = parseInt((req.query.limit || 10).toString(), 10);
-    const dietDays = await dietDayService.getDietDays(page, limit);
-    return res.send(dietDays);
-  },
-
   // GET /dietdays/range?from&to — los días del propio usuario (con su peso)
   // para el calendario y el peso diario.
   async getMyDietDaysInRange(req, res) {

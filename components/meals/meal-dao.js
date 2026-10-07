@@ -24,32 +24,17 @@ function toObjectId(id) {
 const normalizeId = (value) => value?._id || value;
 const toPlainObject = (value) => (value?.toObject ? value.toObject() : { ...value });
 
-// Copia, para pegar, de una receta del portapapeles (acepta también el
-// formato antiguo de overrides del front).
+// Copia, para pegar, de una receta del portapapeles.
 function customRecipeClonePayload(customRecipeObj, cloneCustomProductPayload) {
   return {
     recipe: normalizeId(customRecipeObj.recipe),
     quantity: customRecipeObj.quantity ?? null,
     quantityCooked: customRecipeObj.quantityCooked ?? null,
-    addedCustomProducts: (customRecipeObj.addedCustomProducts || customRecipeObj.additionalCustomProducts || []).map(
-      cloneCustomProductPayload,
-    ),
-    modifiedBaseCustomProducts: (customRecipeObj.modifiedBaseCustomProducts || customRecipeObj.customProductsOverrides || [])
-      .map((override) => {
-        const payload = cloneCustomProductPayload(override);
-        payload.baseCustomProductId = normalizeId(payload.baseCustomProductId || payload.customProductId);
-        delete payload.customProductId;
-        delete payload.removed;
-        return payload;
-      })
+    addedCustomProducts: (customRecipeObj.addedCustomProducts || []).map(cloneCustomProductPayload),
+    modifiedBaseCustomProducts: (customRecipeObj.modifiedBaseCustomProducts || [])
+      .map(cloneCustomProductPayload)
       .filter((override) => override.baseCustomProductId),
-    removedBaseCustomProductIds: (
-      customRecipeObj.removedBaseCustomProductIds ||
-      (customRecipeObj.customProductsOverrides || []).filter((override) => override.removed).map((override) => override.customProductId) ||
-      []
-    )
-      .map((removedId) => normalizeId(removedId))
-      .filter(Boolean),
+    removedBaseCustomProductIds: (customRecipeObj.removedBaseCustomProductIds || []).map(normalizeId).filter(Boolean),
   };
 }
 

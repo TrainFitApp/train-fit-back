@@ -127,13 +127,6 @@ function historyOccurrences(schedule, { before = null, limit = 50, today } = {})
   };
 }
 
-/** Primera ocurrencia posterior a `date`. */
-function nextOccurrenceDate(schedule, date) {
-  const covering = occurrenceCovering(schedule, date);
-  if (covering) return covering.next;
-  return occurrenceDate(schedule, 0);
-}
-
 module.exports = {
   FREQUENCIES,
   validDate,
@@ -143,5 +136,4 @@ module.exports = {
   occurrenceDatesBetween,
   occurrenceCovering,
   historyOccurrences,
-  nextOccurrenceDate,
 };

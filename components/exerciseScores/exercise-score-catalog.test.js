@@ -130,16 +130,16 @@ test("catálogo de puntuaciones", async (t) => {
   });
 });
 
-// Mismo riesgo que los otros catálogos: vive dos veces y se sincroniza a
-// mano. Si el front ofrece una articulación que el backend no conoce, el
-// entrenador la puntúa y el dato se descarta en silencio.
+// Mismo riesgo que los otros catálogos: la escala y sus anclas viven dos
+// veces y se sincronizan a mano (músculos y articulaciones los manda el
+// backend con GET /trainer/exercise-scores/catalog).
 test("el catálogo de puntuaciones del front es idéntico al del backend", async (t) => {
   const MIRROR = path.join(
     __dirname,
     "../../../train-fit-front/packages/shared-core/src/app/core/constants/exercise-score.ts"
   );
 
-  await t.test("mismas articulaciones, mismas anclas y mismos límites", (ctx) => {
+  await t.test("mismas anclas y mismos límites", (ctx) => {
     if (!fs.existsSync(MIRROR)) return ctx.skip("no hay repo de front al lado");
 
     const source = fs.readFileSync(MIRROR, "utf8");
@@ -160,7 +160,6 @@ test("el catálogo de puntuaciones del front es idéntico al del backend", async
       return Number(match[1]);
     };
 
-    assert.deepEqual(extractArray("export const SCORE_JOINTS: string[] = ["), SCORE_JOINTS);
     assert.deepEqual(
       extractArray("export const MUSCLE_SCORE_ANCHORS: string[] = ["),
       MUSCLE_SCORE_ANCHORS
@@ -171,13 +170,5 @@ test("el catálogo de puntuaciones del front es idéntico al del backend", async
     );
     assert.equal(extractNumber("SCORE_MIN"), SCORE_MIN);
     assert.equal(extractNumber("SCORE_MAX"), SCORE_MAX);
-
-    // Los músculos no se comparan como literal: el espejo los importa de
-    // soreness.ts igual que aquí, y eso es lo que se comprueba.
-    assert.match(
-      source,
-      /export const SCORE_MUSCLES: string\[\] = SORENESS_MUSCLES;/,
-      "el front ya no reutiliza los músculos del registro de agujetas"
-    );
   });
 });

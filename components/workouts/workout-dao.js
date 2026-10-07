@@ -101,10 +101,6 @@ function exerciseRefsOf(exercises) {
 }
 
 module.exports = {
-  async getWorkouts(page, limit) {
-    return workoutSchema.find({}).skip(page * limit).limit(limit).exec();
-  },
-
   // La sesión con el Exercise de cada ejercicio poblado (mongoose-autopopulate
   // no actúa sobre .lean()).
   async findWithExercises(id) {
@@ -124,21 +120,6 @@ module.exports = {
 
   async getWorkoutById(id) {
     return workoutSchema.findById(id);
-  },
-
-  // Sustituye los ejercicios de `workoutToPaste` por una copia de los del
-  // portapapeles (series incluidas, sin su ejecución) y copia sus notas.
-  // Los bloques del destino no cambian (son de su fila): un ejercicio pegado
-  // solo conserva su bloque si el destino lo tiene.
-  async pasteWorkout(workoutClipboard, workoutToPaste) {
-    await mutateWorkout({ _id: workoutToPaste?._id }, (workout) => ({
-      exercises: keepValidBlockIds(
-        (workoutClipboard?.exercises || []).map((customExercise) => cloneExercise(customExercise)),
-        workout.blocks,
-      ),
-      notes: workoutClipboard?.notes,
-    }));
-    return workoutSchema.findById(workoutToPaste?._id);
   },
 
   // Duplica la fila de `idWorkout` (la misma posición en todos los

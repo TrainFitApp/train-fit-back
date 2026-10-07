@@ -31,12 +31,6 @@ module.exports = {
     res.send(await pinnedExerciseNoteService.getByTableId(table._id));
   },
 
-  async getByPosition(req, res) {
-    const position = positionOf(req);
-    const table = await accessibleTable(req, req.params.tableId);
-    res.send(await pinnedExerciseNoteService.getByPosition(table._id, position));
-  },
-
   async upsert(req, res) {
     const { notes } = req.body;
     if (typeof notes !== "string" || !notes.trim()) throw badRequest("Notes must be a non-empty string");
@@ -49,13 +43,6 @@ module.exports = {
     if (!mongoose.isValidObjectId(req.params.id)) throw badRequest("Invalid note id");
     const table = await accessibleTable(req, await pinnedExerciseNoteService.tableIdOf(req.params.id));
     await pinnedExerciseNoteService.deleteById(table, req.params.id, req.user.id);
-    res.send({ message: "Pinned exercise note deleted" });
-  },
-
-  async deleteByPosition(req, res) {
-    const position = positionOf(req);
-    const table = await accessibleTable(req, req.params.tableId);
-    await pinnedExerciseNoteService.deleteByPosition(table, position, req.user.id);
     res.send({ message: "Pinned exercise note deleted" });
   },
 };

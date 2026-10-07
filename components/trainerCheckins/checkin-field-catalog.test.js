@@ -101,7 +101,7 @@ test("el catálogo del front es idéntico al del backend", async (t) => {
 
     const source = fs.readFileSync(MIRROR, "utf8");
     const start = source.indexOf("export const CHECKIN_FIELDS: CheckinField[] = [");
-    const end = source.indexOf("\nexport const CHECKIN_FIELD_KEYS");
+    const end = source.indexOf("\n];", start) + 3;
     assert.ok(start >= 0 && end > start, "no se encuentra el array en el espejo");
 
     // Se evalúa el literal del front como JS: es un array de objetos sin

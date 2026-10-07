@@ -19,7 +19,6 @@
 
 const axios = require("axios");
 
-const API = "https://api.revenuecat.com/v1";
 const DAY = 24 * 60 * 60 * 1000;
 
 function httpError(status, message) {

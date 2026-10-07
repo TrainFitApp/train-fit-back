@@ -1,14 +1,6 @@
 const exerciseDao = require("./exercise-dao");
 
 module.exports = {
-  async getExercises(page, limit) {
-    return exerciseDao.getExercises(page, limit);
-  },
-
-  async getExerciseByCode(barcode) {
-    return exerciseDao.getExerciseByCode(barcode);
-  },
-
   async getSearchExercise(page, limit, searchExercisesFilterGroup) {
     return exerciseDao.getSearchExercise(
       page,

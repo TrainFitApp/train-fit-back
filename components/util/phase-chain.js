@@ -31,12 +31,6 @@ function coveringPhase(phases, date) {
   return found;
 }
 
-function latestPhase(phases) {
-  let found = null;
-  for (const phase of phases || []) if (!found || compareChain(phase, found) > 0) found = phase;
-  return found;
-}
-
 // La siguiente en la cadena, o null.
 function successorOf(phases, phase) {
   const ordered = sortChain(phases);
@@ -72,7 +66,6 @@ module.exports = {
   compareChain,
   sortChain,
   coveringPhase,
-  latestPhase,
   successorOf,
   cutEndDate,
   phaseState,

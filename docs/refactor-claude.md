@@ -65,7 +65,7 @@ Estado a **2026-09-25**. La parte del front está en `train-fit-front/docs/refac
 - `CheckinSchedule` es la programación por cliente: `once/daily/weekly/monthly` más "cada N".
 - Las ocurrencias **se calculan al consultar**. No hay cron.
 - `CheckinResponse` guarda una respuesta por ocurrencia, editable mientras siga abierta, y va ligada a la semana de dieta.
-- Los datos corporales también se escriben en `Anthropometry`, que gana perímetros bilaterales L/R, masas y `checkinSources`.
+- Los datos corporales también se escriben en `Anthropometry`, que gana perímetros bilaterales L/R y masas.
 - Agenda y calendario: `checkin-agenda-service.js`.
 
 ### Coach Pro
@@ -103,7 +103,7 @@ Cobros (2026-09-27): nuevas `trainerpaymentprofiles` y `trainerpaymentsettings`;
 | `DietDay` | `userId` (+ índice `{userId, date}`), `skipped`, `menuName` | `steps` ⚠️ |
 | `Meal` | `trainerId`, `assignedByTrainerId`, `completed`, `alternatives`, `chosenAlternativeIndex`, `alternativesTrainerId` | |
 | `CustomProduct` / `CustomRecipe` | `assignedQuantity`, `assignedByTrainerId`, `consumed`; en `CustomProduct` además `name` y `quickAdd` (adición rápida, 2026-10) | |
-| `Anthropometry` | perímetros L/R, `shoulders`, masas, `checkinSources` | |
+| `Anthropometry` | perímetros L/R, `shoulders`, masas | |
 | `NutritionalGoal` | `fiberGTotal`, `source`, `updatedByTrainerId` | |
 | `Recipe` | `tags` | |
 | `Split` / `Workout` / `Table` / `CustomExercise` | ver el apartado "Entrenamiento" | |

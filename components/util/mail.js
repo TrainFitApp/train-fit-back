@@ -189,7 +189,7 @@ const htmlToText = (html) => {
 
   // Enlaces: texto (url)
   text = text.replace(
-    /<a\b[^>]*href=\"([^\"]*)\"[^>]*>(.*?)<\/a>/gi,
+    /<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi,
     "$2 ($1)",
   );
 

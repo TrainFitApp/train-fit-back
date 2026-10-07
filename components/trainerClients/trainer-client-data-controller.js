@@ -71,21 +71,6 @@ module.exports = {
     return res.send(enriched);
   },
 
-  // PUT /trainer/clients/:clientId/tables/:tableId/activate — poner en uso
-  // una rutina ya asignada (o cualquier tabla del cliente). Tocar una fila ya
-  // existente la activa — sin crear ni editar nada, a diferencia de
-  // assignTable (crea + NO activa, ver F11 punto 7.7).
-  async activateTable(req, res) {
-    const { clientId, tableId } = req.params;
-    const table = await trainerPrescriptionService.activateRoutine({
-      trainerId: req.auth.userId,
-      clientId,
-      tableId,
-      reason: req.body?.reason,
-    });
-    return res.send({ _id: table._id });
-  },
-
   // GET /trainer/clients/:clientId/tables/available-templates — F11, requireActiveClient("training")
   // Plantillas disponibles para asignar: públicas de TrainFit + propias del profesional.
   async getAvailableTemplates(req, res) {
@@ -524,13 +509,5 @@ module.exports = {
   async applyMealToClients(req, res) {
     const { date, mealSlot } = req.params;
     return res.send(await trainerPrescriptionService.applyMealToClients(req.auth.userId, { ...req.body, date, mealSlot }));
-  },
-
-  // POST /trainer/meals/apply-to-clients — F30/TAREA5, sin cliente origen en
-  // la URL (ver comentario en trainer-client-routes.js). Misma lógica que
-  // applyMealToClients de arriba, date/mealSlot viajan por el body en vez de
-  // por params porque no hay ruta anidada bajo un cliente concreto.
-  async applyMealToClientsDirect(req, res) {
-    return res.send(await trainerPrescriptionService.applyMealToClients(req.auth.userId, req.body || {}));
   },
 };

@@ -9,7 +9,6 @@ const coachAlertService = require("../coachAlerts/coach-alert-service");
 const tableService = require("../tables/table-service");
 const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
 const dietPhaseService = require("../dietPhases/diet-phase-service");
-const userDao = require("../users/user-dao");
 const {
   buildWeeklyTraining,
   buildPersonalRecords,
@@ -164,14 +163,6 @@ async function summary(trainerId, clientId, trainerTimeZone) {
   };
 }
 
-// Altura, sexo y fecha de nacimiento: lo único que le falta a la calculadora
-// corporal (las fórmulas corren en el navegador).
-async function bodyProfile(clientId) {
-  const client = await userDao.findFields(clientId, "height sex birth");
-  if (!client) throw clientNotFound();
-  return { heightCm: client.height ?? null, sex: client.sex ?? null, birth: client.birth ?? null };
-}
-
 // Serie semanal de las últimas `weeks` semanas + comparativa de la última
 // contra la anterior (los dos últimos elementos de la misma serie).
 async function weeklyProgress(trainerId, clientId, weeks) {
@@ -302,4 +293,4 @@ async function trainingProgress(clientId, { customRange, requestedWeeks, workout
   return response;
 }
 
-module.exports = { SUMMARY_WINDOW_DAYS, summary, bodyProfile, weeklyProgress, trainingProgress };
+module.exports = { SUMMARY_WINDOW_DAYS, summary, weeklyProgress, trainingProgress };

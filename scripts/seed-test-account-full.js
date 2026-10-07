@@ -1,4 +1,5 @@
 const path = require("path");
+const { customKeyFor } = require("../components/forms/custom-question");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
 const crypto = require("crypto");
@@ -544,7 +545,7 @@ const Q = {
   water: { _id: oid("q:water"), label: "¿Has cumplido el objetivo de agua?", type: "frequency", options: [], required: false, enabled: true, unit: "" },
   free: { _id: oid("q:free"), label: "¿Algo que quieras contarle a tu entrenador?", type: "text", options: [], required: false, enabled: true, unit: "" },
 };
-const ck = (q) => `custom:${q._id}`;
+const ck = (q) => customKeyFor(q._id);
 
 const COMMENTS = [
   "Primera semana, todo bien. Me cuesta acostumbrarme a pesar la comida.",
@@ -673,7 +674,6 @@ function buildCheckins(phases, existingAnthroDates) {
       status: extra.status || "responded",
       reviewedAt: extra.reviewedAt || null,
       reviewComment: extra.reviewComment || "",
-      seenByTrainer: extra.seen ?? true,
       week: weekStamp(date, phases),
     });
     stats.responses++;
@@ -697,7 +697,6 @@ function buildCheckins(phases, existingAnthroDates) {
       status: reviewed ? "reviewed" : "responded",
       reviewedAt: reviewed ? at(addDaysToIsoDate(date, 1), "10:30") : null,
       reviewComment: REVIEW[i] || "",
-      seen: i !== 9, // el último sin ver por el entrenador
       updatedAt: i === 9 ? at(addDaysToIsoDate(date, 1), "21:05") : undefined,
     });
   }
@@ -743,7 +742,7 @@ function buildCheckins(phases, existingAnthroDates) {
       motivation_level: 4,
     };
     if (i === 4) values.comment = "Lo pauso, me agobia el diario.";
-    respond(sched.quick, i, addDaysToIsoDate(sched.quick.startDate, i), values, { seen: true });
+    respond(sched.quick, i, addDaysToIsoDate(sched.quick.startDate, i), values);
   }
 
   // Antropometría derivada (una fila por fecha, sin pisar las que ya tenían)

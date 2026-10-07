@@ -67,24 +67,6 @@ module.exports = {
     return Anthropometry.findByIdAndDelete(id);
   },
 
-  // MVP-trainers F17 — upsert atómico que SOLO toca los campos presentes en
-  // `fields`, nunca sobrescribe el documento entero. Usado por el check-in
-  // del profesional para fusionar con lo que el cliente ya haya auto-registrado
-  // ese mismo día (o viceversa) sin que una escritura borre a la otra.
-  async mergeCheckinFields(userId, date, fields, requestId) {
-    try {
-      return await Anthropometry.findOneAndUpdate(
-        { userId, date, checkinSources: { $ne: requestId } },
-        { $set: fields, $setOnInsert: { userId, date }, $addToSet: { checkinSources: requestId } },
-        { new: true, upsert: true }
-      ).lean();
-    } catch (error) {
-      // La clave única del día también protege el reintento tras una caída.
-      if (error.code !== 11000 || !await Anthropometry.exists({ userId, date, checkinSources: requestId })) throw error;
-      return null;
-    }
-  },
-
   // `fromCheckin` marca los campos como respuesta de check-in: el entrenador
   // los ve, el cliente no (anthropometry-origin.js).
   async mergeAnthropometryFields(userId, date, fields, { fromCheckin = false } = {}) {

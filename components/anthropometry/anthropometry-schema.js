@@ -13,7 +13,6 @@ const AnthropometrySchema = new Schema({
     required: true,
   },
   weight: { type: Number },
-  checkinSources: { type: [Schema.Types.ObjectId], default: undefined, select: false },
   // Campos de este día que vienen de un check-in pedido por el entrenador:
   // el cliente no los ve en sus pantallas (anthropometry-origin.js).
   checkinFields: { type: [String], default: undefined },

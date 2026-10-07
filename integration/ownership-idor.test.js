@@ -61,13 +61,13 @@ function idor(name, fn, todo) {
 
 // --- Entrenamiento ----------------------------------------------------------------
 
-idor("borrar la rutina de otro usuario", async ({ victim, attacker, data }) => {
+idor("borrar la rutina de otro usuario", async ({ attacker, data }) => {
   await ctx.call(attacker, "DELETE", `/tables/${data.table._id}`);
   assert.ok(await reload("Table", data.table._id), "la rutina sigue");
   assert.ok(await reload("Set", data.set._id), "y sus series");
 });
 
-idor("copiar o duplicar a mi cuenta la rutina privada de otro", async ({ victim, attacker, data }) => {
+idor("copiar o duplicar a mi cuenta la rutina privada de otro", async ({ data }) => {
   const fields = { fields: { premium: { entitled: true, expiresAt: new Date(Date.now() + 86400000) } } };
   const premiumAttacker = await ctx.makeClient(fields);
   await ctx.call(premiumAttacker, "POST", `/tables/copy/${data.table._id}`, { idUser: premiumAttacker.id });
@@ -75,18 +75,18 @@ idor("copiar o duplicar a mi cuenta la rutina privada de otro", async ({ victim,
   assert.equal(await ctx.count("Table", { userId: premiumAttacker._id }), 0);
 });
 
-idor("buscar rutinas de otro usuario pasando su idUser", async ({ victim, attacker, data }) => {
+idor("buscar rutinas de otro usuario pasando su idUser", async ({ victim, attacker }) => {
   const found = await ctx.post(attacker, "/tables/search", { search: "", isOwn: true, idUser: victim.id });
   assert.ok(!JSON.stringify(found).includes("Rutina privada"));
 });
 
-idor("leer la rutina, el entreno o el ejercicio de otro por id", async ({ victim, attacker, data }) => {
+idor("leer la rutina, el entreno o el ejercicio de otro por id", async ({ attacker, data }) => {
   for (const path of [`/tables/${data.table._id}`, `/workouts/${data.workout._id}`, `/customexercises/${data.ce._id}`]) {
     assert.equal((await ctx.call(attacker, "GET", path)).status, 403, path);
   }
 });
 
-idor("editar la serie, el ejercicio o el entreno de otro", async ({ victim, attacker, data }) => {
+idor("editar la serie, el ejercicio o el entreno de otro", async ({ attacker, data }) => {
   assert.equal((await ctx.call(attacker, "PUT", "/sets", { _id: data.set._id, reps: 1 })).status, 403);
   assert.equal((await ctx.call(attacker, "PUT", `/customexercises/${data.ce._id}/client-notes`, { clientNotes: "x" })).status, 403);
   assert.equal((await ctx.call(attacker, "PUT", "/workouts/modify/one/simple/save", { _id: data.workout._id, name: "x" })).status, 403);
@@ -96,7 +96,7 @@ idor("editar la serie, el ejercicio o el entreno de otro", async ({ victim, atta
   assert.equal((await reload("Workout", data.workout._id)).name, "Pull privado");
 });
 
-idor("marcar como terminado o como descanso el entreno de otro", async ({ victim, attacker, data }) => {
+idor("marcar como terminado o como descanso el entreno de otro", async ({ attacker, data }) => {
   await ctx.call(attacker, "PUT", "/workouts/finish", { workoutId: data.workout._id, date: "2020-01-01" });
   await ctx.call(attacker, "PUT", "/workouts/skip", { workoutId: data.workout._id, rest: true });
   const stored = await reload("Workout", data.workout._id);
@@ -104,7 +104,7 @@ idor("marcar como terminado o como descanso el entreno de otro", async ({ victim
   assert.equal(stored.rest ?? null, null);
 });
 
-idor("renombrar el entreno de otro desde una rutina mía", async ({ victim, attacker, data }) => {
+idor("renombrar el entreno de otro desde una rutina mía", async ({ attacker, data }) => {
   const mine = await ctx.model("Table").create({ name: "Mía", userId: attacker._id, splits: [] });
   await ctx.call(attacker, "PUT", `/workouts/names/${mine._id}/${data.workout._id}`, { workoutsName: "Hackeado" });
   assert.equal((await reload("Workout", data.workout._id)).name, "Pull privado");
@@ -112,38 +112,20 @@ idor("renombrar el entreno de otro desde una rutina mía", async ({ victim, atta
 
 // Desde 2026-10 un microciclo solo existe dentro de su rutina: no hay ruta
 // para "enganchar" uno de otra (antes: PUT /splits/split/:idTable/:idSplit).
-idor("enganchar el microciclo de otro a una rutina mía", async ({ victim, attacker, data }) => {
+idor("enganchar el microciclo de otro a una rutina mía", async ({ attacker, data }) => {
   const mine = await ctx.model("Table").create({ name: "Mía 2", userId: attacker._id, splits: [] });
   assert.equal((await ctx.call(attacker, "PUT", `/splits/split/${mine._id}/${data.split._id}`)).status, 404);
   assert.deepEqual((await reload("Table", mine._id)).splits, []);
 });
 
-// Los listados globales (find({}) paginado, sin filtro de dueño) quedan solo
-// para admin: ninguna app los usa con un usuario normal.
-idor("listar entrenos y microciclos de todos los usuarios", async ({ victim, attacker, data }) => {
-  assert.equal((await ctx.call(attacker, "GET", "/workouts?limit=100")).status, 403);
-  // Los microciclos ya no se listan sueltos (van dentro de su rutina).
-  assert.equal((await ctx.call(attacker, "GET", "/splits?limit=100")).status, 404);
-  const admin = await ctx.makeAdmin();
-  assert.equal((await ctx.call(admin, "GET", "/workouts?limit=1")).status, 200);
-});
-
 // --- Nutrición ----------------------------------------------------------------------
 
-idor("listar días de dieta o comidas de todos los usuarios", async ({ victim, attacker, data }) => {
-  assert.equal((await ctx.call(attacker, "GET", "/dietdays?limit=100")).status, 403);
-  // Las comidas ya no se listan sueltas (van dentro de su día).
-  assert.equal((await ctx.call(attacker, "GET", "/meals?limit=100")).status, 404);
-  const admin = await ctx.makeAdmin();
-  assert.equal((await ctx.call(admin, "GET", "/dietdays?limit=1")).status, 200);
-});
-
-idor("borrar el día de dieta de otro: por fecha solo se borra el propio", async ({ victim, attacker, data }) => {
+idor("borrar el día de dieta de otro: por fecha solo se borra el propio", async ({ attacker, data }) => {
   await ctx.call(attacker, "DELETE", `/dietdays/date/${data.day.date}`);
   assert.ok(await reload("DietDay", data.day._id));
 });
 
-idor("leer, añadir o quitar alimentos de una comida ajena por las rutas de /meals", async ({ victim, attacker, data }) => {
+idor("leer, añadir o quitar alimentos de una comida ajena por las rutas de /meals", async ({ attacker, data }) => {
   assert.equal((await ctx.call(attacker, "GET", `/meals/${data.meal._id}`)).status, 400);
   assert.equal((await ctx.call(attacker, "DELETE", `/meals/${data.meal._id}/customproducts/${data.cp._id}`)).status, 400);
   assert.equal((await ctx.call(attacker, "PATCH", `/meals/${data.meal._id}/customproducts/${data.cp._id}/quantity`, { quantity: 1 })).status, 400);
@@ -154,14 +136,14 @@ idor("leer, añadir o quitar alimentos de una comida ajena por las rutas de /mea
   assert.equal((await reload("Meal", data.meal._id)).customProducts.length, 1);
 });
 
-idor("modificar una comida ajena por la vía genérica", async ({ victim, attacker, data }) => {
+idor("modificar una comida ajena por la vía genérica", async ({ attacker, data }) => {
   await ctx.call(attacker, "PUT", `/meals/${data.meal._id}`, { name: "Hackeada", customProducts: [] });
   const stored = await reload("Meal", data.meal._id);
   assert.equal(stored.name, "Desayuno");
   assert.equal(stored.customProducts.length, 1);
 });
 
-idor("editar o borrar la receta-instancia (CustomRecipe) de otro", async ({ victim, attacker, data }) => {
+idor("editar o borrar la receta-instancia (CustomRecipe) de otro", async ({ attacker, data }) => {
   const mealId = data.day.meals[1]._id;
   await ctx.call(attacker, "POST", "/recipes/compose", {
     mode: "edit",
@@ -173,12 +155,12 @@ idor("editar o borrar la receta-instancia (CustomRecipe) de otro", async ({ vict
   assert.equal((await reload("CustomRecipe", data.customRecipe._id))?.quantity, 200);
 });
 
-idor("enganchar una receta a la comida de otro con /recipes/compose", async ({ victim, attacker, data }) => {
+idor("enganchar una receta a la comida de otro con /recipes/compose", async ({ attacker, data }) => {
   await ctx.call(attacker, "POST", "/recipes/compose", { recipeId: data.recipe._id, customRecipe: { quantity: 100 }, context: { mealId: data.meal._id } });
   assert.equal((await reload("Meal", data.meal._id)).customRecipes.length, 0);
 });
 
-idor("leer una receta privada de otro por id", async ({ victim, attacker, data }) => {
+idor("leer una receta privada de otro por id", async ({ attacker, data }) => {
   const res = await ctx.call(attacker, "GET", `/recipes/${data.recipe._id}`);
   assert.ok(res.status >= 400, String(res.status));
 });
@@ -192,10 +174,6 @@ idor("marcar favoritos en nombre de otro: siempre son los de la sesión", async 
 
 // --- Cuenta y medidas ---------------------------------------------------------------
 
-idor("poner en uso la rutina de otro usuario por /users", async ({ victim, attacker, data }) => {
-  assert.equal((await ctx.call(attacker, "PUT", `/users/addtable/${victim.id}/${data.table._id}`)).status, 403);
-});
-
 idor("marcar como favorita una receta privada de otro: 404", async ({ attacker, data }) => {
   assert.equal((await ctx.call(attacker, "PUT", `/favorites/recipes/${data.recipe._id}`)).status, 404);
 });
@@ -208,7 +186,7 @@ idor("poner en uso en mi cuenta la rutina de otro, o leer su producto privado po
   assert.ok(!JSON.stringify(res).includes("Barritas privadas"));
 });
 
-idor("ver el día de dieta de otro: por fecha solo se ve el propio", async ({ victim, attacker, data }) => {
+idor("ver el día de dieta de otro: por fecha solo se ve el propio", async ({ victim, attacker }) => {
   const res = await ctx.post(attacker, "/dietdays/date/2026-06-10", { userId: victim.id });
   assert.notEqual(String(res.dietDay.userId), victim.id, "el dueño sale del token");
   assert.equal(res.dietDay.meals[0].customProducts.length, 0);

@@ -1,5 +1,4 @@
 const productSchema = require("./product-schema");
-const userSchema = require("../users/user-schema");
 const mongoose = require("mongoose");
 const {
   PRODUCT_SEARCH_CONFIG,
@@ -179,36 +178,28 @@ module.exports = {
    * Primero busca en los productos del usuario (userId == idUser), luego en los globales.
    */
   async getProductByCode(userId, barcode) {
-    try {
-      const userObjectId = toObjectId(userId);
-      // 1. Buscar en productos propios del usuario
-      if (userObjectId) {
-        const ownProduct = await productSchema.findOne({
-          code: barcode,
-          userId: userObjectId,
-        });
-        if (ownProduct) {
-          return { product: ownProduct, isOwn: true };
-        }
-      }
-
-      // 2. Buscar en productos globales
-      const globalProduct = await productSchema.findOne({
+    const userObjectId = toObjectId(userId);
+    // 1. Buscar en productos propios del usuario
+    if (userObjectId) {
+      const ownProduct = await productSchema.findOne({
         code: barcode,
-        userId: null,
+        userId: userObjectId,
       });
-      return { product: globalProduct || null, isOwn: false };
-    } catch (err) {
-      throw err;
+      if (ownProduct) {
+        return { product: ownProduct, isOwn: true };
+      }
     }
+
+    // 2. Buscar en productos globales
+    const globalProduct = await productSchema.findOne({
+      code: barcode,
+      userId: null,
+    });
+    return { product: globalProduct || null, isOwn: false };
   },
 
   async getProductsCount() {
-    try {
-      return await productSchema.countDocuments({ userId: null });
-    } catch (err) {
-      throw err;
-    }
+    return await productSchema.countDocuments({ userId: null });
   },
 
   /**
@@ -339,22 +330,14 @@ module.exports = {
    * Equivalente al antiguo "toProduct".
    */
   async promoteToGlobal(id) {
-    try {
-      return await productSchema.findByIdAndUpdate(
-        id,
-        { $unset: { userId: "" }, $set: { verified: true } },
-        { new: true },
-      );
-    } catch (err) {
-      throw err;
-    }
+    return await productSchema.findByIdAndUpdate(
+      id,
+      { $unset: { userId: "" }, $set: { verified: true } },
+      { new: true },
+    );
   },
 
   async deleteProduct(id) {
-    try {
-      return await productSchema.deleteOne({ _id: id });
-    } catch (err) {
-      throw err;
-    }
+    return await productSchema.deleteOne({ _id: id });
   },
 };

@@ -28,7 +28,6 @@ const CheckinResponseSchema = new Schema({
   status: { type: String, enum: ["responded", "reviewed"], default: "responded" },
   reviewedAt: { type: Date, default: null },
   reviewComment: { type: String, default: "", maxlength: 2000 },
-  seenByTrainer: { type: Boolean, default: false },
   // A qué SEMANA de qué fase de dieta pertenece (docs/plan-semanas.md). Las
   // semanas son naturales, de lunes a domingo: el check-in cae dentro de una
   // y su dato es con el que se ajusta la siguiente. Ausente si el cliente no

@@ -66,10 +66,6 @@ module.exports = {
     return nutritionalGoalDao.findByUserId(userId);
   },
 
-  async getLatestByUserId(userId) {
-    return nutritionalGoalDao.findLatestByUserId(userId);
-  },
-
   async countByUserId(userId) {
     return nutritionalGoalDao.countByUserId(userId);
   },
@@ -84,10 +80,6 @@ module.exports = {
 
   async remove(id) {
     return nutritionalGoalDao.delete(id);
-  },
-
-  async removeByUserId(id, userId) {
-    return nutritionalGoalDao.deleteByIdAndUserId(id, userId);
   },
 
   // Recalcula el objetivo "Default" del cliente a partir de su perfil en

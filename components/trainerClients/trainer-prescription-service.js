@@ -3,9 +3,7 @@ const mealService = require("../meals/meal-service");
 const notificationService = require("../notifications/notification-service");
 const trainerClientService = require("./trainer-client-service");
 const { resolveOwnedDietDay } = require("../dietDays/diet-day-resolver");
-const planChangeService = require("../planChanges/plan-change-service");
-const { routineInUseOfId } = require("../routineAssignments/routine-in-use");
-const { badRequest, notFound } = require("../util/http-error");
+const { badRequest } = require("../util/http-error");
 
 // Lo que el profesional pauta directamente a sus clientes, a uno (F11/F12) o
 // a varios a la vez (F30): una rutina (en blanco o copia de una plantilla) y
@@ -77,20 +75,6 @@ module.exports = {
       return copyTemplate(trainerId, clientId, sourceTableId);
     }
     throw badRequest('mode debe ser "new" o "duplicate"');
-  },
-
-  // Poner en uso una rutina del cliente que ya existe (sin crear ni editar
-  // nada) y apuntarlo en su historial de cambios si cambia la que rige.
-  async activateRoutine({ trainerId, clientId, tableId, reason }) {
-    const table = await tableService.getTableForClient(tableId, clientId);
-    if (!table) throw notFound("Rutina no encontrada para este cliente");
-    const { tableInUse } = await routineInUseOfId(clientId);
-    const previousTable = tableInUse ? await tableService.getTableForClient(tableInUse, clientId) : null;
-    await tableService.activateTableForClient(clientId, table._id);
-    if (String(previousTable?._id) !== String(table._id)) {
-      await planChangeService.recordRoutineChange({ trainerId, clientId, previousTable, newTable: table, reason });
-    }
-    return table;
   },
 
   // F12: la comida se resuelve contra el cliente de la ruta antes de tocar

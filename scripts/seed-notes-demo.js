@@ -102,7 +102,7 @@ async function loadTarget(db) {
   return { table, orderedSplits, workoutsById, customExercises, pinned };
 }
 
-function buildPlan({ table, orderedSplits, workoutsById }) {
+function buildPlan({ orderedSplits, workoutsById }) {
   const workoutSets = [];
   const exerciseSets = [];
   orderedSplits.forEach((split, splitIndex) => {

@@ -129,16 +129,6 @@ module.exports = {
     return userSchema.findByIdAndUpdate(userId, { $unset: { auth: 1 } });
   },
 
-  // Conectados en los últimos 10 minutos y total.
-  async countUsers() {
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-    const [online, total] = await Promise.all([
-      userSchema.countDocuments({ lastLogin: { $gte: tenMinutesAgo, $lte: new Date() } }),
-      userSchema.countDocuments(),
-    ]);
-    return { online, total };
-  },
-
 
   async searchUsers(page, limit, searchTerm, filters = {}) {
     try {
@@ -252,16 +242,6 @@ module.exports = {
       return existing.save();
     }
     return userSchema.create(user);
-  },
-
-  // El usuario pone en uso una de sus rutinas (users/user-schema.js, tableInUseAt).
-  async addUserTable(idUser, idTable) {
-    const addTable = {
-      $set: { tableInUse: idTable, tableInUseAt: new Date() },
-      $unset: { workoutInUse: "", workoutInUseAt: "" },
-    };
-
-    return userSchema.findByIdAndUpdate(idUser, addTable, { new: true });
   },
 
   // Campos del perfil ya filtrados (users/user-profile.js#pickProfile y

@@ -1,7 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  protocolCheckins,
   normalizeCheckins,
   validateCheckins,
   normalizeNutritionTarget,
@@ -10,18 +9,6 @@ const {
 
 const A = "507f1f77bcf86cd799439011";
 const B = "507f1f77bcf86cd799439012";
-
-test("protocolCheckins lee el checkinTemplateId antiguo como semanal", () => {
-  assert.deepEqual(protocolCheckins({ checkinTemplateId: A }), [
-    { templateId: A, frequency: "weekly", interval: 1, time: "09:00" },
-  ]);
-  assert.deepEqual(protocolCheckins({}), []);
-});
-
-test("protocolCheckins prefiere la lista nueva", () => {
-  const checkins = [{ templateId: B, frequency: "daily", interval: 1, time: "08:00" }];
-  assert.equal(protocolCheckins({ checkinTemplateId: A, checkins }), checkins);
-});
 
 test("normalizeCheckins rellena la cadencia por defecto", () => {
   assert.deepEqual(normalizeCheckins([{ templateId: A }]), [

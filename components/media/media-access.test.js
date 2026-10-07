@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { trainerCanSeeProgressDay, sentToTrainer, adminCanSeeContent } = require("./media-access");
+const { trainerCanSeeProgressDay, sentToTrainer } = require("./media-access");
 
 // Quién ve las fotos y vídeos de progreso de un cliente (decisión 4 del
 // plan): es la regla que protege lo más íntimo que guarda la app.
@@ -46,8 +46,4 @@ test("lo mandado en un check-in o en el cuestionario de alta lo ve siempre quien
 test("sin relación o sin día, nada", () => {
   assert.equal(trainerCanSeeProgressDay(null, RELATION), false);
   assert.equal(trainerCanSeeProgressDay({ date: "2026-09-10" }, { ...RELATION, relationStart: null }), false);
-});
-
-test("el admin no ve nunca fotos ni vídeos", () => {
-  assert.equal(adminCanSeeContent(), false);
 });

@@ -53,14 +53,6 @@ function customKeyFor(questionId) {
   return `${CUSTOM_KEY_PREFIX}${questionId}`;
 }
 
-function isCustomKey(key) {
-  return typeof key === "string" && key.startsWith(CUSTOM_KEY_PREFIX);
-}
-
-function questionIdFromKey(key) {
-  return isCustomKey(key) ? key.slice(CUSTOM_KEY_PREFIX.length) : null;
-}
-
 /**
  * Valida una respuesta contra su pregunta. Devuelve un mensaje de error o
  * null. Puro — se prueba sin BD.
@@ -220,8 +212,6 @@ module.exports = {
   FREQUENCY_OPTIONS,
   CUSTOM_KEY_PREFIX,
   customKeyFor,
-  isCustomKey,
-  questionIdFromKey,
   validateCustomAnswer,
   normalizeCustomAnswer,
   validateQuestionDefinition,

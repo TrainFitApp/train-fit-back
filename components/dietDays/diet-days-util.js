@@ -25,9 +25,4 @@ module.exports = {
 
     return dietDay;
   },
-
-  datesAreOnSameDay(first, second) {
-    if (!first || !second) return false;
-    return first === second;
-  },
 };

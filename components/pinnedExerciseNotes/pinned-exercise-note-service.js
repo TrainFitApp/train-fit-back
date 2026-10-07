@@ -20,11 +20,6 @@ module.exports = {
     return PinnedExerciseNoteDTO.fromModels(await PinnedExerciseNoteDAO.findByTableId(tableId));
   },
 
-  async getByPosition(tableId, { workoutIndex, exerciseIndex }) {
-    const note = await PinnedExerciseNoteDAO.findByPosition(tableId, workoutIndex, exerciseIndex);
-    return note ? PinnedExerciseNoteDTO.fromModel(note) : null;
-  },
-
   async upsert(table, { workoutIndex, exerciseIndex }, notes, userId) {
     assertAuthor(table, await PinnedExerciseNoteDAO.findByPosition(table._id, workoutIndex, exerciseIndex), userId);
     const note = await PinnedExerciseNoteDAO.upsert(
@@ -47,10 +42,5 @@ module.exports = {
   async deleteById(table, noteId, userId) {
     assertAuthor(table, await PinnedExerciseNoteDAO.findById(noteId), userId);
     await PinnedExerciseNoteDAO.deleteById(noteId);
-  },
-
-  async deleteByPosition(table, { workoutIndex, exerciseIndex }, userId) {
-    assertAuthor(table, await PinnedExerciseNoteDAO.findByPosition(table._id, workoutIndex, exerciseIndex), userId);
-    await PinnedExerciseNoteDAO.deleteByPosition(table._id, workoutIndex, exerciseIndex);
   },
 };

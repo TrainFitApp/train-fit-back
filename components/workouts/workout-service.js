@@ -3,15 +3,8 @@ const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
 const { toId, isObjectId } = require("./workout-tree");
 
 module.exports = {
-  async getWorkouts(page, limit) {
-    return workoutDao.getWorkouts(page, limit);
-  },
   async getWorkoutById(id) {
     return workoutDao.getWorkoutById(id);
-  },
-
-  async pasteWorkout(workoutClipboard, workoutToPaste) {
-    return workoutDao.pasteWorkout(workoutClipboard, workoutToPaste);
   },
 
   async duplicateWorkoutRow(idTable, idWorkout, nameSuffix) {

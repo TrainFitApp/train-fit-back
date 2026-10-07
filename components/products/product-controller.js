@@ -1,5 +1,4 @@
 const productService = require("./product-service");
-const productDTO = require("./product-dto");
 
 function isAdmin(req) {
   const roles = req?.userData?.roles || [];

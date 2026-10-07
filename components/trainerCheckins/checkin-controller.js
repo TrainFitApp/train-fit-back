@@ -90,23 +90,6 @@ module.exports = {
     return res.send(await checkinService.applyDefinition(req.auth.userId, req.params.id, clientIds, timing));
   },
 
-  // GET /trainer/checkins/responses — "Reportes": histórico de TODOS los
-  // clientes de este entrenador.
-  async getMyCheckinResponses(req, res) {
-    return res.send(await checkinService.listResponsesForTrainer(req.auth.userId));
-  },
-
-  async getUnseenCount(req, res) {
-    return res.send({ count: await checkinService.countUnseenForTrainer(req.auth.userId) });
-  },
-
-  // Visitar "Reportes" limpia el contador, igual que abrir una bandeja de
-  // entrada.
-  async markSeen(req, res) {
-    await checkinService.markAllSeenForTrainer(req.auth.userId);
-    return res.sendStatus(204);
-  },
-
   // GET /trainer/clients/:clientId/checkin-responses — histórico de un cliente
   async getClientCheckinResponses(req, res) {
     return res.send(await checkinService.listResponses(req.auth.userId, req.params.clientId));

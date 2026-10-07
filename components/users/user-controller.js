@@ -1,5 +1,4 @@
 const userService = require("./user-service");
-const tableService = require("../tables/table-service");
 const mail = require("./../util/mail");
 const { normalizeEmail } = require("../util/normalize-email");
 const { badRequest, forbidden, notFound } = require("../util/http-error");
@@ -79,10 +78,6 @@ function notifyUserRegistered(user, req, source) {
 const ROLES_ASSIGNABLE = ["user", "admin"];
 
 module.exports = {
-  async countUsers(req, res) {
-    res.send(await userService.countUsers());
-  },
-
   // Público. Un registro social a medias (cuenta sin nombre) no cuenta: ese
   // correo todavía puede completar el alta.
   async checkEmail(req, res) {
@@ -123,14 +118,6 @@ module.exports = {
     const user = await userService.createProfessional({ name, lastname, email: normalizeEmail(email), password });
     notifyUserRegistered(user, req, "users.createProfessionalUser");
     res.status(201).send(await userService.view(user, req.user));
-  },
-
-  async addUserTable(req, res) {
-    assertCanActOnUser(req, req.params.idUser);
-    // Solo se pone en uso una rutina del propio usuario.
-    const table = await tableService.getTableForClient(req.params.idTable, req.params.idUser);
-    if (!table) throw notFound("Rutina no encontrada");
-    res.send(await userService.addUserTable(req.params.idUser, req.params.idTable));
   },
 
   async updateUser(req, res) {

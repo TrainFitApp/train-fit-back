@@ -73,8 +73,6 @@ test("el cliente ve el check-in abierto con los datos del profesional y lo respo
   const queue = await ctx.get(trainer, "/trainer/review-queue/count");
   assert.ok(JSON.stringify(queue).match(/[1-9]/), JSON.stringify(queue));
   assert.ok(typesOf(await ctx.get(trainer, "/trainer/notifications/mine")).includes("checkin_responded"));
-  const unseen = await ctx.get(trainer, "/trainer/checkins/unseen-count");
-  assert.ok(JSON.stringify(unseen).match(/[1-9]/), JSON.stringify(unseen));
 });
 
 test("responder: valida cada respuesta contra el catálogo (rango, escala, campos que no son del check-in)", async () => {

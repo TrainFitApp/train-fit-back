@@ -328,12 +328,3 @@ test("configuración remota: valida coherencia de fechas y versiones; actualizac
   assert.equal(garbage.body.forceUpdate.required, false, "fail-open con versiones no válidas");
   await ctx.put(admin, "/config/admin", { forceUpdate: { minVersionIos: "" } });
 });
-
-// --- Rutas estáticas ------------------------------------------------------------------
-
-test("ayudante de YouTube que sirve la API (/youtube-embed.html y /api/exercises/youtube-embed)", async () => {
-  const res = await fetch(`${ctx.baseUrl.replace(/\/api$/, "")}/youtube-embed.html`);
-  assert.equal(res.status, 200);
-  const user = await ctx.makeClient();
-  assert.equal((await ctx.call(user, "GET", "/exercises/youtube-embed")).status, 200);
-});

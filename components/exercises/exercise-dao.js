@@ -4,6 +4,7 @@ const WorkoutBase = require("../workouts/workout-base-schema");
 const { Types } = require("mongoose");
 const { cleanObject } = require("../util/clean-data");
 const { normalizeMuscles, expandMuscleFilter } = require("./muscle-catalog");
+const { createAccentInsensitiveRegex } = require("../util/accent-insensitive-regex");
 
 // updateOne no pasa por el hook pre("validate") del schema: `muscles` se
 // deja en forma canónica aquí, con la misma función.
@@ -31,14 +32,6 @@ async function countExerciseUsage(id) {
 }
 
 module.exports = {
-  async getExercises(page, limit) {
-    return exerciseSchema.find({}).skip(page * limit).limit(limit);
-  },
-
-  async getExerciseByCode(barcode) {
-    return exerciseSchema.findOne({ code: barcode });
-  },
-
   async getExercise(id) {
     return exerciseSchema.findById(id);
   },
@@ -49,168 +42,150 @@ module.exports = {
   },
 
   async getSearchExercise(page, limit, searchExercisesFilterGroup) {
-    try {
-      // Los ejercicios retirados (deletedAt) no salen nunca en la búsqueda.
-      const agg = [{ $match: { deletedAt: null } }];
+    // Los ejercicios retirados (deletedAt) no salen nunca en la búsqueda.
+    const agg = [{ $match: { deletedAt: null } }];
 
-      console.log("[EXERCISE-DAO] Filters:", {
-        ownFilter: searchExercisesFilterGroup.ownFilter,
-        favFilter: searchExercisesFilterGroup.favFilter,
-        userId: searchExercisesFilterGroup.userId,
-      });
+    console.log("[EXERCISE-DAO] Filters:", {
+      ownFilter: searchExercisesFilterGroup.ownFilter,
+      favFilter: searchExercisesFilterGroup.favFilter,
+      userId: searchExercisesFilterGroup.userId,
+    });
 
-      // 1) Favoritos: requiere userId + favFilter
-      if (
-        searchExercisesFilterGroup.favFilter &&
-        searchExercisesFilterGroup.userId
-      ) {
-        const favIds = await favoritesDao.list(searchExercisesFilterGroup.userId, "exercises");
-        if (favIds.length > 0) {
-          agg.push({ $match: { _id: { $in: favIds } } });
-        } else {
-          // Si no hay favoritos, retornar array vacío
-          return [];
-        }
+    // 1) Favoritos: requiere userId + favFilter
+    if (
+      searchExercisesFilterGroup.favFilter &&
+      searchExercisesFilterGroup.userId
+    ) {
+      const favIds = await favoritesDao.list(searchExercisesFilterGroup.userId, "exercises");
+      if (favIds.length > 0) {
+        agg.push({ $match: { _id: { $in: favIds } } });
+      } else {
+        // Si no hay favoritos, retornar array vacío
+        return [];
       }
-      // 2) Propios: si viene userId (ownFilter es redundante)
-      else if (searchExercisesFilterGroup.userId) {
-        const matchStage = {
-          $match: {
-            userId: new Types.ObjectId(searchExercisesFilterGroup.userId),
-          },
-        };
-        console.log(
-          "[EXERCISE-DAO] Adding own by userId match:",
-          JSON.stringify(matchStage),
-        );
-        agg.push(matchStage);
-      }
-      // 3) Todo: globales (sin userId)
-      else {
-        console.log('[EXERCISE-DAO] Adding "Todo" filter (no userId)');
-        agg.push({
-          $match: {
-            $or: [{ userId: { $exists: false } }, { userId: null }],
-          },
-        });
-      }
-
-      // Añade una etapa $match para 'category' si existe en 'searchExercisesFilterGroup'.
-      if (
-        searchExercisesFilterGroup.category &&
-        searchExercisesFilterGroup.category.length > 0
-      ) {
-        agg.push({
-          $match: {
-            category: {
-              $in: searchExercisesFilterGroup.category,
-            },
-          },
-        });
-      }
-
-      // Filtro por músculo del catálogo de dos niveles: ejercicios en los
-      // que ese músculo es PRINCIPAL. Con secundarios, buscar "Tríceps"
-      // traería todos los presses de pecho.
-      const muscleIds = expandMuscleFilter(searchExercisesFilterGroup.muscles);
-      if (muscleIds.length > 0) {
-        agg.push({
-          $match: {
-            muscles: { $elemMatch: { muscle: { $in: muscleIds }, role: "primary" } },
-          },
-        });
-      }
-
-      // Añade una etapa $match para 'equipment' si existe en 'searchExercisesFilterGroup'.
-      if (
-        searchExercisesFilterGroup.equipment &&
-        searchExercisesFilterGroup.equipment.length > 0
-      ) {
-        agg.push({
-          $match: {
-            equipment: {
-              $in: searchExercisesFilterGroup.equipment,
-            },
-          },
-        });
-      }
-
-      if (searchExercisesFilterGroup.isCardio === true) {
-        agg.push({
-          $match: {
-            isCardio: true,
-          },
-        });
-      }
-
-      if (searchExercisesFilterGroup.isIsometric === true) {
-        agg.push({
-          $match: {
-            isIsometric: true,
-          },
-        });
-      }
-
-      // Fuerza = ni cardio ni isométrico (mismo criterio que la
-      // clasificación de table-dao). Los flags solo se guardan cuando son
-      // true, así que se excluye con $ne en vez de buscar false.
-      if (searchExercisesFilterGroup.isStrength === true) {
-        agg.push({
-          $match: {
-            isCardio: { $ne: true },
-            isIsometric: { $ne: true },
-          },
-        });
-      }
-
-      // Añade una etapa $match para la búsqueda de texto si existe en 'searchExercisesFilterGroup'.
-      if (searchExercisesFilterGroup.search) {
-        const searchText = searchExercisesFilterGroup.search.trim();
-
-        if (searchText.length > 0) {
-          const searchTerms = searchText
-            .split(" ")
-            .filter((term) => term.trim().length > 0);
-
-          // Función para crear regex insensible a acentos
-          function createAccentInsensitiveRegex(term) {
-            return term
-              .replace(/[aáàäâ]/gi, "[aáàäâ]")
-              .replace(/[eéèëê]/gi, "[eéèëê]")
-              .replace(/[iíìïî]/gi, "[iíìïî]")
-              .replace(/[oóòöô]/gi, "[oóòöô]")
-              .replace(/[uúùüû]/gi, "[uúùüû]")
-              .replace(/[nñ]/gi, "[nñ]")
-              .replace(/[cç]/gi, "[cç]");
-          }
-
-          const regexTerms = searchTerms.map((term) =>
-            createAccentInsensitiveRegex(term),
-          );
-
-          agg.push({
-            $match: {
-              $and: regexTerms.map((term) => ({
-                $or: [
-                  { name: { $regex: term, $options: "i" } },
-                  { keywords: { $regex: term, $options: "i" } },
-                ],
-              })),
-            },
-          });
-        }
-      }
-
-      const exerciseDocs = await exerciseSchema
-        .aggregate(agg)
-        .skip(page * limit)
-        .limit(limit)
-        .exec();
-
-      return exerciseDocs;
-    } catch (err) {
-      throw err;
     }
+    // 2) Propios: si viene userId (ownFilter es redundante)
+    else if (searchExercisesFilterGroup.userId) {
+      const matchStage = {
+        $match: {
+          userId: new Types.ObjectId(searchExercisesFilterGroup.userId),
+        },
+      };
+      console.log(
+        "[EXERCISE-DAO] Adding own by userId match:",
+        JSON.stringify(matchStage),
+      );
+      agg.push(matchStage);
+    }
+    // 3) Todo: globales (sin userId)
+    else {
+      console.log('[EXERCISE-DAO] Adding "Todo" filter (no userId)');
+      agg.push({
+        $match: {
+          $or: [{ userId: { $exists: false } }, { userId: null }],
+        },
+      });
+    }
+
+    // Añade una etapa $match para 'category' si existe en 'searchExercisesFilterGroup'.
+    if (
+      searchExercisesFilterGroup.category &&
+      searchExercisesFilterGroup.category.length > 0
+    ) {
+      agg.push({
+        $match: {
+          category: {
+            $in: searchExercisesFilterGroup.category,
+          },
+        },
+      });
+    }
+
+    // Filtro por músculo del catálogo de dos niveles: ejercicios en los
+    // que ese músculo es PRINCIPAL. Con secundarios, buscar "Tríceps"
+    // traería todos los presses de pecho.
+    const muscleIds = expandMuscleFilter(searchExercisesFilterGroup.muscles);
+    if (muscleIds.length > 0) {
+      agg.push({
+        $match: {
+          muscles: { $elemMatch: { muscle: { $in: muscleIds }, role: "primary" } },
+        },
+      });
+    }
+
+    // Añade una etapa $match para 'equipment' si existe en 'searchExercisesFilterGroup'.
+    if (
+      searchExercisesFilterGroup.equipment &&
+      searchExercisesFilterGroup.equipment.length > 0
+    ) {
+      agg.push({
+        $match: {
+          equipment: {
+            $in: searchExercisesFilterGroup.equipment,
+          },
+        },
+      });
+    }
+
+    if (searchExercisesFilterGroup.isCardio === true) {
+      agg.push({
+        $match: {
+          isCardio: true,
+        },
+      });
+    }
+
+    if (searchExercisesFilterGroup.isIsometric === true) {
+      agg.push({
+        $match: {
+          isIsometric: true,
+        },
+      });
+    }
+
+    // Fuerza = ni cardio ni isométrico (mismo criterio que la
+    // clasificación de table-dao). Los flags solo se guardan cuando son
+    // true, así que se excluye con $ne en vez de buscar false.
+    if (searchExercisesFilterGroup.isStrength === true) {
+      agg.push({
+        $match: {
+          isCardio: { $ne: true },
+          isIsometric: { $ne: true },
+        },
+      });
+    }
+
+    // Añade una etapa $match para la búsqueda de texto si existe en 'searchExercisesFilterGroup'.
+    if (searchExercisesFilterGroup.search) {
+      const searchText = searchExercisesFilterGroup.search.trim();
+
+      if (searchText.length > 0) {
+        const searchTerms = searchText
+          .split(" ")
+          .filter((term) => term.trim().length > 0);
+
+        const regexTerms = searchTerms.map(createAccentInsensitiveRegex);
+
+        agg.push({
+          $match: {
+            $and: regexTerms.map((term) => ({
+              $or: [
+                { name: { $regex: term, $options: "i" } },
+                { keywords: { $regex: term, $options: "i" } },
+              ],
+            })),
+          },
+        });
+      }
+    }
+
+    const exerciseDocs = await exerciseSchema
+      .aggregate(agg)
+      .skip(page * limit)
+      .limit(limit)
+      .exec();
+
+    return exerciseDocs;
   },
 
   async createExercise(exercise) {

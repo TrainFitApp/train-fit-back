@@ -31,7 +31,7 @@ async function updateWhere(filter, id, data) {
   return result.matchedCount ? module.exports.findById(id) : null;
 }
 
-async function pullWhere(filter, id) {
+async function pullWhere(filter) {
   const user = await User.findOne(filter).select({ "nutritionalGoals.$": 1 }).lean();
   const goal = user?.nutritionalGoals?.[0];
   if (!goal) return null;
@@ -78,12 +78,12 @@ module.exports = {
 
   async delete(id) {
     if (!isId(id)) return null;
-    return pullWhere({ "nutritionalGoals._id": id }, id);
+    return pullWhere({ "nutritionalGoals._id": id });
   },
 
   async deleteByIdAndUserId(id, userId) {
     if (!isId(id) || !isId(userId)) return null;
-    return pullWhere({ _id: userId, "nutritionalGoals._id": id }, id);
+    return pullWhere({ _id: userId, "nutritionalGoals._id": id });
   },
 
   // --- El objetivo en uso (User.goalInUse) ---

@@ -14,16 +14,6 @@ function createAccentInsensitiveRegex(term) {
     .replace(/[cç]/gi, '[cç]');
 }
 
-/**
- * Convierte múltiples términos en una expresión regular insensible a tildes
- * @param {string[]} terms - Array de términos de búsqueda
- * @returns {string[]} - Array de expresiones regulares como strings
- */
-function createAccentInsensitiveRegexArray(terms) {
-  return terms.map(term => createAccentInsensitiveRegex(term));
-}
-
 module.exports = {
-  createAccentInsensitiveRegex,
-  createAccentInsensitiveRegexArray
+  createAccentInsensitiveRegex
 };

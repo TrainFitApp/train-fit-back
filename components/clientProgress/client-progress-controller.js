@@ -74,13 +74,6 @@ module.exports = {
     return res.send(await clientProgressService.summary(req.auth.userId, req.params.clientId, req.auth.timeZone));
   },
 
-  // GET /trainer/clients/:clientId/body-profile — Movimiento 3 Coach Pro.
-  // Endpoint propio y no un campo más en /summary: la calculadora vive en
-  // Medidas y no tiene por qué pagar las ~9 consultas del resumen.
-  async getBodyProfile(req, res) {
-    return res.send(await clientProgressService.bodyProfile(req.params.clientId));
-  },
-
   // GET /trainer/clients/:clientId/progress?weeks=4|8|12 — serie semanal +
   // comparativa de la última semana contra la anterior.
   async getProgress(req, res) {

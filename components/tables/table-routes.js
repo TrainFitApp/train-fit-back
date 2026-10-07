@@ -13,9 +13,6 @@ router.getAsync("/:id", auth(["admin", "user", "trainer"]), controller.getTableB
 // Buscar tablas (públicas o propias)
 router.postAsync("/search", auth(["admin", "user", "trainer"]), controller.getSearchTables);
 
-// Crear plantilla pública (admin)
-router.postAsync("/", auth(["admin"]), controller.createTable);
-
 // Crear tabla predeterminada sin userId (admin)
 router.postAsync("/default", auth(["admin"]), controller.createDefaultTable);
 

@@ -111,7 +111,7 @@ function buildEntitlements(user, usage, hasActiveTrainerRelation = false) {
 
   return {
     isPremium: isPremiumUser(user),
-    source: user?.premium?.source || "legacy",
+    source: user?.premium?.source || null,
     plan: normalizedPlan,
     expiresAt: user?.premium?.expiresAt || null,
     limits: {

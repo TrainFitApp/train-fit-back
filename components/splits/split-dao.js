@@ -10,12 +10,6 @@ const { toId, plain, newId, cloneWorkout, isObjectId } = require("../workouts/wo
 // microciclo solo guarda sus datos y los ids de sus sesiones en orden; las
 // sesiones son documentos Workout aparte.
 
-// Planificador visual (Fase C) — el nuevo orden de columnas debe ser
-// exactamente una permutación de los splits actuales de la tabla: nunca
-// añade ni quita splits, solo reordena. Alias mantenido para
-// split-dao.test.js.
-const isValidSplitPermutation = isSamePermutation;
-
 function standardSplit(name) {
   return { _id: newId(), name: name || "Split Predeterminado", workouts: [] };
 }
@@ -39,8 +33,6 @@ async function populatedSplits(idTable) {
 }
 
 module.exports = {
-  isValidSplitPermutation,
-
   async getSplit(id) {
     if (!isObjectId(id)) return null;
     const table = await tableSchema.findOne({ "splits._id": id });
@@ -91,7 +83,8 @@ module.exports = {
     const currentIds = (table.splits || []).map(toId);
     const requestedIds = (Array.isArray(splitIdsOrder) ? splitIdsOrder : []).map(toId);
 
-    if (!isValidSplitPermutation(currentIds, requestedIds)) {
+    // Solo reordena: una permutación exacta de los microciclos actuales.
+    if (!isSamePermutation(currentIds, requestedIds)) {
       throw badRequest("splitIdsOrder debe ser una permutación exacta de los splits actuales", "INVALID_SPLIT_ORDER");
     }
 

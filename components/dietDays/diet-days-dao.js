@@ -36,10 +36,6 @@ const toPlainPayload = (value) => {
 };
 
 module.exports = {
-  async findAll(page, limit) {
-    return dietDaySchema.find({}).skip(page * limit).limit(limit);
-  },
-
   // Refactor nutrición (2026-09) — antes: findById sobre el wrapper Diet, que
   // con autopopulate arrastraba TODOS los días del usuario (con sus comidas y
   // productos) para después filtrar uno en JavaScript. Ahora es un findOne

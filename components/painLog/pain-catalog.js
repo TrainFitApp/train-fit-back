@@ -55,10 +55,6 @@ const PAIN_LIMITING_LEVEL = 5;
 
 const PAIN_ZONE_SET = new Set(PAIN_ZONES);
 
-function bandFor(level) {
-  return PAIN_BANDS.find((band) => level >= band.from && level <= band.to) || null;
-}
-
 function isValidLevel(level) {
   return Number.isInteger(level) && level >= PAIN_MIN && level <= PAIN_MAX;
 }
@@ -134,7 +130,6 @@ module.exports = {
   PAIN_MIN,
   PAIN_MAX,
   PAIN_LIMITING_LEVEL,
-  bandFor,
   isValidLevel,
   isValidZone,
   toLevelOrNull,

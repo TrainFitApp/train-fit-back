@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 const {
   MAX_CLIENTS_AFFECTED_PER_RUN,
   compare,
-  evaluateCondition,
   evaluateRule,
   buildEvidence,
   shouldEvaluateClient,

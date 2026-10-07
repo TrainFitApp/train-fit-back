@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { compareChain, coveringPhase, cutEndDate, latestPhase, phaseState, sortChain, successorOf, withStates } = require("./phase-chain");
+const { compareChain, coveringPhase, cutEndDate, phaseState, sortChain, successorOf, withStates } = require("./phase-chain");
 
 // Cadena de fases (dieta y rutina): todo se deduce del orden por inicio y,
 // con el mismo inicio, por creación.
@@ -38,13 +38,12 @@ test("coveringPhase: la que rige en una fecha", async (t) => {
   });
 });
 
-test("orden, última y siguiente", () => {
+test("orden y siguiente", () => {
   const a = { _id: "a", startDate: "2026-08-01", createdAt: "2026-08-01" };
   const b = { _id: "b", startDate: "2026-09-01", createdAt: "2026-08-20" };
   const c = { _id: "c", startDate: "2026-09-01", createdAt: "2026-08-25" };
   assert.deepEqual(sortChain([c, a, b]).map((p) => p._id), ["a", "b", "c"]);
   assert.ok(compareChain(b, c) < 0);
-  assert.equal(latestPhase([c, a, b]), c);
   assert.equal(successorOf([c, a, b], a), b);
   assert.equal(successorOf([c, a, b], c), null);
 });

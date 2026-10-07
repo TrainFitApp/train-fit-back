@@ -51,11 +51,6 @@ function trainerCanSeeProgressDay(day, { trainerId, relationStart, historyShared
   return String(day.date) >= isoDateInZone(relationStart, timeZone);
 }
 
-/** Decisión 3: el admin no ve nunca fotos ni vídeos. Se niega aquí de forma explícita. */
-function adminCanSeeContent() {
-  return false;
-}
-
 module.exports = {
   MEDIA_CONSENT_VERSION,
   hasMediaConsent,
@@ -63,5 +58,4 @@ module.exports = {
   uploadBlockReason,
   sentToTrainer,
   trainerCanSeeProgressDay,
-  adminCanSeeContent,
 };

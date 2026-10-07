@@ -4,10 +4,6 @@ const dietPhaseDao = require("../dietPhases/diet-phase-dao");
 const { buildShoppingList } = require("./shopping-list-service");
 
 module.exports = {
-  async getDietDays(page, limit) {
-    return dietDayDao.findAll(page, limit);
-  },
-
   async getDietDaysBetweenDatesByUser(userId, startDate, endDate) {
     // El DAO ya devuelve la lista de días directamente (antes venía envuelta
     // en [{dietDays:[...]}] porque la agregación arrancaba en el wrapper

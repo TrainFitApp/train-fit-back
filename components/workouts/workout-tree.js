@@ -99,12 +99,6 @@ function reorderByIds(current, requested) {
   return result;
 }
 
-// Ids de las sesiones de una tabla (lean o documento), en el orden de sus
-// microciclos.
-function workoutIdsOfTable(table) {
-  return (table?.splits || []).flatMap((split) => (split.workouts || []).map(toId)).filter(Boolean);
-}
-
 module.exports = {
   newId,
   toId,
@@ -115,5 +109,4 @@ module.exports = {
   cloneExercise,
   cloneWorkout,
   reorderByIds,
-  workoutIdsOfTable,
 };

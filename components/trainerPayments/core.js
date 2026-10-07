@@ -1,4 +1,3 @@
-const fs = require("fs");
 const path = require("path");
 
 // Cargador del núcleo puro (TypeScript estricto en src/, compilado con
@@ -7,10 +6,6 @@ const path = require("path");
 const BUILD_PATH = path.join(__dirname, "../../.build/trainer-payments/index.js");
 
 let loaded = null;
-
-function isAvailable() {
-  return fs.existsSync(BUILD_PATH);
-}
 
 function load() {
   if (loaded) return loaded;
@@ -25,4 +20,4 @@ function load() {
   return loaded;
 }
 
-module.exports = { load, isAvailable, BUILD_PATH };
+module.exports = { load, BUILD_PATH };

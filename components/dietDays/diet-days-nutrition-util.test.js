@@ -6,9 +6,6 @@ const {
   ingredientMacros,
   macrosForCustomRecipe,
   sumMacroList,
-  kcalForCustomRecipe,
-  kcalForMeal,
-  macrosForMeal,
   countMealItems,
   computeDayCompletion,
   computeDayTracking,
@@ -290,7 +287,6 @@ test("macrosForCustomRecipe escala por la porción consumida sobre el peso crudo
     quantity: 100,
   };
   assert.equal(macrosForCustomRecipe(customRecipe).kcal, 100);
-  assert.equal(kcalForCustomRecipe(customRecipe), 100);
 });
 
 test("macrosForCustomRecipe usa quantityCooked como base cuando existe", () => {
@@ -337,32 +333,6 @@ test("macrosForCustomRecipe escala los cuatro macros, no solo las kcal", () => {
     carbs: 10,
     fat: 5,
   });
-});
-
-// --- kcalForMeal / macrosForMeal --------------------------------------------
-
-test("kcalForMeal suma productos sueltos y recetas", () => {
-  const meal = {
-    customProducts: [snapshot(100, { kcal: 300 })],
-    customRecipes: [{ recipe: recipeOf(base("a", 100)), quantity: 100 }],
-  };
-  assert.equal(kcalForMeal(meal), 400);
-});
-
-test("kcalForMeal de una comida vacía o ausente es 0", () => {
-  assert.equal(kcalForMeal({}), 0);
-  assert.equal(kcalForMeal(null), 0);
-  assert.equal(kcalForMeal({ customProducts: [], customRecipes: [] }), 0);
-});
-
-test("macrosForMeal devuelve los cuatro macros de productos y recetas", () => {
-  const meal = {
-    customProducts: [snapshot(100, { kcal: 300, protein: 30, carbs: 10, fat: 5 })],
-    customRecipes: [
-      { recipe: recipeOf(snapshot(100, { kcal: 100, protein: 1, carbs: 2, fat: 3 })), quantity: 100 },
-    ],
-  };
-  assert.deepEqual(macrosForMeal(meal), { kcal: 400, protein: 31, carbs: 12, fat: 8 });
 });
 
 // --- isItemPlanned / isItemConsumed -----------------------------------------
