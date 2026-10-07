@@ -4,7 +4,7 @@ const Schema = mongoose.Schema;
 const NutritionalGoalSchema = require("../nutritionalGoals/nutritional-goal-schema");
 const NutritionPreferencesSchema = require("../nutritionPreferences/nutrition-preferences-schema");
 const TrainerPaymentSettingsSchema = require("../trainerPayments/trainer-payment-settings-schema");
-const TrainerIntakeConfigSchema = require("../trainerIntakeConfig/trainer-intake-config-schema");
+const { TrainerIntakeConfigSchema } = require("../trainerIntakeConfig/trainer-intake-config-schema");
 const { EMAIL_FORMAT_REGEX } = require("../util/normalize-email");
 const { accountCascade, deleteAccountData } = require("../util/account-cascade");
 const SALT_WORK_FACTOR = 10;
@@ -34,7 +34,9 @@ const UserSchema = new Schema({
   objetive: Number,
   steps: Number,
   training: Number,
-  birth: Date,
+  // Día de calendario "YYYY-MM-DD": la fecha que eligió el usuario, sin hora
+  // ni huso (users/age-policy.js valida y cuenta la edad).
+  birth: String,
   // Sus objetivos nutricionales (nutritionalGoals/nutritional-goal-dao.js) y
   // el que rige (`_id` de uno de ellos).
   nutritionalGoals: { type: [NutritionalGoalSchema], default: undefined },

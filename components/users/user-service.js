@@ -5,10 +5,11 @@ const mail = require("../util/mail");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const jwt = require("jsonwebtoken");
 const { generateVerificationCode } = require("../util/verification-code");
-const { assertMinAge } = require("./age-policy");
+const { assertBirth } = require("./age-policy");
 const { pickProfile, pointerChanges, parseWeight } = require("./user-profile");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { todayForUser } = require("./user-time-zone");
+const { todayIsoDate } = require("../util/date-util");
 const { routineInUseOf, routineInUseOfId, routinesInUseOf } = require("../routineAssignments/routine-in-use");
 const bcrypt = require("../util/bcrypt");
 const { httpError, badRequest, conflict, notFound, onDuplicate } = require("../util/http-error");
@@ -133,16 +134,19 @@ module.exports = {
   /**
    * Alta de cliente por email: su perfil (lista blanca), contraseña, el peso
    * de hoy en sus medidas, el objetivo inicial que calculó la app y el correo
-   * con su código de verificación (15 minutos).
+   * con su código de verificación (15 minutos). `timeZone` es la del
+   * dispositivo (cabecera X-Timezone, null si no vino): sin ella, la edad
+   * mínima y el día del primer peso saldrían de la zona por defecto.
    */
-  async registerClient(email, body) {
+  async registerClient(email, body, timeZone = null) {
     await assertEmailAvailable(email);
-    assertMinAge(body?.birth);
+    assertBirth(body?.birth, todayIsoDate(timeZone));
     const weight = parseWeight(body?.weight);
     const code = generateVerificationCode();
     const created = await userDao
       .createOrCompleteByEmail({
         ...pickProfile(body),
+        ...(timeZone ? { timezone: timeZone } : {}),
         password: body?.password,
         email,
         roles: ["user"],
@@ -164,10 +168,11 @@ module.exports = {
     return userDao.addUserTable(idUser, idTable);
   },
 
-  // Editor de perfil: solo los campos del perfil (lista blanca) y el peso de hoy.
-  async updateUser(body) {
+  // Editor de perfil: solo los campos del perfil (lista blanca) y el peso de
+  // hoy. `timeZone`: la del usuario (req.auth.timeZone).
+  async updateUser(body, timeZone) {
     const { tableInUse, workoutInUse, ...fields } = pickProfile(body, { pointers: true });
-    assertMinAge(fields.birth);
+    assertBirth(fields.birth, todayIsoDate(timeZone));
     const weight = parseWeight(body?.weight);
     const requested = pickProfile({ tableInUse, workoutInUse }, { pointers: true });
     const pointers = Object.keys(requested).length
@@ -270,9 +275,9 @@ module.exports = {
 
   // Fin del registro social (Google/Apple): mismo perfil que el registro
   // por email y el objetivo inicial que calculó la app.
-  async completeSocialProfile(userId, body) {
+  async completeSocialProfile(userId, body, timeZone) {
     const fields = pickProfile(body);
-    assertMinAge(fields.birth);
+    assertBirth(fields.birth, todayIsoDate(timeZone));
     const weight = parseWeight(body?.weight);
     const updated = await userDao.updateProfile(userId, fields);
     if (!updated) throw userNotFound();

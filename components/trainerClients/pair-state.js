@@ -23,6 +23,12 @@ function hasOpenLink(pair) {
   return linksOf(pair).some((link) => OPEN_STATUSES.includes(link.status));
 }
 
+// Invitaciones sin responder del par: el cliente las acepta o rechaza todas
+// a la vez (una invitación por profesional, aunque sean dos scopes).
+function pendingLinks(pair) {
+  return linksOf(pair).filter((link) => link.status === "pending");
+}
+
 function openLink(pair, scope) {
   return linksOf(pair).find((link) => link.scope === scope && OPEN_STATUSES.includes(link.status)) || null;
 }
@@ -107,6 +113,7 @@ module.exports = {
   hasActiveScope,
   activeScopes,
   hasOpenLink,
+  pendingLinks,
   openLink,
   findLink,
   activeSince,

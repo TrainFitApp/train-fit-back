@@ -48,11 +48,16 @@ async function viewsOfDays(days, { baseUrl, userId, ownAnthropometry, trainerId 
     date: day.date,
     note: day.note || "",
     hiddenFromTrainers: Boolean(day.hiddenFromTrainers),
-    // El cliente ve si el día ya se mandó en un check-in (entonces lo ve el
-    // entrenador que lo pidió aunque esté oculto).
+    // El cliente ve si el día ya se mandó en un check-in o en su
+    // cuestionario de alta (entonces lo ve el entrenador que lo pidió aunque
+    // esté oculto).
     answersCheckin: (day.checkins || []).length > 0,
     answersCheckinFor: trainerId
       ? (day.checkins || []).some((checkin) => String(checkin.trainerId) === String(trainerId))
+      : undefined,
+    answersIntake: (day.intakes || []).length > 0,
+    answersIntakeFor: trainerId
+      ? (day.intakes || []).some((intake) => String(intake.trainerId) === String(trainerId))
       : undefined,
     photos: POSES.map((pose) => {
       const photo = (day.photos || []).find((item) => item.pose === pose);
@@ -184,10 +189,10 @@ module.exports = {
   },
 
   /**
-   * Para check-ins: el día que el cliente manda como respuesta de fotos.
-   * Tiene que ser suyo y tener al menos una foto.
+   * El día que el cliente manda como respuesta de fotos (check-in o
+   * cuestionario de alta). Tiene que ser suyo y tener al menos una foto.
    */
-  async dayForCheckin(clientId, dayId) {
+  async ownDayWithPhotos(clientId, dayId) {
     const day = await progressMediaDao.findById(dayId);
     if (!day || String(day.userId) !== String(clientId)) return null;
     return (day.photos || []).length ? day : null;
@@ -195,6 +200,57 @@ module.exports = {
 
   async linkCheckin(dayId, responseId, trainerId) {
     await progressMediaDao.linkCheckin(dayId, responseId, trainerId);
+  },
+
+  /**
+   * Vídeos de progreso del cliente que puede mandar en su cuestionario: de
+   * `assetIds`, los suyos que están subidos y colgados de uno de sus días.
+   * Map assetId → _id del día.
+   */
+  async ownVideoDays(clientId, assetIds) {
+    const ids = [...new Set((assetIds || []).filter(Boolean).map(String))];
+    if (!ids.length) return new Map();
+    const [usable, days] = await Promise.all([
+      mediaService.usableAssetIds(clientId, ids, ["progress_video"]),
+      progressMediaDao.findDaysWithVideos(clientId, ids),
+    ]);
+    const dayOf = new Map();
+    for (const day of days) {
+      for (const video of day.videos || []) {
+        const id = String(video.assetId);
+        if (usable.has(id)) dayOf.set(id, day._id);
+      }
+    }
+    return dayOf;
+  },
+
+  /** Los días mandados con el cuestionario de alta de `trainerId`: los ve siempre. */
+  async linkIntake(dayIds, trainerId) {
+    await progressMediaDao.linkIntake(dayIds.filter(Boolean), trainerId);
+  },
+
+  /**
+   * Fotos y vídeos del cuestionario de alta, para el profesional que lo
+   * pidió (los ve siempre: se los mandaron). `photos`: el día de fotos o
+   * null si ya no existe o se quedó sin fotos; `videos`: uno por petición,
+   * con `asset` null si el cliente lo borró después.
+   */
+  async intakeMediaForTrainer(trainerId, clientId, intake, { baseUrl } = {}) {
+    const day = intake?.photosDayId ? await progressMediaDao.findById(intake.photosDayId) : null;
+    const ownDay = day && String(day.userId) === String(clientId) && (day.photos || []).length ? day : null;
+    const videos = intake?.videos || [];
+    const [[photos], assets] = await Promise.all([
+      ownDay ? viewsOfDays([ownDay], { baseUrl, userId: clientId, ownAnthropometry: false, trainerId }) : [null],
+      mediaService.viewsByIds(videos.map((video) => String(video.assetId)), { baseUrl }),
+    ]);
+    return {
+      photos: photos || null,
+      videos: videos.map((video) => ({
+        requestId: video.requestId,
+        label: video.label,
+        asset: assets.get(String(video.assetId)) || null,
+      })),
+    };
   },
 
   /** Vista de un día concreto para el profesional que pidió el check-in. */

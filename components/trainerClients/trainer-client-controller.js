@@ -1,6 +1,7 @@
 const trainerClientService = require("./trainer-client-service");
 const trainerClientDto = require("./trainer-client-dto");
 const trainerSeatService = require("./trainer-seat-service");
+const { baseUrlOf } = require("../media/media-controller");
 
 // Marca los clientes fuera de las plazas activas (cartera por encima del cupo).
 async function withSeatFlags(trainerId, clients) {
@@ -72,12 +73,16 @@ module.exports = {
 
   // GET /trainer/clients/:clientId/intake — null si aún no hay cuestionario.
   async getClientIntake(req, res) {
-    return res.send(await trainerClientService.getIntakeWithAnswers(req.auth.userId, req.params.clientId));
+    return res.send(
+      await trainerClientService.getIntakeWithAnswers(req.auth.userId, req.params.clientId, { baseUrl: baseUrlOf(req) })
+    );
   },
 
   // PUT /trainer/clients/:clientId/intake — el profesional corrige las respuestas.
   async updateClientIntake(req, res) {
-    return res.send(await trainerClientService.updateIntake(req.auth.userId, req.params.clientId, req.body || {}));
+    return res.send(
+      await trainerClientService.updateIntake(req.auth.userId, req.params.clientId, req.body || {}, { baseUrl: baseUrlOf(req) })
+    );
   },
 
   // GET /trainer/clients/:clientId/intake/status — { status }: "pending" |
@@ -105,23 +110,24 @@ module.exports = {
 
   // --- Lado cliente ---
 
-  // GET /trainer/invites/mine
+  // GET /trainer/invites/mine — una por profesional, con sus scopes.
   async listInvitesMine(req, res) {
     return noStore(res).send(await trainerClientService.listPendingForClient(req.auth.email));
   },
 
-  // POST /trainer/invites/:id/accept
-  async acceptInvite(req, res) {
-    const invitation = await trainerClientService.respondToInvite(req.params.id, req.user, "accept");
-    if (!invitation) return res.sendStatus(404);
-    return res.send(invitation);
+  // POST /trainer/invites/:trainerId/accept — acepta todo lo que ese
+  // profesional le tiene sin responder: { trainerId, scopes, pending }.
+  async acceptInvites(req, res) {
+    const response = await trainerClientService.respondToInvites(req.params.trainerId, req.user, "accept");
+    if (!response) return res.sendStatus(404);
+    return res.send(response);
   },
 
-  // POST /trainer/invites/:id/decline
-  async declineInvite(req, res) {
-    const invitation = await trainerClientService.respondToInvite(req.params.id, req.user, "decline");
-    if (!invitation) return res.sendStatus(404);
-    return res.send(invitation);
+  // POST /trainer/invites/:trainerId/decline — rechaza todos sus scopes.
+  async declineInvites(req, res) {
+    const response = await trainerClientService.respondToInvites(req.params.trainerId, req.user, "decline");
+    if (!response) return res.sendStatus(404);
+    return res.send(response);
   },
 
   // GET /trainer/info — profesionales en curso del cliente, uno por persona.

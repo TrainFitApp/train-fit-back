@@ -8,7 +8,8 @@ module.exports = {
     return res.send({ ...config, catalog: INTAKE_FIELD_KEYS });
   },
 
-  // PUT /trainer/intake-config — { enabledFields, customQuestions, lastScopes }
+  // PUT /trainer/intake-config — { enabledFields, customQuestions,
+  // measurements, photos, videos, lastScopes } (la configuración entera).
   async updateMyConfig(req, res) {
     return res.send(await trainerIntakeConfigService.updateMyConfig(req.auth.userId, req.body || {}));
   },

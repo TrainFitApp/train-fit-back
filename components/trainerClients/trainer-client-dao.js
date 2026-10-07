@@ -29,6 +29,19 @@ async function moveInvitation(filter, invitationId, from, set) {
   return pair ? { pair, invitation: invitationView(pair, findLink(pair, invitationId)) } : null;
 }
 
+// Responde en una sola escritura (atómica) las invitaciones `linkIds` del
+// par que sigan pendientes; `pairFields` va al par. null si no quedaba
+// ninguna pendiente.
+async function answerInvitations(pairId, linkIds, linkFields, pairFields = {}) {
+  const updates = Object.fromEntries(Object.entries(linkFields).map(([key, value]) => [`scopes.$[link].${key}`, value]));
+  const pending = { _id: { $in: linkIds }, status: "pending" };
+  return TrainerClient.findOneAndUpdate(
+    { _id: pairId, scopes: { $elemMatch: pending } },
+    { $set: { ...pairFields, ...updates } },
+    { new: true, arrayFilters: [{ "link._id": pending._id, "link.status": "pending" }] }
+  ).lean();
+}
+
 // Pone `item` en la lista `field` del par, sustituyendo el que tenga el mismo
 // `key` (una entrada por zona o por ejercicio). Sin el par, null.
 async function putInList(trainerId, clientId, field, key, item) {
@@ -63,6 +76,7 @@ module.exports = {
   },
 
   async findPairByEmail(trainerId, clientEmail) {
+    if (!validIds(trainerId)) return null;
     return TrainerClient.findOne({ trainerId, clientEmail: normalizeEmail(clientEmail) }).lean();
   },
 
@@ -200,18 +214,24 @@ module.exports = {
     return invitationById(link._id);
   },
 
-  async acceptInvitation(invitationId, clientId, { intakePending }) {
-    const now = new Date();
-    const pair = await TrainerClient.findOneAndUpdate(
-      { scopes: { $elemMatch: { _id: invitationId, status: "pending" } } },
-      { $set: { clientId, intakePending, "scopes.$.status": "active", "scopes.$.respondedAt": now } },
-      { new: true }
-    ).lean();
-    return pair ? { pair, invitation: invitationView(pair, findLink(pair, invitationId)) } : null;
+  // Copia al par el formulario de alta que se le pide al cliente
+  // (TrainerClient.intakeForm).
+  async setIntakeForm(trainerId, clientEmail, form) {
+    await TrainerClient.updateOne(
+      { trainerId, clientEmail: normalizeEmail(clientEmail) },
+      { $set: { intakeForm: { ...form, sentAt: new Date() } } },
+      { runValidators: true }
+    );
   },
 
-  async declineInvitation(invitationId) {
-    return moveInvitation({}, invitationId, ["pending"], { status: "declined", respondedAt: new Date() });
+  // El cliente acepta a la vez los scopes `linkIds` del par que sigan sin
+  // responder. El par actualizado, o null si ya no quedaba ninguno.
+  async acceptInvitations(pairId, linkIds, clientId, { intakePending }) {
+    return answerInvitations(pairId, linkIds, { status: "active", respondedAt: new Date() }, { clientId, intakePending });
+  },
+
+  async declineInvitations(pairId, linkIds) {
+    return answerInvitations(pairId, linkIds, { status: "declined", respondedAt: new Date() });
   },
 
   // El profesional retira una invitación que nadie ha respondido.

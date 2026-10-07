@@ -169,7 +169,7 @@ async function main() {
     roles: ["user"],
     sex: 1,
     height: 175,
-    birth: new Date("1995-01-01"),
+    birth: "1995-01-01",
     activity: 1.45,
     steps: 1, // STEPS_NOT_COUNTED -> usa el factor de actividad
     training: 1.5,

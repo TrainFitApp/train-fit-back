@@ -12,14 +12,15 @@ const ctx = h.setup();
 const invite = (trainer, client, scopes = ["training", "nutrition"]) =>
   ctx.call(trainer, "POST", "/trainer/invites", { clientEmail: client.email ?? client, scopes });
 
+// El cliente responde por profesional: un solo aceptar para todos sus scopes.
+const respond = (client, trainer, decision) => ctx.call(client, "POST", `/trainer/invites/${trainer._id}/${decision}`);
+
 async function inviteAndAccept(trainer, client, scopes = ["training", "nutrition"]) {
   const res = await invite(trainer, client, scopes);
   assert.equal(res.status, 201, JSON.stringify(res.body));
-  for (const r of res.body.results) {
-    assert.equal(r.success, true, JSON.stringify(r));
-    const accepted = await ctx.call(client, "POST", `/trainer/invites/${r.invitation._id}/accept`);
-    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
-  }
+  for (const r of res.body.results) assert.equal(r.success, true, JSON.stringify(r));
+  const accepted = await respond(client, trainer, "accept");
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   return res.body.results.map((r) => r.invitation);
 }
 
@@ -29,7 +30,7 @@ const typesOf = (list) => (Array.isArray(list) ? list : list.notifications || li
 
 // --- Invitar y aceptar -------------------------------------------------------------
 
-test("flujo completo: invitar dos scopes, el cliente las ve con datos del entrenador, acepta y ambos lo ven", async () => {
+test("flujo completo: invitar dos scopes, el cliente ve UNA invitación con datos del entrenador, acepta una vez y ambos lo ven", async () => {
   const trainer = await ctx.makeTrainer({ name: "Marta" });
   const client = await ctx.makeClient({ name: "Pablo" });
 
@@ -38,13 +39,15 @@ test("flujo completo: invitar dos scopes, el cliente las ve con datos del entren
   assert.deepEqual(res.body.results.map((r) => [r.scope, r.success]), [["training", true], ["nutrition", true]]);
 
   const pending = await ctx.get(client, "/trainer/invites/mine");
-  assert.equal(pending.length, 2);
-  assert.ok(pending.every((i) => i.trainer?.name === "Marta"), "el cliente ve quién le invita");
+  assert.equal(pending.length, 1, "una invitación por profesional");
+  assert.deepEqual(pending[0].scopes, ["training", "nutrition"]);
+  assert.equal(pending[0].trainer?.name, "Marta", "el cliente ve quién le invita");
 
   const sent = await ctx.get(trainer, "/trainer/invites");
   assert.equal(sent.filter((i) => i.status === "pending").length, 2);
 
-  for (const r of res.body.results) await ctx.post(client, `/trainer/invites/${r.invitation._id}/accept`);
+  const accepted = await respond(client, trainer, "accept");
+  assert.deepEqual(accepted.body, { trainerId: String(trainer._id), scopes: ["training", "nutrition"], pending: [] });
 
   const clients = await ctx.get(trainer, "/trainer/clients");
   assert.equal(clients.length, 1, "un cliente con dos scopes cuenta como uno");
@@ -55,7 +58,7 @@ test("flujo completo: invitar dos scopes, el cliente las ve con datos del entren
   assert.deepEqual(pair.scopes.map((link) => [link.scope, link.status]), [["training", "active"], ["nutrition", "active"]]);
   assert.equal(pair.intakePending, true, "el cuestionario queda pendiente al aceptar");
   assert.deepEqual(await ctx.get(client, "/trainer/invites/mine"), [], "ya no quedan invitaciones pendientes");
-  assert.ok(typesOf(await trainerNotifications(trainer)).includes("invite_accepted"));
+  assert.equal(typesOf(await trainerNotifications(trainer)).filter((t) => t === "invite_accepted").length, 1, "un solo aviso");
 });
 
 test("el email de la invitación se normaliza (mayúsculas/espacios) y la invitación llega igual", async () => {
@@ -72,8 +75,8 @@ test("invitar a alguien sin cuenta todavía: queda pendiente y la acepta al regi
   assert.equal((await invite(trainer, email, ["nutrition"])).status, 201);
   const client = await ctx.makeClient({ email });
   const [pending] = await ctx.get(client, "/trainer/invites/mine");
-  assert.equal(pending.scope, "nutrition");
-  await ctx.post(client, `/trainer/invites/${pending._id}/accept`);
+  assert.deepEqual(pending.scopes, ["nutrition"]);
+  await ctx.post(client, `/trainer/invites/${pending.trainerId}/accept`);
   assert.equal(await ctx.count("TrainerClient", { clientId: client._id, "scopes.status": "active" }), 1);
 });
 
@@ -109,10 +112,10 @@ test("solape: un cliente no puede tener dos profesionales activos del mismo scop
   const client = await ctx.makeClient();
 
   // B invita ANTES de que el cliente acepte a A.
-  const fromB = (await invite(b, client, ["training"])).body.results[0].invitation;
+  await invite(b, client, ["training"]);
   await inviteAndAccept(a, client, ["training"]);
 
-  const lateAccept = await ctx.call(client, "POST", `/trainer/invites/${fromB._id}/accept`);
+  const lateAccept = await respond(client, b, "accept");
   assert.equal(lateAccept.status, 400);
   assert.equal(lateAccept.body.code, "OVERLAP");
 
@@ -120,27 +123,34 @@ test("solape: un cliente no puede tener dos profesionales activos del mismo scop
   assert.equal(newInvite.status, 201, "nutrición sí");
   const byScope = Object.fromEntries(newInvite.body.results.map((r) => [r.scope, r.success]));
   assert.deepEqual(byScope, { training: false, nutrition: true });
+
+  // Aceptar a B acepta lo que se puede; entrenamiento sigue sin responder.
+  const partial = await respond(client, b, "accept");
+  assert.deepEqual([partial.body.scopes, partial.body.pending], [["nutrition"], ["training"]]);
 });
 
-test("aceptar una invitación que no es para mí: 403; inexistente: 404; aceptar dos veces es idempotente", async () => {
+test("aceptar una invitación que no es para mí o de quien no me invitó: 404; aceptar dos veces es idempotente", async () => {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
   const intruder = await ctx.makeClient();
-  const [relation] = (await invite(trainer, client, ["training"])).body.results.map((r) => r.invitation);
-  assert.equal((await ctx.call(intruder, "POST", `/trainer/invites/${relation._id}/accept`)).status, 403);
+  await invite(trainer, client, ["training"]);
+  assert.equal((await respond(intruder, trainer, "accept")).status, 404);
   assert.equal((await ctx.call(client, "POST", `/trainer/invites/${ctx.oid()}/accept`)).status, 404);
-  await ctx.post(client, `/trainer/invites/${relation._id}/accept`);
-  const again = await ctx.post(client, `/trainer/invites/${relation._id}/accept`);
-  assert.equal(again.status, "active");
+  assert.equal((await ctx.call(client, "POST", "/trainer/invites/no-es-un-id/accept")).status, 404);
+  await respond(client, trainer, "accept");
+  const again = await respond(client, trainer, "accept");
+  assert.deepEqual([again.status, again.body.scopes], [200, []]);
+  assert.equal((await ctx.pairOf(trainer, client)).scopes[0].status, "active");
   assert.equal(typesOf(await trainerNotifications(trainer)).filter((t) => t === "invite_accepted").length, 1, "un solo aviso");
 });
 
 test("rechazar: la invitación queda 'declined' y el entrenador puede volver a invitar", async () => {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
-  const [relation] = (await invite(trainer, client, ["nutrition"])).body.results.map((r) => r.invitation);
-  const declined = await ctx.post(client, `/trainer/invites/${relation._id}/decline`);
-  assert.equal(declined.status, "declined");
+  await invite(trainer, client, ["nutrition"]);
+  const declined = await respond(client, trainer, "decline");
+  assert.deepEqual(declined.body.scopes, ["nutrition"]);
+  assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id, "scopes.status": "declined" }), 1);
   assert.deepEqual(await ctx.get(client, "/trainer/invites/mine"), []);
   assert.equal((await invite(trainer, client, ["nutrition"])).status, 201);
 });
@@ -149,11 +159,11 @@ test("rechazar y volver a invitar: la misma persona sigue siendo un solo par, co
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
   const [first] = (await invite(trainer, client, ["nutrition"])).body.results.map((r) => r.invitation);
-  await ctx.post(client, `/trainer/invites/${first._id}/decline`);
+  await respond(client, trainer, "decline");
   const [second] = (await invite(trainer, client, ["nutrition"])).body.results.map((r) => r.invitation);
   assert.notEqual(String(second._id), String(first._id), "cada invitación tiene su id");
   assert.equal(await ctx.count("TrainerClient", { trainerId: trainer._id }), 1);
-  await ctx.post(client, `/trainer/invites/${second._id}/accept`);
+  await respond(client, trainer, "accept");
   const history = await ctx.get(client, "/trainer/history?asClient=1");
   assert.deepEqual(history.map((r) => r.status), ["declined"], "el rechazo queda en su historial");
   assert.equal((await ctx.get(trainer, "/trainer/history")).length, 1);
@@ -216,21 +226,20 @@ test("si las plazas bajan, una invitación pendiente no se cancela pero no se pu
     expiresAt: new Date(Date.now() + 86400000), stripeMode: "test" } } });
   const clients = [];
   for (let i = 0; i < 4; i += 1) clients.push(await ctx.makeClient());
-  const relations = [];
-  for (const c of clients) relations.push((await invite(trainer, c, ["training"])).body.results[0].invitation);
+  for (const c of clients) await invite(trainer, c, ["training"]);
   // Termina el periodo pagado: vuelve a Free con 3 plazas y 4 invitaciones reservadas.
   await trainer.doc.constructor.updateOne({ _id: trainer._id }, { $set: { "professionalPremium.expiresAt": new Date(Date.now() - 1000) } });
   for (let i = 0; i < 3; i += 1) {
-    assert.equal((await ctx.call(clients[i], "POST", `/trainer/invites/${relations[i]._id}/accept`)).status, 200);
+    assert.equal((await respond(clients[i], trainer, "accept")).status, 200);
   }
-  const late = await ctx.call(clients[3], "POST", `/trainer/invites/${relations[3]._id}/accept`);
+  const late = await respond(clients[3], trainer, "accept");
   assert.equal(late.status, 409);
   assert.equal(late.body.code, "SEAT_UNAVAILABLE");
   const pending = await ctx.get(clients[3], "/trainer/invites/mine");
   assert.equal(pending.length, 1, "la invitación sigue pendiente");
   // Al liberar una plaza (el entrenador termina con un cliente), ya se puede aceptar.
   assert.equal((await ctx.call(trainer, "DELETE", `/trainer/clients/${clients[0].id}?scope=training`)).status, 200);
-  assert.equal((await ctx.call(clients[3], "POST", `/trainer/invites/${relations[3]._id}/accept`)).status, 200);
+  assert.equal((await respond(clients[3], trainer, "accept")).status, 200);
 });
 
 test("por encima del plan: los clientes más recientes quedan en SOLO LECTURA (leer sí, escribir CLIENT_READ_ONLY)", async () => {
@@ -455,12 +464,21 @@ test("cuestionario: las respuestas propias se validan por tipo, se exigen las ob
     "valores normalizados por tipo; lo que no es una pregunta suya no se guarda"
   );
 
-  // El profesional borra una pregunta y corrige otra: lo ya respondido a la
-  // borrada sigue ahí, legible.
+  // El profesional borra una pregunta de su configuración: el formulario de
+  // este cliente es la copia de su invitación y no cambia. Corregir una
+  // respuesta deja las demás como estaban.
   await ctx.put(trainer, "/trainer/intake-config", { enabledFields: ["goals"], customQuestions: [config.customQuestions[1], config.customQuestions[2]] });
   const corrected = await ctx.put(trainer, `/trainer/clients/${client.id}/intake`, { goals: "x", customAnswers: [{ questionId: sport, value: "Nadar" }] });
   assert.deepEqual(corrected.customAnswers.map((a) => [a.label, a.value]),
-    [["Horas de sueño", 7.5], ["Deporte", "Nadar"], ["¿Turnos de noche?", true]]);
+    [["¿Turnos de noche?", true], ["Horas de sueño", 7.5], ["Deporte", "Nadar"]]);
+
+  // Tras una baja, la invitación nueva copia la configuración de ahora: lo
+  // ya respondido a la pregunta borrada sigue ahí, legible.
+  await ctx.del(client, "/trainer/link/training");
+  await inviteAndAccept(trainer, client, ["training"]);
+  const reopened = await ctx.put(trainer, `/trainer/clients/${client.id}/intake`, { goals: "x", customAnswers: [{ questionId: sleep, value: 8 }] });
+  assert.deepEqual(reopened.customAnswers.map((a) => [a.label, a.value]),
+    [["Horas de sueño", 8], ["Deporte", "Nadar"], ["¿Turnos de noche?", true]]);
 });
 
 test("cuestionario: sin relación activa no se puede enviar; datos fuera de rango no tocan el perfil", async () => {

@@ -220,8 +220,9 @@ router.postAsync(
 
 // --- Lado cliente ---
 router.getAsync("/invites/mine", auth(["user", "admin"]), controller.listInvitesMine);
-router.postAsync("/invites/:id/accept", auth(["user", "admin"]), controller.acceptInvite);
-router.postAsync("/invites/:id/decline", auth(["user", "admin"]), controller.declineInvite);
+// El cliente responde por profesional: todos sus scopes pendientes a la vez.
+router.postAsync("/invites/:trainerId/accept", auth(["user", "admin"]), controller.acceptInvites);
+router.postAsync("/invites/:trainerId/decline", auth(["user", "admin"]), controller.declineInvites);
 router.getAsync("/info", auth(["user", "admin"]), controller.listMyProfessionals);
 router.deleteAsync("/link/:scope", auth(["user", "admin"]), controller.revokeByClient);
 

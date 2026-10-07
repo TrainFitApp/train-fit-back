@@ -140,7 +140,7 @@ test("objetivos de otro usuario: 404 en leer, editar, activar y borrar", async (
 
 test("el profesional fija el objetivo a mano: el cliente lo ve en su objetivo en uso y recalcular el perfil ya no lo pisa", async () => {
   const trainer = await ctx.makeTrainer();
-  const client = await ctx.makeClient({ fields: { weight: 80, height: 180, sex: 1, birth: new Date("1990-05-01"), activity: 1.375, steps: 1.2, training: 1.2, objetive: 0 } });
+  const client = await ctx.makeClient({ fields: { weight: 80, height: 180, sex: 1, birth: "1990-05-01", activity: 1.375, steps: 1.2, training: 1.2, objetive: 0 } });
   await ctx.relate(trainer, client, { scope: "nutrition" });
 
   const view = await ctx.get(trainer, `/trainer/clients/${client.id}/nutritional-goal`);

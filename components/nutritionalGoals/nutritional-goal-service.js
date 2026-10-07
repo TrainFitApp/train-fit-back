@@ -8,13 +8,7 @@ const { addDaysToIsoDate } = require("../util/date-util");
 const { todayForUser } = require("../users/user-time-zone");
 const { conflict } = require("../util/http-error");
 const { computeNutritionTarget } = require("./nutrition-target");
-
-function ageFromBirth(birth) {
-  if (!birth) return null;
-  const ms = Date.now() - new Date(birth).getTime();
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-  return Math.floor(ms / (1000 * 3600 * 24) / 365.25);
-}
+const { ageOn } = require("../users/age-policy");
 
 module.exports = {
   async create(data) {
@@ -101,16 +95,17 @@ module.exports = {
   // la app del cliente, ver nutrition-target.js). Lo usa el intake al
   // reescribir peso/pasos/etc.
   async recomputeDefaultForClient(clientId) {
-    const [user, latestWeight] = await Promise.all([
+    const [user, latestWeight, today] = await Promise.all([
       userDao.findFields(clientId, "height birth sex activity steps training objetive goalInUse"),
       anthropometryDao.findLatestWeight(clientId),
+      todayForUser(clientId),
     ]);
     if (!user) return null;
 
     const target = computeNutritionTarget({
       weightKg: latestWeight?.weight ?? null,
       heightCm: user.height,
-      age: ageFromBirth(user.birth),
+      age: ageOn(user.birth, today),
       sex: user.sex,
       activity: user.activity,
       steps: user.steps,

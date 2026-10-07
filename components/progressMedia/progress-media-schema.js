@@ -53,6 +53,20 @@ const ProgressMediaDaySchema = new Schema(
       ],
       default: [],
     },
+    // Profesionales a los que el cliente mandó este día con su cuestionario
+    // de alta (fotos de inicio o vídeos pedidos): igual que un check-in, para
+    // ellos es visible siempre.
+    intakes: {
+      type: [
+        new Schema(
+          {
+            trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
   },
   { collection: "progressmediadays", timestamps: true }
 );
@@ -90,6 +104,6 @@ ProgressMediaDaySchema.pre("deleteOne", { document: false, query: true }, async 
   }
 });
 
-ProgressMediaDaySchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"], authorship: ["checkins.trainerId"] });
+ProgressMediaDaySchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["userId"], authorship: ["checkins.trainerId", "intakes.trainerId"] });
 
 module.exports = mongoose.model("ProgressMediaDay", ProgressMediaDaySchema);

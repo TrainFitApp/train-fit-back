@@ -28,6 +28,18 @@ function parseVimeoId(url) {
   return match ? match[1] : null;
 }
 
+// Enlace limpio y su plataforma ({ source, externalUrl }), o null si no es
+// de YouTube ni de Vimeo.
+function parseLink(url) {
+  const externalUrl = String(url || "").trim();
+  if (externalUrl.length > 500) return null;
+  if (parseYouTubeId(externalUrl)) return { source: "youtube", externalUrl };
+  if (parseVimeoId(externalUrl)) return { source: "vimeo", externalUrl };
+  return null;
+}
+
+const badUrl = () => fail(400, "TECHNIQUE_VIDEO_BAD_URL", "Ese enlace no es de YouTube ni de Vimeo");
+
 function trainerNameOf(trainer) {
   if (!trainer || typeof trainer !== "object") return "";
   return [trainer.name, trainer.lastname].filter(Boolean).join(" ");
@@ -66,6 +78,7 @@ async function viewsOf(videos, { baseUrl } = {}) {
 module.exports = {
   parseYouTubeId,
   parseVimeoId,
+  parseLink,
 
   async viewsByIds(ids, { baseUrl } = {}) {
     const videos = await techniqueVideoDao.findByIds(ids);
@@ -95,12 +108,11 @@ module.exports = {
       const attachable = await mediaService.assertAttachable(trainer, body?.assetId, ["technique_video"]);
       if (attachable.error) return attachable;
       data.assetId = attachable.asset._id;
-    } else if (source === "youtube") {
-      if (!parseYouTubeId(body?.externalUrl)) return fail(400, "TECHNIQUE_VIDEO_BAD_URL", "Ese enlace de YouTube no es válido");
-      data.externalUrl = String(body.externalUrl).trim();
-    } else if (source === "vimeo") {
-      if (!parseVimeoId(body?.externalUrl)) return fail(400, "TECHNIQUE_VIDEO_BAD_URL", "Ese enlace de Vimeo no es válido");
-      data.externalUrl = String(body.externalUrl).trim();
+    } else if (source === "youtube" || source === "vimeo") {
+      // Manda el enlace: pegar uno de Vimeo con YouTube marcado no es un error.
+      const link = parseLink(body?.externalUrl);
+      if (!link) return badUrl();
+      Object.assign(data, link);
     } else {
       return fail(400, "TECHNIQUE_VIDEO_BAD_SOURCE", "Origen de vídeo no válido");
     }
@@ -120,6 +132,15 @@ module.exports = {
     }
     if (typeof body?.cues === "string") set.cues = body.cues.trim().slice(0, 1000);
     if (Array.isArray(body?.exerciseIds)) set.exerciseIds = cleanExerciseIds(body.exerciseIds);
+    // El enlace de un vídeo de YouTube o Vimeo se puede cambiar, también de
+    // una plataforma a otra: el origen sale del propio enlace. Un vídeo subido
+    // no tiene enlace (pasarlo a enlace es borrarlo y crear otro).
+    if (typeof body?.externalUrl === "string") {
+      if (video.source === "upload") return fail(400, "TECHNIQUE_VIDEO_BAD_SOURCE", "Un vídeo subido no tiene enlace que cambiar");
+      const link = parseLink(body.externalUrl);
+      if (!link) return badUrl();
+      Object.assign(set, link);
+    }
     await techniqueVideoDao.update(video._id, set);
     const [view] = await viewsOf([await techniqueVideoDao.findByIdWithExercises(video._id)], { baseUrl });
     return { video: view };

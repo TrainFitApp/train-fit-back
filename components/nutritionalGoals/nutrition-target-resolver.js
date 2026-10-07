@@ -14,13 +14,8 @@ const {
   trainingDaysFromFactors,
   trainingFactor,
 } = require("./training-factor");
-
-function ageFromBirth(birth, at = new Date()) {
-  if (!birth) return null;
-  const ms = at.getTime() - new Date(birth).getTime();
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-  return Math.floor(ms / (1000 * 3600 * 24) / 365.25);
-}
+const { ageOn } = require("../users/age-policy");
+const { todayIsoDate, timeZoneOf } = require("../util/date-util");
 
 // Pasos y factor de entrenamiento que entran en la fórmula. Sin rango
 // declarado en un check-in, los del perfil tal cual. Con rango declarado, se
@@ -73,7 +68,7 @@ function resolveSteps(user, stepsRangeKey) {
  */
 async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0, macroOverride = {}, options = {}) {
   const [user, anthros] = await Promise.all([
-    userSchema.findById(clientId).select("sex height birth activity steps training objetive").lean(),
+    userSchema.findById(clientId).select("sex height birth activity steps training objetive timezone").lean(),
     anthropometryDao.getAllAnthropometriesByUserId(clientId),
   ]);
 
@@ -86,7 +81,8 @@ async function resolveClientNutritionTarget(clientId, objetiveKcalDelta = 0, mac
   const weightSource = latestAnthroWeight
     ? { weightKg: latestAnthroWeight.weight, date: latestAnthroWeight.date, from: "anthropometry" }
     : null;
-  const age = ageFromBirth(user?.birth, options.asOf ? new Date(`${options.asOf}T12:00:00`) : new Date());
+  // Edad de ese día, o de hoy en la zona del cliente.
+  const age = ageOn(user?.birth, options.asOf || todayIsoDate(timeZoneOf(user)));
   const steps = resolveSteps(user, options.stepsRangeKey);
 
   // `useClientObjetive`: el delta lo pone el propio cliente (el objetivo que

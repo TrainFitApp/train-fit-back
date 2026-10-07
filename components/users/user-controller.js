@@ -3,6 +3,7 @@ const tableService = require("../tables/table-service");
 const mail = require("./../util/mail");
 const { normalizeEmail } = require("../util/normalize-email");
 const { badRequest, forbidden, notFound } = require("../util/http-error");
+const { normalizeTimeZone } = require("../util/date-util");
 
 const htmlFinalResponse1 = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html dir="ltr" lang="es">
@@ -106,7 +107,10 @@ module.exports = {
   },
 
   async createUser(req, res) {
-    const user = await userService.registerClient(normalizeEmail(req.body?.user?.email), req.body.user);
+    // Alta sin sesión: la zona del dispositivo viene en la cabecera, sin
+    // pasar por validateAuth.
+    const timeZone = normalizeTimeZone(String(req.headers?.["x-timezone"] || "").trim());
+    const user = await userService.registerClient(normalizeEmail(req.body?.user?.email), req.body.user, timeZone);
     notifyUserRegistered(user, req, "users.createUser");
     res.send(await userService.view(user, req.user));
   },
@@ -134,7 +138,7 @@ module.exports = {
     assertCanActOnUser(req, req.body._id.toString(), "No tienes permiso para actualizar este usuario");
     // Solo el perfil (lista blanca, users/user-profile.js) y, si viene, el
     // peso de hoy. La respuesta es el DTO: nunca el documento crudo.
-    const user = await userService.updateUser(req.body);
+    const user = await userService.updateUser(req.body, req.auth.timeZone);
     res.send(await userService.view(user, req.user));
   },
 

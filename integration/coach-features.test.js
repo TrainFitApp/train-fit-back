@@ -208,6 +208,53 @@ test("vídeo de técnica asignado: el cliente lo ve en vez del general, se cambi
   assert.deepEqual((await ctx.put(trainer, path, {})).overrides, [], "sin vídeo = quitar la asignación");
 });
 
+test("biblioteca de vídeos de técnica: el enlace se edita, también de YouTube a Vimeo; uno mal formado o un vídeo subido no", async () => {
+  const { trainer, client } = await pair("training");
+  const exerciseId = String(ctx.oid());
+  const created = await ctx.call(trainer, "POST", "/trainer/technique-videos", {
+    title: "Sentadilla",
+    source: "youtube",
+    externalUrl: "  https://youtu.be/abcdefghijk  ",
+    exerciseIds: [exerciseId],
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const { id } = created.body.video;
+  assert.deepEqual([created.body.video.source, created.body.video.youtubeId, created.body.video.externalUrl], ["youtube", "abcdefghijk", "https://youtu.be/abcdefghijk"]);
+
+  // Manda el enlace: uno de Vimeo con YouTube marcado se guarda como Vimeo.
+  const mislabeled = await ctx.post(trainer, "/trainer/technique-videos", { title: "Peso muerto", source: "youtube", externalUrl: "https://vimeo.com/123456789" });
+  assert.deepEqual([mislabeled.video.source, mislabeled.video.vimeoId, mislabeled.video.youtubeId], ["vimeo", "123456789", null]);
+
+  const toVimeo = await ctx.put(trainer, `/trainer/technique-videos/${id}`, { externalUrl: "https://vimeo.com/987654321" });
+  assert.deepEqual(
+    [toVimeo.video.source, toVimeo.video.vimeoId, toVimeo.video.youtubeId, toVimeo.video.title],
+    ["vimeo", "987654321", null, "Sentadilla"],
+    "la plataforma sale del enlace y lo demás no cambia"
+  );
+  const mine = await ctx.get(client, "/technique-videos/mine");
+  assert.equal(mine.byExercise[exerciseId].vimeoId, "987654321", "el cliente ve el enlace nuevo");
+
+  const shorts = await ctx.put(trainer, `/trainer/technique-videos/${id}`, { externalUrl: "https://www.youtube.com/shorts/zyxwvutsrqp" });
+  assert.deepEqual([shorts.video.source, shorts.video.youtubeId, shorts.video.vimeoId], ["youtube", "zyxwvutsrqp", null]);
+
+  for (const externalUrl of ["https://www.instagram.com/p/abc/", "   ", `https://youtu.be/abcdefghijk?x=${"a".repeat(500)}`]) {
+    const bad = await ctx.call(trainer, "PUT", `/trainer/technique-videos/${id}`, { externalUrl });
+    assert.equal(bad.status, 400, externalUrl.slice(0, 40));
+    assert.equal(bad.body.code, "TECHNIQUE_VIDEO_BAD_URL");
+  }
+  const renamed = await ctx.put(trainer, `/trainer/technique-videos/${id}`, { title: "Sentadilla goblet" });
+  assert.deepEqual([renamed.video.title, renamed.video.youtubeId], ["Sentadilla goblet", "zyxwvutsrqp"], "sin enlace en el cuerpo, el enlace no cambia");
+
+  const uploaded = await ctx.model("TechniqueVideo").create({ trainerId: trainer._id, title: "Subido", source: "upload", assetId: ctx.oid() });
+  const noLink = await ctx.call(trainer, "PUT", `/trainer/technique-videos/${uploaded._id}`, { externalUrl: "https://youtu.be/abcdefghijk" });
+  assert.equal(noLink.status, 400);
+  assert.equal(noLink.body.code, "TECHNIQUE_VIDEO_BAD_SOURCE", "un vídeo subido no pasa a enlace: se borra y se crea otro");
+  assert.equal((await ctx.model("TechniqueVideo").findById(uploaded._id).lean()).source, "upload");
+
+  const stranger = await ctx.makeTrainer();
+  assert.equal((await ctx.call(stranger, "PUT", `/trainer/technique-videos/${id}`, { externalUrl: "https://vimeo.com/111111111" })).status, 404);
+});
+
 // --- Preferencias de nutrición -----------------------------------------------------
 
 test("preferencias de nutrición: pedirlas avisa al cliente con una notificación", async () => {

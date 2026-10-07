@@ -4,8 +4,8 @@ const { CUSTOM_QUESTION_TYPES } = require("../forms/custom-question");
 
 // Cuestionario de alta: UNO por par (profesional, cliente), embebido en el
 // documento del par (TrainerClient.intake). Salud, lesiones, experiencia,
-// disponibilidad y material no dependen de si el profesional lleva
-// entrenamiento o nutrición. Alergias y preferencias de comida NO se guardan
+// disponibilidad, material, medidas, fotos y vídeos no dependen de si el
+// profesional lleva entrenamiento o nutrición. Alergias y preferencias de comida NO se guardan
 // aquí: el formulario las escribe en User.nutritionPreferences, y el perfil
 // (peso, altura, actividad…) en User (ver trainer-client-service.js#submitIntake).
 
@@ -46,6 +46,38 @@ const ClientIntakeSchema = new Schema(
           unit: { type: String, default: "" },
           // Número, sí/no (booleano) o texto, según el tipo.
           value: { type: Schema.Types.Mixed, required: true },
+        },
+      ],
+      default: () => [],
+    },
+    // Lo que pidió el profesional además de preguntas
+    // (trainerIntakeConfig/intake-requests.js). Las medidas se copian aquí
+    // con su valor (el formulario recibido no cambia si el cliente corrige
+    // después ese día) y además se escriben en su Anthropometry de
+    // `measuredOn`, como las de un check-in.
+    measurements: {
+      type: [
+        {
+          _id: false,
+          key: { type: String, required: true },
+          value: { type: Number, required: true },
+        },
+      ],
+      default: () => [],
+    },
+    measuredOn: { type: String, default: null }, // "YYYY-MM-DD" del cliente
+    // Día de fotos de progreso con el que respondió (ProgressMediaDay): el
+    // primero de su evolución. Queda enlazado a este profesional, que lo ve
+    // siempre aunque el cliente lo oculte después (enviar ya es compartir).
+    photosDayId: { type: Schema.Types.ObjectId, ref: "ProgressMediaDay", default: null },
+    // Un vídeo de progreso por petición, con la indicación copiada.
+    videos: {
+      type: [
+        {
+          _id: false,
+          requestId: { type: String, required: true },
+          label: { type: String, required: true, trim: true, maxlength: 200 },
+          assetId: { type: Schema.Types.ObjectId, ref: "MediaAsset", required: true },
         },
       ],
       default: () => [],

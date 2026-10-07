@@ -83,7 +83,7 @@ module.exports = {
   },
 
   async completeSocial(req, res) {
-    const user = await userService.completeSocialProfile(req.user._id, req.body || {});
+    const user = await userService.completeSocialProfile(req.user._id, req.body || {}, req.auth.timeZone);
     mail.notifyUserRegistered(user, {
       source: "auth.completeSocial",
       provider: user.provider,

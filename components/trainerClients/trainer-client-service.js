@@ -11,11 +11,21 @@ const { isOldEnough } = require("../users/age-policy");
 const { httpError, badRequest, forbidden, notFound } = require("../util/http-error");
 const { sanitizeIntakeAnswers } = require("./client-intake-schema");
 const { buildCustomAnswers } = require("../forms/custom-question");
+const {
+  buildIntakeMeasurements,
+  anthropometryFieldsOf,
+  intakePhotosError,
+  buildIntakeVideos,
+  intakeFormOf,
+} = require("../trainerIntakeConfig/intake-requests");
+const { checkinWritableFields } = require("../anthropometry/anthropometry-origin");
 const { isReadOnly } = require("./trainer-seat-service");
 const {
   SCOPES,
   activeScopes,
+  hasActiveScope,
   hasOpenLink,
+  pendingLinks,
   openLink,
   latestRevokedAt,
   intakePendingOnAccept,
@@ -28,12 +38,14 @@ const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v))
 
 // Datos de perfil que el cuestionario confirma y reescribe en `User` (los
 // metió el cliente al registrarse). Rangos = los mismos que valida el
-// schema / sign-up. El peso no: es una medida (ver submitIntake).
-function extractUserProfilePatch(data) {
+// schema / sign-up. El peso no: es una medida (ver submitIntake). `birth`
+// es un día "YYYY-MM-DD" tal cual (users/age-policy.js); `today`, el del
+// cliente.
+function extractUserProfilePatch(data, today) {
   const patch = {};
   if (num(data.height) >= 70 && num(data.height) <= 300) patch.height = num(data.height);
   if (data.sex === 0 || data.sex === 1) patch.sex = data.sex;
-  if (data.birth && isOldEnough(data.birth)) patch.birth = new Date(data.birth);
+  if (isOldEnough(data.birth, today)) patch.birth = data.birth;
   // steps/activity/training llegan ya resueltos al `.value` numérico del
   // enum (mismo criterio que sign-up: el front tiene las constantes).
   // Rangos: STEPS 1-1.86, ACTIVITY 1.15-1.75, TRAINING ~1-1.8.
@@ -46,6 +58,8 @@ function extractUserProfilePatch(data) {
   }
   return patch;
 }
+
+const SCOPE_NAMES = { training: "entrenamiento", nutrition: "nutrición" };
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
@@ -110,13 +124,67 @@ function intakeFieldsFor(enabledFields, scopes) {
   return [...fields];
 }
 
-// Respuestas del formulario + las propias validadas contra las preguntas
-// actuales del profesional (ver forms/custom-question.js#buildCustomAnswers).
-async function intakeAnswers(trainerId, data, options) {
-  const questions = (await trainerIntakeConfigService.getCustomQuestionsByTrainers([String(trainerId)])).get(String(trainerId));
-  const { answers, error } = buildCustomAnswers(questions, data.customAnswers, options);
+// El formulario de alta del par: la copia que se hizo al invitar. Un par sin
+// copia (creado a mano, sin pasar por una invitación) recibe el de un
+// profesional sin configuración: todos los campos y nada más.
+function intakeFormOfPair(pair) {
+  return pair?.intakeForm || intakeFormOf(null);
+}
+
+// Respuestas del formulario + las propias validadas contra las preguntas de
+// su formulario (ver forms/custom-question.js#buildCustomAnswers).
+function intakeAnswers(form, data, options) {
+  const { answers, error } = buildCustomAnswers(form.customQuestions, data.customAnswers, options);
   if (error) throw badRequest(error, "INVALID_CUSTOM_ANSWER");
   return { ...sanitizeIntakeAnswers(data), customAnswers: answers };
+}
+
+const progressMediaService = () => require("../progressMedia/progress-media-service");
+const mediaService = () => require("../media/media-service");
+
+/**
+ * Lo que el profesional pidió además de preguntas (medidas, fotos y vídeos;
+ * trainerIntakeConfig/intake-requests.js), validado contra el formulario del
+ * par. Solo lo puede mandar el cliente. Sin almacenamiento de fotos o
+ * vídeos configurado, esas peticiones dejan de ser obligatorias: el cliente
+ * no podría cumplirlas. Devuelve lo que se guarda en el cuestionario y los
+ * días de progreso que quedan enviados al profesional.
+ */
+async function intakeRequestAnswers(form, clientId, data) {
+  const measured = buildIntakeMeasurements(form.measurements, data.measurements);
+  if (measured.error) throw badRequest(measured.error, "INVALID_INTAKE_MEASUREMENT");
+
+  const available = mediaService().uploadsAvailable();
+  let photosDay = null;
+  if (form.photos) {
+    photosDay = data.photosDayId ? await progressMediaService().ownDayWithPhotos(clientId, data.photosDayId) : null;
+    const error = intakePhotosError({ ...form.photos, required: form.photos.required && available.images }, photosDay);
+    if (error) throw badRequest(error, "INTAKE_PHOTOS_MISSING");
+  }
+
+  const sentVideos = Array.isArray(data.videos) ? data.videos : [];
+  const videoDays = await progressMediaService().ownVideoDays(clientId, sentVideos.map((video) => video?.assetId));
+  const requests = form.videos.map((request) => ({ ...request, required: request.required && available.videos }));
+  const built = buildIntakeVideos(requests, sentVideos, new Set(videoDays.keys()));
+  if (built.error) throw badRequest(built.error, "INVALID_INTAKE_VIDEO");
+
+  return {
+    measurements: measured.measurements,
+    photosDayId: photosDay?._id || null,
+    videos: built.videos,
+    sentDayIds: [photosDay?._id, ...built.videos.map((video) => videoDays.get(video.assetId))],
+  };
+}
+
+// Las medidas del cuestionario van a su Anthropometry de `date`, marcadas
+// como pedidas por el profesional (como las de un check-in, ver
+// anthropometry-origin.js): nunca pisan lo que el cliente apuntó él mismo
+// ese día.
+async function saveIntakeMeasurements(clientId, date, measurements) {
+  if (!measurements.length) return;
+  const existing = await anthropometryDao.getAnthropometryByUserIdAndDate(clientId, date);
+  const fields = checkinWritableFields(existing, anthropometryFieldsOf(measurements));
+  if (Object.keys(fields).length) await anthropometryDao.mergeAnthropometryFields(clientId, date, fields, { fromCheckin: true });
 }
 
 async function requireActivePair(trainerId, clientId, message) {
@@ -158,6 +226,10 @@ module.exports = {
       throw badRequest("Debes indicar al menos un scope válido (training/nutrition)", "INVALID_SCOPE");
     }
 
+    // Lo que tiene activo ahora mismo en su cuestionario de alta: se copia
+    // al par con la invitación.
+    const intakeForm = await trainerIntakeConfigService.intakeFormFor(trainerId);
+
     const results = await withAdmission(trainerId, async (clientLimit) => {
       const [existingUser, pair, seats] = await Promise.all([
         userDao.findFieldsByEmail(clientEmail, "roles"),
@@ -193,6 +265,12 @@ module.exports = {
           outcome.push({ scope, success: false, error: `Ya existe una invitación pendiente para este email en el ámbito "${scope}"` });
         }
       }
+      // El formulario que rellenará: el de esta invitación, salvo que ya
+      // tenga uno en curso y enviado (un scope más con quien ya es cliente
+      // no le abre otro cuestionario, ver pair-state.js#intakePendingOnAccept).
+      if (outcome.some((result) => result.success) && (!hasActiveScope(pair) || pair.intakePending)) {
+        await trainerClientDao.setIntakeForm(trainerId, clientEmail, intakeForm);
+      }
       return outcome;
     });
 
@@ -225,14 +303,22 @@ module.exports = {
     return (cancelled || (await trainerClientDao.findInvitation(invitationId))).invitation;
   },
 
-  // Invitaciones sin responder del cliente: una tarjeta por scope, con quién
-  // le invita.
+  // Invitaciones sin responder del cliente: UNA por profesional, con todos
+  // los scopes a los que le invita (se aceptan o rechazan juntos), de la
+  // más reciente a la más antigua.
   async listPendingForClient(clientEmail) {
     const pairs = await trainerClientDao.findPairsWithPendingInvitations(clientEmail);
-    return invitationsOf(pairs, (link) => link.status === "pending").map(({ pair, link }) => ({
-      ...invitationView({ ...pair, trainerId: pair.trainerId?._id || pair.trainerId }, link),
-      trainer: personOf(pair.trainerId),
-    }));
+    return pairs
+      .map((pair) => {
+        const links = pendingLinks(pair);
+        return {
+          trainerId: pair.trainerId?._id || pair.trainerId,
+          trainer: personOf(pair.trainerId),
+          scopes: links.map((link) => link.scope),
+          invitedAt: new Date(Math.max(...links.map((link) => new Date(link.invitedAt).getTime()))),
+        };
+      })
+      .sort((a, b) => b.invitedAt - a.invitedAt);
   },
 
   // Profesionales en curso del cliente, uno por par con sus scopes activos.
@@ -242,47 +328,61 @@ module.exports = {
   },
 
   /**
-   * El cliente acepta o rechaza una invitación. Responder dos veces es
-   * idempotente. Aceptar formaliza la relación al momento (el cliente ya
-   * sale en la cartera); el cuestionario queda pendiente aparte, sin
-   * bloquear nada. La plaza se comprueba y se ocupa bajo el bloqueo de altas.
+   * El cliente acepta o rechaza la invitación de un profesional: todos los
+   * scopes que tenga sin responder con él, de una vez (un solo «Aceptar»
+   * y un solo cuestionario de alta aunque lleve entrenamiento y nutrición).
+   * Responder dos veces es idempotente. Aceptar formaliza la relación al
+   * momento (el cliente ya sale en la cartera); el cuestionario queda
+   * pendiente aparte, sin bloquear nada. La plaza (una por persona) se
+   * comprueba y se ocupa bajo el bloqueo de altas. Un scope en el que
+   * entretanto aceptó a otro profesional sigue sin responder (`pending`).
+   * null si ese profesional no le ha invitado nunca.
    */
-  async respondToInvite(invitationId, clientUser, decision) {
-    const found = await trainerClientDao.findInvitation(invitationId);
-    if (!found) return null;
-    const { pair, invitation } = found;
-    if (normalizeEmail(pair.clientEmail) !== normalizeEmail(clientUser.email)) {
-      throw forbidden("Esta invitación no está dirigida a tu cuenta", "FORBIDDEN");
-    }
-    if (invitation.status !== "pending") return invitation;
+  async respondToInvites(trainerId, clientUser, decision) {
+    const pair = await trainerClientDao.findPairByEmail(trainerId, clientUser.email);
+    if (!pair) return null;
+    const pending = pendingLinks(pair);
+    const response = (answered, waiting = []) => ({
+      trainerId: pair.trainerId,
+      scopes: answered.map((link) => link.scope),
+      pending: waiting.map((link) => link.scope),
+    });
+    if (!pending.length) return response([]);
 
     if (decision === "decline") {
-      const declined = await trainerClientDao.declineInvitation(invitationId);
-      return (declined || (await trainerClientDao.findInvitation(invitationId))).invitation;
+      const declined = await trainerClientDao.declineInvitations(pair._id, pending.map((link) => link._id));
+      return response(declined ? pending : []);
     }
 
     // Puede haber aceptado a otro profesional del mismo scope entretanto.
-    const overlapping = await trainerClientDao.hasOtherActiveTrainer({
-      clientEmail: pair.clientEmail,
-      clientId: clientUser._id,
-      scope: invitation.scope,
-      excludingTrainerId: pair.trainerId,
-    });
-    if (overlapping) {
-      throw badRequest(`Este cliente ya tiene un profesional de tipo "${invitation.scope}"`, "OVERLAP");
+    const acceptable = [];
+    const overlapping = [];
+    for (const link of pending) {
+      const taken = await trainerClientDao.hasOtherActiveTrainer({
+        clientEmail: pair.clientEmail,
+        clientId: clientUser._id,
+        scope: link.scope,
+        excludingTrainerId: pair.trainerId,
+      });
+      (taken ? overlapping : acceptable).push(link);
+    }
+    if (!acceptable.length) {
+      const names = overlapping.map((link) => SCOPE_NAMES[link.scope]).join(" y ");
+      throw badRequest(`Ya tienes otro profesional que lleva tu ${names}`, "OVERLAP");
     }
 
     const accepted = await withAdmission(pair.trainerId, async (_admission, capacity) => {
       await require("./trainer-seat-service").assertSeatForAcceptance(pair.trainerId, clientUser._id, capacity);
       const current = await trainerClientDao.findPairByEmail(pair.trainerId, pair.clientEmail);
-      return trainerClientDao.acceptInvitation(invitationId, clientUser._id, {
+      return trainerClientDao.acceptInvitations(pair._id, acceptable.map((link) => link._id), clientUser._id, {
         intakePending: intakePendingOnAccept(current),
       });
     });
-    if (!accepted) return (await trainerClientDao.findInvitation(invitationId)).invitation;
+    if (!accepted) return response([], overlapping);
 
-    await notificationDao.createForTrainer(pair.trainerId, clientUser._id, "invite_accepted", { scope: invitation.scope });
-    return accepted.invitation;
+    const answered = response(acceptable, overlapping);
+    await notificationDao.createForTrainer(pair.trainerId, clientUser._id, "invite_accepted", { scopes: answered.scopes });
+    return answered;
   },
 
   /**
@@ -302,8 +402,17 @@ module.exports = {
       throw badRequest("No tienes ningún cuestionario pendiente con este profesional", "NO_INTAKE_PENDING");
     }
 
-    const answers = await intakeAnswers(trainerId, intakeData, { requireAll: true });
-    const saved = await trainerClientDao.submitIntake(pair._id, answers);
+    const form = intakeFormOfPair(pair);
+    const answers = intakeAnswers(form, intakeData, { requireAll: true });
+    const { sentDayIds, ...requested } = await intakeRequestAnswers(form, clientId, intakeData);
+    const today = await todayForUser(clientId);
+    const saved = await trainerClientDao.submitIntake(pair._id, {
+      ...answers,
+      ...requested,
+      measuredOn: requested.measurements.length ? today : null,
+    });
+    await saveIntakeMeasurements(clientId, today, requested.measurements);
+    await progressMediaService().linkIntake(sentDayIds, trainerId);
     await nutritionPreferencesDao.upsertOwnResponse(clientId, {
       allergies: intakeData.allergies,
       favoriteFoods: intakeData.favoriteFoods,
@@ -315,10 +424,10 @@ module.exports = {
     // El peso que confirma es su medida de hoy (el peso vive en sus medidas,
     // no en el usuario). Si cambió algo, se recalcula el objetivo "Default"
     // del cliente (uno puesto por un profesional no se pisa).
-    const userPatch = extractUserProfilePatch(intakeData);
+    const userPatch = extractUserProfilePatch(intakeData, today);
     const weight = num(intakeData.weight) >= 30 && num(intakeData.weight) <= 300 ? num(intakeData.weight) : null;
     if (Object.keys(userPatch).length) await userDao.updateProfile(clientId, userPatch);
-    if (weight !== null) await anthropometryDao.upsertOwnFields(clientId, await todayForUser(clientId), { weight });
+    if (weight !== null) await anthropometryDao.upsertOwnFields(clientId, today, { weight });
     if (Object.keys(userPatch).length || weight !== null) {
       await nutritionalGoalService.recomputeDefaultForClient(clientId).catch(() => {});
     }
@@ -337,22 +446,24 @@ module.exports = {
     return pair?.intake || null;
   },
 
-  // El cuestionario como lo ve el profesional. El formulario escribe en tres
-  // sitios (ver submitIntake): sus respuestas, el perfil en User y la
-  // nutrición en User.nutritionPreferences; se devuelven los tres, con los
-  // valores actuales.
-  async getIntakeWithAnswers(trainerId, clientId) {
+  // El cuestionario como lo ve el profesional. El formulario escribe en
+  // varios sitios (ver submitIntake): sus respuestas, el perfil en User, la
+  // nutrición en User.nutritionPreferences y las fotos y vídeos en su
+  // progreso; se devuelven todos, con los valores actuales.
+  async getIntakeWithAnswers(trainerId, clientId, { baseUrl } = {}) {
     const pair = await requireActivePair(trainerId, clientId, "No tienes una relación con este cliente que permita ver su cuestionario");
-    return withProfileAndNutrition(pair.intake, clientId);
+    return intakeForTrainer(trainerId, clientId, pair, { baseUrl });
   },
 
   // El profesional corrige el cuestionario: solo las respuestas, sin cambiar
-  // el estado del envío ni repetir los efectos del envío del cliente.
-  async updateIntake(trainerId, clientId, data) {
+  // el estado del envío ni repetir los efectos del envío del cliente. Las
+  // medidas, fotos y vídeos son del cliente: no se tocan.
+  async updateIntake(trainerId, clientId, data, { baseUrl } = {}) {
     const pair = await requireActivePair(trainerId, clientId, "No tienes una relación con este cliente que permita editar su cuestionario");
-    const answers = await intakeAnswers(trainerId, data, { previous: pair.intake?.customAnswers || [] });
+    const form = intakeFormOfPair(pair);
+    const answers = intakeAnswers(form, data, { previous: pair.intake?.customAnswers || [] });
     const saved = await trainerClientDao.updateIntakeAnswers(pair._id, answers);
-    return withProfileAndNutrition(saved.intake, clientId);
+    return intakeForTrainer(trainerId, clientId, saved, { baseUrl });
   },
 
   // Guard de la ficha (front): sin enviar o por revisar no se entra.
@@ -370,34 +481,38 @@ module.exports = {
 
   /**
    * El cuestionario de cada profesional en curso del cliente: su estado y lo
-   * que necesita el formulario (campos y preguntas propias de ese
-   * profesional). Nunca bloquea la app.
+   * que le pide su formulario (campos, preguntas propias, medidas, fotos y
+   * vídeos; la copia que se hizo al invitarle). `uploads`: si ahora mismo se
+   * pueden subir fotos y vídeos (sin almacenamiento, esos pasos no se
+   * enseñan y no son obligatorios). Nunca bloquea la app.
    */
   async getOnboardingStatus(clientId) {
     const pairs = (await trainerClientDao.findActivePairsOfClient(clientId, { withTrainer: true }))
       .filter((pair) => intakeStatusOf(pair));
     if (!pairs.length) return { professionals: [] };
 
-    const trainerIds = pairs.map((pair) => String(pair.trainerId._id));
-    const [enabledFieldsByTrainer, customQuestionsByTrainer] = await Promise.all([
-      trainerIntakeConfigService.getEnabledFieldsByTrainers(trainerIds),
-      trainerIntakeConfigService.getCustomQuestionsByTrainers(trainerIds),
-    ]);
     return {
+      uploads: mediaService().uploadsAvailable(),
       professionals: pairs.map((pair) => {
-        const trainerId = String(pair.trainerId._id);
         const scopes = activeScopes(pair);
+        const form = intakeFormOfPair(pair);
         return {
-          trainerId,
+          trainerId: String(pair.trainerId._id),
           trainer: personOf(pair.trainerId),
           scopes,
           intakeStatus: intakeStatusOf(pair),
-          intakeEnabledFields: intakeFieldsFor(enabledFieldsByTrainer.get(trainerId), scopes),
-          // Solo las que el profesional deja activas: desactivar no borra la
-          // pregunta, pero deja de mandarla.
-          intakeCustomQuestions: (customQuestionsByTrainer.get(trainerId) || [])
-            .filter((question) => question.enabled !== false)
-            .map(({ _id, label, type, unit, options, required }) => ({ _id, label, type, unit, options, required })),
+          intakeEnabledFields: intakeFieldsFor(form.enabledFields, scopes),
+          intakeCustomQuestions: form.customQuestions.map(({ _id, label, type, unit, options, required }) => ({
+            _id,
+            label,
+            type,
+            unit,
+            options,
+            required,
+          })),
+          intakeMeasurements: form.measurements.map(({ key, required }) => ({ key, required })),
+          intakePhotos: form.photos ? { poses: form.photos.poses, required: form.photos.required } : null,
+          intakeVideos: form.videos.map(({ _id, label, required }) => ({ _id, label, required })),
         };
       }),
     };
@@ -488,6 +603,29 @@ module.exports = {
 
 function isClosed(link) {
   return link.status === "declined" || link.status === "revoked";
+}
+
+// El cuestionario del par para el profesional: con el perfil y la nutrición
+// actuales, las vistas de sus fotos y vídeos (URL firmadas) y lo que se le
+// pidió (`requested`), para ver también lo opcional que no mandó.
+async function intakeForTrainer(trainerId, clientId, pair, { baseUrl } = {}) {
+  if (!pair?.intake) return null;
+  const [withProfile, media] = await Promise.all([
+    withProfileAndNutrition(pair.intake, clientId),
+    progressMediaService().intakeMediaForTrainer(trainerId, clientId, pair.intake, { baseUrl }),
+  ]);
+  const { photosDayId: _photosDayId, ...rest } = withProfile;
+  const form = intakeFormOfPair(pair);
+  return {
+    ...rest,
+    photos: media.photos,
+    videos: media.videos,
+    requested: {
+      measurements: form.measurements.map(({ key, required }) => ({ key, required })),
+      photos: form.photos ? { poses: form.photos.poses, required: form.photos.required } : null,
+      videos: form.videos.map(({ _id, label, required }) => ({ _id: String(_id), label, required })),
+    },
+  };
 }
 
 async function withProfileAndNutrition(intake, clientId) {

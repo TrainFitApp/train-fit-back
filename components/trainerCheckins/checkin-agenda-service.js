@@ -296,7 +296,7 @@ async function validatePhotoAnswers(clientId, values) {
   const progressMediaService = require("../progressMedia/progress-media-service");
   for (const [key, value] of Object.entries(values || {})) {
     if (CHECKIN_FIELDS_BY_KEY.get(key)?.type !== "photos") continue;
-    const day = await progressMediaService.dayForCheckin(clientId, value);
+    const day = await progressMediaService.ownDayWithPhotos(clientId, value);
     if (!day) return { error: "Añade al menos una foto antes de enviar" };
   }
   return {};

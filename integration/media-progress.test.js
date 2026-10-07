@@ -166,6 +166,52 @@ test("quitar la foto del día borra el archivo y su registro", async () => {
   assert.equal(fs.existsSync(path.join(LOCAL_ROOT, asset.key)), false, "el archivo también se borra");
 });
 
+test("fotos de varias poses colgadas a la vez en un día nuevo: se quedan todas", async () => {
+  const { client } = await clientWithTrainer();
+  await ctx.post(client, "/media/consent", {});
+  const poses = ["front", "side", "back", "extra"];
+  const uploads = await Promise.all(poses.map(() => uploadPhoto(client)));
+
+  // Frente y perfil terminan de subir juntas: las peticiones llegan a la vez.
+  const responses = await Promise.all(
+    poses.map((pose, i) => ctx.call(client, "PUT", `/progress-media/mine/${h.day(0)}/photos/${pose}`, { assetId: uploads[i].assetId }))
+  );
+  responses.forEach((res) => assert.equal(res.status, 200, JSON.stringify(res.body)));
+
+  const days = await ctx.model("ProgressMediaDay").find({ userId: client._id }).lean();
+  assert.equal(days.length, 1, "un solo día");
+  assert.deepEqual(days[0].photos.map((photo) => photo.pose).sort(), [...poses].sort());
+  assert.deepEqual(
+    Object.fromEntries(days[0].photos.map((photo) => [photo.pose, String(photo.assetId)])),
+    Object.fromEntries(poses.map((pose, i) => [pose, String(uploads[i].assetId)]))
+  );
+});
+
+test("cambiar la foto de una pose borra la anterior, también con dos cambios a la vez: no quedan archivos huérfanos", async () => {
+  const { client } = await clientWithTrainer();
+  await ctx.post(client, "/media/consent", {});
+  const first = await uploadPhoto(client);
+  await ctx.put(client, `/progress-media/mine/${h.day(0)}/photos/front`, { assetId: first.assetId });
+
+  const [second, third] = await Promise.all([uploadPhoto(client), uploadPhoto(client)]);
+  const responses = await Promise.all(
+    [second, third].map(({ assetId }) => ctx.call(client, "PUT", `/progress-media/mine/${h.day(0)}/photos/front`, { assetId }))
+  );
+  responses.forEach((res) => assert.equal(res.status, 200, JSON.stringify(res.body)));
+
+  const day = await ctx.model("ProgressMediaDay").findOne({ userId: client._id }).lean();
+  assert.equal(day.photos.length, 1);
+  const kept = String(day.photos[0].assetId);
+  assert.ok([second.assetId, third.assetId].map(String).includes(kept));
+  const remaining = await ctx.model("MediaAsset").find({ ownerId: client._id, purpose: "progress_photo" }).lean();
+  assert.deepEqual(remaining.map((asset) => String(asset._id)), [kept], "solo queda la foto que está en el día");
+
+  // Quitarla deja el día sin fotos y borra el archivo; quitarla otra vez no rompe nada.
+  assert.equal((await ctx.call(client, "DELETE", `/progress-media/mine/${h.day(0)}/photos/front`)).status, 200);
+  assert.equal((await ctx.call(client, "DELETE", `/progress-media/mine/${h.day(0)}/photos/front`)).status, 200);
+  assert.equal(await ctx.count("MediaAsset", { ownerId: client._id, purpose: "progress_photo" }), 0);
+});
+
 test("borrar la cuenta borra sus fotos del almacenamiento", async () => {
   const { client } = await clientWithTrainer();
   await ctx.post(client, "/media/consent", {});

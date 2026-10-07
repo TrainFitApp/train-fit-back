@@ -25,11 +25,17 @@ function uploadBlockReason(user, hasActiveTrainerRelation = false) {
   return "premium_required";
 }
 
+/** ¿Mandó el cliente este día a ESTE profesional (check-in o cuestionario de alta)? */
+function sentToTrainer(day, trainerId) {
+  const mine = (link) => String(link.trainerId) === String(trainerId);
+  return (day?.checkins || []).some(mine) || (day?.intakes || []).some(mine);
+}
+
 /**
  * Decisión 4: ¿ve el profesional este día de progreso del cliente?
  *   1. La relación está activa (quien llama ya lo ha comprobado).
- *   2. Si el día responde a un check-in de ESTE profesional, lo ve siempre:
- *      responder ya es enviárselo.
+ *   2. Si el día responde a un check-in o al cuestionario de alta de ESTE
+ *      profesional, lo ve siempre: responder ya es enviárselo.
  *   3. Si no, el día no puede estar oculto y tiene que ser del inicio de la
  *      relación en adelante, salvo que el cliente le haya compartido su
  *      historial.
@@ -38,10 +44,7 @@ function uploadBlockReason(user, hasActiveTrainerRelation = false) {
 // que cuenta es el de su calendario.
 function trainerCanSeeProgressDay(day, { trainerId, relationStart, historyShared, timeZone } = {}) {
   if (!day) return false;
-  const answersHisCheckin = (day.checkins || []).some(
-    (checkin) => String(checkin.trainerId) === String(trainerId)
-  );
-  if (answersHisCheckin) return true;
+  if (sentToTrainer(day, trainerId)) return true;
   if (day.hiddenFromTrainers) return false;
   if (historyShared) return true;
   if (!relationStart) return false;
@@ -58,6 +61,7 @@ module.exports = {
   hasMediaConsent,
   canUploadMedia,
   uploadBlockReason,
+  sentToTrainer,
   trainerCanSeeProgressDay,
   adminCanSeeContent,
 };

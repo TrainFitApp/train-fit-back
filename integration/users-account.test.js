@@ -190,7 +190,7 @@ test("borrar cuenta: no se puede borrar la de otro; la propia sí y su sesión m
 });
 
 test("leer el perfil de otro usuario por email no expone sus datos ni su código de verificación", async () => {
-  const victim = await ctx.makeClient({ fields: { hash: "424242", weight: 90, birth: new Date("1990-01-01") } });
+  const victim = await ctx.makeClient({ fields: { hash: "424242", weight: 90, birth: "1990-01-01" } });
   const other = await ctx.makeClient();
   const res = await ctx.call(other, "GET", `/users/${encodeURIComponent(victim.email)}`);
   assert.ok(res.status === 403 || res.status === 404 || (res.body && res.body.hash === undefined && res.body.weight === undefined), JSON.stringify(res.body));

@@ -14,7 +14,7 @@ module.exports = {
     return send(res, await techniqueVideoService.create(req.user, req.body, { baseUrl: baseUrlOf(req) }), 201);
   },
 
-  // PUT /trainer/technique-videos/:id { title?, cues?, exerciseIds? }
+  // PUT /trainer/technique-videos/:id { title?, cues?, exerciseIds?, externalUrl? }
   async update(req, res) {
     return send(res, await techniqueVideoService.update(req.user, req.params.id, req.body, { baseUrl: baseUrlOf(req) }));
   },

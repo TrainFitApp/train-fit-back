@@ -133,6 +133,32 @@ module.exports = {
     };
   },
 
+  /**
+   * ¿Se pueden subir ahora fotos y vídeos de progreso? Sin almacenamiento
+   * configurado, lo que se pida como obligatorio deja de poder exigirse.
+   */
+  uploadsAvailable() {
+    return { images: storageAvailable("image"), videos: storageAvailable("video", "progress_video") };
+  },
+
+  /**
+   * De `ids`, los que son de `ownerId`, de uno de esos propósitos y están
+   * subidos (listos o procesándose). Set de ids en texto.
+   */
+  async usableAssetIds(ownerId, ids, purposes) {
+    const assets = await mediaDao.findByIds(ids);
+    return new Set(
+      assets
+        .filter(
+          (asset) =>
+            String(asset.ownerId) === String(ownerId) &&
+            purposes.includes(asset.purpose) &&
+            ["ready", "processing"].includes(asset.status)
+        )
+        .map((asset) => String(asset._id))
+    );
+  },
+
   async giveConsent(user) {
     const at = await mediaDao.setConsent(user._id, MEDIA_CONSENT_VERSION);
     return { consentAt: at };

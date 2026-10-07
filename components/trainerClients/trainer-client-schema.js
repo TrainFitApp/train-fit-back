@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 const { ClientIntakeSchema } = require("./client-intake-schema");
+const { IntakeFormSchema } = require("../trainerIntakeConfig/trainer-intake-config-schema");
 const { SCOPES, LINK_STATUSES } = require("./pair-state");
 
 // Una entrada por invitación de un scope. Su `_id` es el id de la invitación
@@ -60,6 +61,12 @@ const TrainerClientSchema = new Schema(
     // Cuestionario de alta sin enviar: se pone al aceptar el primer scope y
     // se quita cuando el cliente lo envía. Nunca bloquea nada.
     intakePending: { type: Boolean, default: false },
+    // Lo que se le pide en ese cuestionario (campos, preguntas propias,
+    // medidas, fotos y vídeos): la configuración del profesional copiada al
+    // invitarle. Cambiarla después no cambia el formulario de quien ya
+    // estaba invitado. Se vuelve a copiar con cada invitación mientras el
+    // cuestionario siga sin enviar (trainer-client-service.js#inviteClient).
+    intakeForm: { type: IntakeFormSchema, default: null },
     intake: { type: ClientIntakeSchema, default: null },
     // Fotos de progreso (docs/plan-medidas-multimedia.md, decisión 4): el
     // profesional ve las del cliente desde que empezó la relación; las
