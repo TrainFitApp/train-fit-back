@@ -47,6 +47,7 @@ const { cleanup } = require("./migrations/18-cleanup");
 const { rebuildSearchIndexes } = require("./migrations/19-search-indexes");
 const { migrateUserBirthDate } = require("./migrations/20-user-birth-date");
 const { migrateIntakeForms } = require("./migrations/21-intake-forms");
+const { migrateWorkoutRowBlocks } = require("./migrations/22-workout-row-blocks");
 
 const LOG_PREFIX = "[migrate-modelo-datos]";
 const RECORDS = "schemamigrations";
@@ -74,6 +75,7 @@ const STEPS = [
   { id: "19-search-indexes", run: rebuildSearchIndexes },
   { id: "20-user-birth-date", run: migrateUserBirthDate },
   { id: "21-intake-forms", run: migrateIntakeForms },
+  { id: "22-workout-row-blocks", run: migrateWorkoutRowBlocks },
 ];
 
 // Lo que la rama main ya debía haber dejado hecho en PRO.
