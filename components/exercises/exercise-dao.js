@@ -151,6 +151,18 @@ module.exports = {
         });
       }
 
+      // Fuerza = ni cardio ni isométrico (mismo criterio que la
+      // clasificación de table-dao). Los flags solo se guardan cuando son
+      // true, así que se excluye con $ne en vez de buscar false.
+      if (searchExercisesFilterGroup.isStrength === true) {
+        agg.push({
+          $match: {
+            isCardio: { $ne: true },
+            isIsometric: { $ne: true },
+          },
+        });
+      }
+
       // Añade una etapa $match para la búsqueda de texto si existe en 'searchExercisesFilterGroup'.
       if (searchExercisesFilterGroup.search) {
         const searchText = searchExercisesFilterGroup.search.trim();
