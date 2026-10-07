@@ -3,15 +3,14 @@ const assert = require("node:assert/strict");
 const h = require("./support/harness");
 
 // Catálogo de alimentos y recetas, y el motor de búsqueda único
-// (components/util/food-search.js) visto desde sus tres puertas:
-// /meals/search/all, /products/search y /recipes/search. Lo que se cambia en
+// (components/util/food-search.js) visto desde sus dos puertas:
+// /meals/search y /recipes/search. Lo que se cambia en
 // un producto (nombre, marca, borrado, promoción) tiene que reflejarse en la
 // búsqueda y en todo lo que lo usaba.
 
 const ctx = h.setup();
 
 const searchFoods = (user, body) => ctx.post(user, "/meals/search", { page: 0, ...body });
-const searchProducts = (user, search, page = 0) => ctx.post(user, `/products/search?page=${page}&limit=10`, { search });
 const names = (list) => list.map((p) => p.name);
 
 let Product;
@@ -101,10 +100,9 @@ test("plural/stemming se rescata ('galletas' encuentra 'Galleta maría')", async
   assert.ok(names(await searchFoods(user, { search: "galletas", userId: user.id })).includes("Galleta maría"));
 });
 
-test("los productos privados de otro usuario NO salen en ninguna de las tres búsquedas", async () => {
+test("los productos privados de otro usuario NO salen en la búsqueda", async () => {
   const user = await ctx.makeClient();
   assert.ok(!names(await searchFoods(user, { search: "leche", userId: user.id })).includes("Leche secreta del vecino"));
-  assert.ok(!names(await searchProducts(user, "leche")).includes("Leche secreta del vecino"));
   // Sin texto (listado) tampoco.
   const all = [];
   for (let page = 0; page < 5; page += 1) all.push(...names(await searchFoods(user, { search: "", userId: user.id, page })));
@@ -189,11 +187,10 @@ test("paginación estable: páginas disjuntas que juntas son todo el resultado",
   assert.equal(new Set(seen).size, 16, "ningún producto repetido entre páginas");
 });
 
-test("las tres puertas devuelven lo mismo para la misma query (mismo motor)", async () => {
+test("POST /products/search ya no existe: la búsqueda va por /meals/search", async () => {
   const user = await ctx.makeClient();
-  const viaMeals = names(await searchFoods(user, { search: "leche entera", userId: user.id })).slice(0, 3);
-  const viaProducts = names(await searchProducts(user, "leche entera")).slice(0, 3);
-  assert.deepEqual(viaProducts, viaMeals);
+  const res = await ctx.call(user, "POST", "/products/search", { search: "leche" });
+  assert.equal(res.status, 404);
 });
 
 // --- Catálogo: crear, editar, borrar, promocionar -----------------------------------

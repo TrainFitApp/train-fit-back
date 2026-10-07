@@ -17,10 +17,6 @@ module.exports = {
     return productDao.getProductsCount();
   },
 
-  async searchProduct(page, limit, search, userId) {
-    return productDao.searchProduct(page, limit, search, userId);
-  },
-
   async createProduct(product) {
     return productDao.createProduct(product);
   },

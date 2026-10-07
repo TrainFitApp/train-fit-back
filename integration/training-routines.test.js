@@ -195,6 +195,54 @@ test("renombrar: propia sí (y se ve en el listado); sin nombre 400; inexistente
   assert.equal((await ctx.call(user, "PUT", "/tables", { _id: ctx.oid(), name: "x" })).status, 404);
 });
 
+// --- Bloques (superseries, circuitos…) ---------------------------------------------
+
+test("bloques en rutina propia: el cliente los crea y agrupa ejercicios, en toda la fila; otro usuario no", async () => {
+  const owner = await ctx.makeClient();
+  const stranger = await ctx.makeClient();
+  const [press, row] = [await catalogExercise("Press"), await catalogExercise("Remo")];
+  const day = (name) => ({
+    name,
+    exercises: [press, row].map((exercise, order) => ({
+      exercise: exercise._id,
+      order,
+      sets: [{ order: 0, expectedReps: [8] }],
+    })),
+  });
+  const { workouts } = await ctx.seedTable({
+    owner,
+    splits: [
+      { name: "Semana 1", workouts: [day("Torso")] },
+      { name: "Semana 2", workouts: [day("Torso")] },
+    ],
+  });
+  const [week1, week2] = workouts;
+
+  const created = await ctx.put(owner, `/workouts/${week1._id}/blocks`, {
+    blocks: [{ name: "Superserie A", type: "superset", rounds: "3" }],
+  });
+  const [block] = created.blocks;
+  assert.equal(block.name, "Superserie A");
+  assert.equal(block.rounds, 3);
+  const sibling = (await ctx.model("Workout").findById(week2._id).lean()).blocks;
+  assert.deepEqual(sibling.map((b) => String(b._id)), [String(block._id)], "el bloque es de la fila");
+
+  const moved = await ctx.put(owner, `/customexercises/${week1.exercises[0]._id}/block`, { blockId: block._id });
+  assert.equal(String(moved.blockId), String(block._id));
+  const week2Press = (await ctx.model("Workout").findById(week2._id).lean()).exercises[0];
+  assert.equal(String(week2Press.blockId), String(block._id), "el mismo ejercicio de la fila entra en el bloque");
+
+  const foreign = await ctx.call(owner, "PUT", `/customexercises/${week1.exercises[1]._id}/block`, { blockId: ctx.oid() });
+  assert.equal(foreign.status, 400);
+  assert.equal(foreign.body.code, "BLOCK_NOT_FOUND");
+
+  assert.equal((await ctx.call(stranger, "PUT", `/workouts/${week1._id}/blocks`, { blocks: [] })).status, 403);
+  assert.equal(
+    (await ctx.call(stranger, "PUT", `/customexercises/${week1.exercises[1]._id}/block`, { blockId: block._id })).status,
+    403,
+  );
+});
+
 // --- Rutina asignada por el profesional -------------------------------------------
 
 test("rutina asignada: el cliente NO puede cambiar su estructura (TABLE_ASSIGNED_BY_TRAINER)", async () => {

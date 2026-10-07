@@ -15,6 +15,9 @@
 
 const { expectedWeeklyRateKg } = require("../nutritionalGoals/nutrition-target");
 
+// La banda, el tope y los kcal/kg salen en la ayuda "Qué es el ritmo" del
+// modal de la semana siguiente (trainers, CLIENTS.RITMO_INFO_*): si cambian,
+// cambia también ese texto.
 const ON_TRACK_BAND_KG = 0.1; // dentro de esto se considera "va según plan"
 const LOW_ADHERENCE_PCT = 75;
 const KCAL_PER_KG = 7700;

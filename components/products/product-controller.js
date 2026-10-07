@@ -33,27 +33,6 @@ module.exports = {
     return res.send(count);
   },
 
-  // Replanteamiento MVP (nutrición) — este endpoint nunca funcionó vía HTTP
-  // para NINGÚN llamador real: express.json() usa "strict" por defecto
-  // (app.js), que RECHAZA con 400 cualquier body JSON cuyo valor raíz no sea
-  // un objeto/array — un body de solo texto (`req.body` como string crudo)
-  // jamás llega a parsearse. Se corrige aceptando un objeto {search}, mismo
-  // patrón ya usado (y ya funcional) por exercise-controller.js#getSearchExercise.
-  async searchProduct(req, res) {
-    const page = parseInt((req.query.page || 0).toString(), 10);
-    const limit = parseInt((req.query.limit || 10).toString(), 10);
-    const search = typeof req.body === "string" ? req.body : req.body?.search;
-    // El usuario autenticado, para que también encuentre SUS productos: un
-    // entrenador que crea un producto tiene que poder volver a buscarlo.
-    const products = await productService.searchProduct(
-      page,
-      limit,
-      search,
-      req?.user?.id,
-    );
-    return res.send(products);
-  },
-
   /**
    * Crear un producto. Si se envía userId en el body, será un producto del usuario.
    */

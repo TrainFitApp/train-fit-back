@@ -1,9 +1,8 @@
-// Motor único de búsqueda de alimentos (productos y recetas). Lo usan los tres
+// Motor único de búsqueda de alimentos (productos y recetas). Lo usan los dos
 // puntos de entrada que antes tenían implementaciones distintas y con
 // resultados distintos para la misma query:
 //
-//   POST /api/meals/search/all   (search-foods del cliente y del profesional)
-//   POST /api/products/search    (ProductSearchModalComponent de trainers)
+//   POST /api/meals/search       (search-foods del cliente y del profesional)
 //   GET  /api/recipes/search     (pestaña Recetas de search-foods)
 //
 // Qué resuelve, y por qué la implementación anterior no lo resolvía:

@@ -1,11 +1,5 @@
 const productSchema = require("./product-schema");
 const mongoose = require("mongoose");
-const {
-  PRODUCT_SEARCH_CONFIG,
-  parseSearchQuery,
-  searchByRelevance,
-  listByScope,
-} = require("../util/food-search");
 
 function toObjectId(id) {
   if (!id || !mongoose.Types.ObjectId.isValid(id)) return null;
@@ -202,42 +196,6 @@ module.exports = {
     return await productSchema.countDocuments({ userId: null });
   },
 
-  /**
-   * Búsqueda de productos de /api/products/search (modal de productos de
-   * trainers). Mismo motor que search-foods: ver components/util/food-search.js.
-   *
-   * Incluye los productos del propio usuario además de los globales. Antes
-   * filtraba por `userId: null` y un entrenador no podía volver a encontrar
-   * los productos que él mismo había creado.
-   */
-  async searchProduct(page, limit, search, userId = null) {
-    const userObjectId = toObjectId(userId);
-    const { hasSearch } = parseSearchQuery(search);
-
-    const scope = {
-      userId: userObjectId ? { $in: [userObjectId, null] } : null,
-    };
-
-    if (!hasSearch) {
-      return listByScope({
-        model: productSchema,
-        scope,
-        page,
-        limit,
-        config: PRODUCT_SEARCH_CONFIG,
-      });
-    }
-
-    return searchByRelevance({
-      model: productSchema,
-      scope,
-      search,
-      page,
-      limit,
-      context: { ownerId: userObjectId },
-      config: PRODUCT_SEARCH_CONFIG,
-    });
-  },
 
   /**
    * Crear un producto. Si se pasa userId, será un producto del usuario.
