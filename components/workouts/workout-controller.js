@@ -215,42 +215,6 @@ module.exports = {
     return res.send(workout);
   },
 
-  // POST /workouts/:idWorkout/copy-to-split/:idSplit — Planificador visual
-  // (Fase C). Copia un workout suelto a otra semana (o a la misma, como
-  // "duplicar en el sitio"). Verifica que el split de destino pertenece a la
-  // MISMA tabla que el workout origen — nunca confiar en un idSplit suelto
-  // del body/params (mismo criterio que el resto de este controller).
-  async copyWorkoutToSplit(req, res) {
-    const sourceTable = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
-    if (!sourceTable) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, sourceTable)) return;
-
-    const targetTable = await tableAccess.findTableOwningSplit(req.params.idSplit);
-    if (!targetTable) return res.status(404).send({ message: "Split de destino no encontrado" });
-    if (targetTable._id.toString() !== sourceTable._id.toString()) {
-      return res.status(403).send({ message: "El split de destino no pertenece a esta rutina" });
-    }
-
-    return res.status(201).send(await workoutService.copyWorkoutToSplit(req.params.idWorkout, req.params.idSplit));
-  },
-
-  // PUT /workouts/split/:idSplit/order — Planificador visual (Fase C).
-  // Reordena las cards DENTRO de una sola columna (a diferencia de
-  // reorderWorkoutRows, que reordena la misma fila en TODOS los splits).
-  async reorderWorkoutsInSplit(req, res) {
-    const table = await tableAccess.findTableOwningSplit(req.params.idSplit);
-    if (!table) return res.status(404).send({ message: "Split no encontrado" });
-    if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
-      return res.status(403).send({ message: "No tienes permiso para esta rutina" });
-    }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-
-    const splits = await withPinnedNotesSync(table._id, () =>
-      workoutService.reorderWorkoutsInSplit(req.params.idSplit, req.body?.workoutIdsOrder),
-    );
-    return res.send(splits);
-  },
-
   // PUT /workouts/:idWorkout/blocks — reemplaza el array de bloques completo.
   async updateWorkoutBlocks(req, res) {
     const table = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
@@ -360,17 +324,6 @@ module.exports = {
       tableIds.push(table._id);
     }
     await withPinnedNotesSync(tableIds, () => workoutService.deleteWorkoutRows(workouts));
-    res.sendStatus(204);
-  },
-
-  // Corrige `req.param.id` (sin "s"), typo preexistente que hacía que este
-  // endpoint fallara siempre. La comprobación de propiedad que faltaba se
-  // añade ahora (ver assertCanAccessWorkoutId) al abrir este módulo a "trainer".
-  async deleteWorkout(req, res) {
-    const table = await assertCanAccessWorkoutId(req, res, req.params.id);
-    if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    await withPinnedNotesSync(table._id, () => workoutService.deleteWorkout(req.params.id));
     res.sendStatus(204);
   },
 

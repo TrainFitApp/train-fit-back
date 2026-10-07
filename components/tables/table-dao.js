@@ -84,7 +84,7 @@ async function buildOwnTablesMatch(idUser) {
 
 // Copia una rutina entera: microciclos y sesiones con ids nuevos. Cada
 // sesión conserva su estado (como hizo siempre la copia de rutinas); sus
-// series pierden "hecha" y técnica (workout-tree.js#cloneSet). Las notas
+// series pierden su ejecución (workout-tree.js#cloneSet). Las notas
 // ancladas no viajan con la copia (nunca lo hicieron: pueden ser del
 // cliente).
 async function copyHierarchy(tableDoc) {

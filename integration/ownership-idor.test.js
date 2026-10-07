@@ -90,7 +90,7 @@ idor("editar la serie, el ejercicio o el entreno de otro", async ({ victim, atta
   assert.equal((await ctx.call(attacker, "PUT", "/sets", { _id: data.set._id, reps: 1 })).status, 403);
   assert.equal((await ctx.call(attacker, "PUT", `/customexercises/${data.ce._id}/client-notes`, { clientNotes: "x" })).status, 403);
   assert.equal((await ctx.call(attacker, "PUT", "/workouts/modify/one/simple/save", { _id: data.workout._id, name: "x" })).status, 403);
-  assert.equal((await ctx.call(attacker, "DELETE", `/workouts/${data.workout._id}`)).status, 403);
+  assert.equal((await ctx.call(attacker, "PUT", "/workouts/deletes", [{ _id: data.workout._id }])).status, 403);
   assert.equal((await ctx.call(attacker, "DELETE", `/sets/${data.set._id}`)).status, 403);
   assert.equal((await reload("Set", data.set._id)).reps, 5);
   assert.equal((await reload("Workout", data.workout._id)).name, "Pull privado");

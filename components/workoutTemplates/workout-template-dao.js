@@ -1,10 +1,8 @@
 const mongoose = require("mongoose");
-const { badRequest, forbidden, notFound } = require("../util/http-error");
 const Workout = require("../workouts/workout-schema");
 const WorkoutTemplate = require("./workout-template-schema");
 const tableSchema = require("../tables/table-schema");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
-const { toId, cloneExercise } = require("../workouts/workout-tree");
 
 // Plantillas sueltas de sesión del profesional (WorkoutTemplate, misma forma
 // que una sesión: workout-base-schema.js). El shape "de edición"
@@ -131,10 +129,20 @@ function buildBlockFromWorkout(workout) {
   return blocks;
 }
 
+// La plantilla como datos de un entrenamiento nuevo (nombre, bloques y
+// ejercicios con sus series), listos para addWorkoutsToSplits.
+// Pasa por la forma anidada y se vuelve a materializar, el mismo camino que
+// create()/update().
+function workoutDataFromTemplate(template) {
+  const { customExercisesToCreate, workoutBlocksToCreate } = materializeBlocksAsExercises(buildBlockFromWorkout(template));
+  return { name: template.name, blocks: workoutBlocksToCreate, exercises: customExercisesToCreate };
+}
+
 module.exports = {
   // Funciones puras exportadas para test (workout-template-dao.test.js).
   materializeBlocksAsExercises,
   buildBlockFromWorkout,
+  workoutDataFromTemplate,
 
   async create(trainerId, data) {
     const { customExercisesToCreate, workoutBlocksToCreate } = materializeBlocksAsExercises(data.blocks);
@@ -200,52 +208,11 @@ module.exports = {
     return WorkoutTemplate.deleteOne({ _id: id, trainerId });
   },
 
-  // Crea una sesión real al final del microciclo indicado con el contenido
-  // de la plantilla. Se pasa por la forma anidada (buildBlockFromWorkout) y
-  // se vuelve a materializar con ids nuevos, mismo camino que create()/
-  // update(), para no mantener un tercer camino de escritura distinto.
-  // Aplica la plantilla como una fila NUEVA al final de todos los
-  // microciclos de la tabla, igual que crear un entrenamiento: los mismos
-  // bloques (mismo _id) en toda la fila (workouts/workout-row-blocks.js) y
-  // los ejercicios, con sus series, copiados en cada microciclo. Antes se
-  // aplicaba microciclo a microciclo y cada uno estrenaba sus propios
-  // bloques: borrar o editar un bloque no llegaba a los demás.
-  async applyToTable(template, tableId, clientId) {
-    const table = await tableSchema.findById(tableId).select("_id userId splits._id").lean();
-    if (!table) {
-      throw notFound("Rutina no encontrada", "TABLE_NOT_FOUND");
-    }
-    if (!table.userId || table.userId.toString() !== clientId.toString()) {
-      throw forbidden("La rutina no pertenece a este cliente", "TABLE_FORBIDDEN");
-    }
-    if (!(table.splits || []).length) {
-      throw badRequest("La rutina no tiene microciclos", "TABLE_WITHOUT_SPLITS");
-    }
-
-    const nestedBlocks = buildBlockFromWorkout(template);
-    const { customExercisesToCreate, workoutBlocksToCreate } = materializeBlocksAsExercises(nestedBlocks);
-
-    const workouts = table.splits.map(() => ({
-      _id: new mongoose.Types.ObjectId(),
-      name: template.name,
-      blocks: workoutBlocksToCreate.map((block) => ({ ...block })),
-      exercises: customExercisesToCreate.map((exercise) => cloneExercise(exercise)),
-    }));
-    await Workout.insertMany(workouts);
-    await tableSchema.bulkWrite(
-      table.splits.map((split, index) => ({
-        updateOne: {
-          filter: { _id: table._id },
-          update: { $push: { "splits.$[split].workouts": workouts[index]._id } },
-          arrayFilters: [{ "split._id": split._id }],
-        },
-      })),
-    );
-
-    // Mismo shape de retorno que workoutDao.addWorkoutsToSplits (table.splits
-    // completo).
-    const updatedTable = await tableSchema.findById(table._id);
-    return updatedTable.splits;
+  // La rutina sobre la que se aplica una plantilla: su dueño y sus
+  // microciclos (solo los _id).
+  async findTableForApply(tableId) {
+    if (!mongoose.isValidObjectId(tableId)) return null;
+    return tableSchema.findById(tableId).select("_id userId splits._id").lean();
   },
 
   async findWorkoutForTemplateSource(workoutId) {

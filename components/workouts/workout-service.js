@@ -22,14 +22,6 @@ module.exports = {
     return workoutDao.reorderWorkoutRows(idTable, workoutIdsOrder);
   },
 
-  async copyWorkoutToSplit(workoutId, targetSplitId) {
-    return workoutDao.copyWorkoutToSplit(workoutId, targetSplitId);
-  },
-
-  async reorderWorkoutsInSplit(idSplit, workoutIdsOrder) {
-    return workoutDao.reorderWorkoutsInSplit(idSplit, workoutIdsOrder);
-  },
-
   async addWorkoutsToSplits(idTable, workout) {
     return workoutDao.addWorkoutsToSplits(idTable, workout);
   },
@@ -89,18 +81,10 @@ module.exports = {
     return workoutDao.updateWorkoutsName(idTable, idWorkout, workoutsName);
   },
 
-  async deleteWorkout(id) {
-    return workoutDao.deleteWorkout(id);
-  },
-
-  async deleteWorkouts(workouts) {
-    return workoutDao.deleteWorkouts(workouts);
-  },
-
   // Borrar un entrenamiento es borrar su FILA: el de esa posición en todos
-  // los microciclos. Las hermanas se calculan aquí, y antes de quitar nada
-  // (al quitarlas cambia el índice): si la tabla del front estaba desfasada,
-  // antes quedaban sesiones sueltas en algún microciclo.
+  // los microciclos. Las hermanas se calculan aquí, antes de quitar nada (al
+  // quitarlas cambia el índice), así que la fila sale entera aunque la tabla
+  // que tenía la app estuviera desfasada.
   async deleteWorkoutRows(workouts) {
     const ids = new Set();
     for (const workout of workouts || []) {

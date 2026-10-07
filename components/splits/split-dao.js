@@ -1,5 +1,5 @@
 const { default: mongoose } = require("mongoose");
-const { badRequest, notFound } = require("../util/http-error");
+const { badRequest, conflict, notFound } = require("../util/http-error");
 const tableSchema = require("../tables/table-schema");
 const workoutSchema = require("../workouts/workout-schema");
 const userSchema = require("../users/user-schema");
@@ -22,6 +22,17 @@ function standardSplit(name) {
 
 const tableNotFound = () => notFound("Table not found", "TABLE_NOT_FOUND");
 
+// Todos los microciclos tienen el mismo número de entrenamientos (filas,
+// ver workouts/workout-row-blocks.js): uno en blanco solo cabe en una rutina
+// sin entrenamientos. Con entrenamientos, el microciclo nuevo se duplica de
+// otro (addSplitToTable, con o sin series).
+const blankSplitWithWorkouts = () =>
+  conflict(
+    "La rutina ya tiene entrenamientos: el microciclo nuevo se crea duplicando otro",
+    "SPLIT_BLANK_WITH_WORKOUTS",
+  );
+const NO_WORKOUTS = { "splits.workouts.0": { $exists: false } };
+
 async function populatedSplits(idTable) {
   const table = await tableSchema.findById(idTable);
   return table ? table.splits : [];
@@ -36,15 +47,17 @@ module.exports = {
     return table?.splits?.id(id) || null;
   },
 
-  // Duplica el microciclo `idSplit` (o uno vacío si no es de la tabla) justo
-  // detrás de él. Las sesiones se copian sin su ejecución, y sus series solo
-  // con `withSets` (sin ellas, los ejercicios quedan sin series).
+  // Duplica el microciclo `idSplit` justo detrás de él (o crea uno vacío si
+  // no es de la tabla y la rutina aún no tiene entrenamientos). Las sesiones
+  // se copian sin su ejecución, y sus series solo con `withSets` (sin ellas,
+  // los ejercicios quedan sin series).
   async addSplitToTable(idTable, idSplit, withSets) {
     const table = await tableSchema.findById(idTable);
     if (!table) throw tableNotFound();
 
     const splitIndex = Math.max(0, table.splits.findIndex((split) => toId(split) === toId(idSplit)));
     const source = table.splits.find((split) => toId(split) === toId(idSplit));
+    if (!source && table.splits.some((split) => (split.workouts || []).length)) throw blankSplitWithWorkouts();
 
     const newWorkouts = source
       ? (source.workouts || []).filter(Boolean).map((workout) => cloneWorkout(workout, { withSets: Boolean(withSets) }))
@@ -89,10 +102,13 @@ module.exports = {
   },
 
   // "Añadir semana" en blanco (a diferencia de addSplitToTable, que
-  // duplica un microciclo existente).
+  // duplica un microciclo existente): solo en una rutina sin entrenamientos,
+  // comprobado en la misma escritura.
   async createBlankSplitAndAddToTable(idTable, name) {
-    const result = await tableSchema.updateOne({ _id: idTable }, { $push: { splits: standardSplit(name) } });
-    if (!result.matchedCount) throw tableNotFound();
+    const result = await tableSchema.updateOne({ _id: idTable, ...NO_WORKOUTS }, { $push: { splits: standardSplit(name) } });
+    if (!result.matchedCount) {
+      throw (await tableSchema.exists({ _id: idTable })) ? blankSplitWithWorkouts() : tableNotFound();
+    }
     return populatedSplits(idTable);
   },
 

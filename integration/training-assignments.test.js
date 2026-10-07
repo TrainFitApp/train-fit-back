@@ -218,7 +218,7 @@ test("las rutinas de la biblioteca del entrenador no cuentan como rutinas de nin
 
 // --- Plantillas de entreno ------------------------------------------------------------
 
-test("plantilla de entreno aplicada a un microciclo del cliente: copia independiente de la plantilla", async () => {
+test("plantilla de entreno aplicada a una rutina del cliente: fila nueva, copia independiente de la plantilla", async () => {
   const { trainer, client } = await pair();
   const exercise = await ctx.model("Exercise").create({ name: "Press banca" });
   const tpl = await ctx.post(trainer, "/trainer/workout-templates", {
@@ -234,8 +234,15 @@ test("plantilla de entreno aplicada a un microciclo del cliente: copia independi
   const split = { _id: ctx.oid(), name: "Micro 1", workouts: [] };
   await ctx.model("Table").updateOne({ _id: table._id }, { $push: { splits: split } });
 
-  const applied = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/splits/${split._id}/workout-templates/${tpl._id}/apply`);
+  const before = await ctx.model("Table").findById(table._id).lean();
+  const applied = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables/${table._id}/workout-templates/${tpl._id}/apply`);
   assert.equal(applied.status, 201, JSON.stringify(applied.body));
+  const after = await ctx.model("Table").findById(table._id).lean();
+  assert.deepEqual(
+    after.splits.map((item) => item.workouts.length),
+    before.splits.map((item) => item.workouts.length + 1),
+    "un entrenamiento nuevo en cada microciclo",
+  );
   const storedSplit = await ctx.findSplit(split._id);
   assert.equal(storedSplit.workouts.length, 1);
   const workout = await ctx.model("Workout").findById(storedSplit.workouts[0]).lean();
@@ -250,14 +257,13 @@ test("plantilla de entreno aplicada a un microciclo del cliente: copia independi
   assert.ok(await ctx.model("Workout").exists({ _id: workout._id }));
 });
 
-test("aplicar plantilla de entreno a un microciclo que no es de ese cliente: 403/404", async () => {
+test("aplicar plantilla de entreno a una rutina que no es de ese cliente: 403", async () => {
   const { trainer, client } = await pair();
   const tpl = await ctx.post(trainer, "/trainer/workout-templates", { name: "Pierna" });
   const { table } = await ctx.seedTable({ owner: await ctx.makeClient(), name: "Ajena", splits: [{ name: "Ajeno", workouts: [] }] });
-  const strangerSplit = table.splits[0];
-  const res = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/splits/${strangerSplit._id}/workout-templates/${tpl._id}/apply`);
-  assert.ok([403, 404].includes(res.status), String(res.status));
-  assert.equal((await ctx.findSplit(strangerSplit._id)).workouts.length, 0);
+  const res = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables/${table._id}/workout-templates/${tpl._id}/apply`);
+  assert.equal(res.status, 403, JSON.stringify(res.body));
+  assert.equal((await ctx.findSplit(table.splits[0]._id)).workouts.length, 0);
 });
 
 test("plantillas de entreno ajenas: invisibles e inmodificables para otro entrenador", async () => {

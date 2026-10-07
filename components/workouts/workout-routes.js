@@ -39,11 +39,6 @@ router.putAsync(
   controller.reorderWorkoutRows,
 );
 router.putAsync(
-  "/split/:idSplit/order",
-  auth(["admin", "user", "trainer"]),
-  controller.reorderWorkoutsInSplit,
-);
-router.putAsync(
   "/modify/one/simple/save",
   auth(["admin", "user", "trainer"]),
   controller.modifyWorkout,
@@ -52,11 +47,6 @@ router.putAsync(
   "/:idWorkout/blocks",
   auth(["admin", "user", "trainer"]),
   controller.updateWorkoutBlocks,
-);
-router.postAsync(
-  "/:idWorkout/copy-to-split/:idSplit",
-  auth(["admin", "user", "trainer"]),
-  controller.copyWorkoutToSplit,
 );
 // finish es "reproducir" el entrenamiento (autoservicio del cliente) —
 // deliberadamente NO se abre a "trainer": un profesional construye la
@@ -78,7 +68,6 @@ router.putAsync(
 router.putAsync("/deletes", auth(["admin", "user", "trainer"]), controller.deleteWorkouts);
 router.putAsync("/paste", auth(["admin", "user", "trainer"]), controller.pasteWorkout);
 router.putAsync("/paste-exercises", auth(["admin", "user", "trainer"]), controller.pasteExercises);
-router.deleteAsync("/:id", auth(["admin", "user", "trainer"]), controller.deleteWorkout);
 router.deleteAsync(
   "/all/deletes/:id",
   auth(["admin", "user", "trainer"]),

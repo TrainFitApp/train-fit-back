@@ -9,14 +9,107 @@
 //         microciclos).
 // Ahora:  todos los entrenamientos de una fila tienen los mismos bloques, con
 //         el mismo _id, y ningún ejercicio apunta a un bloque inexistente
-//         (invariante y reglas de unificación en
-//         components/workouts/workout-row-blocks.js#unifyRowBlocks).
+//         (invariante en components/workouts/workout-row-blocks.js; reglas
+//         de unificación en unifyRowBlocks, aquí abajo).
 //
 // Idempotente: una fila que ya cumple el invariante no se escribe.
 
-const { unifyRowBlocks } = require("../../components/workouts/workout-row-blocks");
+const { pickRowExercise } = require("../../components/workouts/workout-row-blocks");
 
 const idOf = (value) => (value && value._id ? value._id : value)?.toString() || "";
+
+const normalizedName = (name) => String(name || "").trim().toLowerCase();
+
+const BLOCK_FIELDS = ["name", "type", "order", "rounds", "restBetweenExercises", "restBetweenRounds", "instructions"];
+const blocksSignature = (blocks) =>
+  JSON.stringify(
+    [...(blocks || [])]
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .map((block) => [idOf(block), ...BLOCK_FIELDS.map((field) => block[field] ?? null)]),
+  );
+const blockIdsSignature = (exercises) =>
+  JSON.stringify((exercises || []).map((exercise) => (exercise.blockId ? idOf(exercise.blockId) : null)));
+
+/**
+ * Deja una fila cumpliendo el invariante. `row`: sus entrenamientos en orden
+ * de microciclo, cada uno { _id, blocks, exercises }. Devuelve, en el mismo
+ * orden, { _id, blocks, exercises, changed }.
+ *
+ * - Un bloque se reconoce en otro microciclo por su _id o, si no lo comparte
+ *   (datos antiguos: cada microciclo creaba el suyo), por tipo + nombre (y
+ *   el número de aparición si el mismo tipo y nombre se repite).
+ * - Cada bloque se queda con el _id y los datos de su primera aparición en
+ *   la fila; el orden, el de la fila (0..n-1).
+ * - Un bloque que falta en un microciclo se crea allí, y se le asignan los
+ *   ejercicios equivalentes de la fila (pickRowExercise) que no estén ya en
+ *   otro bloque.
+ * - Ningún ejercicio queda apuntando a un bloque que no existe.
+ */
+function unifyRowBlocks(row) {
+  const canonical = [];
+  const byId = new Map();
+  const byKey = new Map();
+  const localToCanonical = row.map(() => new Map());
+
+  row.forEach((workout, workoutIndex) => {
+    const local = localToCanonical[workoutIndex];
+    const used = new Set();
+    const occurrences = new Map();
+    const blocks = [...(workout.blocks || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    for (const block of blocks) {
+      const base = `${block.type || "straight"}|${normalizedName(block.name)}`;
+      const occurrence = (occurrences.get(base) || 0) + 1;
+      occurrences.set(base, occurrence);
+      const key = `${base}#${occurrence}`;
+
+      let entry = byId.get(idOf(block)) || byKey.get(key) || null;
+      if (entry && used.has(entry)) entry = null;
+      if (!entry) {
+        entry = { block, sourceIndex: workoutIndex, members: [] };
+        canonical.push(entry);
+        if (!byKey.has(key)) byKey.set(key, entry);
+      }
+      used.add(entry);
+      byId.set(idOf(block), entry);
+      local.set(idOf(block), entry);
+    }
+  });
+
+  for (const entry of canonical) {
+    (row[entry.sourceIndex].exercises || []).forEach((exercise, index) => {
+      if (exercise.blockId && idOf(exercise.blockId) === idOf(entry.block)) {
+        entry.members.push({ index, exercise: exercise.exercise });
+      }
+    });
+  }
+
+  const rowBlocks = canonical.map((entry, order) => ({ ...entry.block, order }));
+
+  return row.map((workout, workoutIndex) => {
+    const local = localToCanonical[workoutIndex];
+    let exercises = (workout.exercises || []).map((exercise) => {
+      const entry = exercise.blockId ? local.get(idOf(exercise.blockId)) : null;
+      const current = exercise.blockId ? idOf(exercise.blockId) : "";
+      const next = entry ? idOf(entry.block) : "";
+      return current === next ? exercise : { ...exercise, blockId: entry ? entry.block._id : null };
+    });
+
+    const present = new Set(local.values());
+    for (const entry of canonical) {
+      if (present.has(entry)) continue;
+      for (const member of entry.members) {
+        const target = pickRowExercise(member.index, member.exercise, exercises);
+        if (!target || target.blockId) continue;
+        exercises = exercises.map((exercise) => (exercise === target ? { ...exercise, blockId: entry.block._id } : exercise));
+      }
+    }
+
+    const changed =
+      blocksSignature(workout.blocks) !== blocksSignature(rowBlocks) ||
+      blockIdsSignature(workout.exercises) !== blockIdsSignature(exercises);
+    return { _id: workout._id, blocks: rowBlocks.map((block) => ({ ...block })), exercises, changed };
+  });
+}
 
 async function migrateWorkoutRowBlocks(db, { dryRun = false } = {}) {
   const tables = db.collection("tables");
@@ -73,4 +166,4 @@ async function migrateWorkoutRowBlocks(db, { dryRun = false } = {}) {
   return stats;
 }
 
-module.exports = { migrateWorkoutRowBlocks };
+module.exports = { migrateWorkoutRowBlocks, unifyRowBlocks };

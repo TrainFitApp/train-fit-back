@@ -127,8 +127,28 @@ test("el entrenador puede pasar de 4 microciclos en la rutina asignada a su clie
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
   await ctx.relate(trainer, client, { scope: "training" });
-  const { table } = await seedRoutine(client, { assignedBy: trainer, shape: [[[1]], [[1]], [[1]], [[1]]] });
-  assert.equal((await ctx.call(trainer, "POST", `/splits/blank/${table._id}`, { name: "Quinto" })).status, 201);
+  const { table, ids } = await seedRoutine(client, { assignedBy: trainer, shape: [[[1]], [[1]], [[1]], [[1]]] });
+  const fifth = await ctx.call(trainer, "PUT", "/splits/add/to/table", { idTable: table._id, idSplit: ids.splits[3], withSets: true });
+  assert.equal(fifth.status, 200, JSON.stringify(fifth.body));
+  assert.equal((await ctx.model("Table").findById(table._id).lean()).splits.length, 5);
+});
+
+test("microciclo en blanco solo en una rutina sin entrenamientos: las filas no se descuadran", async () => {
+  const user = await ctx.makeClient();
+  const { table, ids } = await seedRoutine(user, { shape: [[[1], [1]], [[1], [1]]] });
+
+  const blank = await ctx.call(user, "POST", `/splits/blank/${table._id}`, { name: "Vacío" });
+  assert.equal(blank.status, 409);
+  assert.equal(blank.body.code, "SPLIT_BLANK_WITH_WORKOUTS");
+  const unknownSource = await ctx.call(user, "PUT", "/splits/add/to/table", { idTable: table._id, idSplit: ctx.oid() });
+  assert.equal(unknownSource.status, 409);
+  assert.equal(unknownSource.body.code, "SPLIT_BLANK_WITH_WORKOUTS");
+  assert.equal((await ctx.model("Table").findById(table._id).lean()).splits.length, 2);
+
+  const copy = await ctx.call(user, "PUT", "/splits/add/to/table", { idTable: table._id, idSplit: ids.splits[1] });
+  assert.equal(copy.status, 200, JSON.stringify(copy.body));
+  const saved = await ctx.model("Table").findById(table._id).lean();
+  assert.deepEqual(saved.splits.map((split) => split.workouts.length), [2, 2, 2], "duplicar sí: misma forma");
 });
 
 // --- Leer y permisos ----------------------------------------------------------------
@@ -193,7 +213,7 @@ test("rutina asignada: el cliente NO puede cambiar su estructura (TABLE_ASSIGNED
     ["POST", `/splits/blank/${table._id}`, { name: "Extra" }],
     ["DELETE", `/splits/${table._id}/${split1}`],
     ["PUT", `/splits/rows/order/${table._id}`, { splitIdsOrder: [split1, split0] }],
-    ["DELETE", `/workouts/${workout}`],
+    ["PUT", "/workouts/deletes", [{ _id: workout }]],
     ["PUT", `/workouts/${workout}/blocks`, { blocks: [] }],
     ["DELETE", `/customexercises/${ce}`],
     ["PUT", `/customexercises/${ce}`, { reps: 1 }],

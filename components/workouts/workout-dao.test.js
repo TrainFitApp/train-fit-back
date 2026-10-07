@@ -16,7 +16,16 @@ async function seedTable() {
   const squat = await Exercise.create({ name: "Sentadilla" });
   const bench = await Exercise.create({ name: "Press banca" });
   const make = (name, exercise, extra = {}) =>
-    Workout.create({ name, exercises: [{ exercise: exercise._id, sets: [{ reps: 5, doned: true, drop: true }] }], ...extra });
+    Workout.create({
+      name,
+      exercises: [
+        {
+          exercise: exercise._id,
+          sets: [{ reps: 5, doned: true, donedAt: new Date("2026-01-05"), cronometer: 40, drop: true, expectedRir: [-1] }],
+        },
+      ],
+      ...extra,
+    });
   const s1 = [await make("Pierna", squat, { date: new Date("2026-01-05") }), await make("Torso", bench)];
   const s2 = [await make("Pierna", squat), await make("Torso", bench)];
   const table = await Table.create({
@@ -46,7 +55,7 @@ test("deleteWorkouts quita las sesiones de sus microciclos y las borra", async (
   assert.equal(await Workout.countDocuments({ _id: { $in: [s1[0]._id, s2[1]._id] } }), 0);
 });
 
-test("duplicateWorkoutRow copia la fila debajo en TODOS los microciclos, sin la ejecución", async () => {
+test("duplicateWorkoutRow copia la fila debajo en TODOS los microciclos, con la pauta y sin la ejecución", async () => {
   await db.reset();
   const { table, s1 } = await seedTable();
 
@@ -60,9 +69,13 @@ test("duplicateWorkoutRow copia la fila debajo en TODOS los microciclos, sin la 
   assert.equal(copy.date, undefined, "la fecha de la sesión hecha no se copia");
   assert.notEqual(String(copy.exercises[0]._id), String(s1[0].exercises[0]._id), "ejercicios con id nuevo");
   assert.equal(copy.exercises[0].exercise.name, "Sentadilla", "el Exercise llega poblado");
-  assert.equal(copy.exercises[0].sets[0].doned, undefined);
-  assert.equal(copy.exercises[0].sets[0].drop, undefined);
-  assert.equal(copy.exercises[0].sets[0].reps, 5);
+  const [set] = copy.exercises[0].sets;
+  assert.equal(set.doned, undefined, "sin su ejecución");
+  assert.equal(set.donedAt, undefined);
+  assert.equal(set.cronometer, undefined);
+  assert.equal(set.drop, true, "la pauta viaja igual: drop set");
+  assert.deepEqual([...set.expectedRir], [-1], "y fallo");
+  assert.equal(set.reps, 5);
 });
 
 test("reorderWorkoutRows aplica la misma permutación en todos los microciclos", async () => {
@@ -77,28 +90,11 @@ test("reorderWorkoutRows aplica la misma permutación en todos los microciclos",
   await assert.rejects(() => workoutDao.reorderWorkoutRows(table._id, [String(s1[0]._id)]), /Invalid workout order/);
 });
 
-test("reorderWorkoutsInSplit reordena solo ese microciclo y exige una permutación exacta", async () => {
+test("addWorkoutsToSplits añade una sesión nueva al final de cada microciclo", async () => {
   await db.reset();
-  const { table, s1, s2 } = await seedTable();
+  const { table } = await seedTable();
 
-  const splits = await workoutDao.reorderWorkoutsInSplit(table.splits[0]._id, [String(s1[1]._id), String(s1[0]._id)]);
-  assert.deepEqual(ids(splits[0].workouts), ids([s1[1], s1[0]]));
-  assert.deepEqual(ids(splits[1].workouts), ids(s2));
-
-  await assert.rejects(
-    () => workoutDao.reorderWorkoutsInSplit(table.splits[0]._id, [String(s1[0]._id), String(s2[0]._id)]),
-    { code: "INVALID_WORKOUT_ORDER" },
-  );
-});
-
-test("copyWorkoutToSplit y addWorkoutsToSplits añaden sesiones nuevas al final", async () => {
-  await db.reset();
-  const { table, s1 } = await seedTable();
-
-  let splits = await workoutDao.copyWorkoutToSplit(s1[0]._id, table.splits[1]._id);
-  assert.deepEqual(splits[1].workouts.map((w) => w.name), ["Pierna", "Torso", "Pierna"]);
-
-  splits = await workoutDao.addWorkoutsToSplits(table._id, { name: "Descanso", isPlannedRestDay: true, exercises: [] });
+  const splits = await workoutDao.addWorkoutsToSplits(table._id, { name: "Descanso", isPlannedRestDay: true, exercises: [] });
   assert.deepEqual(splits.map((split) => split.workouts.at(-1).name), ["Descanso", "Descanso"]);
   assert.notEqual(String(splits[0].workouts.at(-1)._id), String(splits[1].workouts.at(-1)._id));
 });

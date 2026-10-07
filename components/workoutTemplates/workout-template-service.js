@@ -1,5 +1,6 @@
 const workoutTemplateDao = require("./workout-template-dao");
-const { forbidden, notFound } = require("../util/http-error");
+const workoutService = require("../workouts/workout-service");
+const { badRequest, forbidden, notFound } = require("../util/http-error");
 
 // Plantillas de sesión de la biblioteca del profesional
 // (workout-template-schema.js), siempre filtradas por él.
@@ -15,9 +16,21 @@ module.exports = {
     return (await workoutTemplateDao.delete(trainerId, id)).deletedCount > 0;
   },
 
-  // Copia la plantilla como sesión nueva del microciclo del cliente. Devuelve
-  // los microciclos de la rutina (mismo shape que el resto de altas).
-  applyToTable: (template, tableId, clientId) => workoutTemplateDao.applyToTable(template, tableId, clientId),
+  // La plantilla entra como una fila nueva al final de todos los microciclos
+  // de la rutina del cliente, por la misma vía que crear un entrenamiento a
+  // mano (bloques nuevos compartidos por toda la fila, ejercicios y series
+  // copiados en cada microciclo). Devuelve los microciclos de la rutina.
+  async applyToTable(template, tableId, clientId) {
+    const table = await workoutTemplateDao.findTableForApply(tableId);
+    if (!table) throw notFound("Rutina no encontrada", "TABLE_NOT_FOUND");
+    if (String(table.userId) !== String(clientId)) {
+      throw forbidden("La rutina no pertenece a este cliente", "TABLE_FORBIDDEN");
+    }
+    if (!(table.splits || []).length) {
+      throw badRequest("La rutina no tiene microciclos", "TABLE_WITHOUT_SPLITS");
+    }
+    return workoutService.addWorkoutsToSplits(table._id, workoutTemplateDao.workoutDataFromTemplate(template));
+  },
 
   // Una sesión ya construida se guarda como plantilla: solo si el profesional
   // tiene acceso a la rutina de la que cuelga.

@@ -36,21 +36,15 @@ function exerciseRefOf(customExercise) {
   return ref?._id ?? ref ?? undefined;
 }
 
-// Técnica (drop/restPause/FALLO) y "hecha" son de ESA serie concreta, no algo
-// que deba heredar una copia (duplicar microciclo, fila, sesión o rutina).
-function normalizeSetForCopy(set) {
-  delete set.doned;
-  delete set.drop;
-  delete set.restPause;
-  if (Array.isArray(set.expectedRir) && set.expectedRir.includes(-1)) {
-    set.expectedRir = [];
-  }
-}
+// Una copia (duplicar microciclo, fila o rutina, aplicar una plantilla,
+// pegar) lleva la serie igual que está pautada: repeticiones, RIR (fallo
+// incluido), drop set, rest-pause, descanso, carga, tiempo y distancia. Lo
+// que no viaja es su ejecución: si se hizo, cuándo y su cronómetro.
+const SET_EXECUTION_FIELDS = ["__v", "doned", "donedAt", "cronometer"];
 
 function cloneSet(set) {
   const clone = plain(set);
-  delete clone.__v;
-  normalizeSetForCopy(clone);
+  for (const field of SET_EXECUTION_FIELDS) delete clone[field];
   return compactSet({ ...clone, _id: newId() });
 }
 
@@ -73,7 +67,7 @@ function cloneExercise(customExercise, { withSets = true } = {}) {
 // bloques conservan su _id: así se reconocen en la misma fila de los demás
 // microciclos (workout-row-blocks.js). `keepExecutionState`: copiar o
 // duplicar una rutina entera conserva el estado de cada sesión, como hizo
-// siempre (solo las series pierden su "hecha" y su técnica).
+// siempre (las series pierden su ejecución: cloneSet).
 function cloneWorkout(workout, { nameSuffix, withSets = true, keepExecutionState = false } = {}) {
   const clone = plain(workout);
   delete clone.__v;
@@ -117,7 +111,6 @@ module.exports = {
   isObjectId,
   plain,
   exerciseRefOf,
-  normalizeSetForCopy,
   cloneSet,
   cloneExercise,
   cloneWorkout,

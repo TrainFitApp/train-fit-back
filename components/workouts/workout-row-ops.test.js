@@ -89,6 +89,48 @@ test("addWorkoutsToSplits crea la fila con los MISMOS bloques en todos los micro
   assert.notEqual(str(first.exercises[0]), str(second.exercises[0]), "cada microciclo con sus propios ejercicios");
 });
 
+test("duplicateWorkoutRow: la fila nueva estrena bloques, los mismos en todos sus microciclos", async () => {
+  await db.reset();
+  const [press] = await exercises("Press");
+  const { table, workouts } = await seedRow([[press], [press]]);
+  const [original] = (await workoutDao.updateWorkoutBlocks(workouts[0]._id, [{ name: "SS", type: "superset", order: 0 }])).blocks;
+  await Workout.updateMany({}, { $set: { "exercises.0.blockId": original._id } });
+
+  const splits = await workoutDao.duplicateWorkoutRow(table._id, workouts[0]._id, "Copia");
+  const copies = await Promise.all(splits.map((split) => load(split.workouts[1]._id)));
+  const copyBlockId = str(copies[0].blocks[0]);
+  assert.notEqual(copyBlockId, str(original), "no comparte bloques con la fila de origen");
+  for (const copy of copies) {
+    assert.deepEqual(copy.blocks.map((item) => [str(item), item.name, item.type]), [[copyBlockId, "SS", "superset"]]);
+    assert.deepEqual(blockIdsOf(copy), [copyBlockId], "sus ejercicios, en el bloque nuevo");
+  }
+  for (const workout of workouts) {
+    assert.deepEqual((await load(workout._id)).blocks.map(str), [str(original)], "el origen no cambia");
+  }
+});
+
+test("modifyWorkout no escribe bloques: son de la fila", async () => {
+  await db.reset();
+  const [press] = await exercises("Press");
+  const { workouts } = await seedRow([[press], [press]]);
+
+  await workoutDao.modifyWorkout({ _id: workouts[0]._id, name: "Otro", blocks: [{ _id: db.oid(), name: "Suelto", type: "circuit" }] });
+  const saved = await load(workouts[0]._id);
+  assert.equal(saved.name, "Otro");
+  assert.deepEqual(saved.blocks, []);
+});
+
+test("updateWorkout solo guarda el blockId del ejercicio nuevo si el bloque es de esa sesión", async () => {
+  await db.reset();
+  const [press, curl] = await exercises("Press", "Curl");
+  const { workouts } = await seedRow([[press]]);
+  const [own] = (await workoutDao.updateWorkoutBlocks(workouts[0]._id, [{ name: "B", type: "straight", order: 0 }])).blocks;
+
+  await workoutDao.updateWorkout({ _id: workouts[0]._id }, { exercise: curl._id, blockId: own._id, sets: [] });
+  await workoutDao.updateWorkout({ _id: workouts[0]._id }, { exercise: curl._id, blockId: db.oid(), sets: [] });
+  assert.deepEqual(blockIdsOf(await load(workouts[0]._id)), [null, str(own), null]);
+});
+
 test("pasteExercises pega en toda la fila salvo en la sesión de origen", async () => {
   await db.reset();
   const [press, curl] = await exercises("Press", "Curl");

@@ -5,10 +5,11 @@ const Workout = require("../workouts/workout-schema");
 const Table = require("../tables/table-schema");
 const Exercise = require("../exercises/exercise-schema");
 const WorkoutTemplate = require("./workout-template-schema");
-const workoutTemplateDao = require("./workout-template-dao");
+const workoutTemplateService = require("./workout-template-service");
 
 // Aplicar una plantilla = un entrenamiento nuevo en TODOS los microciclos,
-// con los mismos bloques (mismo _id) en toda la fila. Contra un Mongo efímero.
+// con los mismos bloques (_id nuevos, los mismos en toda la fila). Contra un
+// Mongo efímero.
 const db = useTestDb();
 
 const str = (value) => String(value?._id ?? value);
@@ -39,7 +40,7 @@ async function seed({ splits = 2 } = {}) {
 test("applyToTable crea la sesión en todos los microciclos con los mismos bloques", async () => {
   const { template, table, clientId } = await seed();
 
-  const splits = await workoutTemplateDao.applyToTable(template, table._id, clientId);
+  const splits = await workoutTemplateService.applyToTable(template, table._id, clientId);
   assert.deepEqual(splits.map((split) => split.workouts.length), [1, 1]);
 
   const created = await Promise.all(splits.map((split) => Workout.findById(split.workouts[0]._id).lean()));
@@ -55,15 +56,16 @@ test("applyToTable crea la sesión en todos los microciclos con los mismos bloqu
     assert.equal(workout.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0), 3, "con sus series");
   }
   assert.notEqual(str(first.exercises[0]), str(second.exercises[0]), "cada microciclo con sus propios ejercicios");
+  assert.ok(!blockIds.includes(str(template.blocks[0])), "la fila no comparte bloques con la plantilla");
 });
 
 test("applyToTable rechaza la rutina de otro cliente o sin microciclos", async () => {
   const { template, table } = await seed();
-  await assert.rejects(workoutTemplateDao.applyToTable(template, table._id, db.oid()), { code: "TABLE_FORBIDDEN" });
-  await assert.rejects(workoutTemplateDao.applyToTable(template, db.oid(), db.oid()), { code: "TABLE_NOT_FOUND" });
+  await assert.rejects(workoutTemplateService.applyToTable(template, table._id, db.oid()), { code: "TABLE_FORBIDDEN" });
+  await assert.rejects(workoutTemplateService.applyToTable(template, db.oid(), db.oid()), { code: "TABLE_NOT_FOUND" });
 
   const empty = await seed({ splits: 0 });
-  await assert.rejects(workoutTemplateDao.applyToTable(empty.template, empty.table._id, empty.clientId), {
+  await assert.rejects(workoutTemplateService.applyToTable(empty.template, empty.table._id, empty.clientId), {
     code: "TABLE_WITHOUT_SPLITS",
   });
 });

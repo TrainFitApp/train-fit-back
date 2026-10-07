@@ -182,8 +182,9 @@ module.exports = {
   // Asigna/quita el bloque de un ejercicio. El bloque tiene que existir en
   // Workout.blocks[] de la MISMA sesión (nunca confiar en un id suelto del
   // body). El mismo ejercicio de la misma fila en los demás microciclos entra
-  // o sale del mismo bloque, solo donde ese bloque existe (un bloque antiguo,
-  // local, no está en los demás).
+  // o sale del mismo bloque: los bloques son de la fila
+  // (workouts/workout-row-blocks.js), y aun así solo se escribe donde el
+  // bloque existe, para no dejar nunca un blockId huérfano.
   async setCustomExerciseBlock(id, blockId) {
     let originIndex = -1;
     let originExercise = null;

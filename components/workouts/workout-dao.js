@@ -8,7 +8,7 @@ const { isSamePermutation } = require("../util/permutation-util");
 const { keepValidBlockIds, rekeyBlocks } = require("./workout-row-blocks");
 const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
 const { mutateWorkout } = require("./workout-store");
-const { badRequest, notFound } = require("../util/http-error");
+const { notFound } = require("../util/http-error");
 const {
   toId,
   plain,
@@ -24,7 +24,8 @@ const {
 // sesiones de una rutina cuelgan de Table.splits[].workouts (ids en orden).
 
 // Campos de la sesión que se pueden escribir desde modifyWorkout. Quedan
-// fuera `_id`, `kind`, `createdAt` y `exercises`, que se trata aparte.
+// fuera `_id`, `kind`, `createdAt`, `exercises`, que se trata aparte, y
+// `blocks`: son de la fila y solo los escribe updateWorkoutBlocks.
 const WORKOUT_WRITABLE_FIELDS = new Set([
   "name",
   "notes",
@@ -39,7 +40,6 @@ const WORKOUT_WRITABLE_FIELDS = new Set([
   "readinessPre",
   "perceivedEffortPost",
   "sorenessPre",
-  "blocks",
 ]);
 
 async function populatedSplits(tableFilter) {
@@ -142,7 +142,8 @@ module.exports = {
   },
 
   // Duplica la fila de `idWorkout` (la misma posición en todos los
-  // microciclos) justo debajo de ella.
+  // microciclos) justo debajo de ella. La fila nueva estrena sus bloques:
+  // _id nuevos, los mismos en todos sus microciclos (workout-row-blocks.js).
   async duplicateWorkoutRow(idTable, idWorkout, nameSuffix = "Copy") {
     const tableDoc = await tableSchema.findById(idTable);
     if (!tableDoc) throw new Error("Table not found");
@@ -152,10 +153,14 @@ module.exports = {
 
     const clones = [];
     const workoutsBySplitId = new Map();
+    let rowBlocks = null;
     tableDoc.splits.forEach((split) => {
       const workoutToCopy = split.workouts[workoutIndex];
       if (!workoutToCopy) throw new Error("Workout row is not complete in all splits");
       const clone = cloneWorkout(workoutToCopy, { nameSuffix });
+      rowBlocks ??= rekeyBlocks(clone.blocks, newId);
+      clone.blocks = rowBlocks.blocks.map((block) => ({ ...block }));
+      clone.exercises = rowBlocks.remapExercises(clone.exercises);
       clones.push(clone);
       const ids = split.workouts.map((w) => w._id);
       ids.splice(workoutIndex + 1, 0, clone._id);
@@ -197,44 +202,6 @@ module.exports = {
     const result = (await workoutSchema.findById(workoutId)).toObject();
     result.rowWorkouts = siblingIds.length ? await workoutSchema.find({ _id: { $in: siblingIds } }) : [];
     return result;
-  },
-
-  // Copia una sesión suelta a otro microciclo (o al mismo, como "duplicar
-  // en el sitio").
-  async copyWorkoutToSplit(workoutId, targetSplitId) {
-    const workoutDoc = await workoutSchema.findById(workoutId);
-    if (!workoutDoc) throw notFound("Entrenamiento no encontrado", "WORKOUT_NOT_FOUND");
-
-    const table = await tableSchema.findOne({ "splits._id": targetSplitId }).select("_id").lean();
-    if (!table) throw notFound("Split de destino no encontrado", "SPLIT_NOT_FOUND");
-
-    const clone = cloneWorkout(workoutDoc);
-    await workoutSchema.insertMany([clone]);
-    await tableSchema.updateOne(
-      { _id: table._id },
-      { $push: { "splits.$[split].workouts": clone._id } },
-      { arrayFilters: [{ "split._id": new mongoose.Types.ObjectId(toId(targetSplitId)) }] },
-    );
-    return populatedSplits({ _id: table._id });
-  },
-
-  // Reordena las sesiones DENTRO de un microciclo.
-  async reorderWorkoutsInSplit(idSplit, workoutIdsOrder) {
-    const table = await tableSchema.findOne({ "splits._id": idSplit }).select("splits").lean();
-    const split = (table?.splits || []).find((candidate) => toId(candidate) === toId(idSplit));
-    if (!split) throw notFound("Split no encontrado", "SPLIT_NOT_FOUND");
-
-    const currentIds = (split.workouts || []).map(toId);
-    const requestedIds = (Array.isArray(workoutIdsOrder) ? workoutIdsOrder : []).map(toId);
-    if (!isSamePermutation(currentIds, requestedIds)) {
-      throw badRequest(
-        "workoutIdsOrder debe ser una permutación exacta de los workouts actuales",
-        "INVALID_WORKOUT_ORDER",
-      );
-    }
-
-    await writeSplitWorkouts(table._id, new Map([[toId(split), requestedIds.map((id) => new mongoose.Types.ObjectId(id))]]));
-    return populatedSplits({ _id: table._id });
   },
 
   // Reordena las FILAS: la misma permutación en todos los microciclos.
@@ -414,7 +381,8 @@ module.exports = {
   // Añade `customExercise` (nuevo) al final de la sesión. Antes esta ruta
   // reescribía además la sesión entera con la copia que tuviera la app; la
   // única pantalla que la usa (añadir ejercicio a una fila) solo necesita
-  // añadirlo, y reescribir el resto pisaba cambios hechos entretanto.
+  // añadirlo, y reescribir el resto pisaba cambios hechos entretanto. Su
+  // blockId solo se guarda si el bloque es de esa sesión.
   async updateWorkout(workout, customExercise) {
     const sets = incomingSets(customExercise?.sets);
     const created = {
@@ -426,7 +394,7 @@ module.exports = {
       sets,
     };
     await mutateWorkout({ _id: workout?._id }, (current) => ({
-      exercises: [...(current.exercises || []), created],
+      exercises: [...(current.exercises || []), ...keepValidBlockIds([created], current.blocks)],
     }));
     return workoutSchema.findById(workout?._id);
   },
@@ -450,17 +418,13 @@ module.exports = {
     return workoutSchema.findById(workoutId);
   },
 
-  // Reordena los ejercicios de la fila de `idWorkout` en todos los
-  // microciclos. `newOrder` son posiciones: newOrder[i] = posición antigua del
-  // ejercicio que pasa a ser el i-ésimo.
   // Reordena los ejercicios de una sesión y de la misma fila en los demás
   // microciclos. `newOrder[posición] = índice original`, y tiene que ser una
-  // permutación completa. Antes la misma permutación se aplicaba a ciegas a
-  // todas las hermanas: con un ejercicio de más se perdía (filter(Boolean)
-  // sobre índices que no llegaban) y con otro orden se desordenaba. Ahora
-  // solo se tocan las hermanas con los mismos ejercicios en el mismo orden
-  // que tenía el origen; el resto se deja como estaba.
-  // rowWorkouts: las hermanas ya reordenadas, para repintarlas sin recargar.
+  // permutación completa. Solo se tocan las hermanas con los mismos
+  // ejercicios en el mismo orden que tenía el origen (aplicar la permutación
+  // a otra lista perdería o desordenaría ejercicios); el resto se queda como
+  // estaba. rowWorkouts: las hermanas ya reordenadas, para repintarlas sin
+  // recargar.
   async updateWorkoutsOrder(idWorkout, idTable, newOrder) {
     const table = await leanTable(idTable);
     const indexWorkout = rowIndexOf(table, idWorkout);
@@ -560,10 +524,6 @@ module.exports = {
   // Vacía la sesión de ejercicios.
   async deleteWorkoutCustomExercises(id) {
     return workoutSchema.updateOne({ _id: id }, { $set: { exercises: [] }, $inc: { __v: 1 } });
-  },
-
-  async deleteWorkout(id) {
-    return this.deleteWorkouts([{ _id: id }]);
   },
 
   // Quita las sesiones de sus microciclos y las borra.

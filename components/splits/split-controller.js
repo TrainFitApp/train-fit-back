@@ -14,7 +14,10 @@ module.exports = {
         .send({ message: "No tienes permiso para esta rutina" });
     }
     if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
-    if (!featureAccess.canAddMicrocycle(req.user, (table.splits || []).length)) {
+    // Misma exención que el microciclo en blanco: la rutina que un
+    // profesional asigna a su cliente no cuenta contra el límite Free.
+    const isExempt = await tableAccess.isMicrocycleExempt(table);
+    if (!featureAccess.canAddMicrocycle(req.user, (table.splits || []).length, isExempt)) {
       const limit = featureAccess.getLimits(
         req.user,
       ).microcyclesPerRoutine;
