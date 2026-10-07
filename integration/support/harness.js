@@ -40,7 +40,7 @@ delete process.env.CORS_OPEN;
 // Sin credenciales de R2/Bunny: el almacenamiento de media cae al disco local
 // solo si se pide explícitamente. Cada test de media lo activa por su cuenta.
 for (const name of Object.keys(process.env)) {
-  if (/^(R2_|BUNNY_|STRIPE_|REVENUECAT_|SES_|REGISTER_MAIL_|SUGGESTIONS_MAIL_|RESEND_|MAIL_PROVIDER|MONGODB_)/.test(name)) {
+  if (/^(R2_|BUNNY_|STRIPE_|REVENUECAT_|RESEND_|MONGODB_)/.test(name)) {
     delete process.env[name];
   }
 }

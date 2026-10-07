@@ -1,100 +1,36 @@
 const nodemailer = require("nodemailer");
 const dns = require("dns").promises;
 const { EMAIL_FORMAT_REGEX } = require("./normalize-email");
-// Proveedor de correo saliente.
-//   resend (por defecto): todo sale por el SMTP de Resend desde @trainfit.net,
-//     también los avisos internos (registro y sugerencias).
-//   ses: canal antiguo (Amazon SES para clientes y Gmail para avisos internos).
-//     Solo como vuelta atrás durante la migración; se elimina después.
-const mailProvider = String(process.env.MAIL_PROVIDER || "resend").toLowerCase() === "ses" ? "ses" : "resend";
+// Correo saliente: todo sale por el SMTP de Resend desde @trainfit.net,
+// también los avisos internos (registro y sugerencias). Las respuestas
+// llegan por Cloudflare Email Routing (docs/plan-correo-resend.md).
 const resendApiKey = process.env.RESEND_API_KEY;
 const fromEmail = process.env.FROM_EMAIL || "registro@trainfit.net";
 // Buzón al que llegan las respuestas de los usuarios a los correos transaccionales.
 const supportEmail = process.env.SUPPORT_EMAIL || "soporte@trainfit.net";
 const notificationsFromEmail = process.env.NOTIFICATIONS_FROM_EMAIL || "avisos@trainfit.net";
 
-// Legado (MAIL_PROVIDER=ses).
-const registerHost = process.env.REGISTER_MAIL_SENDER_HOST;
-const registerPort = process.env.REGISTER_MAIL_SENDER_PORT;
-const registerUser = process.env.REGISTER_MAIL_SENDER_USER;
-const registerPass = process.env.REGISTER_MAIL_SENDER_PASS;
-const suggestionsHost = process.env.SUGGESTIONS_MAIL_SENDER_HOST;
-const suggestionsPort = process.env.SUGGESTIONS_MAIL_SENDER_PORT;
-const suggestionsUser = process.env.SUGGESTIONS_MAIL_SENDER_USER;
-const suggestionsPass = process.env.SUGGESTIONS_MAIL_SENDER_PASS;
-const sesSmtpUser = process.env.SES_SMTP_USER;
-const sesSmtpPass = process.env.SES_SMTP_PASS;
-const sesRegion = process.env.SES_REGION;
+// Destinatarios de los avisos internos.
+const registrationNotificationEmail = process.env.REGISTRATION_NOTIFICATION_EMAIL;
+const suggestionsNotificationEmail = process.env.SUGGESTIONS_NOTIFICATION_EMAIL || registrationNotificationEmail;
 
-// Destinatarios de los avisos internos. Mientras existan las variables de
-// Gmail se usan como respaldo para no perder avisos al cambiar de proveedor.
-const registrationNotificationEmail =
-  process.env.REGISTRATION_NOTIFICATION_EMAIL || registerUser;
-const suggestionsNotificationEmail =
-  process.env.SUGGESTIONS_NOTIFICATION_EMAIL || suggestionsUser || registrationNotificationEmail;
+// SMTP de Resend: usuario fijo "resend" y la API key como contraseña.
+const transporter = nodemailer.createTransport({
+  host: "smtp.resend.com",
+  port: 465,
+  secure: true,
+  auth: { user: "resend", pass: resendApiKey },
+  tls: { minVersion: "TLSv1.2" },
+});
 
-const createSmtpTransporter = ({ host, port, user, pass }) =>
-  nodemailer.createTransport({
-    host,
-    port: Number(port),
-    secure: String(port) === "465",
-    auth: { user, pass },
-    tls: { minVersion: "TLSv1.2" },
-  });
-
-const transporters = {};
-
-if (mailProvider === "resend") {
-  // SMTP de Resend: usuario fijo "resend" y la API key como contraseña.
-  transporters.transactional = createSmtpTransporter({
-    host: "smtp.resend.com",
-    port: 465,
-    user: "resend",
-    pass: resendApiKey,
-  });
-  transporters.register = transporters.transactional;
-  transporters.suggestions = transporters.transactional;
-} else {
-  transporters.transactional = nodemailer.createTransport({
-    host: `email-smtp.${sesRegion || "eu-west-3"}.amazonaws.com`,
-    port: 587,
-    secure: false,
-    auth: { user: sesSmtpUser, pass: sesSmtpPass },
-    tls: { minVersion: "TLSv1.2" },
-  });
-  transporters.register = createSmtpTransporter({
-    host: registerHost,
-    port: registerPort,
-    user: registerUser,
-    pass: registerPass,
-  });
-  transporters.suggestions = createSmtpTransporter({
-    host: suggestionsHost,
-    port: suggestionsPort,
-    user: suggestionsUser,
-    pass: suggestionsPass,
-  });
-}
-
-const transportersToVerify =
-  mailProvider === "resend"
-    ? [["Resend SMTP", transporters.transactional, resendApiKey]]
-    : [
-        ["SES SMTP", transporters.transactional, sesSmtpUser],
-        ["Register SMTP", transporters.register, registerUser],
-        ["Suggestions SMTP", transporters.suggestions, suggestionsUser],
-      ];
-
-transportersToVerify.forEach(([label, transporter, credential]) => {
-  if (!credential) {
-    console.warn(`${label} sin credenciales: no se enviarán correos por este canal`);
-    return;
-  }
+if (resendApiKey) {
   transporter
     .verify()
-    .then(() => console.log(`${label} ready`))
-    .catch((error) => console.warn(`${label} verify failed:`, error?.message || error));
-});
+    .then(() => console.log("Resend SMTP ready"))
+    .catch((error) => console.warn("Resend SMTP verify failed:", error?.message || error));
+} else {
+  console.warn("Resend SMTP sin credenciales: no se enviarán correos");
+}
 
 /**
  * Valida que un email tenga formato correcto y dominio con registros MX válidos
@@ -140,11 +76,9 @@ const sendSuggestionMail = async (userEmail, suggestions) => {
     throw new Error("SUGGESTIONS_NOTIFICATION_EMAIL no configurado");
   }
   const html = `<p>${escapeHtml(suggestions).replace(/\n/g, "<br />")}</p>`;
-  const sender = mailProvider === "resend" ? notificationsFromEmail : suggestionsUser;
-
-  return transporters.suggestions.sendMail({
-    from: { name: "TrainFit Sugerencias", address: sender },
-    replyTo: userEmail || sender,
+  return transporter.sendMail({
+    from: { name: "TrainFit Sugerencias", address: notificationsFromEmail },
+    replyTo: userEmail || notificationsFromEmail,
     to: suggestionsNotificationEmail,
     subject: `Sugerencia de: ${userEmail}`,
     html,
@@ -153,7 +87,7 @@ const sendSuggestionMail = async (userEmail, suggestions) => {
 };
 
 const sendRegisterMail = async (to, subject, html, options = {}) => {
-  const sender = options.from || (mailProvider === "resend" ? notificationsFromEmail : registerUser);
+  const sender = options.from || notificationsFromEmail;
   const mailOptions = {
     from: {
       name: options.fromName || "TrainFit",
@@ -166,7 +100,7 @@ const sendRegisterMail = async (to, subject, html, options = {}) => {
     text: htmlToText(html),
   };
 
-  return transporters.register.sendMail(mailOptions);
+  return transporter.sendMail(mailOptions);
 };
 
 /**
@@ -225,10 +159,7 @@ const sendTransactionalMail = async (to, subject, html, options = {}) => {
     "List-Unsubscribe": `<mailto:${fromEmail}>`,
     "X-Auto-Response-Suppress": "OOF, AutoReply",
   };
-  // Configuration set de SES (métricas y rebotes). Solo existe en el canal antiguo.
-  if (mailProvider === "ses") headers["X-SES-CONFIGURATION-SET"] = "TrainFitConfig";
-
-  return transporters.transactional.sendMail({
+  return transporter.sendMail({
     from: { name: "TrainFit", address: fromEmail },
     replyTo,
     to,
