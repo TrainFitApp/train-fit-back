@@ -73,13 +73,6 @@ test("webhook de RevenueCat con secreto: sin cabecera o con otra, 401; con la bu
     assert.equal((await ctx.model("User").findById(user.id).lean()).premium.entitled, true);
     const dup = await ctx.raw("POST", "/billing/webhooks/revenuecat", event, { authorization: "Bearer secreto-test" });
     assert.equal(dup.body.duplicated, true);
-    // Y la ruta sin /api (compatibilidad) pasa por la misma validación.
-    const legacy = await fetch(`${ctx.baseUrl.replace(/\/api$/, "")}/billing/webhooks/revenuecat`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(event),
-    });
-    assert.equal(legacy.status, 401);
   } finally {
     billing.validateWebhookAuth = original;
   }

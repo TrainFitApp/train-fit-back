@@ -1,7 +1,6 @@
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const routes = require("./routes");
-const billingController = require("./components/billing/billing-controller");
 const { error404Handler, errorHandler } = require("./middleware");
 const logger = require("./middleware/logger");
 const maintenanceCheck = require("./middleware/maintenance");
@@ -78,8 +77,6 @@ app.set("trust proxy", 1);
 app.use(logger);
 app.use(maintenanceCheck);
 
-// Compatibilidad: algunos paneles externos se configuran sin prefijo /api.
-app.post("/billing/webhooks/revenuecat", billingController.revenueCatWebhook);
 app.use("/api", routes);
 
 app.use(error404Handler);
