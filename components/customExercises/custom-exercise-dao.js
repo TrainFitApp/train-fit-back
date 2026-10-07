@@ -6,7 +6,7 @@ const { normalizeSetsOrder } = require("../sets/set-order-util");
 const { findRowSiblingWorkoutIds } = require("../workouts/workout-row-dao");
 const { pickRowExercise } = require("../workouts/workout-row-blocks");
 const { mutateWorkout } = require("../workouts/workout-store");
-const { toId, plain, newId, isObjectId } = require("../workouts/workout-tree");
+const { toId, plain, newId, isObjectId, cloneSet } = require("../workouts/workout-tree");
 
 // Ejercicios de sesión embebidos en su Workout (Workout.exercises[], con las
 // series dentro; 2026-10). Las operaciones que tocan la lista de series leen
@@ -154,7 +154,9 @@ module.exports = {
   },
 
   // El cliente manda el ejercicio con la serie copiada ya colocada y SIN
-  // _id; el resto de series pueden traer su orden nuevo.
+  // _id; el resto de series pueden traer su orden nuevo. La copia lleva lo
+  // mismo que la serie de origen salvo su ejecución (workout-tree.js#cloneSet):
+  // nace sin hacer.
   async copySetOnCustomExercise(order, customExercise) {
     const incoming = (customExercise?.sets || []).map(plainSet);
     if (!incoming.some((set) => !set._id)) {
@@ -165,7 +167,7 @@ module.exports = {
       const savedById = new Map((saved.sets || []).map((set) => [toId(set), set]));
       const merged = incoming
         .map((set) => {
-          if (!set._id) return { ...newSet(set), order: set.order };
+          if (!set._id) return cloneSet(set);
           const existing = savedById.get(toId(set));
           if (!existing) return null; // id ajeno a este ejercicio
           const next = { ...existing };

@@ -112,13 +112,17 @@ test("addSetToCustomExercise y copySetOnCustomExercise añaden series con id nue
     _id: id,
     sets: [
       { _id: a._id, reps: 1, order: 0 },
-      { reps: 1, order: 1 },
+      { reps: 1, order: 1, drop: true, doned: true, cronometer: 30 },
       { _id: b._id, reps: 2, order: 2 },
       { _id: result.sets[2]._id, reps: 3, order: 3 },
     ],
   });
   assert.deepEqual(result.sets.map((set) => set.reps), [1, 1, 2, 3]);
   assert.equal(new Set(result.sets.map((set) => String(set._id))).size, 4);
+  const copy = result.sets[1];
+  assert.equal(copy.drop, true, "la copia lleva la pauta");
+  assert.equal(copy.doned, undefined, "y nace sin hacer");
+  assert.equal(copy.cronometer, undefined);
 });
 
 test("deleteCustomExercises quita los ejercicios de su sesión (con sus series)", async () => {
