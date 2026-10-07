@@ -1,4 +1,6 @@
 const workoutDao = require("./workout-dao");
+const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
+const { toId, isObjectId } = require("./workout-tree");
 
 module.exports = {
   async getWorkouts(page, limit) {
@@ -93,6 +95,21 @@ module.exports = {
 
   async deleteWorkouts(workouts) {
     return workoutDao.deleteWorkouts(workouts);
+  },
+
+  // Borrar un entrenamiento es borrar su FILA: el de esa posición en todos
+  // los microciclos. Las hermanas se calculan aquí, y antes de quitar nada
+  // (al quitarlas cambia el índice): si la tabla del front estaba desfasada,
+  // antes quedaban sesiones sueltas en algún microciclo.
+  async deleteWorkoutRows(workouts) {
+    const ids = new Set();
+    for (const workout of workouts || []) {
+      const id = toId(workout?._id ?? workout);
+      if (!isObjectId(id)) continue;
+      ids.add(String(id));
+      for (const siblingId of await findRowSiblingWorkoutIds(id)) ids.add(String(toId(siblingId)));
+    }
+    return workoutDao.deleteWorkouts([...ids]);
   },
 
   async pasteExercises(tableId, sourceWorkoutId, targetWorkoutId, exercises) {

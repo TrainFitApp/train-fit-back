@@ -127,14 +127,16 @@ module.exports = {
     return res.sendStatus(204);
   },
 
-  // POST /trainer/clients/:clientId/splits/:splitId/workout-templates/:templateId/apply
-  async applyTemplateToSplit(req, res) {
+  // POST /trainer/clients/:clientId/tables/:tableId/workout-templates/:templateId/apply
+  // La plantilla entra como un entrenamiento nuevo en TODOS los microciclos
+  // (una fila), como crear uno a mano.
+  async applyTemplateToTable(req, res) {
     const template = await workoutTemplateService.findOwned(req.auth.userId, req.params.templateId);
     if (!template) return res.status(404).send({ message: "Plantilla no encontrada" });
 
     // Mismo shape que el resto de altas de workout (addWorkoutsToSplits):
-    // devuelve table.splits completo, no solo el Workout creado.
-    const splits = await workoutTemplateService.applyToSplit(template, req.params.splitId, req.params.clientId);
+    // devuelve table.splits completo, no solo los Workout creados.
+    const splits = await workoutTemplateService.applyToTable(template, req.params.tableId, req.params.clientId);
     return res.status(201).send(splits);
   },
 

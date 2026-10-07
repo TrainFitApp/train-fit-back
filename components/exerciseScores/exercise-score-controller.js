@@ -170,4 +170,13 @@ module.exports = {
     );
     return res.send(load);
   },
+
+  // GET /trainer/exercise-scores/split/:splitId — lo mismo para un
+  // microciclo entero (pestaña Semana del planificador).
+  async getSplitLoad(req, res) {
+    const load = await exerciseScoreService.splitLoad(req.auth.userId, req.params.splitId, (ownerId) =>
+      tableAccess.canAccessUserTable(req, ownerId)
+    );
+    return res.send(load);
+  },
 };

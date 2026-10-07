@@ -29,7 +29,10 @@ router.putAsync(
   auth(["admin", "user"]),
   controller.addUserTable,
 );
-router.putAsync("/", auth(["admin", "user"]), controller.updateUser);
+// También el entrenador (Cuenta > Editar perfil daba 403). El controller ya
+// exige que sea la cuenta propia (o admin) y el servicio solo acepta la lista
+// blanca de users/user-profile.js: el email no se cambia por aquí.
+router.putAsync("/", auth(["admin", "user", "trainer"]), controller.updateUser);
 
 // Borrar la propia cuenta (verificar contraseña + borrar) también desde
 // Trainers: el entrenador recibía 403 y no podía eliminar su cuenta. Los dos

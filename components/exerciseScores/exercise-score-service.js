@@ -9,6 +9,30 @@ const { forbidden, notFound } = require("../util/http-error");
 // Puntuaciones de ejercicios del profesional (exercise-score-schema.js) y la
 // carga de una sesión calculada con ellas.
 
+const exerciseIdOf = (customExercise) => customExercise?.exercise?._id || customExercise?.exercise;
+
+// Las puntuaciones del entrenador para estos ejercicios y, para los que no
+// tienen, la sugerencia por defecto (exercise-score-defaults.js, la misma con
+// la que arranca el editor). Antes solo contaba lo guardado: sin puntuar a
+// mano, el reparto (y sobre todo el estrés articular) salía vacío.
+// `suggestedExercises` dice cuántos van con la sugerencia.
+async function scoresWithDefaults(trainerId, customExercises) {
+  const exerciseIds = customExercises.map(exerciseIdOf).filter(Boolean);
+  const scores = await exerciseScoreDao.listForExercises(trainerId, exerciseIds);
+  const scoresById = new Map(scores.map((score) => [String(score.exerciseId), score]));
+  const suggested = new Set();
+  for (const customExercise of customExercises) {
+    const id = exerciseIdOf(customExercise);
+    if (!id || scoresById.has(String(id))) continue;
+    const fallback = getDefaultScoreForName(customExercise?.exercise?.name);
+    if (!fallback) continue;
+    scoresById.set(String(id), fallback);
+    suggested.add(String(id));
+  }
+  const suggestedExercises = customExercises.filter((item) => suggested.has(String(exerciseIdOf(item)))).length;
+  return { scoresById, suggestedExercises };
+}
+
 module.exports = {
   /**
    * Sugerencia inicial para el editor cuando aún no ha puntuado el ejercicio
@@ -40,12 +64,26 @@ module.exports = {
     if (!table || !(await canAccessOwner(table.userId))) throw forbidden("No tienes acceso a esta sesión");
 
     const customExercises = workout.exercises || [];
-    const exerciseIds = customExercises.map((item) => item?.exercise?._id || item?.exercise).filter(Boolean);
-    const scores = await exerciseScoreDao.listForExercises(trainerId, exerciseIds);
-    const scoresById = new Map(scores.map((score) => [String(score.exerciseId), score]));
+    const { scoresById, suggestedExercises } = await scoresWithDefaults(trainerId, customExercises);
     return {
       ...buildSessionLoad(customExercises, scoresById),
+      suggestedExercises,
       estimatedSeconds: estimateSessionSeconds(customExercises, scoresById),
     };
+  },
+
+  /**
+   * El mismo reparto para un microciclo entero (pestaña Semana del
+   * planificador): la suma de sus sesiones. Mismo control de acceso.
+   */
+  async splitLoad(trainerId, splitId, canAccessOwner) {
+    const table = await tableAccess.findTableOwningSplit(splitId);
+    if (!table) throw notFound("Microciclo no encontrado");
+    if (!(await canAccessOwner(table.userId))) throw forbidden("No tienes acceso a este microciclo");
+
+    const workouts = await workoutDao.findSplitWorkoutsWithExercises(splitId);
+    const customExercises = workouts.flatMap((workout) => workout.exercises || []);
+    const { scoresById, suggestedExercises } = await scoresWithDefaults(trainerId, customExercises);
+    return { ...buildSessionLoad(customExercises, scoresById), suggestedExercises };
   },
 };

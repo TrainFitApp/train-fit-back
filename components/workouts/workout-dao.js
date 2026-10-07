@@ -5,7 +5,7 @@ const exerciseSchema = require("../exercises/exercise-schema");
 const userSchema = require("../users/user-schema");
 const { compactSet, SET_FIELDS } = require("../sets/set-schema");
 const { isSamePermutation } = require("../util/permutation-util");
-const { diffBlocks, applyBlockDiff } = require("./workout-row-blocks");
+const { keepValidBlockIds, rekeyBlocks } = require("./workout-row-blocks");
 const { findRowSiblingWorkoutIds } = require("./workout-row-dao");
 const { mutateWorkout } = require("./workout-store");
 const { badRequest, notFound } = require("../util/http-error");
@@ -87,6 +87,19 @@ function incomingSets(sets) {
     });
 }
 
+// [2, 0, 1]: cada índice de 0 a n-1 exactamente una vez.
+function isPermutation(order) {
+  if (!Array.isArray(order)) return false;
+  const seen = new Set(order);
+  return seen.size === order.length && order.every((index) => Number.isInteger(index) && index >= 0 && index < order.length);
+}
+
+// El Exercise de cada ejercicio, en orden: identifica la "misma fila" en
+// otro microciclo (los CustomExercise tienen _id distinto en cada uno).
+function exerciseRefsOf(exercises) {
+  return (exercises || []).map((customExercise) => String(toId(customExercise?.exercise) || ""));
+}
+
 module.exports = {
   async getWorkouts(page, limit) {
     return workoutSchema.find({}).skip(page * limit).limit(limit).exec();
@@ -98,15 +111,31 @@ module.exports = {
     return workoutSchema.findById(id).populate("exercises.exercise").lean();
   },
 
+  // Las sesiones de UN microciclo, igual de pobladas (carga semanal del
+  // planificador). La tabla en .lean(): `workouts` llega como ids.
+  async findSplitWorkoutsWithExercises(splitId) {
+    if (!isObjectId(splitId)) return [];
+    const table = await tableSchema.findOne({ "splits._id": splitId }).select("splits._id splits.workouts").lean();
+    const split = (table?.splits || []).find((item) => String(item._id) === String(splitId));
+    const ids = (split?.workouts || []).map(toId).filter(Boolean);
+    if (!ids.length) return [];
+    return workoutSchema.find({ _id: { $in: ids } }).populate("exercises.exercise").lean();
+  },
+
   async getWorkoutById(id) {
     return workoutSchema.findById(id);
   },
 
   // Sustituye los ejercicios de `workoutToPaste` por una copia de los del
   // portapapeles (series incluidas, sin su ejecución) y copia sus notas.
+  // Los bloques del destino no cambian (son de su fila): un ejercicio pegado
+  // solo conserva su bloque si el destino lo tiene.
   async pasteWorkout(workoutClipboard, workoutToPaste) {
-    await mutateWorkout({ _id: workoutToPaste?._id }, () => ({
-      exercises: (workoutClipboard?.exercises || []).map((customExercise) => cloneExercise(customExercise)),
+    await mutateWorkout({ _id: workoutToPaste?._id }, (workout) => ({
+      exercises: keepValidBlockIds(
+        (workoutClipboard?.exercises || []).map((customExercise) => cloneExercise(customExercise)),
+        workout.blocks,
+      ),
       notes: workoutClipboard?.notes,
     }));
     return workoutSchema.findById(workoutToPaste?._id);
@@ -139,44 +168,28 @@ module.exports = {
   },
 
   // Reemplaza Workout.blocks[] completo (crear/editar/borrar/reordenar
-  // bloques en una sola llamada). `blocks` ya viene sanitizado desde el
-  // controller (sanitizeWorkoutBlocks): aquí solo se resuelven los _id.
+  // bloques en una sola llamada) en TODA la fila: los bloques son de la fila
+  // (workout-row-blocks.js), así que la misma lista se escribe en el
+  // entrenamiento de esa posición de cada microciclo. `blocks` ya viene
+  // sanitizado desde el controller (sanitizeWorkoutBlocks); los nuevos nacen
+  // aquí con un _id que comparte toda la fila. Un ejercicio cuyo bloque
+  // desaparece queda suelto en cada microciclo.
   async updateWorkoutBlocks(workoutId, blocks) {
-    const normalizedBlocks = (blocks || []).map((block) => ({
+    const rowBlocks = (blocks || []).map((block) => ({
       ...block,
       _id: isObjectId(block._id) ? new mongoose.Types.ObjectId(toId(block._id)) : newId(),
     }));
-
-    let diff = null;
-    const written = await mutateWorkout({ _id: workoutId }, (workout) => {
-      diff = diffBlocks(workout.blocks || [], normalizedBlocks);
-      const removed = new Set(diff.removedIds);
-      return {
-        blocks: normalizedBlocks,
-        // Un ejercicio cuyo bloque se borró vuelve a quedar "suelto": nunca
-        // debe apuntar a un blockId que ya no existe en este Workout.
-        exercises: (workout.exercises || []).map((exercise) =>
-          exercise.blockId && removed.has(toId(exercise.blockId)) ? { ...exercise, blockId: null } : exercise,
-        ),
-      };
+    const withRowBlocks = (workout) => ({
+      blocks: rowBlocks,
+      exercises: keepValidBlockIds(workout.exercises, rowBlocks),
     });
+
+    const written = await mutateWorkout({ _id: workoutId }, withRowBlocks);
     if (!written) throw notFound("Workout no encontrado", "WORKOUT_NOT_FOUND");
 
-    // Mismo cambio en el entrenamiento de la misma fila de los demás
-    // microciclos (ver workout-row-blocks.js: solo casan los bloques que
-    // comparten _id; los antiguos, locales, no se propagan).
     const siblingIds = await findRowSiblingWorkoutIds(workoutId);
     for (const siblingId of siblingIds) {
-      await mutateWorkout({ _id: siblingId }, (sibling) => {
-        const siblingBlockIds = new Set((sibling.blocks || []).map(toId));
-        const removed = new Set(diff.removedIds.filter((id) => siblingBlockIds.has(id)));
-        return {
-          blocks: applyBlockDiff(sibling.blocks, diff),
-          exercises: (sibling.exercises || []).map((exercise) =>
-            exercise.blockId && removed.has(toId(exercise.blockId)) ? { ...exercise, blockId: null } : exercise,
-          ),
-        };
-      });
+      await mutateWorkout({ _id: siblingId }, withRowBlocks);
     }
 
     // rowWorkouts: los demás microciclos ya actualizados, para que el
@@ -256,10 +269,19 @@ module.exports = {
     const table = await leanTable(idTable);
     if (!table) throw new Error("Table not found");
 
+    // Una fila nueva por cada entrenamiento recibido: sus bloques, con _id
+    // nuevos COMPARTIDOS por toda la fila (workout-row-blocks.js), se calculan
+    // una sola vez; cada microciclo recibe su copia de los ejercicios.
+    const rows = (Array.isArray(workouts) ? workouts : [workouts]).map((data) => {
+      const { blocks, remapExercises } = rekeyBlocks(data?.blocks, newId);
+      const exercises = remapExercises((data?.exercises || []).filter((exercise) => exercise?.exercise));
+      return { data, blocks, exercises };
+    });
+
     const toCreate = [];
     const workoutsBySplitId = new Map();
     for (const split of table.splits || []) {
-      const created = (Array.isArray(workouts) ? workouts : [workouts]).map((data) => ({
+      const created = rows.map(({ data, blocks, exercises }) => ({
         _id: newId(),
         name: data?.name,
         notes: data?.notes,
@@ -268,7 +290,8 @@ module.exports = {
         cronometer: data?.cronometer,
         paused: data?.paused,
         isPlannedRestDay: data?.isPlannedRestDay,
-        exercises: (data?.exercises || []).filter((exercise) => exercise?.exercise).map((exercise) => cloneExercise(exercise)),
+        blocks: blocks.map((block) => ({ ...block })),
+        exercises: exercises.map((exercise) => cloneExercise(exercise)),
       }));
       toCreate.push(...created);
       workoutsBySplitId.set(toId(split), [...(split.workouts || []), ...created.map((w) => w._id)]);
@@ -373,9 +396,15 @@ module.exports = {
 
     const workoutDoc = await workoutSchema.findByIdAndUpdate(workoutId, update, { new: true });
 
+    // Solo si la sesión en curso era ESTA (como ya hace el front): saltar
+    // otro día no debe cortar el entrenamiento que el cliente tiene abierto.
     let userUpdated = false;
-    if (rest) {
-      const userDoc = await userSchema.findByIdAndUpdate(userId, { $unset: { workoutInUse: 1, workoutInUseAt: 1 } }, { new: true });
+    if (rest && userId) {
+      const userDoc = await userSchema.findOneAndUpdate(
+        { _id: userId, workoutInUse: workoutId },
+        { $unset: { workoutInUse: 1, workoutInUseAt: 1 } },
+        { new: true },
+      );
       userUpdated = !!userDoc;
     }
 
@@ -424,23 +453,47 @@ module.exports = {
   // Reordena los ejercicios de la fila de `idWorkout` en todos los
   // microciclos. `newOrder` son posiciones: newOrder[i] = posición antigua del
   // ejercicio que pasa a ser el i-ésimo.
+  // Reordena los ejercicios de una sesión y de la misma fila en los demás
+  // microciclos. `newOrder[posición] = índice original`, y tiene que ser una
+  // permutación completa. Antes la misma permutación se aplicaba a ciegas a
+  // todas las hermanas: con un ejercicio de más se perdía (filter(Boolean)
+  // sobre índices que no llegaban) y con otro orden se desordenaba. Ahora
+  // solo se tocan las hermanas con los mismos ejercicios en el mismo orden
+  // que tenía el origen; el resto se deja como estaba.
+  // rowWorkouts: las hermanas ya reordenadas, para repintarlas sin recargar.
   async updateWorkoutsOrder(idWorkout, idTable, newOrder) {
     const table = await leanTable(idTable);
     const indexWorkout = rowIndexOf(table, idWorkout);
-    if (indexWorkout < 0 || !Array.isArray(newOrder)) return { modifiedCount: 0 };
+    if (indexWorkout < 0 || !isPermutation(newOrder)) return { modifiedCount: 0, rowWorkouts: [] };
+
+    const origin = await workoutSchema.findById(idWorkout).select("exercises.exercise").lean();
+    const originRefs = exerciseRefsOf(origin?.exercises);
+    if (originRefs.length !== newOrder.length) return { modifiedCount: 0, rowWorkouts: [] };
 
     let modifiedCount = 0;
+    const touchedSiblings = [];
     for (const split of table.splits || []) {
       const rowWorkoutId = split.workouts?.[indexWorkout];
       if (!rowWorkoutId) continue;
-      const written = await mutateWorkout({ _id: rowWorkoutId }, (workout) => {
+      const isOrigin = toId(rowWorkoutId) === toId(idWorkout);
+      // mutateWorkout devuelve el documento también cuando no escribe nada.
+      let reordered = false;
+      await mutateWorkout({ _id: rowWorkoutId }, (workout) => {
+        reordered = false;
         const exercises = workout.exercises || [];
-        const reordered = newOrder.map((index) => exercises[index]).filter(Boolean);
-        return { exercises: reordered };
+        if (exercises.length !== newOrder.length) return null;
+        if (!isOrigin && exerciseRefsOf(exercises).join() !== originRefs.join()) return null;
+        reordered = true;
+        return { exercises: newOrder.map((index) => exercises[index]) };
       });
-      if (written) modifiedCount += 1;
+      if (!reordered) continue;
+      modifiedCount += 1;
+      if (!isOrigin) touchedSiblings.push(rowWorkoutId);
     }
-    return { modifiedCount };
+    const rowWorkouts = touchedSiblings.length
+      ? await workoutSchema.find({ _id: { $in: touchedSiblings } })
+      : [];
+    return { modifiedCount, rowWorkouts };
   },
 
   // Cambia el Exercise de un ejercicio en la misma posición (fila y orden)
@@ -487,11 +540,20 @@ module.exports = {
   },
 
   // Añade a la sesión destino una copia de los ejercicios (con sus series).
+  // Se pega también en la misma fila de los demás microciclos, como añadir
+  // un ejercicio o editar bloques (findRowSiblingWorkoutIds), salvo en la
+  // sesión de origen: copiar de M1 a M2 en el mismo día no debe duplicar M1.
+  // Cada destino recibe sus propios clones (ids nuevos); un ejercicio solo
+  // conserva su bloque si el destino lo tiene (misma fila: siempre).
   async pasteExercises(tableId, sourceWorkoutId, targetWorkoutId, exercises) {
-    const clones = (exercises || []).map((customExercise) => cloneExercise(customExercise));
-    await mutateWorkout({ _id: targetWorkoutId }, (workout) => ({
-      exercises: [...(workout.exercises || []), ...clones],
-    }));
+    const siblingIds = await findRowSiblingWorkoutIds(targetWorkoutId);
+    const destinations = [targetWorkoutId, ...siblingIds.filter((id) => toId(id) !== toId(sourceWorkoutId))];
+    for (const destinationId of destinations) {
+      await mutateWorkout({ _id: destinationId }, (workout) => {
+        const clones = keepValidBlockIds((exercises || []).map((customExercise) => cloneExercise(customExercise)), workout.blocks);
+        return { exercises: [...(workout.exercises || []), ...clones] };
+      });
+    }
     return { tableInUse: await tableSchema.findById(tableId) };
   },
 

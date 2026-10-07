@@ -1,10 +1,10 @@
 const mongoose = require("mongoose");
-const { forbidden, notFound } = require("../util/http-error");
+const { badRequest, forbidden, notFound } = require("../util/http-error");
 const Workout = require("../workouts/workout-schema");
 const WorkoutTemplate = require("./workout-template-schema");
 const tableSchema = require("../tables/table-schema");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
-const { toId } = require("../workouts/workout-tree");
+const { toId, cloneExercise } = require("../workouts/workout-tree");
 
 // Plantillas sueltas de sesión del profesional (WorkoutTemplate, misma forma
 // que una sesión: workout-base-schema.js). El shape "de edición"
@@ -204,33 +204,47 @@ module.exports = {
   // de la plantilla. Se pasa por la forma anidada (buildBlockFromWorkout) y
   // se vuelve a materializar con ids nuevos, mismo camino que create()/
   // update(), para no mantener un tercer camino de escritura distinto.
-  async applyToSplit(template, splitId, clientId) {
-    const owningTable = await tableSchema.findOne({ "splits._id": splitId }).select("_id userId").lean();
-    if (!owningTable) {
-      throw notFound("Split no encontrado", "SPLIT_NOT_FOUND");
+  // Aplica la plantilla como una fila NUEVA al final de todos los
+  // microciclos de la tabla, igual que crear un entrenamiento: los mismos
+  // bloques (mismo _id) en toda la fila (workouts/workout-row-blocks.js) y
+  // los ejercicios, con sus series, copiados en cada microciclo. Antes se
+  // aplicaba microciclo a microciclo y cada uno estrenaba sus propios
+  // bloques: borrar o editar un bloque no llegaba a los demás.
+  async applyToTable(template, tableId, clientId) {
+    const table = await tableSchema.findById(tableId).select("_id userId splits._id").lean();
+    if (!table) {
+      throw notFound("Rutina no encontrada", "TABLE_NOT_FOUND");
     }
-    if (!owningTable.userId || owningTable.userId.toString() !== clientId.toString()) {
-      throw forbidden("El split no pertenece a este cliente", "SPLIT_FORBIDDEN");
+    if (!table.userId || table.userId.toString() !== clientId.toString()) {
+      throw forbidden("La rutina no pertenece a este cliente", "TABLE_FORBIDDEN");
+    }
+    if (!(table.splits || []).length) {
+      throw badRequest("La rutina no tiene microciclos", "TABLE_WITHOUT_SPLITS");
     }
 
     const nestedBlocks = buildBlockFromWorkout(template);
     const { customExercisesToCreate, workoutBlocksToCreate } = materializeBlocksAsExercises(nestedBlocks);
 
-    const workoutDoc = await Workout.create({
+    const workouts = table.splits.map(() => ({
+      _id: new mongoose.Types.ObjectId(),
       name: template.name,
-      blocks: workoutBlocksToCreate,
-      exercises: customExercisesToCreate,
-    });
-
-    await tableSchema.updateOne(
-      { _id: owningTable._id },
-      { $push: { "splits.$[split].workouts": workoutDoc._id } },
-      { arrayFilters: [{ "split._id": new mongoose.Types.ObjectId(toId(splitId)) }] },
+      blocks: workoutBlocksToCreate.map((block) => ({ ...block })),
+      exercises: customExercisesToCreate.map((exercise) => cloneExercise(exercise)),
+    }));
+    await Workout.insertMany(workouts);
+    await tableSchema.bulkWrite(
+      table.splits.map((split, index) => ({
+        updateOne: {
+          filter: { _id: table._id },
+          update: { $push: { "splits.$[split].workouts": workouts[index]._id } },
+          arrayFilters: [{ "split._id": split._id }],
+        },
+      })),
     );
 
     // Mismo shape de retorno que workoutDao.addWorkoutsToSplits (table.splits
     // completo).
-    const updatedTable = await tableSchema.findById(owningTable._id);
+    const updatedTable = await tableSchema.findById(table._id);
     return updatedTable.splits;
   },
 

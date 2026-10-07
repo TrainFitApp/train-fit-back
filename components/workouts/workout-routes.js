@@ -58,11 +58,12 @@ router.postAsync(
   auth(["admin", "user", "trainer"]),
   controller.copyWorkoutToSplit,
 );
-// finish/skip son acciones de "reproducir" el entrenamiento (autoservicio del
-// cliente) — deliberadamente NO se abren a "trainer": un profesional
-// construye la rutina, no registra las series del cliente en su lugar.
+// finish es "reproducir" el entrenamiento (autoservicio del cliente) —
+// deliberadamente NO se abre a "trainer": un profesional construye la
+// rutina, no registra las series del cliente en su lugar. skip sí: saltar un
+// día es planificar (el menú del Planner ya lo ofrecía y daba 403).
 router.putAsync("/finish", auth(["admin", "user"]), controller.finishWorkout);
-router.putAsync("/skip", auth(["admin", "user"]), controller.skipWorkout);
+router.putAsync("/skip", auth(["admin", "user", "trainer"]), controller.skipWorkout);
 router.putAsync("/", auth(["admin", "user", "trainer"]), controller.updateWorkout);
 router.putAsync(
   "/:idTable/:idWorkout/:idCustomExercise/:idExercise",

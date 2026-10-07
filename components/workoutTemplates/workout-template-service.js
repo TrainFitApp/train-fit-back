@@ -17,7 +17,7 @@ module.exports = {
 
   // Copia la plantilla como sesión nueva del microciclo del cliente. Devuelve
   // los microciclos de la rutina (mismo shape que el resto de altas).
-  applyToSplit: (template, splitId, clientId) => workoutTemplateDao.applyToSplit(template, splitId, clientId),
+  applyToTable: (template, tableId, clientId) => workoutTemplateDao.applyToTable(template, tableId, clientId),
 
   // Una sesión ya construida se guarda como plantilla: solo si el profesional
   // tiene acceso a la rutina de la que cuelga.

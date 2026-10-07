@@ -275,10 +275,13 @@ module.exports = {
   },
 
   async skipWorkout(req, res) {
-    if (!(await assertCanAccessWorkoutId(req, res, req.body?.workoutId))) return;
+    const table = await assertCanAccessWorkoutId(req, res, req.body?.workoutId);
+    if (!table) return;
+    // El dueño de la rutina, no quien llama: si salta el entrenador, la
+    // sesión en curso que se cierra es la de su cliente.
     const result = await workoutService.skipWorkout(
       req.body.workoutId,
-      req.user?.id,
+      table.userId,
       req.body.rest,
     );
     if (!result?.workout) {
@@ -346,7 +349,9 @@ module.exports = {
   },
 
   async deleteWorkouts(req, res) {
-    const workouts = Array.isArray(req.body) ? req.body : [];
+    // Sin _id no hay nada que borrar: un microciclo más corto que los demás
+    // mandaba un hueco y el 404 de ese hueco cancelaba el borrado entero.
+    const workouts = (Array.isArray(req.body) ? req.body : []).filter((workout) => workout?._id);
     const tableIds = [];
     for (const workoutTemp of workouts) {
       const table = await assertCanAccessWorkoutId(req, res, workoutTemp?._id);
@@ -354,7 +359,7 @@ module.exports = {
       if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
       tableIds.push(table._id);
     }
-    await withPinnedNotesSync(tableIds, () => workoutService.deleteWorkouts(req.body));
+    await withPinnedNotesSync(tableIds, () => workoutService.deleteWorkoutRows(workouts));
     res.sendStatus(204);
   },
 

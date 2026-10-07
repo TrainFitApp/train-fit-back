@@ -5,7 +5,7 @@ const mail = require("../util/mail");
 const nutritionalGoalService = require("../nutritionalGoals/nutritional-goal-service");
 const jwt = require("jsonwebtoken");
 const { generateVerificationCode } = require("../util/verification-code");
-const { assertBirth } = require("./age-policy");
+const { assertBirth, isBirthDate } = require("./age-policy");
 const { pickProfile, pointerChanges, parseWeight } = require("./user-profile");
 const anthropometryDao = require("../anthropometry/anthropometry-dao");
 const { todayForUser } = require("./user-time-zone");
@@ -70,6 +70,19 @@ const GOOGLE_ALLOWED_CLIENT_IDS = (
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+
+// Usuario sin migrar (users.birth todavía Date, scripts/migrations/
+// 20-user-birth-date.js): la app recibe ese valor y lo devuelve tal cual en
+// cada guardado del usuario entero (empezar un entrenamiento, borrar uno…).
+// Si lo que llega no es un día "YYYY-MM-DD" y lo guardado tampoco, es ese
+// eco: no se valida ni se escribe. Antes daba 400 USER_BIRTH_INVALID y, por
+// ejemplo, el entrenamiento no llegaba a quedar en curso. Una fecha nueva
+// válida sí se valida y se guarda (y deja migrado a ese usuario).
+async function isLegacyBirthEcho(userId, birth) {
+  if (birth === undefined || birth === null || birth === "" || isBirthDate(birth)) return false;
+  const stored = await userDao.findFields(userId, "birth");
+  return !!stored && stored.birth != null && !isBirthDate(stored.birth);
+}
 
 module.exports = {
   async getUserById(id) {
@@ -172,6 +185,7 @@ module.exports = {
   // hoy. `timeZone`: la del usuario (req.auth.timeZone).
   async updateUser(body, timeZone) {
     const { tableInUse, workoutInUse, ...fields } = pickProfile(body, { pointers: true });
+    if (await isLegacyBirthEcho(body._id, fields.birth)) delete fields.birth;
     assertBirth(fields.birth, todayIsoDate(timeZone));
     const weight = parseWeight(body?.weight);
     const requested = pickProfile({ tableInUse, workoutInUse }, { pointers: true });

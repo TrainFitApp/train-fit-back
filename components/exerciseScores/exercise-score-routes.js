@@ -19,6 +19,11 @@ router.getAsync(
   auth(["trainer"]),
   controller.getSessionLoad
 );
+router.getAsync(
+  "/exercise-scores/split/:splitId",
+  auth(["trainer"]),
+  controller.getSplitLoad
+);
 // 2026-09 — sugerencia inicial para el editor cuando el entrenador todavía
 // no ha puntuado ESTE ejercicio (ver exercise-score-defaults.js). Tres
 // segmentos, no choca con "/exercise-scores/:exerciseId" aunque fuera

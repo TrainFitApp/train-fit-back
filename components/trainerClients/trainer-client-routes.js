@@ -69,14 +69,14 @@ router.getAsync(
   requireActiveClient("training"),
   dataController.getClientWorkoutHistory
 );
-// Rediseño de entrenamiento (Fase A) — aplica una WorkoutTemplate real dentro
-// de un split concreto del cliente, materializando exercises/sets ya
-// prescritos (ver workoutTemplates/workout-template-dao.js#applyToSplit).
+// Aplica una WorkoutTemplate a una rutina del cliente: un entrenamiento nuevo
+// en todos sus microciclos, con exercises/sets ya prescritos (ver
+// workoutTemplates/workout-template-dao.js#applyToTable).
 router.postAsync(
-  "/clients/:clientId/splits/:splitId/workout-templates/:templateId/apply",
+  "/clients/:clientId/tables/:tableId/workout-templates/:templateId/apply",
   auth(["trainer"]),
   requireActiveClient("training"),
-  workoutTemplateController.applyTemplateToSplit
+  workoutTemplateController.applyTemplateToTable
 );
 router.getAsync(
   "/clients/:clientId/anthropometry",
