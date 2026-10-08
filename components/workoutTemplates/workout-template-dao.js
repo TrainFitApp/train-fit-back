@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Workout = require("../workouts/workout-schema");
+const Exercise = require("../exercises/exercise-schema");
 const WorkoutTemplate = require("./workout-template-schema");
 const tableSchema = require("../tables/table-schema");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
@@ -9,24 +10,44 @@ const trainerClientDao = require("../trainerClients/trainer-client-dao");
 // (blocks[].exercises[].sets[] anidado) que manda/espera el front NO es el
 // de almacenamiento (blocks solo metadata + exercises con blockId, series
 // dentro de cada ejercicio) — estas dos funciones traducen entre ambos.
+
+// Lo que el editor necesita de cada ejercicio para pintarlo y pautarlo: el
+// nombre, el tipo (fuerza, isométrico o cardio decide qué se prescribe), el
+// material y los músculos (resumen de la sesión).
+const EXERCISE_EDITOR_FIELDS = "name isCardio isIsometric equipment muscles deletedAt";
+
+// La referencia al ejercicio del catálogo, venga poblada (documento u objeto
+// del editor) o pelada (ObjectId o cadena).
+function exerciseIdOf(exercise) {
+  if (!exercise) return exercise;
+  if (typeof exercise === "string" || exercise instanceof mongoose.Types.ObjectId) return exercise;
+  return exercise._id ?? exercise;
+}
+
 function materializeBlocksAsExercises(blocks) {
   const customExercisesToCreate = [];
   const workoutBlocksToCreate = [];
   let exerciseOrder = 0;
 
+  let blockOrder = 0;
   const sortedBlocks = [...(blocks || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
-  sortedBlocks.forEach((block, blockIndex) => {
-    const blockId = new mongoose.Types.ObjectId();
-    workoutBlocksToCreate.push({
-      _id: blockId,
-      name: block.name || "",
-      type: block.type || "straight",
-      order: blockIndex,
-      rounds: block.rounds ?? null,
-      restBetweenExercises: block.restBetweenExercises ?? null,
-      restBetweenRounds: block.restBetweenRounds ?? null,
-      instructions: block.instructions || "",
-    });
+  sortedBlocks.forEach((block) => {
+    // "Sin agrupar", como en el Planificador: sus ejercicios van sin bloque
+    // (blockId null). Antes se creaba un bloque "Recta" para ellos y, al
+    // aplicar la plantilla, el cliente los veía dentro de un bloque.
+    const blockId = block.ungrouped ? null : new mongoose.Types.ObjectId();
+    if (blockId) {
+      workoutBlocksToCreate.push({
+        _id: blockId,
+        name: block.name || "",
+        type: block.type || "straight",
+        order: blockOrder++,
+        rounds: block.rounds ?? null,
+        restBetweenExercises: block.restBetweenExercises ?? null,
+        restBetweenRounds: block.restBetweenRounds ?? null,
+        instructions: block.instructions || "",
+      });
+    }
 
     const sortedExercises = [...(block.exercises || [])].sort(
       (a, b) => (a.order || 0) - (b.order || 0)
@@ -41,12 +62,13 @@ function materializeBlocksAsExercises(blocks) {
         restPause: templateSet.restPause ?? undefined,
         expectedTime: templateSet.expectedTime || undefined,
         expectedDistance: templateSet.expectedDistance ?? undefined,
+        restSeconds: templateSet.restSeconds ?? undefined,
         order: setIndex,
       }));
 
       customExercisesToCreate.push({
         _id: new mongoose.Types.ObjectId(),
-        exercise: templateExercise.exercise,
+        exercise: exerciseIdOf(templateExercise.exercise),
         notes: templateExercise.notes || undefined,
         order: exerciseOrder++,
         blockId,
@@ -58,9 +80,14 @@ function materializeBlocksAsExercises(blocks) {
   return { customExercisesToCreate, workoutBlocksToCreate };
 }
 
-function mapCustomExerciseToTemplateShape(customExercise, index) {
+// Con `exercisesById` (el editor) cada ejercicio sale con su ficha resumida;
+// sin él, como id (aplicar plantilla, guardar una sesión como plantilla). Un
+// ejercicio que ya no está en el catálogo sale como id: el editor lo pinta
+// como eliminado y lo conserva al guardar.
+function mapCustomExerciseToTemplateShape(customExercise, index, exercisesById = null) {
+  const exerciseId = exerciseIdOf(customExercise.exercise);
   return {
-    exercise: customExercise.exercise?._id || customExercise.exercise,
+    exercise: (exercisesById && exercisesById.get(String(exerciseId))) || exerciseId,
     order: Number.isFinite(customExercise.order) ? customExercise.order : index,
     notes: customExercise.notes || "",
     sets: (customExercise.sets || []).map((set) => ({
@@ -70,6 +97,7 @@ function mapCustomExerciseToTemplateShape(customExercise, index) {
       restPause: set.restPause ?? null,
       expectedTime: set.expectedTime || "",
       expectedDistance: set.expectedDistance ?? null,
+      restSeconds: set.restSeconds ?? null,
     })),
   };
 }
@@ -77,9 +105,10 @@ function mapCustomExerciseToTemplateShape(customExercise, index) {
 // Inverso de materializeBlocksAsExercises. Lee Workout.blocks[] reales y
 // agrupa Workout.exercises[] (autopoblado) por blockId. Ejercicios sin
 // blockId, o con blockId que ya no existe (huérfano — defensa en
-// profundidad), caen en un bloque "straight" final: nunca se pierde
-// contenido silenciosamente.
-function buildBlockFromWorkout(workout) {
+// profundidad), caen en un grupo final marcado `ungrouped` (el "Sin
+// agrupar" del Planificador, workout-blocks.util.ts): nunca se pierde
+// contenido silenciosamente y al guardar vuelven a ir sin bloque.
+function buildBlockFromWorkout(workout, exercisesById = null) {
   const realBlocks = [...(workout.blocks || [])].sort(
     (a, b) => (a.order || 0) - (b.order || 0)
   );
@@ -107,12 +136,13 @@ function buildBlockFromWorkout(workout) {
     restBetweenRounds: block.restBetweenRounds ?? null,
     instructions: block.instructions || "",
     exercises: (exercisesByBlockId.get(block._id.toString()) || []).map(
-      (entry, exIndex) => mapCustomExerciseToTemplateShape(entry.customExercise, exIndex)
+      (entry, exIndex) => mapCustomExerciseToTemplateShape(entry.customExercise, exIndex, exercisesById)
     ),
   }));
 
   if (leftoverExercises.length > 0 || blocks.length === 0) {
     blocks.push({
+      ungrouped: true,
       name: "",
       type: "straight",
       order: blocks.length,
@@ -121,7 +151,7 @@ function buildBlockFromWorkout(workout) {
       restBetweenRounds: null,
       instructions: "",
       exercises: leftoverExercises.map((entry, exIndex) =>
-        mapCustomExerciseToTemplateShape(entry.customExercise, exIndex)
+        mapCustomExerciseToTemplateShape(entry.customExercise, exIndex, exercisesById)
       ),
     });
   }
@@ -129,13 +159,42 @@ function buildBlockFromWorkout(workout) {
   return blocks;
 }
 
-// La plantilla como datos de un entrenamiento nuevo (nombre, bloques y
-// ejercicios con sus series), listos para addWorkoutsToSplits.
+// La plantilla como datos de un entrenamiento nuevo (nombre, indicaciones,
+// bloques y ejercicios con sus series), listos para addWorkoutsToSplits.
 // Pasa por la forma anidada y se vuelve a materializar, el mismo camino que
 // create()/update().
 function workoutDataFromTemplate(template) {
   const { customExercisesToCreate, workoutBlocksToCreate } = materializeBlocksAsExercises(buildBlockFromWorkout(template));
-  return { name: template.name, blocks: workoutBlocksToCreate, exercises: customExercisesToCreate };
+  return {
+    name: template.name,
+    notes: template.notes || undefined,
+    blocks: workoutBlocksToCreate,
+    exercises: customExercisesToCreate,
+  };
+}
+
+// Plantillas guardadas (lean) en la forma del editor, con la ficha resumida
+// de cada ejercicio. Una sola consulta al catálogo para todas: `.lean()` no
+// activa el autopopulate del esquema, y sin esto el editor recibía solo ids
+// (nombre "?" y el tipo perdido: un isométrico se reabría como fuerza).
+async function toEditorShape(templates) {
+  const ids = new Set();
+  templates.forEach((template) =>
+    (template.exercises || []).forEach((customExercise) => {
+      const id = exerciseIdOf(customExercise.exercise);
+      if (id) ids.add(String(id));
+    })
+  );
+
+  const exercises = ids.size
+    ? await Exercise.find({ _id: { $in: [...ids] } }).select(EXERCISE_EDITOR_FIELDS).lean()
+    : [];
+  const exercisesById = new Map(exercises.map((exercise) => [String(exercise._id), exercise]));
+
+  return templates.map(({ exercises: storedExercises, ...template }) => ({
+    ...template,
+    blocks: buildBlockFromWorkout({ blocks: template.blocks, exercises: storedExercises }, exercisesById),
+  }));
 }
 
 module.exports = {
@@ -143,6 +202,7 @@ module.exports = {
   materializeBlocksAsExercises,
   buildBlockFromWorkout,
   workoutDataFromTemplate,
+  exerciseIdOf,
 
   async create(trainerId, data) {
     const { customExercisesToCreate, workoutBlocksToCreate } = materializeBlocksAsExercises(data.blocks);
@@ -150,6 +210,7 @@ module.exports = {
     const created = await WorkoutTemplate.create({
       trainerId,
       name: data.name,
+      notes: data.notes,
       description: data.description,
       level: data.level,
       tags: data.tags,
@@ -158,24 +219,15 @@ module.exports = {
       exercises: customExercisesToCreate,
     });
 
-    return {
-      _id: created._id,
-      trainerId: created.trainerId,
-      name: created.name,
-      description: created.description,
-      level: created.level,
-      tags: created.tags,
-      equipment: created.equipment,
-      createdAt: created.createdAt,
-      blocks: buildBlockFromWorkout({ blocks: workoutBlocksToCreate, exercises: customExercisesToCreate }),
-    };
+    const [template] = await toEditorShape([created.toObject({ depopulate: true })]);
+    return template;
   },
 
-  // .lean(): los ejercicios y sus series vienen dentro del documento; el
-  // Exercise de cada uno basta como id (buildBlockFromWorkout solo lee eso).
+  // .lean(): los ejercicios y sus series vienen dentro del documento; la
+  // ficha de cada Exercise la añade toEditorShape.
   async listByTrainer(trainerId) {
     const templates = await WorkoutTemplate.find({ trainerId }).sort({ createdAt: -1 }).lean();
-    return templates.map((t) => ({ ...t, blocks: buildBlockFromWorkout(t) }));
+    return toEditorShape(templates);
   },
 
   async findOwnedByTrainer(trainerId, id) {
@@ -187,7 +239,7 @@ module.exports = {
     if (!existing) return null;
 
     const setOps = {};
-    ["name", "description", "level", "tags", "equipment"].forEach((key) => {
+    ["name", "notes", "description", "level", "tags", "equipment"].forEach((key) => {
       if (patch[key] !== undefined) setOps[key] = patch[key];
     });
 
@@ -201,7 +253,8 @@ module.exports = {
     await WorkoutTemplate.updateOne({ _id: id }, { $set: setOps, $inc: { __v: 1 } }, { runValidators: true });
 
     const updated = await WorkoutTemplate.findOne({ _id: id, trainerId }).lean();
-    return { ...updated, blocks: buildBlockFromWorkout(updated) };
+    const [template] = await toEditorShape([updated]);
+    return template;
   },
 
   async delete(trainerId, id) {

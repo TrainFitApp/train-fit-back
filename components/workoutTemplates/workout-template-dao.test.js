@@ -203,3 +203,83 @@ test("buildBlockFromWorkout con ejercicios sin poblar", async (t) => {
     assert.equal(blocks[0].exercises.length, 2);
   });
 });
+
+// El editor de plantillas recibe cada ejercicio con su ficha (nombre, tipo,
+// músculos). Antes llegaba solo el id: nombre "?" y un isométrico o un
+// cardio se reabrían como fuerza, perdiendo el tiempo al guardar.
+test("buildBlockFromWorkout con fichas de ejercicio (editor)", async (t) => {
+  const { exerciseIdOf } = require("./workout-template-dao");
+  const plank = { _id: "ex-plank", name: "Plancha", isIsometric: true, muscles: [] };
+  const exercisesById = new Map([["ex-plank", plank]]);
+  const workout = {
+    blocks: [{ _id: "b1", type: "straight", order: 0 }],
+    exercises: [
+      { blockId: "b1", exercise: "ex-plank", order: 0, sets: [{ expectedTime: "30s", restSeconds: 60 }] },
+      { blockId: "b1", exercise: "ex-borrado", order: 1, sets: [] },
+    ],
+  };
+
+  await t.test("cada ejercicio sale con su ficha; el que no está en el catálogo, como id", () => {
+    const [block] = buildBlockFromWorkout(workout, exercisesById);
+    assert.equal(block.exercises[0].exercise, plank);
+    assert.equal(block.exercises[1].exercise, "ex-borrado");
+  });
+
+  await t.test("sin fichas, como siempre: solo ids", () => {
+    const [block] = buildBlockFromWorkout(workout);
+    assert.equal(block.exercises[0].exercise, "ex-plank");
+  });
+
+  await t.test("el descanso entre series viaja en los dos sentidos", () => {
+    const [block] = buildBlockFromWorkout(workout, exercisesById);
+    assert.equal(block.exercises[0].sets[0].restSeconds, 60);
+    const { customExercisesToCreate } = materializeBlocksAsExercises([block]);
+    assert.equal(customExercisesToCreate[0].sets[0].restSeconds, 60);
+  });
+
+  await t.test("al guardar, una ficha poblada se vuelve a su id", () => {
+    const [block] = buildBlockFromWorkout(workout, exercisesById);
+    const { customExercisesToCreate } = materializeBlocksAsExercises([block]);
+    assert.equal(customExercisesToCreate[0].exercise, "ex-plank");
+    assert.equal(exerciseIdOf({ _id: "x", name: "y" }), "x");
+    assert.equal(exerciseIdOf("x"), "x");
+    assert.equal(exerciseIdOf(null), null);
+  });
+});
+
+test("workoutDataFromTemplate lleva las indicaciones de la sesión", () => {
+  const { workoutDataFromTemplate } = require("./workout-template-dao");
+  const template = { name: "Empuje", notes: "Técnica antes que carga", blocks: [], exercises: [] };
+  assert.equal(workoutDataFromTemplate(template).notes, "Técnica antes que carga");
+  assert.equal(workoutDataFromTemplate({ ...template, notes: "" }).notes, undefined);
+});
+
+// "Sin agrupar", como en el Planificador: los ejercicios sueltos de una
+// plantilla siguen sueltos al guardarla y al aplicarla (antes acababan en un
+// bloque "Recta" sin nombre que el cliente veía como bloque).
+test("grupo sin agrupar", async (t) => {
+  await t.test("los ejercicios sin bloque vuelven marcados como sin agrupar", () => {
+    const workout = {
+      blocks: [{ _id: "b1", name: "Superserie", type: "superset", order: 0 }],
+      exercises: [
+        { blockId: "b1", exercise: "ex-1", order: 0, sets: [] },
+        { blockId: null, exercise: "ex-2", order: 1, sets: [] },
+      ],
+    };
+    const blocks = buildBlockFromWorkout(workout);
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[0].ungrouped, undefined);
+    assert.equal(blocks[1].ungrouped, true);
+  });
+
+  await t.test("al materializar no crean bloque: blockId null", () => {
+    const { customExercisesToCreate, workoutBlocksToCreate } = materializeBlocksAsExercises([
+      { order: 0, name: "Superserie", type: "superset", exercises: [{ exercise: "ex-1", sets: [] }] },
+      { order: 1, ungrouped: true, exercises: [{ exercise: "ex-2", sets: [] }] },
+    ]);
+    assert.equal(workoutBlocksToCreate.length, 1);
+    assert.equal(workoutBlocksToCreate[0].order, 0);
+    assert.ok(customExercisesToCreate[0].blockId);
+    assert.equal(customExercisesToCreate[1].blockId, null);
+  });
+});

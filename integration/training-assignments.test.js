@@ -257,6 +257,56 @@ test("plantilla de entreno aplicada a una rutina del cliente: fila nueva, copia 
   assert.ok(await ctx.model("Workout").exists({ _id: workout._id }));
 });
 
+test("plantilla de entreno: el editor recibe la ficha de cada ejercicio y el descanso e indicaciones llegan al cliente", async () => {
+  const { trainer, client } = await pair();
+  const plank = await ctx.model("Exercise").create({ name: "Plancha", isIsometric: true, equipment: ["Esterilla"] });
+  const tpl = await ctx.post(trainer, "/trainer/workout-templates", {
+    name: "Core",
+    notes: "Respira durante todo el bloque",
+    blocks: [{ exercises: [{ exercise: plank._id, sets: [{ expectedTime: "30s", restSeconds: 45 }] }] }],
+  });
+  assert.equal(tpl.blocks[0].exercises[0].exercise.name, "Plancha", "la respuesta de crear ya trae la ficha");
+
+  const [listed] = await ctx.get(trainer, "/trainer/workout-templates");
+  const listedExercise = listed.blocks[0].exercises[0];
+  assert.equal(listedExercise.exercise.name, "Plancha");
+  assert.equal(listedExercise.exercise.isIsometric, true);
+  assert.deepEqual(listedExercise.exercise.equipment, ["Esterilla"]);
+  assert.equal(listedExercise.sets[0].restSeconds, 45);
+  assert.equal(listed.notes, "Respira durante todo el bloque");
+
+  // Guardar desde el editor reenvía la ficha tal cual la recibió: se guarda su id.
+  const updated = await ctx.put(trainer, `/trainer/workout-templates/${tpl._id}`, { blocks: listed.blocks });
+  assert.equal(updated.blocks[0].exercises[0].exercise.name, "Plancha");
+
+  const table = await assignNew(trainer, client);
+  const split = { _id: ctx.oid(), name: "Micro 1", workouts: [] };
+  await ctx.model("Table").updateOne({ _id: table._id }, { $push: { splits: split } });
+  const applied = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables/${table._id}/workout-templates/${tpl._id}/apply`);
+  assert.equal(applied.status, 201, JSON.stringify(applied.body));
+
+  const storedSplit = await ctx.findSplit(split._id);
+  const workout = await ctx.model("Workout").findById(storedSplit.workouts[0]).lean();
+  assert.equal(workout.notes, "Respira durante todo el bloque");
+  assert.equal(String(workout.exercises[0].exercise), String(plank._id));
+  assert.equal(workout.exercises[0].sets[0].restSeconds, 45);
+  assert.equal(workout.exercises[0].sets[0].expectedTime, "30s");
+  assert.equal(workout.blocks.length, 1, "un bloque sin marcar sigue siendo un bloque");
+
+  // "Sin agrupar" (como en el Planificador): sin bloque también en el cliente.
+  const loose = await ctx.post(trainer, "/trainer/workout-templates", {
+    name: "Sueltos",
+    blocks: [{ ungrouped: true, exercises: [{ exercise: plank._id, sets: [{ expectedTime: "45s" }] }] }],
+  });
+  assert.equal(loose.blocks.length, 1);
+  assert.equal(loose.blocks[0].ungrouped, true);
+  const appliedLoose = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables/${table._id}/workout-templates/${loose._id}/apply`);
+  assert.equal(appliedLoose.status, 201, JSON.stringify(appliedLoose.body));
+  const looseWorkout = await ctx.model("Workout").findById((await ctx.findSplit(split._id)).workouts[1]).lean();
+  assert.equal(looseWorkout.blocks.length, 0);
+  assert.equal(looseWorkout.exercises[0].blockId ?? null, null);
+});
+
 test("aplicar plantilla de entreno a una rutina que no es de ese cliente: 403", async () => {
   const { trainer, client } = await pair();
   const tpl = await ctx.post(trainer, "/trainer/workout-templates", { name: "Pierna" });

@@ -41,6 +41,11 @@ module.exports = {
     if (!(await workoutTemplateDao.canTrainerAccessTable(trainerId, owningTable))) {
       throw forbidden("No tienes acceso a este entrenamiento");
     }
-    return workoutTemplateDao.create(trainerId, { ...fields, blocks: workoutTemplateDao.buildBlockFromWorkout(workout) });
+    // Las indicaciones de la sesión viajan con ella salvo que lleguen otras.
+    return workoutTemplateDao.create(trainerId, {
+      notes: workout.notes,
+      ...fields,
+      blocks: workoutTemplateDao.buildBlockFromWorkout(workout),
+    });
   },
 };

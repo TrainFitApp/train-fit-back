@@ -105,3 +105,35 @@ test("sanitizeBlocks", async (t) => {
     assert.deepEqual(sanitizeBlocks(null), []);
   });
 });
+
+// Descanso entre series y pausa del rest-pause: segundos dentro del rango de
+// la serie real (0–600). Fuera de él, el updateOne con runValidators fallaba
+// entero y el entrenador perdía todo lo editado.
+test("sanitizeSets: restSeconds y restPause", async (t) => {
+  await t.test("restSeconds pasa redondeado; vacío -> null", () => {
+    const [withRest, withoutRest] = sanitizeSets([{ restSeconds: "90.4" }, { restSeconds: "" }]);
+    assert.equal(withRest.restSeconds, 90);
+    assert.equal(withoutRest.restSeconds, null);
+  });
+
+  await t.test("fuera de rango se acota a 0–600", () => {
+    const [tooLong, negative] = sanitizeSets([{ restSeconds: 900, restPause: 700 }, { restSeconds: -5 }]);
+    assert.equal(tooLong.restSeconds, 600);
+    assert.equal(tooLong.restPause, 600);
+    assert.equal(negative.restSeconds, 0);
+  });
+});
+
+test("buildPatchFromBody: indicaciones de la sesión", async (t) => {
+  const { buildPatchFromBody } = require("./workout-template-controller");
+
+  await t.test("notes se recorta y se limita a 500", () => {
+    assert.equal(buildPatchFromBody({ notes: "  Calienta bien  " }).notes, "Calienta bien");
+    assert.equal(buildPatchFromBody({ notes: "a".repeat(600) }).notes.length, 500);
+  });
+
+  await t.test("sin notes en el body no se toca", () => {
+    assert.equal("notes" in buildPatchFromBody({ name: "x" }), false);
+    assert.equal(buildPatchFromBody({ notes: null }).notes, "");
+  });
+});

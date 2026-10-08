@@ -25,6 +25,13 @@ function toFiniteOrNull(value) {
   return Number.isFinite(num) ? num : null;
 }
 
+// Segundos de descanso o de pausa, dentro del rango que admite la serie real
+// (set-schema.js: 0–600). Fuera de él la escritura entera fallaría.
+function toSecondsOrNull(value) {
+  const num = toFiniteOrNull(value);
+  return num === null ? null : Math.min(600, Math.max(0, Math.round(num)));
+}
+
 function sanitizeSets(sets) {
   return (Array.isArray(sets) ? sets : []).map((set) => ({
     expectedReps: Array.isArray(set?.expectedReps)
@@ -34,9 +41,10 @@ function sanitizeSets(sets) {
       ? set.expectedRir.map(Number).filter(Number.isFinite)
       : [],
     drop: Boolean(set?.drop),
-    restPause: toFiniteOrNull(set?.restPause),
+    restPause: toSecondsOrNull(set?.restPause),
     expectedTime: (set?.expectedTime || "").toString().trim().slice(0, 20),
     expectedDistance: toFiniteOrNull(set?.expectedDistance),
+    restSeconds: toSecondsOrNull(set?.restSeconds),
   }));
 }
 
@@ -55,6 +63,8 @@ function sanitizeExercises(exercises) {
 
 function sanitizeBlocks(blocks) {
   return (Array.isArray(blocks) ? blocks : []).map((block, index) => ({
+    // El grupo "Sin agrupar" del editor: sus ejercicios se guardan sin bloque.
+    ...(block?.ungrouped === true ? { ungrouped: true } : {}),
     name: (block?.name || "").toString().trim().slice(0, 100),
     type: BLOCK_TYPES.has(block?.type) ? block.type : "straight",
     order: Number.isFinite(Number(block?.order)) ? Number(block.order) : index,
@@ -68,6 +78,11 @@ function sanitizeBlocks(blocks) {
 
 function buildPatchFromBody(body) {
   const patch = {};
+  // Indicaciones de la sesión para el cliente: viajan al entrenamiento al
+  // aplicar la plantilla (Workout.notes). `description` es solo de biblioteca.
+  if (body?.notes !== undefined) {
+    patch.notes = (body.notes || "").toString().trim().slice(0, 500);
+  }
   if (body?.description !== undefined) {
     patch.description = (body.description || "").toString().trim().slice(0, 500);
   }
@@ -87,6 +102,7 @@ module.exports = {
   sanitizeSets,
   sanitizeExercises,
   sanitizeBlocks,
+  buildPatchFromBody,
 
   // --- Biblioteca de plantillas propias del profesional ---
   async createTemplate(req, res) {
