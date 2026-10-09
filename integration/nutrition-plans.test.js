@@ -318,14 +318,76 @@ test("sustituir una fase el MISMO día en que empezó: desde hoy manda la nueva"
   assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Único"]);
 });
 
-test("una fase futura que pisa otra fase futura ya programada: 409 PLAN_OVERLAP", async () => {
+test("sustituir otra vez el mismo día: la ya sustituida no bloquea y manda la última", async () => {
+  const { trainer, client } = await setupPair();
+  await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(0));
+  await ctx.post(trainer, phasesPath(client), { name: "Corrección", startDate: h.day(0), menus: [{ name: "Único", meals: [] }] });
+  const third = await ctx.call(trainer, "POST", phasesPath(client), {
+    name: "Segunda corrección",
+    startDate: h.day(0),
+    menus: [{ name: "Otro", meals: [] }],
+  });
+  assert.equal(third.status, 201, "antes daba 409: la sustituida (inicio y fin hoy) contaba como choque");
+  assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Otro"]);
+  assert.equal((await ctx.get(trainer, `${phasesPath(client)}/current`)).name, "Segunda corrección");
+
+  // Ponerle fin tampoco choca con las sustituidas (antes, 409 PLAN_OVERLAP).
+  const ended = await ctx.patch(trainer, `${phasesPath(client)}/${third.body._id}`, { endDate: h.day(5) });
+  assert.equal(ended.endDate, h.day(5));
+  assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Otro"], "la sustituida sigue tapada");
+
+  // Una fase programada más adelante sí impide empezar antes que ella.
+  await ctx.post(trainer, phasesPath(client), { name: "Programada", startDate: h.day(10), menus: [{ name: "Único", meals: [] }] });
+  const beforeScheduled = await ctx.call(trainer, "POST", phasesPath(client), { name: "Encima", startDate: h.day(0), menus: [{ name: "Único", meals: [] }] });
+  assert.equal(beforeScheduled.status, 409);
+  assert.equal(beforeScheduled.body.code, "PLAN_OVERLAP");
+  assert.match(beforeScheduled.body.message, /Programada/);
+});
+
+test("empezar más adelante con una fase en curso: la corta el día anterior y pierde lo preparado desde entonces", async () => {
+  const { trainer, client } = await setupPair();
+  const first = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-5));
+  const prepared = [h.day(2), h.day(9)];
+  await ctx.model("DietPhase").updateOne(
+    { _id: ctx.oid(first._id) },
+    { $push: { contents: { $each: prepared.map((startDate) => ({ startDate, menus: [] })) } }, $inc: { __v: 1 } }
+  );
+
+  const later = await ctx.call(trainer, "POST", phasesPath(client), {
+    name: "Siguiente",
+    startDate: h.day(7),
+    menus: [{ name: "Único", meals: [] }],
+  });
+  assert.equal(later.status, 201, "antes daba 409: programar con otra fase en curso se rechazaba");
+  const history = await ctx.get(trainer, phasesPath(client));
+  assert.deepEqual(
+    history.map((p) => [p.name, p.state, p.endDate]),
+    [["Siguiente", "scheduled", null], ["Definición", "current", h.day(6)]]
+  );
+  const cut = await ctx.model("DietPhase").findById(first._id).lean();
+  assert.deepEqual(cut.contents.map((c) => c.startDate), [h.day(-5), h.day(2)], "lo preparado desde el corte nunca va a correr");
+  assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Menú A", "Menú B"], "hasta entonces, la que estaba");
+  assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(7)}/menu`)).options, ["Único"]);
+
+  // Quitarla vuelve a dejar abierta la anterior.
+  assert.equal((await ctx.call(trainer, "DELETE", `${phasesPath(client)}/${later.body._id}`)).status, 204);
+  assert.equal((await ctx.model("DietPhase").findById(first._id).lean()).endDate, null);
+});
+
+test("una fase futura no empieza antes que otra programada ni el mismo día que ella (409 PLAN_OVERLAP); después, la corta", async () => {
   const { trainer, client } = await setupPair();
   const tpl = await libraryTemplate(trainer);
-  await applyTemplate(trainer, client, tpl, h.day(10));
-  const clash = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: h.day(12) });
-  assert.equal(clash.status, 409);
-  assert.equal(clash.body.code, "PLAN_OVERLAP");
-  assert.match(clash.body.message, /Definición/);
+  const scheduled = await applyTemplate(trainer, client, tpl, h.day(10));
+  for (const startDate of [h.day(5), h.day(10)]) {
+    const clash = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate });
+    assert.equal(clash.status, 409, startDate);
+    assert.equal(clash.body.code, "PLAN_OVERLAP");
+    assert.match(clash.body.message, /Definición/);
+  }
+  const after = await ctx.call(trainer, "POST", phasesPath(client), { name: "Encima", startDate: h.day(12), menus: [{ name: "Único", meals: [] }] });
+  assert.equal(after.status, 201);
+  assert.equal((await ctx.model("DietPhase").findById(scheduled._id).lean()).endDate, h.day(11));
+
   assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: "mañana" })).status, 400);
   assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { startDate: h.day(20), menus: [] })).status, 400, "sin plantilla hace falta nombre");
   const otherTrainer = await ctx.makeTrainer();
@@ -435,8 +497,6 @@ test("renombrar y mover las fechas de una fase: el contenido se mueve con ella y
   const { trainer, client } = await setupPair();
   const tpl = await libraryTemplate(trainer);
   const phase = await applyTemplate(trainer, client, tpl, h.day(2));
-  const later = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: h.day(30) });
-  assert.equal(later.status, 409, "programar encima de una fase abierta se rechaza");
 
   const renamed = await ctx.patch(trainer, `${phasesPath(client)}/${phase._id}`, { name: "Arranque" });
   assert.equal(renamed.name, "Arranque");
@@ -494,6 +554,27 @@ test("día saltado: el profesional lo vacía de lo pautado (lo propio se queda),
   assert.equal(menu.needsChoice, false);
   const choose = await ctx.call(client, "PUT", `/dietdays/date/${date}/menu`, { menuName: "Menú A" });
   assert.equal(choose.status, 409);
+});
+
+// La ficha ofrece saltar cualquier día dentro de una fase, también los que el
+// cliente todavía no ha abierto (los de la semana que viene), y ya no lee el
+// día al elegirlo en el calendario: nada ha creado su DietDay. Daba 404.
+test("saltar un día del plan que el cliente aún no ha abierto: nace saltado y sin nada pautado", async () => {
+  const { trainer, client } = await setupPair();
+  await applyTemplate(trainer, client, await libraryTemplate(trainer));
+  const date = h.day(3);
+
+  assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/skipped-days`, { date })).status, 201);
+  // Repetirlo no falla ni crea otro día.
+  assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/skipped-days`, { date })).status, 201);
+
+  const menu = await ctx.get(client, `/dietdays/date/${date}/menu`);
+  assert.equal(menu.skipped, true);
+  assert.equal(menu.needsChoice, false);
+  const read = await readDay(client, date);
+  assert.equal(read.dietDay.skipped, true);
+  assert.equal(read.plannedTarget, null);
+  assert.ok(read.dietDay.meals.every((meal) => !meal.customProducts.length && !meal.customRecipes.length));
 });
 
 test("saltar un día fuera de plan o con fecha inválida: 400", async () => {
@@ -572,4 +653,81 @@ test("lista de la compra: sale de los menús elegidos en el rango y es la misma 
   const serialized = JSON.stringify(mine);
   assert.ok(serialized.includes("Avena") && serialized.includes("Pollo"), serialized.slice(0, 300));
   assert.equal((await ctx.call(client, "GET", "/dietdays/shopping-list?from=2026-01-01&to=2026-12-31")).status, 400, "rango de más de 62 días");
+});
+
+// --- Resumen de un día (Plan › Nutrición › Día) ------------------------------------------
+
+const nutritionDay = (trainer, client, date) => ctx.get(trainer, `/trainer/clients/${client.id}/nutrition-day?date=${date}`);
+
+test("resumen del día: menú y opción elegidos, lo tomado (en otra cantidad), lo propio y la desviación", async () => {
+  const { trainer, client } = await setupPair();
+  await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-3));
+  const date = h.day(0);
+  await ctx.put(client, `/dietdays/date/${date}/menu`, { menuName: "Menú B" });
+  const comida = mealBySlot((await readDay(client, date)).dietDay, "Comida");
+  await ctx.put(client, `/meals/${comida._id}/alternative`, { chosenIndex: 1 });
+  const salmon = mealBySlot((await readDay(client, date)).dietDay, "Comida").customProducts[0];
+  await ctx.patch(client, `/meals/${comida._id}/customproducts/${salmon._id}/quantity`, { quantity: 200 });
+  await ctx.patch(client, `/meals/${comida._id}/customproducts/${salmon._id}/consumed`, { consumed: true });
+  await ctx.post(client, `/dietdays/date/${date}/meals/4/customproducts`, {
+    customProduct: { quantity: 100, product: { name: "Pizza propia", energyKcal100g: 270, protein100g: 11, carbohydrates100g: 33, fat100g: 10 } },
+  });
+
+  const day = await nutritionDay(trainer, client, date);
+  assert.equal(day.state, "menu");
+  assert.equal(day.menuName, "Menú B");
+  assert.deepEqual(day.menus, ["Menú A", "Menú B"]);
+  assert.equal(day.phase.name, "Definición");
+  assert.deepEqual(day.meals.map((m) => [m.name, m.status]), [["Comida", "done"], ["Cena", "extra"]]);
+  assert.deepEqual(day.meals[0].options, { chosen: 1, labels: ["Pollo", "Salmón"] });
+  assert.deepEqual(
+    day.meals[0].items.map((i) => [i.name, i.status, i.plannedQuantity, i.quantity]),
+    [["Salmón", "eaten", 150, 200]]
+  );
+  assert.deepEqual(day.meals[1].items.map((i) => [i.name, i.status]), [["Pizza propia", "extra"]]);
+  // Pautado a la cantidad del profesional (150 g); tomado, 200 g + la pizza.
+  assert.equal(day.planned.kcal, Math.round(208 * 1.5));
+  assert.equal(day.consumed.kcal, 208 * 2 + 270);
+  assert.equal(day.extra.kcal, 270);
+  assert.equal(day.deviation.kcal, 208 * 2 + 270 - Math.round(208 * 1.5));
+  assert.equal(day.deviation.withinTolerance, false);
+  assert.deepEqual(day.counts, { planned: 1, eaten: 1, extra: 1 });
+  assert.equal(day.completionPercentage, 100);
+
+  // La gráfica de Seguimiento mide igual ese día.
+  const tracking = await ctx.get(trainer, `/trainer/clients/${client.id}/nutrition-tracking?from=${date}&to=${date}`);
+  assert.equal(Math.round(tracking.dailyTracking[0].planned.kcal), day.planned.kcal);
+  assert.equal(Math.round(tracking.dailyTracking[0].consumed.kcal), day.consumed.kcal);
+});
+
+test("resumen del día: un día pasado sin menú se mide con el menú por defecto y no se materializa", async () => {
+  const { trainer, client } = await setupPair();
+  await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-3));
+  const date = h.day(-2);
+
+  const day = await nutritionDay(trainer, client, date);
+  assert.equal(day.state, "unchosen");
+  assert.equal(day.menuName, null);
+  assert.deepEqual(day.meals.map((m) => [m.name, m.status]), [["Desayuno", "unchecked"], ["Comida", "unchecked"]]);
+  assert.deepEqual(day.counts, { planned: 4, eaten: 0, extra: 0 });
+  assert.equal(day.completionPercentage, 0);
+  assert.equal(await ctx.count("DietDay", { userId: client._id, date }), 0, "un GET no crea el día");
+
+  const pending = await nutritionDay(trainer, client, h.day(1));
+  assert.equal(pending.state, "pending");
+  assert.deepEqual(pending.meals, []);
+  assert.equal((await nutritionDay(trainer, client, h.day(-10))).state, "none");
+});
+
+test("resumen del día: fecha inválida 400, y solo lo ve quien lleva la nutrición del cliente", async () => {
+  const { trainer, client } = await setupPair();
+  const invalid = await ctx.call(trainer, "GET", `/trainer/clients/${client.id}/nutrition-day?date=hoy`);
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.code, "INVALID_DATE");
+  assert.equal((await ctx.call(trainer, "GET", `/trainer/clients/${client.id}/nutrition-day`)).status, 400);
+
+  const coach = await ctx.makeTrainer();
+  await ctx.relate(coach, client, { scope: "training" });
+  assert.equal((await ctx.call(coach, "GET", `/trainer/clients/${client.id}/nutrition-day?date=${h.day(0)}`)).status, 403);
+  assert.equal((await ctx.call(client, "GET", `/trainer/clients/${client.id}/nutrition-day?date=${h.day(0)}`)).status, 403);
 });

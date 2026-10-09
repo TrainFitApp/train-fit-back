@@ -1,6 +1,5 @@
 const anthropometryService = require("../anthropometry/anthropometry-service");
 const dietDayService = require("./diet-days-service");
-const mealService = require("../meals/meal-service");
 const { resolveOwnedDietDay, applyResolvedPlanToDietDay } = require("./diet-day-resolver");
 const dietPhaseService = require("../dietPhases/diet-phase-service");
 const planResolver = require("../dietPhases/diet-phase-resolver");
@@ -133,14 +132,15 @@ const controller = {
   },
 
   // PUT /dietdays/date/:date/paste — pega sobre el día de esa fecha las
-  // comidas del portapapeles. No se puede pegar encima de comida pautada.
+  // comidas del portapapeles como alimentos del cliente; lo pautado del
+  // destino se queda (ver diet-days-dao.js#pasteDietDayByUser). Una fecha
+  // sin día se estrena antes con su plan, como al abrirla: si no, lo pegado
+  // la dejaría "tocada" y el plan ya no entraría nunca.
   async pasteDay(req, res) {
     const date = requireIsoDate(req, res);
     if (!date) return;
 
-    const target = await dietDayService.findByUserAndDate(req.user.id, date);
-    mealService.assertDayPasteAllowed(target);
-
+    await resolveOwnedDietDay(req.user.id, date);
     return res.send(await dietDayService.pasteDietDayByUser(req.user.id, req.body?.dietDayClipboard, date));
   },
 

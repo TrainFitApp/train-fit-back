@@ -27,38 +27,9 @@ function assertMealEditable(meal) {
   }
 }
 
-// pasteMeal en modo "reemplazar" (merge=false) borra TODO lo que hubiera
-// antes en la comida — si esta ya tiene items pautados a nivel individual
-// (meal.assignedByTrainerId sigue null porque la comida es "mixta", ver
-// meal-dao.js#pasteMeal), un reemplazo se los llevaría por delante sin que
-// assertMealEditable (que solo mira el nivel de Meal) lo detecte. En modo
-// "combinar" (merge=true) los items existentes sobreviven intactos, así
-// que no hace falta esta comprobación extra.
-function assertMealPasteAllowed(meal, merge) {
-  assertMealEditable(meal);
-  if (merge) return;
-
-  const hasProtectedItems =
-    (meal?.customProducts || []).some((cp) => cp?.assignedByTrainerId) ||
-    (meal?.customRecipes || []).some((cr) => cr?.assignedByTrainerId);
-  if (hasProtectedItems) {
-    throw new MealProtectedError();
-  }
-}
-
-// Pegar un día entero sustituye TODAS sus comidas (diet-days-dao.js#
-// pasteDietDayByUser): mismo criterio que pegar una comida en modo
-// "reemplazar", aplicado a cada comida del día destino. Antes se llevaba por
-// delante lo pautado por el profesional sin avisar.
-function assertDayPasteAllowed(dietDay) {
-  for (const meal of dietDay?.meals || []) assertMealPasteAllowed(meal, false);
-}
-
 module.exports = {
   MealProtectedError,
   assertMealEditable,
-  assertMealPasteAllowed,
-  assertDayPasteAllowed,
 
   async findById(id) {
     return mealDao.findById(id);

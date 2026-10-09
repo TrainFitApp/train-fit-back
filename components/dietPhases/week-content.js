@@ -20,6 +20,29 @@ function contentAt(contents, date) {
   return found;
 }
 
+/**
+ * El contenido que rige `date` entre varias fases ya cargadas: el de la fase
+ * que la cubre (la que empieza más tarde de las que la contienen;
+ * diet-phase-dao.js#findCoveringDate ordena igual) y, dentro de ella, la
+ * última versión que ya empezó (una semana preparada tapa a la anterior
+ * desde su lunes). `{ phase, content }`, o null.
+ */
+function coveringContent(phases, date) {
+  let best = null;
+  for (const phase of phases || []) {
+    if (!phase?.startDate || phase.startDate > date) continue;
+    if (phase.endDate && phase.endDate < date) continue;
+    // Mismo desempate que findCoveringDate: a igual inicio, la más reciente.
+    if (
+      !best ||
+      phase.startDate > best.startDate ||
+      (phase.startDate === best.startDate && new Date(phase.createdAt || 0) > new Date(best.createdAt || 0))
+    ) best = phase;
+  }
+  const content = best ? contentAt(best.contents, date) : null;
+  return content ? { phase: best, content } : null;
+}
+
 /** Hasta qué día rige un contenido: el anterior al siguiente, o el fin de la fase. */
 function contentEnd(phase, content) {
   const contents = phase.contents || [];
@@ -50,4 +73,4 @@ function contentSignature({ menus }) {
   );
 }
 
-module.exports = { contentAt, contentEnd, contentSignature };
+module.exports = { contentAt, coveringContent, contentEnd, contentSignature };

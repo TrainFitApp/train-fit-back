@@ -15,6 +15,9 @@ const ExerciseMuscleSchema = new Schema(
 const ExerciseSchema = Schema({
   name: { type: String, trim: true, maxlength: 100 },
   videoUrl: String,
+  // GIF de demostración del catálogo (lo pinta el front en el buscador y en
+  // el entrenamiento).
+  gifUrl: String,
   description: { type: String, trim: true, maxlength: 6500 },
   // Músculos que trabaja, cada uno con su papel. [] = ninguno (cardio).
   muscles: { type: [ExerciseMuscleSchema], default: [] },

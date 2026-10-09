@@ -56,11 +56,10 @@ function dedupeKeyFor(trainerId, clientId, type) {
  * cascada por cliente, en serie) hasta dietDaysDao#listTrackingDaysForUsers.
  *
  * Lo que NO se usa aquí, a propósito:
- *   - getTrackingDaysForClient (trainer-client-data-controller.js): resuelve
- *     el plan al vuelo para cada fecha sin DietDay materializado, y cada
- *     resolución son 3 consultas más una DietTemplate con la cascada entera
- *     de autopopulate. Correcto para UN cliente y UN rango en una ficha
- *     abierta; ruinoso para 30 clientes × 28 días. Aquí se leen solo los
+ *   - getTrackingDaysForClient (diet-day-resolver.js): carga las fases del
+ *     cliente con la cascada entera de autopopulate para medir con lo
+ *     pautado los días en que no eligió menú. Correcto para UN cliente en
+ *     una ficha abierta; ruinoso para toda la cartera. Aquí se leen solo los
  *     días REALMENTE materializados, que además es el dato correcto para
  *     esta señal: un día que nadie abrió no tiene consumo que medir, y ese
  *     silencio ya lo recoge la señal de inactividad.

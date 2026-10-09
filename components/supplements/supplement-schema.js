@@ -16,9 +16,14 @@ const Schema = mongoose.Schema;
 
 const { SUPPLEMENT_TIMINGS } = require("./supplement-catalog");
 
+// Dos orígenes con el mismo modelo: lo que pauta un profesional (trainerId)
+// y lo que el cliente se apunta él mismo (trainerId null), que solo puede
+// añadir mientras no tenga profesional (supplement-service.js#createOwn).
+
 const SupplementSchema = new Schema(
   {
-    trainerId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    // null = suplemento propio del cliente, no pautado por nadie.
+    trainerId: { type: Schema.Types.ObjectId, ref: "User", default: null, index: true },
     clientId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     name: { type: String, required: true, trim: true, maxlength: 120 },
     // Texto libre y no un número con unidad: las dosis reales son "5 g",
@@ -54,7 +59,8 @@ const SupplementSchema = new Schema(
 );
 
 // Un entrenador no pauta dos veces el mismo suplemento al mismo cliente: si
-// cambia la dosis, edita el que hay. El índice lo garantiza.
+// cambia la dosis, edita el que hay. El índice lo garantiza, también para los
+// propios del cliente (trainerId null): uno por nombre.
 SupplementSchema.index({ trainerId: 1, clientId: 1, name: 1 }, { unique: true });
 
 SupplementSchema.plugin(require("../util/account-cascade").accountCascade, { owners: ["trainerId", "clientId"] });

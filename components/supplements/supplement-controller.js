@@ -2,6 +2,7 @@ const supplementService = require("./supplement-service");
 const { SUPPLEMENT_TIMINGS } = require("./supplement-catalog");
 const { todayForUser } = require("../users/user-time-zone");
 const { todayIsoDate } = require("../util/date-util");
+const { badRequest } = require("../util/http-error");
 
 const TIMING_KEYS = new Set(SUPPLEMENT_TIMINGS.map((option) => option.key));
 
@@ -59,6 +60,20 @@ function sanitizeBody(body, today) {
   };
 }
 
+// El cuerpo saneado o un 400: nombre y dosis obligatorios y fechas en orden.
+function requireBody(body, today) {
+  const data = sanitizeBody(body, today);
+  if (!data) throw badRequest("Revisa el nombre, la dosis y las fechas", "SUPPLEMENT_INVALID");
+  return data;
+}
+
+// Lo que decide el cliente de sus propios suplementos. El resto (motivo,
+// enlace, días, fin) es de la pauta de un profesional; desde qué día se toma
+// lo fija el alta y editar no lo mueve.
+function ownFields({ name, dose, timing, customTiming }) {
+  return { name, dose, timing, customTiming };
+}
+
 module.exports = {
   // El vocabulario lo decide el backend, igual que en dolor y en reglas.
   async getTimings(_req, res) {
@@ -72,27 +87,13 @@ module.exports = {
   },
 
   async create(req, res) {
-    const data = sanitizeBody(req.body, await todayForUser(req.params.clientId));
-    if (!data) {
-      return res.status(400).send({
-        message: "Revisa el nombre, la dosis y las fechas",
-        code: "SUPPLEMENT_INVALID",
-      });
-    }
-
+    const data = requireBody(req.body, await todayForUser(req.params.clientId));
     const supplement = await supplementService.create(req.auth.userId, req.params.clientId, data);
     return res.status(201).send(supplement);
   },
 
   async update(req, res) {
-    const data = sanitizeBody(req.body, await todayForUser(req.params.clientId));
-    if (!data) {
-      return res.status(400).send({
-        message: "Revisa el nombre, la dosis y las fechas",
-        code: "SUPPLEMENT_INVALID",
-      });
-    }
-
+    const data = requireBody(req.body, await todayForUser(req.params.clientId));
     const supplement = await supplementService.update(req.auth.userId, req.params.clientId, req.params.supplementId, data);
     if (!supplement) return res.status(404).send({ message: "Suplemento no encontrado" });
     return res.send(supplement);
@@ -106,9 +107,30 @@ module.exports = {
   // --- Lado cliente ---
   // Sus suplementos vigentes hoy (o en la fecha que pida la app: la pantalla
   // de dieta los pinta debajo de las comidas del día que se está mirando),
-  // de cualquier profesional con relación viva.
+  // de cualquier profesional con relación viva, y los que se apuntó él.
   async listMine(req, res) {
     const date = sanitizeDate(req.query?.date, todayIsoDate(req.auth.timeZone));
     return res.send(await supplementService.listActiveForClient(req.auth.userId, date));
+  },
+
+  // Los que se apunta él mismo, desde la pantalla de dieta. Se toman desde
+  // `startDate` (el día que estaba mirando; hoy si no lo manda).
+  async createMine(req, res) {
+    const data = requireBody(req.body, todayIsoDate(req.auth.timeZone));
+    const supplement = await supplementService.createOwn(req.auth.userId, {
+      ...ownFields(data),
+      startDate: data.startDate,
+    });
+    return res.status(201).send(supplement);
+  },
+
+  async updateMine(req, res) {
+    const data = ownFields(requireBody(req.body, todayIsoDate(req.auth.timeZone)));
+    return res.send(await supplementService.updateOwn(req.auth.userId, req.params.supplementId, data));
+  },
+
+  async removeMine(req, res) {
+    await supplementService.removeOwn(req.auth.userId, req.params.supplementId);
+    return res.sendStatus(204);
   },
 };

@@ -179,13 +179,24 @@ function isItemConsumed(item) {
   return !!item?.consumed;
 }
 
+// Lo PAUTADO de un item: a la cantidad que puso el profesional
+// (assignedQuantity), no a la que el cliente registró después. Sin esto, un
+// cliente que se tomaba 150 g de lo pautado en 100 g subía también el
+// "pautado" del día y la desviación salía cero.
+function plannedView(item) {
+  const assigned = item?.assignedQuantity;
+  if (assigned === null || assigned === undefined) return item;
+  const base = typeof item?.toObject === "function" ? item.toObject() : item;
+  return { ...base, quantity: assigned };
+}
+
 function mealTracking(meal) {
   const products = meal?.customProducts || [];
   const recipes = meal?.customRecipes || [];
 
   const plannedMacros = sumMacroList([
-    ...products.filter(isItemPlanned).map(ingredientMacros),
-    ...recipes.filter(isItemPlanned).map(macrosForCustomRecipe),
+    ...products.filter(isItemPlanned).map((p) => ingredientMacros(plannedView(p))),
+    ...recipes.filter(isItemPlanned).map((r) => macrosForCustomRecipe(plannedView(r))),
   ]);
   const consumedMacros = sumMacroList([
     ...products.filter((p) => isItemConsumed(p)).map(ingredientMacros),
@@ -253,8 +264,15 @@ function computeRangeAdherence(days, periodDays) {
   };
 }
 
+// Margen único de la adherencia calórica: un día cuadra si lo comido queda a
+// ±15 % de lo pautado (adherencia de la ficha y desviación del resumen del
+// día).
+const KCAL_TOLERANCE = 0.15;
+
 module.exports = {
+  KCAL_TOLERANCE,
   CUSTOM_PRODUCT_OVERRIDE_FIELDS,
+  plannedView,
   mergeRecipeIngredients,
   ingredientMacros,
   macrosForCustomRecipe,

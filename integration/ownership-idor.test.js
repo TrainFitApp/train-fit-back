@@ -120,6 +120,14 @@ idor("enganchar el microciclo de otro a una rutina mía", async ({ attacker, dat
 
 // --- Nutrición ----------------------------------------------------------------------
 
+idor("editar o quitar los suplementos propios de otro cliente", async ({ victim, attacker }) => {
+  const own = await ctx.post(victim, "/supplements/mine", { name: "Creatina", dose: "5 g" });
+  assert.equal((await ctx.call(attacker, "PUT", `/supplements/mine/${own._id}`, { name: "Hackeada", dose: "1 g" })).status, 404);
+  assert.equal((await ctx.call(attacker, "DELETE", `/supplements/mine/${own._id}`)).status, 404);
+  assert.deepEqual(await ctx.get(attacker, "/supplements/mine"), []);
+  assert.deepEqual((await ctx.get(victim, "/supplements/mine")).map((s) => [s.name, s.dose]), [["Creatina", "5 g"]]);
+});
+
 idor("borrar el día de dieta de otro: por fecha solo se borra el propio", async ({ attacker, data }) => {
   await ctx.call(attacker, "DELETE", `/dietdays/date/${data.day.date}`);
   assert.ok(await reload("DietDay", data.day._id));
@@ -190,4 +198,13 @@ idor("ver el día de dieta de otro: por fecha solo se ve el propio", async ({ vi
   const res = await ctx.post(attacker, "/dietdays/date/2026-06-10", { userId: victim.id });
   assert.notEqual(String(res.dietDay.userId), victim.id, "el dueño sale del token");
   assert.equal(res.dietDay.meals[0].customProducts.length, 0);
+});
+
+idor("ver el resumen de un día de dieta de quien no es cliente mío", async ({ victim, attacker }) => {
+  const stranger = await ctx.makeTrainer();
+  for (const user of [stranger, attacker]) {
+    const res = await ctx.call(user, "GET", `/trainer/clients/${victim.id}/nutrition-day?date=2026-06-10`);
+    assert.equal(res.status, 403);
+    assert.ok(!JSON.stringify(res.body).includes("Desayuno privado"));
+  }
 });

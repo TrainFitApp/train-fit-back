@@ -132,6 +132,82 @@ test("suplementos: editar y borrar solo los propios del profesional", async () =
   assert.deepEqual(await ctx.get(client, "/supplements/mine"), []);
 });
 
+test("suplementos propios: sin profesional, el cliente los añade desde un día, los edita y los quita", async () => {
+  const client = await ctx.makeClient();
+  assert.equal((await ctx.call(client, "POST", "/supplements/mine", { dose: "5 g" })).body.code, "SUPPLEMENT_INVALID");
+
+  const created = await ctx.post(client, "/supplements/mine", {
+    name: "  Creatina ",
+    dose: "5 g",
+    timing: "post_workout",
+    startDate: h.day(-2),
+    reason: "No lo decide el cliente",
+    weekdays: [1],
+  });
+  assert.equal(created.name, "Creatina");
+  assert.equal(created.trainerId, null, "propio: sin profesional");
+  assert.equal(created.startDate, h.day(-2));
+  assert.deepEqual([created.reason, created.weekdays], ["", []], "solo nombre, dosis y momento");
+
+  const today = await ctx.get(client, "/supplements/mine");
+  assert.deepEqual(today.map((s) => [s.name, s.own]), [["Creatina", true]]);
+  assert.deepEqual(await ctx.get(client, `/supplements/mine?date=${h.day(-3)}`), [], "antes del día de alta no está");
+
+  const duplicate = await ctx.call(client, "POST", "/supplements/mine", { name: "Creatina", dose: "3 g" });
+  assert.deepEqual([duplicate.status, duplicate.body.code], [409, "SUPPLEMENT_DUPLICATE"]);
+
+  const updated = await ctx.put(client, `/supplements/mine/${created._id}`, {
+    name: "Creatina",
+    dose: "3 g",
+    timing: "custom",
+    customTiming: "Con el café",
+    startDate: h.day(5),
+  });
+  assert.deepEqual([updated.dose, updated.customTiming], ["3 g", "Con el café"]);
+  assert.equal(updated.startDate, h.day(-2), "editar no mueve el día de alta");
+
+  assert.equal((await ctx.call(client, "DELETE", `/supplements/mine/${created._id}`)).status, 204);
+  assert.deepEqual(await ctx.get(client, "/supplements/mine"), []);
+  const again = await ctx.call(client, "DELETE", `/supplements/mine/${created._id}`);
+  assert.deepEqual([again.status, again.body.code], [404, "SUPPLEMENT_NOT_FOUND"]);
+});
+
+test("suplementos propios: con profesional activo no se añaden, los que tenía siguen siendo suyos y lo pautado no lo toca", async () => {
+  const trainer = await ctx.makeTrainer({ name: "Coach" });
+  const client = await ctx.makeClient();
+  const own = await ctx.post(client, "/supplements/mine", { name: "Vitamina D", dose: "2000 UI" });
+  await ctx.relateBoth(trainer, client);
+
+  const blocked = await ctx.call(client, "POST", "/supplements/mine", { name: "Cafeína", dose: "200 mg" });
+  assert.deepEqual([blocked.status, blocked.body.code], [403, "SUPPLEMENT_MANAGED_BY_TRAINER"]);
+
+  const prescribed = await ctx.post(trainer, `/trainer/clients/${client.id}/supplements`, { name: "Magnesio", dose: "300 mg" });
+  const list = await ctx.get(client, "/supplements/mine");
+  assert.deepEqual(
+    list.map((s) => [s.name, s.own, Boolean(s.trainerName)]),
+    [["Magnesio", false, true], ["Vitamina D", true, false]],
+    "lo pautado primero, distinguido de lo suyo"
+  );
+
+  // Cada uno solo toca lo suyo.
+  const trainerList = await ctx.get(trainer, `/trainer/clients/${client.id}/supplements`);
+  assert.deepEqual(trainerList.map((s) => s.name), ["Magnesio"], "el profesional no ve los propios del cliente");
+  assert.equal((await ctx.call(trainer, "PUT", `/trainer/clients/${client.id}/supplements/${own._id}`, { name: "x", dose: "y" })).status, 404);
+  await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}/supplements/${own._id}`);
+  assert.equal(await ctx.count("Supplement", { _id: own._id }), 1);
+
+  assert.equal((await ctx.call(client, "PUT", `/supplements/mine/${prescribed._id}`, { name: "Magnesio", dose: "1 g" })).status, 404);
+  assert.equal((await ctx.call(client, "DELETE", `/supplements/mine/${prescribed._id}`)).status, 404);
+  assert.equal((await ctx.get(trainer, `/trainer/clients/${client.id}/supplements`))[0].dose, "300 mg");
+
+  const edited = await ctx.put(client, `/supplements/mine/${own._id}`, { name: "Vitamina D", dose: "4000 UI" });
+  assert.equal(edited.dose, "4000 UI", "lo suyo lo sigue editando con profesional");
+
+  await ctx.endRelation(trainer, client);
+  assert.deepEqual((await ctx.get(client, "/supplements/mine")).map((s) => s.name), ["Vitamina D"]);
+  await ctx.post(client, "/supplements/mine", { name: "Cafeína", dose: "200 mg" });
+});
+
 // --- Dolor --------------------------------------------------------------------------
 
 test("dolor: el cliente lo apunta por zona y día (sin duplicar), el profesional lo ve con sus umbrales", async () => {

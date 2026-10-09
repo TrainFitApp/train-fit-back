@@ -42,7 +42,8 @@ module.exports = {
   // body: { startDate, templateId? | menus?, name?, target?, proteinPerKg?, fatPerKg?, reason? }
   // Con `templateId`, copia esa plantilla de la biblioteca (el nombre, si no
   // llega, es el suyo); sin él, `name` y `menus` construidos para el cliente.
-  // 409 PLAN_OVERLAP si pisa una fase programada.
+  // La que rige ese día se corta; 409 PLAN_OVERLAP si empieza antes que una
+  // fase programada (o, en un día futuro, el mismo en que empieza otra).
   async createPhase(req, res) {
     const body = req.body || {};
     const phase = await dietPhaseService.createPhase({

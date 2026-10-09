@@ -15,8 +15,9 @@ const RecipeSchema = Schema(
     // Derivados de búsqueda, ver components/util/search-index.js.
     nameNormalized: String,
     searchTokens: [String],
-    // Descripción opcional
-    description: { type: String, trim: true, maxlength: 2000 },
+    // Descripción opcional: hasta lo que caben los 20 pasos de 300 caracteres
+    // de los editores de recetas del front, como en Exercise.
+    description: { type: String, trim: true, maxlength: 6500 },
     // TASK-046 (MASTER_BACKLOG.md) — categorización libre (tipo de cocina,
     // dieta, etc.), filtrable en searchRecipes. Sin catálogo cerrado
     // deliberadamente — mismo criterio que Exercise.category (string libre
@@ -52,7 +53,7 @@ RecipeSchema.plugin(require("mongoose-autopopulate"));
 // ─── Campos derivados de búsqueda ──────────────────────────────────────
 // Mismo criterio que Product: los calcula el schema para que no haya forma de
 // guardar una receta que la búsqueda no encuentre. Índices en
-// scripts/rebuild-search-indexes.js (npm run rebuild:search-indexes).
+// scripts/rebuild-indexes.js (npm run rebuild:indexes).
 
 RecipeSchema.pre("save", function syncSearchFieldsOnSave(next) {
   if (this.isModified("name") || !this.nameNormalized) {

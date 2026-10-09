@@ -44,7 +44,7 @@ function customRecipeClonePayload(customRecipeObj, cloneCustomProductPayload) {
  * cantidad de ahora como referencia; pegado por el cliente, la copia es SUYA
  * (nunca hereda la marca de pautado ni el "tomado").
  */
-async function cloneClipboardContent(clipboard, { trainerId = null, mealId = null } = {}) {
+async function cloneClipboardContent(clipboard, { trainerId = null } = {}) {
   const stampProvenance = (payload) => {
     if (trainerId) {
       payload.assignedByTrainerId = trainerId;
@@ -70,7 +70,6 @@ async function cloneClipboardContent(clipboard, { trainerId = null, mealId = nul
   const customProducts = (clipboard?.customProducts || []).map((value) => ({
     ...cloneCustomProductPayload(value),
     _id: mealStore.newId(),
-    ...(mealId ? { mealId } : {}),
   }));
 
   const customRecipes = [];
@@ -89,8 +88,20 @@ async function cloneClipboardContent(clipboard, { trainerId = null, mealId = nul
 
 const isPlanned = (item) => Boolean(item?.assignedByTrainerId);
 
+/**
+ * Lo que se queda en la comida destino al pegar. Combinar (`merge`) lo deja
+ * todo. Reemplazar quita lo del cliente, pero lo pautado solo lo rehace su
+ * profesional (`byTrainer`): cuando pega el cliente, lo pautado del destino
+ * sigue donde estaba y lo pegado se suma como suyo.
+ */
+function keptOnPaste(items, { merge = false, byTrainer = false } = {}) {
+  if (merge) return items || [];
+  return byTrainer ? [] : (items || []).filter(isPlanned);
+}
+
 module.exports = {
   cloneClipboardContent,
+  keptOnPaste,
 
   async findById(id) {
     return mealStore.readMeal(id);
@@ -211,17 +222,19 @@ module.exports = {
   },
 
   // Pega el portapapeles en la comida: con `merge` se añade a lo que ya
-  // tiene; sin él, lo sustituye. `trainerId` solo lo pasan los flujos del
-  // profesional (pautar, aplicar a clientes, propuestas, plan): estampa
+  // tiene; sin él, lo sustituye (ver keptOnPaste: el cliente nunca se lleva
+  // lo pautado). `trainerId` solo lo pasan los flujos del profesional
+  // (pautar, aplicar a clientes, propuestas, plan): estampa
   // assignedByTrainerId en cada alimento/receta NUEVO, a nivel de item, para
   // que el cliente pueda seguir añadiendo lo suyo a la misma comida.
   async pasteMeal(mealClipboard, mealToPaste, merge, trainerId = null) {
     const mealId = normalizeId(mealToPaste);
-    const content = await cloneClipboardContent(mealClipboard, { trainerId, mealId });
+    const content = await cloneClipboardContent(mealClipboard, { trainerId });
+    const keep = { merge, byTrainer: Boolean(trainerId) };
     await mealStore.mutateMeal(mealId, (meal) => ({
       ...meal,
-      customProducts: [...(merge ? meal.customProducts || [] : []), ...content.customProducts],
-      customRecipes: [...(merge ? meal.customRecipes || [] : []), ...content.customRecipes],
+      customProducts: [...keptOnPaste(meal.customProducts, keep), ...content.customProducts],
+      customRecipes: [...keptOnPaste(meal.customRecipes, keep), ...content.customRecipes],
     }));
     return mealStore.readMeal(mealId);
   },

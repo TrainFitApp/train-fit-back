@@ -14,13 +14,13 @@ ctx.before(async () => {
   pollo = await ctx.model("Product").create({ name: "Pollo", energyKcal100g: 165, protein100g: 31, carbohydrates100g: 0, fat100g: 3.6, verified: true });
 });
 
-async function clientOnPlan() {
+async function clientOnPlan({ startDate = h.day(-3) } = {}) {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
   await ctx.relateBoth(trainer, client);
   await ctx.post(trainer, `/trainer/clients/${client.id}/diet-phases`, {
     name: "Plan",
-    startDate: h.day(-3),
+    startDate,
     menus: [{ name: "Único", meals: [{ slot: "Comida", alternatives: [{ customProducts: [{ product: String(pollo._id), quantity: 200, energyKcal100g: 165, protein100g: 31, carbohydrates100g: 0, fat100g: 3.6 }] }] }] }],
   });
   return { trainer, client };
@@ -99,6 +99,35 @@ test("resumen de la ficha: responde para su cliente y 403 para uno ajeno; el pro
   const onlyDiet = await ctx.makeClient();
   await ctx.relate(dietitian, onlyDiet, { scope: "nutrition" });
   assert.equal((await ctx.call(dietitian, "GET", `/trainer/clients/${onlyDiet.id}/training-progress`)).status, 403);
+});
+
+// Un día solo lleva pauta cuando el cliente elige menú. Los días pasados de
+// la fase en los que no lo eligió tienen que contar como no seguidos: antes
+// el Resumen decía "sin datos de seguimiento" con la fase semanas asignada.
+test("resumen: los días pasados de la fase sin menú elegido cuentan como 0 %, no como «sin datos»", async () => {
+  const { trainer, client } = await clientOnPlan({ startDate: h.day(-6) });
+  const base = `/trainer/clients/${client.id}`;
+
+  const untouched = (await ctx.get(trainer, `${base}/summary`)).adherence.dimensions.nutrition;
+  assert.deepEqual(
+    { applicable: untouched.applicable, percentage: untouched.percentage, daysWithData: untouched.daysWithData },
+    { applicable: true, percentage: 0, daysWithData: 6 },
+    "6 días pasados de fase sin elegir; hoy aún puede elegir"
+  );
+
+  await eatPrescribed(client, h.day(-1));
+  const summary = await ctx.get(trainer, `${base}/summary`);
+  assert.equal(summary.adherence.dimensions.nutrition.percentage, 17, "1 día al 100 % y 5 al 0 %");
+  assert.equal(summary.dietPhase.name, "Plan");
+
+  const progress = await ctx.get(trainer, `${base}/progress?weeks=4`);
+  assert.ok(progress.series.some((week) => week.nutritionAdherence !== null), "la serie semanal también tiene datos");
+
+  const compliance = await ctx.get(trainer, `${base}/nutrition-compliance?from=${h.day(-6)}&to=${h.day(0)}`);
+  const byDate = Object.fromEntries(compliance.dailyBreakdown.map((d) => [d.date, d]));
+  assert.deepEqual([byDate[h.day(-6)].hasPlan, byDate[h.day(-6)].completionPercentage], [true, 0]);
+  assert.equal(byDate[h.day(-1)].completionPercentage, 100);
+  assert.equal(byDate[h.day(0)], undefined, "hoy sin elegir no se juzga");
 });
 
 test("bandeja «Por revisar»: el check-in respondido aparece y desaparece al revisarlo", async () => {

@@ -83,13 +83,9 @@ async function loadClientWindow(trainerId, clientId, { from, to, timeZone }) {
     // Las solicitudes de la ventana, para medir adherencia de check-in
     // contra fechas reales y no contra una cadencia estimada.
     checkinAgenda.agendaFor(trainerId, clientId, from, to, today),
-    // Auditoría 2026-09 — antes leía SOLO DietDay ya materializados
-    // (getFullyPopulatedDietDaysForUser), igual que el bug ya arreglado en
-    // Seguimiento (F20-undecies, ver diet-day-resolver.js): un plan recién
-    // asignado que nadie ha abierto todavía salía "sin datos suficientes"
-    // pese a cubrir días reales de la ventana. getTrackingDaysForClient
-    // resuelve además los días sin materializar (sin escribir en BD), dando
-    // hasPlan=true/0% consumido en vez de excluirlos del cálculo.
+    // Los mismos días que mide el resto de la ficha: los pasados de una fase
+    // en los que el cliente no eligió menú cuentan con lo pautado sin tomar
+    // (0 %), no como "sin datos" (ver dietDays/tracking-days.js).
     client._id
       ? getTrackingDaysForClient(clientId, from, to)
       : [],

@@ -53,7 +53,7 @@ DietDaySchema.plugin(mongooseAutopopulate);
 // colisionar todos entre sí por `null`.
 //
 // Al desplegar esto sobre una base que ya tenía el índice NO único hay que
-// pasar `npm run migrate:modelo-datos` (paso 02: funde duplicados y
+// pasar `npm run migrate` (paso 02: funde duplicados y
 // sustituye el índice). Si no, mongoose no puede crear el índice (IndexOptionsConflict) y
 // la protección se queda sin aplicar.
 DietDaySchema.index(

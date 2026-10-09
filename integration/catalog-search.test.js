@@ -18,11 +18,9 @@ let catalogOwner;
 
 ctx.before(async () => {
   Product = ctx.model("Product");
-  // Índices reales de búsqueda, los mismos que crea el script de despliegue
-  // (sin ellos la etapa de texto falla en silencio y el rescate no se prueba).
-  const script = require("../scripts/rebuild-search-indexes");
-  await script.syncIndexes(Product.collection, "products", script.PRODUCT_INDEXES);
-  await script.syncIndexes(ctx.model("Recipe").collection, "recipes", script.RECIPE_INDEXES);
+  // Índices reales, los mismos que deja el script de despliegue (sin los de
+  // búsqueda la etapa de texto falla en silencio y el rescate no se prueba).
+  await require("../scripts/rebuild-indexes").rebuildIndexes(Product.db.db);
 
   catalogOwner = await ctx.makeClient({ name: "Ajeno" });
   const global = (name, extra = {}) => ({ name, energyKcal100g: 100, verified: true, ...extra });
@@ -244,6 +242,30 @@ test("editar o borrar un producto ajeno o global: 403; inexistente: 404; admin s
   assert.equal(adminEdit.status, 200);
 });
 
+test("biblioteca de alimentos del entrenador: lista lo suyo sin texto, edita lo propio y nada ajeno", async () => {
+  const trainer = await ctx.makeTrainer();
+  const created = await ctx.post(trainer, "/products", { name: "Crema de cacahuete del coach", energyKcal100g: 600 });
+  assert.equal(String(created.userId), trainer.id);
+
+  // La portada de Biblioteca › Alimentos: «Míos» sin texto, productos y recetas.
+  const ownProducts = await searchFoods(trainer, { search: "", userId: trainer.id, ownFilter: true });
+  assert.deepEqual(names(ownProducts), ["Crema de cacahuete del coach"]);
+  await composeRecipe(trainer, "Tostada del coach");
+  assert.deepEqual(names(await ctx.get(trainer, "/recipes/search?own=true")), ["Tostada del coach"]);
+
+  const edited = await ctx.call(trainer, "PUT", "/products", { _id: created._id, name: "Crema de cacahuete 100 %", energyKcal100g: 620 });
+  assert.equal(edited.status, 200);
+  assert.equal((await Product.findById(created._id).lean()).energyKcal100g, 620);
+  assert.deepEqual(names(await searchFoods(trainer, { search: "cacahuete", userId: trainer.id })), ["Crema de cacahuete 100 %"]);
+
+  const global = await Product.findOne({ name: "Leche desnatada" });
+  const foreign = await Product.findOne({ name: "Leche secreta del vecino" });
+  for (const target of [global, foreign]) {
+    assert.equal((await ctx.call(trainer, "PUT", "/products", { _id: target._id, name: "Hack" })).status, 403);
+  }
+  assert.equal((await Product.findById(foreign._id).lean()).name, "Leche secreta del vecino");
+});
+
 test("promocionar a global: solo admin; después lo ve todo el mundo como verificado", async () => {
   const owner = await ctx.makeClient();
   const stranger = await ctx.makeClient();
@@ -347,6 +369,14 @@ test("límite free de recetas: 2 propias; la tercera da PREMIUM_LIMIT_RECIPES; p
   await composeRecipe(expired, "Caducada 1");
   await composeRecipe(expired, "Caducada 2");
   assert.equal((await ctx.call(expired, "POST", "/recipes/compose", { recipe: { name: "Caducada 3" } })).status, 403);
+});
+
+test("una receta guarda la descripción entera que dejan escribir los editores (20 pasos de 300 caracteres)", async () => {
+  const chef = await ctx.makeClient();
+  const description = Array.from({ length: 20 }, (_, i) => `${i + 1}. ${"x".repeat(296)}`).join("\n");
+  assert.ok(description.length > 2000, "antes el back cortaba en 2.000 y daba error");
+  await ctx.post(chef, "/recipes", { name: "Receta larga", description });
+  assert.equal((await ctx.model("Recipe").findOne({ name: "Receta larga" }).lean()).description, description);
 });
 
 test("el entrenador crea recetas de biblioteca sin límite pero nunca las engancha a una comida", async () => {
@@ -476,15 +506,16 @@ test("borrar una receta global usada en una plantilla de dieta: la plantilla la 
 
 // --- Script de índices --------------------------------------------------------------
 
-test("rebuild-search-indexes es idempotente y los schemas no declaran índices propios de búsqueda", async () => {
-  const script = require("../scripts/rebuild-search-indexes");
+test("rebuild-indexes deja en products solo los de búsqueda y la segunda pasada no cambia nada", async () => {
+  const script = require("../scripts/rebuild-indexes");
   const before = (await Product.collection.indexes()).map((i) => i.name).sort();
-  await script.syncIndexes(Product.collection, "products", script.PRODUCT_INDEXES);
+  const { collections } = await script.rebuildIndexes(Product.db.db, { skipBackfill: true });
   const after = (await Product.collection.indexes()).map((i) => i.name).sort();
-  assert.deepEqual(after, before, "segunda pasada: nada que crear ni borrar");
+  assert.deepEqual(after, before, "segunda pasada: los mismos índices");
+  const products = collections.find((result) => result.name === "products");
+  assert.deepEqual([products.retired, products.added], [[], []]);
   const expected = ["_id_", ...script.PRODUCT_INDEXES.map((d) => d.options.name)].sort();
   assert.deepEqual(after, expected, "solo los índices del script");
-  // Si un schema declarase un índice, el script lo borraría en cada despliegue
-  // y mongoose lo volvería a crear al arrancar.
+  // Los de búsqueda se declaran solo en el script: el schema no lleva ninguno.
   assert.deepEqual(Product.schema.indexes(), []);
 });

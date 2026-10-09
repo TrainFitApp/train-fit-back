@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const tableService = require("../tables/table-service");
 const anthropometryService = require("../anthropometry/anthropometry-service");
 const trainerNoteService = require("../trainerNotes/trainer-note-service");
-const { resolveOwnedDietDay, getTrackingDaysForClient } = require("../dietDays/diet-day-resolver");
+const { resolveOwnedDietDay, getTrackingDaysForClient, getDaySummaryForClient } = require("../dietDays/diet-day-resolver");
 const nutritionPreferencesService = require("../nutritionPreferences/nutrition-preferences-service");
 const trainerClientService = require("./trainer-client-service");
 const trainerPrescriptionService = require("./trainer-prescription-service");
@@ -14,9 +14,6 @@ const dietDaysService = require("../dietDays/diet-days-service");
 const { summarizeFoodCompliance } = require("../dietDays/food-compliance");
 const { routineInUseOfId } = require("../routineAssignments/routine-in-use");
 
-// MVP-trainers F20 — margen de tolerancia único, no repetido inline en varios
-// sitios (sección 9 del doc). ±15% sobre el objetivo de kcal del día.
-const ADHERENCE_TOLERANCE = 0.15;
 
 // Fase 7 Coach Pro — los tres helpers de fecha que vivían aquí ahora salen
 // de util/date-util.js. `daysBetweenIsoDates` pasa a llamarse `daysInRange`
@@ -257,9 +254,8 @@ module.exports = {
     // frontend), pero aquí dentro necesita otro nombre.
     const rangeDays = daysInRange(from, to);
 
-    // F20-undecies: getTrackingDaysForClient (materializados + resueltos al
-    // vuelo para fechas sin DietDay real) en vez de leer solo lo ya
-    // materializado — si no, un plan recién aplicado salía casi sin datos.
+    // Los días pasados de una fase sin menú elegido cuentan con lo pautado
+    // sin tomar (ver dietDays/tracking-days.js).
     const dietDays = await getTrackingDaysForClient(clientId, from, to);
 
     const dailyBreakdown = dietDays
@@ -268,7 +264,7 @@ module.exports = {
       .map((d) => {
         const kcal = Math.round(d.consumed.kcal);
         const plannedKcal = Math.round(d.planned.kcal);
-        const withinMargin = Math.abs(d.consumed.kcal - d.planned.kcal) <= d.planned.kcal * ADHERENCE_TOLERANCE;
+        const withinMargin = Math.abs(d.consumed.kcal - d.planned.kcal) <= d.planned.kcal * dietDaysNutritionUtil.KCAL_TOLERANCE;
         return { date: d.date, kcal, plannedKcal, withinMargin };
       });
 
@@ -368,6 +364,14 @@ module.exports = {
     return res.send({ status: "ok", dailyTracking });
   },
 
+  // GET /trainer/clients/:clientId/nutrition-day?date=YYYY-MM-DD
+  // Resumen de UN día (Plan › Nutrición › Día): menú y opciones elegidas, lo
+  // que tomó, lo que no y lo que añadió por su cuenta, y la desviación frente
+  // a lo pautado. No materializa el día (dietDays/day-summary.js).
+  async getClientNutritionDay(req, res) {
+    return res.send(await getDaySummaryForClient(req.params.clientId, req.query.date));
+  },
+
   // GET /trainer/clients/:clientId/nutrition-foods?from=&to=
   // Cumplimiento ALIMENTO A ALIMENTO del rango, para el panel de resumen de
   // una semana. Hermano de getClientNutritionTracking (que da lo mismo en macros,
@@ -376,10 +380,8 @@ module.exports = {
   async getClientNutritionFoods(req, res) {
     const clientId = req.params.clientId;
 
-    // `to` se acota a HOY a propósito: los días que todavía no están
-    // materializados se resuelven al vuelo con `consumed: false` (ver
-    // getTrackingDaysForClient), así que contar el futuro haría parecer que el
-    // cliente incumple lo que aún no le ha llegado.
+    // `to` se acota a HOY a propósito: una semana que aún no ha llegado no
+    // tiene cumplimiento que resumir.
     const hoy = await todayForUser(clientId);
     const pedido = req.query.to || hoy;
     const to = pedido > hoy ? hoy : pedido;

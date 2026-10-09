@@ -4,7 +4,13 @@ const dietDaySchema = require("./diet-days-schema");
 const mealStore = require("../meals/meal-store");
 const planResolver = require("../dietPhases/diet-phase-resolver");
 const mealAlternatives = require("../meals/meal-alternatives");
-const { daysInRange, addDaysToIsoDate } = require("../util/date-util");
+const dietPhaseDao = require("../dietPhases/diet-phase-dao");
+const { todayForUser } = require("../users/user-time-zone");
+const { buildTrackingDays } = require("./tracking-days");
+const { summarizeDay } = require("./day-summary");
+const { badRequest } = require("../util/http-error");
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Fase 9 — aplica un `resolved` de diet-phase-resolver.js#resolvePlanForDate
 // ({slot: {alternatives:[...]}}) sobre un DietDay YA EXISTENTE, comida a
@@ -188,69 +194,34 @@ async function resyncPlannedDays(clientId, from, to = null) {
   return resynced;
 }
 
-// F20-undecies — getFullyPopulatedDietDaysForDiet SOLO devuelve DietDay que
-// YA EXISTEN como documento; la resolución de un plan es LAZY
-// (resolveOwnedDietDay materializa un día la primera vez que alguien lo
-// abre — el cliente en su app, o el entrenador al mirar esa fecha desde la
-// ficha). La inmensa mayoría de los días de una ventana de 30/90 días
-// nunca se han "abierto" por nadie, así que adherencia/cumplimiento/
-// seguimiento salían casi vacíos para un plan recién aplicado aunque SÍ lo
-// cubriera — bug real, no "sin datos". Para cada fecha del rango sin
-// DietDay real, resuelve el plan sobre la marcha (resolvePlanForDate, sin
-// escribir nada en BD — un GET no debe materializar 90 documentos) y
-// construye una comida "sintética" con lo pautado (primera alternativa de
-// cada slot, mismo criterio que el total de macros del builder). Sin
-// datos de consumo real —nada se ha marcado porque nadie ha abierto ese
-// día—, pero eso es justo lo correcto: hasPlan=true, 0% consumido.
-//
-// Extraída de trainer-client-data-controller.js (F20-undecies) para
-// reutilizarla también en client-data-loader.js (Resumen de la ficha,
-// Auditoría 2026-09): el mismo bug de materialización que ya se arregló
-// para "Seguimiento" seguía vivo en el cálculo de adherencia del Resumen,
-// que leía los DietDay materializados directamente sin pasar por aquí.
+// Los días con los que la ficha del profesional mide el seguimiento
+// nutricional de [from, to] (Resumen, calendario, gráfica, alimentos). Un GET
+// no materializa nada: los días pasados de una fase en los que el cliente no
+// eligió menú se miden con lo pautado sin tomar (ver tracking-days.js).
 async function getTrackingDaysForClient(clientId, from, to) {
-  const materialized = await dietDaysService.getFullyPopulatedDietDaysForUser(clientId, from, to);
-  const materializedDates = new Set(materialized.map((d) => d.date));
+  const [dietDays, phases, today] = await Promise.all([
+    dietDaysService.getFullyPopulatedDietDaysForUser(clientId, from, to),
+    dietPhaseDao.listCoveringRange(clientId, from, to),
+    todayForUser(clientId),
+  ]);
+  return buildTrackingDays({ from, to, today, dietDays, phases });
+}
 
-  const days = [...materialized];
-  const totalDays = daysInRange(from, to);
-  for (let i = 0; i < totalDays; i++) {
-    const date = addDaysToIsoDate(from, i);
-    if (materializedDates.has(date)) continue;
-
-    let result;
-    try {
-      result = await planResolver.resolvePlanForDate(clientId, date);
-    } catch (e) {
-      continue;
-    }
-    if (!result) continue;
-
-    const meals = Object.values(result.resolved || {})
-      .map((slot) => slot.alternatives?.[0])
-      .filter((alt) => alt && ((alt.customProducts || []).length || (alt.customRecipes || []).length))
-      .map((alt) => ({
-        completed: false,
-        customProducts: (alt.customProducts || []).map((cp) => ({
-          ...(typeof cp.toObject === "function" ? cp.toObject() : cp),
-          assignedByTrainerId: result.trainerId,
-          consumed: false,
-        })),
-        customRecipes: (alt.customRecipes || []).map((cr) => ({
-          ...(typeof cr.toObject === "function" ? cr.toObject() : cr),
-          assignedByTrainerId: result.trainerId,
-          consumed: false,
-        })),
-      }));
-
-    if (meals.length) days.push({ date, meals });
-  }
-
-  days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  return days;
+// Resumen de un día del cliente para su profesional (day-summary.js), con los
+// mismos datos que getTrackingDaysForClient: el día tal cual y, si no eligió
+// menú, lo pautado por defecto. Tampoco materializa nada.
+async function getDaySummaryForClient(clientId, date) {
+  if (!ISO_DATE.test(date || "")) throw badRequest("Fecha inválida (YYYY-MM-DD)", "INVALID_DATE");
+  const [dietDays, phases, today] = await Promise.all([
+    dietDaysService.getFullyPopulatedDietDaysForUser(clientId, date, date),
+    dietPhaseDao.listCoveringRange(clientId, date, date),
+    todayForUser(clientId),
+  ]);
+  return summarizeDay({ date, today, dietDay: dietDays[0] || null, phases });
 }
 
 module.exports = {
+  getDaySummaryForClient,
   resolveOwnedDietDay,
   resolveOwnedMealById,
   applyResolvedPlanToDietDay,

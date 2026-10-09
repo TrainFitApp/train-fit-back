@@ -49,6 +49,7 @@ En el servidor, después de que `API CI` salga en verde:
 1. `git pull` (o el botón del panel de management).
 2. `npm ci --omit=dev` si cambiaron dependencias.
 3. `npm run build:ts`: PM2 arranca `bin/www` sin `prestart`.
-4. Migraciones e índices del commit (`npm run migrate:*`,
-   `npm run rebuild:search-indexes`), con `:dry-run` primero.
+4. Migración del commit (`npm run migrate`, que rehace también los índices,
+   en mantenimiento) y contenido de fábrica (`npm run presets`), con
+   `:dry-run` primero.
 5. `pm2 reload train-fit-back`.

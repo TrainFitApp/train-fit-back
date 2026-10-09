@@ -12,7 +12,9 @@ router.getAsync("/count", auth(["admin", "user", "trainer"]), controller.getProd
 // TAREA5 — el entrenador crea productos reales (no macros a mano) para
 // pautar comida vía search-foods (F12/F28).
 router.postAsync("/", auth(["admin", "user", "trainer"]), controller.createProduct);
-router.putAsync("/", auth(["admin", "user"]), controller.updateProduct);
+// El entrenador edita los suyos desde su Biblioteca › Alimentos y desde el
+// detalle del buscador; el controller solo deja tocar los propios.
+router.putAsync("/", auth(["admin", "user", "trainer"]), controller.updateProduct);
 router.putAsync(
   "/promote/:id",
   auth(["admin", "user"]),

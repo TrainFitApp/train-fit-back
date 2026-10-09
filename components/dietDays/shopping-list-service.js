@@ -1,6 +1,6 @@
 const { mergeRecipeIngredients } = require("./diet-days-nutrition-util");
 const { addDaysToIsoDate } = require("../util/date-util");
-const { contentAt } = require("../dietPhases/week-content");
+const { coveringContent } = require("../dietPhases/week-content");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -79,26 +79,6 @@ function itemsOfAlternative(alternative) {
     byKey.set(key, current);
   }
   return [...byKey.values()].map((entry) => ({ ...entry, quantity: round1(entry.quantity) }));
-}
-
-// El contenido que rige `date`: el de la fase que la cubre (la que empieza
-// más tarde de las que la contienen; findCoveringDate ordena igual) y, dentro
-// de ella, la última versión que ya empezó (una semana preparada tapa a la
-// anterior desde su lunes).
-function coveringContent(phases, date) {
-  let best = null;
-  for (const phase of phases) {
-    if (!phase?.startDate || phase.startDate > date) continue;
-    if (phase.endDate && phase.endDate < date) continue;
-    // Mismo desempate que findCoveringDate: a igual inicio, la más reciente.
-    if (
-      !best ||
-      phase.startDate > best.startDate ||
-      (phase.startDate === best.startDate && new Date(phase.createdAt || 0) > new Date(best.createdAt || 0))
-    ) best = phase;
-  }
-  const content = best ? contentAt(best.contents, date) : null;
-  return content ? { phase: best, content } : null;
 }
 
 function enumerateDates(from, to) {

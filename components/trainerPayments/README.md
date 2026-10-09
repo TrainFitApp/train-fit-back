@@ -166,8 +166,8 @@ anomalías, pagos anulados y previsiones. `GET /trainer/payments/summary` (panel
 Es el paso 13 del runner único del modelo de datos:
 
 ```bash
-npm run migrate:modelo-datos:dry-run   # informe, sin escribir
-npm run migrate:modelo-datos
+npm run migrate:dry-run   # informe, sin escribir
+npm run migrate
 ```
 
 Repetible y sin avisos. Lleva toda la colección a la forma de este README (el código ya no lee
@@ -200,7 +200,7 @@ antes/después; sale con código 1 si no coinciden. Test: `scripts/migrate-train
    lo avisa una vez).
 2. Arrancar: Mongoose crea las colecciones nuevas y los índices (parciales, sin conflictos
    con los datos actuales).
-3. `npm run migrate:modelo-datos:dry-run`, revisar anomalías y huérfanos del paso 13, y después sin `--dry-run`.
+3. `npm run migrate:dry-run`, revisar anomalías y huérfanos del paso 13, y después sin `--dry-run`.
 4. Publicar las apps (Trainers, cliente) a la vez que el back, con actualización forzada: las
    versiones anteriores usaban rutas y campos que ya no existen.
 

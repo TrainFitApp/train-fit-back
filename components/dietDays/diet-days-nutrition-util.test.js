@@ -431,6 +431,27 @@ test("computeDayTracking marca hasPlan aunque el plan sume 0 kcal", () => {
   assert.deepEqual(tracking.planned, ZERO);
 });
 
+// Regresión: lo pautado se medía a la cantidad que registró el cliente
+// (`quantity`), no a la que puso el profesional (`assignedQuantity`). Tomarse
+// 150 g de lo pautado en 100 g subía también el pautado del día y la
+// desviación salía cero.
+test("computeDayTracking mide lo pautado a la cantidad del profesional, no a la que registró el cliente", () => {
+  const recipe = { name: "Bol", customProducts: [snapshot(100, { kcal: 200 })] };
+  const tracking = computeDayTracking([
+    {
+      customProducts: [{ assignedByTrainerId: "trainer-1", assignedQuantity: 100, consumed: true, ...snapshot(150, { kcal: 200 }) }],
+      customRecipes: [{ assignedByTrainerId: "trainer-1", assignedQuantity: 100, quantity: 50, consumed: true, recipe }],
+    },
+  ]);
+  assert.equal(tracking.planned.kcal, 200 + 200);
+  assert.equal(tracking.consumed.kcal, 300 + 100);
+});
+
+test("computeDayTracking sin assignedQuantity (pautado por defecto) mide con quantity", () => {
+  const tracking = computeDayTracking([{ customProducts: [{ assignedByTrainerId: "trainer-1", ...snapshot(80, { kcal: 100 }) }] }]);
+  assert.equal(tracking.planned.kcal, 80);
+});
+
 test("computeDayTracking de un día sin comidas devuelve ceros, no undefined", () => {
   const tracking = computeDayTracking([]);
   assert.equal(tracking.hasPlan, false);
