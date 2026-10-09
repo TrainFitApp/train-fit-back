@@ -344,14 +344,50 @@ test("sustituir otra vez el mismo día: la ya sustituida no bloquea y manda la �
   assert.match(beforeScheduled.body.message, /Programada/);
 });
 
-test("una fase futura que pisa otra fase futura ya programada: 409 PLAN_OVERLAP", async () => {
+test("empezar más adelante con una fase en curso: la corta el día anterior y pierde lo preparado desde entonces", async () => {
+  const { trainer, client } = await setupPair();
+  const first = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-5));
+  const prepared = [h.day(2), h.day(9)];
+  await ctx.model("DietPhase").updateOne(
+    { _id: ctx.oid(first._id) },
+    { $push: { contents: { $each: prepared.map((startDate) => ({ startDate, menus: [] })) } }, $inc: { __v: 1 } }
+  );
+
+  const later = await ctx.call(trainer, "POST", phasesPath(client), {
+    name: "Siguiente",
+    startDate: h.day(7),
+    menus: [{ name: "Único", meals: [] }],
+  });
+  assert.equal(later.status, 201, "antes daba 409: programar con otra fase en curso se rechazaba");
+  const history = await ctx.get(trainer, phasesPath(client));
+  assert.deepEqual(
+    history.map((p) => [p.name, p.state, p.endDate]),
+    [["Siguiente", "scheduled", null], ["Definición", "current", h.day(6)]]
+  );
+  const cut = await ctx.model("DietPhase").findById(first._id).lean();
+  assert.deepEqual(cut.contents.map((c) => c.startDate), [h.day(-5), h.day(2)], "lo preparado desde el corte nunca va a correr");
+  assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(0)}/menu`)).options, ["Menú A", "Menú B"], "hasta entonces, la que estaba");
+  assert.deepEqual((await ctx.get(client, `/dietdays/date/${h.day(7)}/menu`)).options, ["Único"]);
+
+  // Quitarla vuelve a dejar abierta la anterior.
+  assert.equal((await ctx.call(trainer, "DELETE", `${phasesPath(client)}/${later.body._id}`)).status, 204);
+  assert.equal((await ctx.model("DietPhase").findById(first._id).lean()).endDate, null);
+});
+
+test("una fase futura no empieza antes que otra programada ni el mismo día que ella (409 PLAN_OVERLAP); después, la corta", async () => {
   const { trainer, client } = await setupPair();
   const tpl = await libraryTemplate(trainer);
-  await applyTemplate(trainer, client, tpl, h.day(10));
-  const clash = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: h.day(12) });
-  assert.equal(clash.status, 409);
-  assert.equal(clash.body.code, "PLAN_OVERLAP");
-  assert.match(clash.body.message, /Definición/);
+  const scheduled = await applyTemplate(trainer, client, tpl, h.day(10));
+  for (const startDate of [h.day(5), h.day(10)]) {
+    const clash = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate });
+    assert.equal(clash.status, 409, startDate);
+    assert.equal(clash.body.code, "PLAN_OVERLAP");
+    assert.match(clash.body.message, /Definición/);
+  }
+  const after = await ctx.call(trainer, "POST", phasesPath(client), { name: "Encima", startDate: h.day(12), menus: [{ name: "Único", meals: [] }] });
+  assert.equal(after.status, 201);
+  assert.equal((await ctx.model("DietPhase").findById(scheduled._id).lean()).endDate, h.day(11));
+
   assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: "mañana" })).status, 400);
   assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { startDate: h.day(20), menus: [] })).status, 400, "sin plantilla hace falta nombre");
   const otherTrainer = await ctx.makeTrainer();
@@ -461,8 +497,6 @@ test("renombrar y mover las fechas de una fase: el contenido se mueve con ella y
   const { trainer, client } = await setupPair();
   const tpl = await libraryTemplate(trainer);
   const phase = await applyTemplate(trainer, client, tpl, h.day(2));
-  const later = await ctx.call(trainer, "POST", phasesPath(client), { templateId: tpl._id, startDate: h.day(30) });
-  assert.equal(later.status, 409, "programar encima de una fase abierta se rechaza");
 
   const renamed = await ctx.patch(trainer, `${phasesPath(client)}/${phase._id}`, { name: "Arranque" });
   assert.equal(renamed.name, "Arranque");

@@ -16,6 +16,11 @@ router.getAsync(
 // Sin :clientId: el usuario del token es el dueño de la pauta. Mismo criterio
 // que /trainer/tasks/mine y /pain/mine.
 router.getAsync("/supplements/mine", auth(["user", "admin"]), controller.listMine);
+// Los suyos propios (sin trainerId): solo los añade sin profesional activo;
+// editar y quitar, siempre (supplement-service.js#createOwn).
+router.postAsync("/supplements/mine", auth(["user", "admin"]), controller.createMine);
+router.putAsync("/supplements/mine/:supplementId", auth(["user", "admin"]), controller.updateMine);
+router.deleteAsync("/supplements/mine/:supplementId", auth(["user", "admin"]), controller.removeMine);
 
 // --- Lado profesional ---
 // requireActiveClient SIN scope: un suplemento lo pauta tanto el entrenador

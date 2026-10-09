@@ -120,6 +120,14 @@ idor("enganchar el microciclo de otro a una rutina mía", async ({ attacker, dat
 
 // --- Nutrición ----------------------------------------------------------------------
 
+idor("editar o quitar los suplementos propios de otro cliente", async ({ victim, attacker }) => {
+  const own = await ctx.post(victim, "/supplements/mine", { name: "Creatina", dose: "5 g" });
+  assert.equal((await ctx.call(attacker, "PUT", `/supplements/mine/${own._id}`, { name: "Hackeada", dose: "1 g" })).status, 404);
+  assert.equal((await ctx.call(attacker, "DELETE", `/supplements/mine/${own._id}`)).status, 404);
+  assert.deepEqual(await ctx.get(attacker, "/supplements/mine"), []);
+  assert.deepEqual((await ctx.get(victim, "/supplements/mine")).map((s) => [s.name, s.dose]), [["Creatina", "5 g"]]);
+});
+
 idor("borrar el día de dieta de otro: por fecha solo se borra el propio", async ({ attacker, data }) => {
   await ctx.call(attacker, "DELETE", `/dietdays/date/${data.day.date}`);
   assert.ok(await reload("DietDay", data.day._id));
