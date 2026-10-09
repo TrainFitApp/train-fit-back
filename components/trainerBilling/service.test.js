@@ -84,6 +84,32 @@ test("contratar crea un único cliente de Stripe y un Checkout con lo elegido; n
   await assert.rejects(service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 0 }), errorCode("INVALID_PLAN"));
 });
 
+test("si Stripe rechaza abrir Checkout no queda un intento colgado: se puede contratar enseguida, también otro plan", async () => {
+  const { BillingError } = require("../../.build/trainer-billing/types");
+  const { stripe, repository, service } = freeSetup();
+  stripe.failNext("createCheckout", new BillingError("CHECKOUT_REJECTED", "No se ha podido abrir la página de pago.", 503));
+  await assert.rejects(service.checkout(USER_ID, { tier: "professional", interval: "monthly" }), errorCode("CHECKOUT_REJECTED"));
+  assert.equal(stored(repository).checkout, null);
+  assert.notEqual(stored(repository).status, "checkout_pending", "no se presenta como contratación pendiente");
+  const retry = await service.checkout(USER_ID, { tier: "starter", interval: "monthly" });
+  assert.equal(retry.reused, false);
+  assert.equal(stripe.named("createCheckout").length, 2);
+});
+
+test("un intento que Stripe nunca llegó a crear no bloquea la cuenta: pasados 25 min se abre otro", async () => {
+  const { stripe, repository, service } = freeSetup();
+  // Fallo incierto (p. ej. de red): el intento se conserva para reintentarlo con su misma clave.
+  stripe.failNext("createCheckout");
+  await assert.rejects(service.checkout(USER_ID, { tier: "professional", interval: "monthly" }));
+  const first = stored(repository).checkout.key;
+  assert.ok(first);
+  // Sin ninguna sesión de ese intento en Stripe y pasados 25 min se abre otro (antes: «contacta con soporte»).
+  repository.accounts.get(USER_ID).checkout.startedAt = new Date(Date.now() - 30 * 60000);
+  const fresh = await service.checkout(USER_ID, { tier: "starter", interval: "monthly" });
+  assert.equal(fresh.reused, false);
+  assert.notEqual(stripe.named("createCheckout").at(-1).args.key, first);
+});
+
 test("al volver de Checkout el pago confirmado da las plazas del plan comprado, también en Free con plazas", async () => {
   const { stripe, repository, service } = freeSetup();
   const { sessionId } = await service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 4 });
@@ -274,6 +300,30 @@ test("una respuesta perdida de Stripe se recupera con la misma clave: nunca hay 
   assert.equal(calls.length, 2);
   assert.equal(calls[0].args.key, calls[1].args.key);
   assert.equal(stripe.invoices.size, 1);
+});
+
+test("si Stripe rechaza aplicar una subida, el cambio se descarta: el plan sigue y la cuenta no queda bloqueada", async () => {
+  const { BillingError } = require("../../.build/trainer-billing/types");
+  const { stripe, repository, service } = paidSetup(state("free", "monthly", 1));
+  const quote = await quoteFor(service, state("starter"));
+  stripe.failNext("applyUpgrade", new BillingError("CHANGE_REJECTED", "Stripe no ha aceptado el cambio.", 503));
+  await assert.rejects(service.changePlan(USER_ID, quote.quoteId), errorCode("CHANGE_REJECTED"));
+  assert.equal(stored(repository).change.status, "discarded");
+  assert.equal(stored(repository).quote, null);
+  assert.deepEqual([stored(repository).tier, stored(repository).extraSeats], ["free", 1], "se conserva lo pagado");
+  // Antes cada relectura reintentaba el cambio y fallaba: ahora sync funciona y se puede pedir otra propuesta.
+  await service.sync(USER_ID);
+  assert.equal(stripe.named("applyUpgrade").length, 1);
+  const again = await quoteFor(service, state("starter"));
+  assert.ok(again.quoteId);
+});
+
+test("un error de red al aplicar una subida no descarta el cambio: se reintenta con la misma clave", async () => {
+  const { stripe, repository, service } = paidSetup(state("starter"));
+  const quote = await quoteFor(service, state("professional"));
+  stripe.failNext("applyUpgrade");
+  await assert.rejects(service.changePlan(USER_ID, quote.quoteId));
+  assert.equal(stored(repository).change.status, "processing");
 });
 
 test("si Stripe responde pero falla el guardado local, el reintento no crea otra factura", async () => {

@@ -35,6 +35,17 @@ function assertMode(livemode: boolean, mode: Mode): void {
   if (livemode !== (mode === "live")) throw new BillingError("MODE_MISMATCH", "Se ha rechazado un recurso de otro entorno de pagos.", 409);
 }
 export function encodeTarget(state: PlanState): string { return `${state.tier}:${state.interval}:${state.extraSeats}`; }
+// Stripe rechazó la petición sin aplicar nada (inválida o sin permiso de la clave; un error de idempotencia
+// no cuenta: el original pudo aplicarse). Al log van el código, el parámetro y el id de la petición para
+// buscarla en el Dashboard; nunca el payload ni el mensaje.
+const CHANGE_REJECTED_MESSAGE = "Stripe no ha aceptado el cambio. Tu plan actual se mantiene.";
+const CONTROL_REJECTED_MESSAGE = "Stripe no ha aceptado la operación. Tu suscripción no ha cambiado.";
+function rejection(error: unknown, operation: string, code: string, message: string): unknown {
+  if (!(error instanceof Stripe.errors.StripeInvalidRequestError || error instanceof Stripe.errors.StripePermissionError)) return error;
+  console.error(`[TrainerBilling] Stripe rechazó ${operation}: ${error.code || error.type}` +
+    `${error.param ? ` (${error.param})` : ""}, petición ${error.requestId || "sin id"}.`);
+  return new BillingError(code, message, 503);
+}
 function sessionView(session: Stripe.Checkout.Session, mode: Mode): Session {
   assertMode(session.livemode, mode);
   return { id: session.id, customerId: id(session.customer), subscriptionId: id(session.subscription),
@@ -227,7 +238,9 @@ export class StripeGateway implements Gateway {
 
   async createCustomer(user: User, idempotencyKey: string): Promise<string> {
     const customer = await this.stripe.customers.create({ email: user.email,
-      metadata: { trainfitUserId: user.id, scope: "trainers" } }, { idempotencyKey });
+      metadata: { trainfitUserId: user.id, scope: "trainers" } }, { idempotencyKey }).catch((error: unknown) => {
+      throw rejection(error, "crear el cliente", "CUSTOMER_REJECTED", "No se ha podido preparar tu cuenta de pago.");
+    });
     this.check(customer.livemode);
     return customer.id;
   }
@@ -312,7 +325,9 @@ export class StripeGateway implements Gateway {
       cancel_url: `${this.config.returnUrl}/tabs/subscription?checkout=cancelled`,
       expires_at: Math.floor(account.checkout!.startedAt.getTime() / 1000) + 3600,
       integration_identifier: `trainfit_trainers_${suffix}`,
-    } as Stripe.Checkout.SessionCreateParams, { idempotencyKey: key });
+    } as Stripe.Checkout.SessionCreateParams, { idempotencyKey: key }).catch((error: unknown) => {
+      throw rejection(error, "abrir Checkout", "CHECKOUT_REJECTED", "No se ha podido abrir la página de pago.");
+    });
     return sessionView(session, this.config.mode);
   }
   // Portal de la cuenta (configuración predeterminada): facturas, método de pago y cancelación a fin
@@ -447,7 +462,9 @@ export class StripeGateway implements Gateway {
       payment_behavior: "pending_if_incomplete", proration_behavior: "always_invoice", proration_date: quote.prorationDate,
       // Changing the recurring interval resets the anchor automatically.
       // Stripe rejects explicit anchor=now together with proration_date.
-    }, { idempotencyKey: key });
+    }, { idempotencyKey: key }).catch((error: unknown) => {
+      throw rejection(error, "aplicar el cambio", "CHANGE_REJECTED", CHANGE_REJECTED_MESSAGE);
+    });
     this.check(changed.livemode);
     const invoiceId = id(changed.latest_invoice);
     if (!invoiceId) throw new BillingError("BILLING_REVIEW_REQUIRED", "El cambio necesita revisión de soporte.");
@@ -455,7 +472,8 @@ export class StripeGateway implements Gateway {
   }
   async scheduleChange(quote: ChangeQuote, key: string): Promise<{ scheduleId: string }> {
     // Stable create/update keys recover a response lost between the two calls.
-    const created = await this.stripe.subscriptionSchedules.create({ from_subscription: quote.subscriptionId }, { idempotencyKey: `${key}-create` });
+    const created = await this.stripe.subscriptionSchedules.create({ from_subscription: quote.subscriptionId }, { idempotencyKey: `${key}-create` })
+      .catch((error: unknown) => { throw rejection(error, "programar el cambio", "CHANGE_REJECTED", CHANGE_REJECTED_MESSAGE); });
     this.check(created.livemode);
     const current = created.phases.find((phase) => phase.start_date <= quote.prorationDate && phase.end_date > quote.prorationDate);
     if (!current || created.phases.length !== 1 ||
@@ -468,7 +486,14 @@ export class StripeGateway implements Gateway {
       end_date: undefined, duration: { interval: quote.to.interval === "annual" ? "year" : "month", interval_count: 1 },
       items: quote.targetItems.map((item) => ({ price: item.price, quantity: item.quantity })), billing_cycle_anchor: "phase_start" };
     await this.stripe.subscriptionSchedules.update(created.id, { end_behavior: "release", proration_behavior: "none",
-      phases: [first, next], metadata: { trainfitChangeId: quote.quoteId, scope: "trainers" } }, { idempotencyKey: `${key}-update` });
+      phases: [first, next], metadata: { trainfitChangeId: quote.quoteId, scope: "trainers" } }, { idempotencyKey: `${key}-update` })
+      .catch(async (error: unknown) => {
+        const rejected = rejection(error, "programar el cambio", "CHANGE_REJECTED", CHANGE_REJECTED_MESSAGE);
+        // Sin la segunda fase el calendario solo repite lo actual: se libera para no bloquear otros cambios.
+        // Si liberarlo falla, el cambio sigue pendiente y se reintenta entero (claves estables).
+        if (rejected instanceof BillingError) await this.releaseSchedule(created.id, `${key}-abort`);
+        throw rejected;
+      });
     return { scheduleId: created.id };
   }
   async changePayment(account: Account, operation: ChangeOperation) {
@@ -491,16 +516,21 @@ export class StripeGateway implements Gateway {
     const schedule = await this.stripe.subscriptionSchedules.retrieve(scheduleId);
     this.check(schedule.livemode);
     if (["released", "completed", "canceled"].includes(schedule.status)) return;
-    await this.stripe.subscriptionSchedules.release(scheduleId, { preserve_cancel_date: true }, { idempotencyKey: key });
+    await this.stripe.subscriptionSchedules.release(scheduleId, { preserve_cancel_date: true }, { idempotencyKey: key })
+      .catch((error: unknown) => { throw rejection(error, "liberar el calendario", "CONTROL_REJECTED", CONTROL_REJECTED_MESSAGE); });
   }
   async voidInvoice(invoiceId: string, key: string): Promise<void> {
     const invoice = await this.stripe.invoices.retrieve(invoiceId);
     this.check(invoice.livemode);
     if (invoice.status === "paid" || invoice.status === "void") return;
-    await this.stripe.invoices.voidInvoice(invoiceId, {}, { idempotencyKey: key });
+    await this.stripe.invoices.voidInvoice(invoiceId, {}, { idempotencyKey: key })
+      .catch((error: unknown) => { throw rejection(error, "anular la factura", "CONTROL_REJECTED", CONTROL_REJECTED_MESSAGE); });
   }
   async setCancellation(subscriptionId: string, cancel: boolean, key: string): Promise<void> {
-    const sub = await this.stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: cancel, proration_behavior: "none" }, { idempotencyKey: key });
+    const sub = await this.stripe.subscriptions.update(subscriptionId, { cancel_at_period_end: cancel, proration_behavior: "none" }, { idempotencyKey: key })
+      .catch((error: unknown) => {
+        throw rejection(error, cancel ? "cancelar la renovación" : "reactivar la renovación", "CONTROL_REJECTED", CONTROL_REJECTED_MESSAGE);
+      });
     this.check(sub.livemode);
   }
   // Deshace una subida: vuelve al estado anterior sin prorrateo, así que no genera factura ni cobro.

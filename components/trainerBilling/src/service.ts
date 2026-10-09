@@ -3,7 +3,7 @@ import { CATALOG, FREE_SEATS, PlanState, isTier, sameState, seatsOf, tierRank } 
 import { parseTarget, publicPlans, requireReady, stateView } from "./config";
 import { classifyInvoice, fundingRole } from "./financing";
 import { MONEY_EVENT_TYPES, checkoutKey, encodeTarget } from "./stripe-gateway";
-import { AccessAdjustment, AccessSnapshot, Account, Actor, AdminAction, BillingCase, BillingDetails, BillingError, CaseSuggestion, ChangeKind, ChangeQuote, Config, DisputeView, EventRecord, Financed, FraudWarningView, FundingRole, Gateway, Intervention, Interval, Notifier, PaymentContext, Projection, Repository, Session, Subscription, TermsAcceptance, Tier, User } from "./types";
+import { AccessAdjustment, AccessSnapshot, Account, Actor, AdminAction, BillingCase, BillingDetails, BillingError, CaseSuggestion, errorTrace, ChangeKind, ChangeQuote, Config, DisputeView, EventRecord, Financed, FraudWarningView, FundingRole, Gateway, Intervention, Interval, Notifier, PaymentContext, Projection, Repository, Session, Subscription, TermsAcceptance, Tier, User } from "./types";
 
 const TERMINAL = new Set(["canceled", "incomplete_expired"]);
 // Disputa abierta (incluidas las consultas previas); el resto de estados son cierres.
@@ -103,6 +103,12 @@ function caseLifecycle(existing: BillingCase | null, changed: boolean, note: str
   };
 }
 function newId(prefix: string): string { return `${prefix}-${randomBytes(12).toString("hex")}`; }
+// Pasadas 23 h la clave de idempotencia de Stripe (24 h) ya no protege un reintento.
+function stale(startedAt: Date): boolean { return Date.now() - new Date(startedAt).getTime() > 23 * 3600000; }
+// Stripe rechazó la petición sin aplicar nada (el gateway lo traduce desde el SDK).
+function rejectedByStripe(error: unknown): boolean {
+  return error instanceof BillingError && ["CHANGE_REJECTED", "CONTROL_REJECTED"].includes(error.code);
+}
 function badRequest(code: string, message: string): BillingError { return new BillingError(code, message, 400); }
 
 interface MoneyContext {
@@ -182,6 +188,7 @@ export class TrainerBillingService {
       this.applyState(account, sub.state);
       account.paidUntil = new Date(Math.min(sub.currentPeriodEnd, sub.paidPeriodEnd) * 1000);
     }
+    this.settleStaleChange(account, sub);
     const change = account.change;
     account.pendingPayment = null;
     if (change?.status === "payment_pending" && change.invoiceId) {
@@ -227,32 +234,61 @@ export class TrainerBillingService {
     account.interval = state.interval;
     account.extraSeats = state.extraSeats;
   }
+  // Un cambio o una operación pendientes se reintentan con su misma clave (un error de red nunca duplica
+  // nada). Si Stripe los rechaza sin aplicarlos, se descartan. Pasadas 23 h la clave ya no es fiable:
+  // no se reintenta y manda lo que diga Stripe. Nunca bloquean la relectura de la cuenta; antes un
+  // rechazo dejaba sync, propuestas, webhooks, reconciliación y Gestión respondiendo 503.
   private async recoverChange(account: Account, save: () => Promise<void>): Promise<void> {
     const change = account.change;
-    if (!change || change.status !== "processing") return;
-    if (Date.now() - new Date(change.startedAt).getTime() > 23 * 3600000) {
-      throw new BillingError("CHANGE_REVIEW_REQUIRED", "El cambio requiere revisión de soporte antes de reintentarlo.");
-    }
+    if (!change || change.status !== "processing" || stale(change.startedAt)) return;
     const key = `trainers-change-${change.quote.quoteId}`;
-    if (change.quote.previousScheduleId) await this.gateway.releaseSchedule(change.quote.previousScheduleId, `${key}-release`);
-    if (change.quote.kind === "immediate") {
-      change.invoiceId = (await this.gateway.applyUpgrade(change.quote, key)).invoiceId;
-      change.status = "payment_pending";
-    } else {
-      change.scheduleId = (await this.gateway.scheduleChange(change.quote, key)).scheduleId;
-      change.status = "scheduled";
+    try {
+      if (change.quote.previousScheduleId) await this.gateway.releaseSchedule(change.quote.previousScheduleId, `${key}-release`);
+      if (change.quote.kind === "immediate") {
+        change.invoiceId = (await this.gateway.applyUpgrade(change.quote, key)).invoiceId;
+        change.status = "payment_pending";
+      } else {
+        change.scheduleId = (await this.gateway.scheduleChange(change.quote, key)).scheduleId;
+        change.status = "scheduled";
+      }
+    } catch (error) {
+      if (!rejectedByStripe(error)) throw error;
+      change.status = "discarded";
+      account.quote = null;
     }
     await save();
+  }
+  // Cambio que lleva más de 23 h sin confirmarse: se resuelve con la suscripción que devuelve Stripe.
+  private settleStaleChange(account: Account, sub: Subscription): void {
+    const change = account.change;
+    if (change?.status !== "processing" || !stale(change.startedAt)) return;
+    console.warn("[TrainerBilling] Cambio sin confirmar durante más de 23 h: se resuelve con el estado de Stripe.");
+    if (change.quote.kind === "immediate" && sub.pendingUpdate) {
+      change.status = "payment_pending";
+      change.invoiceId = sub.latestInvoiceId || undefined;
+    } else if (change.quote.kind === "scheduled" && sub.scheduleId) {
+      change.status = "scheduled";
+      change.scheduleId = sub.scheduleId;
+    } else {
+      change.status = sameState(sub.state, change.quote.to) ? "applied" : "discarded";
+    }
   }
   private async recoverControl(account: Account, save: () => Promise<void>): Promise<void> {
     const op = account.control;
     if (!op || op.done) return;
-    if (Date.now() - new Date(op.startedAt).getTime() > 23 * 3600000 || !account.subscriptionId) {
-      throw new BillingError("CHANGE_REVIEW_REQUIRED", "La operación requiere revisión de soporte.");
+    if (stale(op.startedAt) || !account.subscriptionId) {
+      // Cancelación, factura y calendario se leen después de Stripe: lo que quedara aplicado se verá ahí.
+      console.warn("[TrainerBilling] Operación sin confirmar durante más de 23 h: se cierra y manda el estado de Stripe.");
+    } else {
+      try {
+        if (op.invoiceId && op.kind !== "resume") await this.gateway.voidInvoice(op.invoiceId, `${op.id}-void`);
+        if (op.scheduleId && op.kind !== "resume") await this.gateway.releaseSchedule(op.scheduleId, `${op.id}-release`);
+        if (op.kind !== "discard") await this.gateway.setCancellation(account.subscriptionId, op.kind === "cancel", `${op.id}-${op.kind}`);
+      } catch (error) {
+        if (!rejectedByStripe(error)) throw error;
+        op.rejected = true;
+      }
     }
-    if (op.invoiceId && op.kind !== "resume") await this.gateway.voidInvoice(op.invoiceId, `${op.id}-void`);
-    if (op.scheduleId && op.kind !== "resume") await this.gateway.releaseSchedule(op.scheduleId, `${op.id}-release`);
-    if (op.kind !== "discard") await this.gateway.setCancellation(account.subscriptionId, op.kind === "cancel", `${op.id}-${op.kind}`);
     op.done = true;
     account.quote = null;
     await save();
@@ -364,6 +400,9 @@ export class TrainerBillingService {
       if (terms) this.acceptTerms(account, { at: new Date(), via: "change", ref: quote.quoteId, termsUrl: terms });
       await save();
       await this.refresh(account, save);
+      if (account.change.status === "discarded") {
+        throw new BillingError("CHANGE_REJECTED", "Stripe no ha aceptado el cambio. Tu plan actual se mantiene.", 503);
+      }
       return { status: account.change.status, paymentActionUrl: account.pendingPayment?.url };
     });
   }
@@ -390,6 +429,7 @@ export class TrainerBillingService {
     // Refresh paid proof first: a concurrent successful payment must retain the
     // newly paid plan even when its pending change is being discarded.
     await this.refresh(account, save);
+    if (op.rejected) throw new BillingError("CONTROL_REJECTED", "Stripe no ha aceptado la operación. Tu suscripción no ha cambiado.", 503);
     if (kind !== "resume") {
       if (account.change && ["payment_pending", "scheduled"].includes(account.change.status)) account.change.status = "discarded";
       account.pendingPayment = null;
@@ -416,7 +456,11 @@ export class TrainerBillingService {
         }
         account.customerStartedAt ||= new Date();
         await save();
-        account.customerId = await this.gateway.createCustomer(user, `trainers-${account.mode}-${userId}`);
+        account.customerId = await this.gateway.createCustomer(user, `trainers-${account.mode}-${userId}`).catch(async (error: unknown) => {
+          // Stripe no lo creó: se olvida el intento para que no acabe en revisión de soporte a las 23 h.
+          if (error instanceof BillingError && error.code === "CUSTOMER_REJECTED") { account.customerStartedAt = null; await save(); }
+          throw error;
+        });
         await save();
       }
       await this.refresh(account, save);
@@ -436,18 +480,28 @@ export class TrainerBillingService {
         await this.refresh(account, save);
         throw new BillingError("PAYMENT_PENDING", "Estamos comprobando el pago anterior. Actualiza el estado antes de volver a contratar.");
       }
-      if (account.checkout && !attempt && Date.now() - account.checkout.startedAt.getTime() > 25 * 60000) {
-        throw new BillingError("CHECKOUT_REVIEW_REQUIRED", "Contacta con soporte para revisar el pago anterior.");
-      }
-      if (!account.checkout || attempt?.status === "expired" || terminalAttempt) {
+      // Un intento sin sesión en Stripe pasados 25 min nunca llegó a crearse: la sesión siempre lleva su
+      // customer y la lista es completa (has_more se rechaza). Ya no admite reintento con su clave
+      // (expires_at quedaría a menos de 30 min), así que se empieza otro en vez de bloquear la cuenta.
+      const abandoned = Boolean(account.checkout && !attempt && Date.now() - account.checkout.startedAt.getTime() > 25 * 60000);
+      if (!account.checkout || attempt?.status === "expired" || terminalAttempt || abandoned) {
         account.checkout = { key: checkoutKey(), target, startedAt: new Date() };
       } else if (!sameState(account.checkout.target, target)) {
         throw new BillingError("EXISTING_CHECKOUT", "Estamos comprobando un pago anterior para otro plan.");
       }
       await this.gateway.validateState(target);
+      const previousStatus = account.status;
       account.status = "checkout_pending";
       await this.persist(account, save);
-      const session = await this.gateway.createCheckout(user, account, target, account.checkout.key);
+      const session = await this.gateway.createCheckout(user, account, target, account.checkout.key).catch(async (error: unknown) => {
+        // Stripe no creó nada: el intento se descarta para que el siguiente empiece limpio.
+        if (error instanceof BillingError && error.code === "CHECKOUT_REJECTED") {
+          account.checkout = null;
+          account.status = previousStatus;
+          await this.persist(account, save);
+        }
+        throw error;
+      });
       this.ownSession(session, account);
       if (!session.url) throw new BillingError("CHECKOUT_UNAVAILABLE", "No se ha podido abrir la página de pago.", 503);
       account.checkout.sessionId = session.id;
@@ -598,16 +652,21 @@ export class TrainerBillingService {
     const effects = [...(existing?.effects || [])];
     const open = OPEN_DISPUTE.has(dispute.status);
     const live = Boolean(account.subscriptionId && account.provider && !TERMINAL.has(account.status));
+    // Si no se pueden pausar los cobros, el caso se registra igualmente (Gestión debe verlo) y el
+    // evento falla para reintentar la pausa; antes la disputa quedaba invisible.
+    let pauseError: unknown = null;
     if (open && live && !effects.includes("collection_paused") && this.gateway.pauseCollection) {
-      if (!account.hold) {
-        const paused = await this.gateway.pauseCollection(account.subscriptionId!, `trainers-dispute-${dispute.id}-pause`);
-        account.hold = { kind: "dispute", since: new Date(), caseIds: [caseId], pausedInvoiceIds: paused.pausedInvoiceIds,
-          subscriptionId: account.subscriptionId! };
-      } else if (!account.hold.caseIds.includes(caseId)) {
-        account.hold = { ...account.hold, kind: "dispute", caseIds: [...account.hold.caseIds, caseId] };
-      }
-      effects.push("collection_paused");
-      await save();
+      try {
+        if (!account.hold) {
+          const paused = await this.gateway.pauseCollection(account.subscriptionId!, `trainers-dispute-${dispute.id}-pause`);
+          account.hold = { kind: "dispute", since: new Date(), caseIds: [caseId], pausedInvoiceIds: paused.pausedInvoiceIds,
+            subscriptionId: account.subscriptionId! };
+        } else if (!account.hold.caseIds.includes(caseId)) {
+          account.hold = { ...account.hold, kind: "dispute", caseIds: [...account.hold.caseIds, caseId] };
+        }
+        effects.push("collection_paused");
+        await save();
+      } catch (error) { pauseError = error; }
     }
     if (dispute.status === "lost" && !effects.some((effect) => effect.startsWith("rights_"))) {
       effects.push(await this.withdrawRights(account, save, financed, role, caseId, `trainers-dispute-${dispute.id}`));
@@ -623,6 +682,10 @@ export class TrainerBillingService {
       ...caseLifecycle(existing, statusChanged, `La disputa ha pasado a ${dispute.status}.`),
     });
     if (statusChanged) console.warn("[TrainerBilling] Dispute updated; decision pending in Gestión.");
+    if (pauseError) {
+      console.error(`[TrainerBilling] Disputa registrada sin poder pausar los cobros (${errorTrace(pauseError)}); se reintenta.`);
+      throw pauseError;
+    }
     await this.persist(account, save);
   }
   private async recordFraudWarning(account: Account, warning: FraudWarningView, payment: PaymentContext | null, financed: Financed | null,
@@ -745,9 +808,12 @@ export class TrainerBillingService {
   }
   async reconcile(): Promise<void> {
     requireReady(this.config);
-    try { await this.backfillMoneyEvents(); } catch { /* siguiente ronda */ }
+    // Todo fallo se reintenta en la siguiente ronda; se resume en una línea (clase, código y petición,
+    // nunca el payload) para que una cuenta atascada no pase desapercibida.
+    const failures: string[] = [];
+    try { await this.backfillMoneyEvents(); } catch (error) { failures.push(`recuperar eventos: ${errorTrace(error)}`); }
     for (const event of await this.repository.pendingEvents(100)) {
-      try { await this.event(event); } catch { /* remains retryable; no secret/error payload logging */ }
+      try { await this.event(event); } catch (error) { failures.push(`evento ${event.type}: ${errorTrace(error)}`); }
     }
     for (const account of await this.repository.accountsForReconciliation(100)) {
       try {
@@ -758,7 +824,10 @@ export class TrainerBillingService {
             await this.remindRenewal(locked, save);
           }
         });
-      } catch { /* Next cron run retries, access still expires locally. */ }
+      } catch (error) { failures.push(`cuenta ${account.userId}: ${errorTrace(error)}`); }
+    }
+    if (failures.length) {
+      console.warn(`[TrainerBilling] Reconciliación con ${failures.length} fallo(s), se reintentan: ${failures.slice(0, 5).join("; ")}.`);
     }
   }
 
