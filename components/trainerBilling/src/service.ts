@@ -236,7 +236,19 @@ export class TrainerBillingService {
     const key = `trainers-change-${change.quote.quoteId}`;
     if (change.quote.previousScheduleId) await this.gateway.releaseSchedule(change.quote.previousScheduleId, `${key}-release`);
     if (change.quote.kind === "immediate") {
-      change.invoiceId = (await this.gateway.applyUpgrade(change.quote, key)).invoiceId;
+      const applied = await this.gateway.applyUpgrade(change.quote, key).catch((error: unknown) => {
+        if (error instanceof BillingError && error.code === "CHANGE_REJECTED") return null;
+        throw error;
+      });
+      // Stripe lo rechazó sin aplicar nada: se descarta y la cuenta sigue con lo pagado. Antes quedaba
+      // "processing" y cada relectura (sync, propuesta, webhook) lo reintentaba y fallaba con 503.
+      if (!applied) {
+        change.status = "discarded";
+        account.quote = null;
+        await save();
+        return;
+      }
+      change.invoiceId = applied.invoiceId;
       change.status = "payment_pending";
     } else {
       change.scheduleId = (await this.gateway.scheduleChange(change.quote, key)).scheduleId;
@@ -364,6 +376,9 @@ export class TrainerBillingService {
       if (terms) this.acceptTerms(account, { at: new Date(), via: "change", ref: quote.quoteId, termsUrl: terms });
       await save();
       await this.refresh(account, save);
+      if (account.change.status === "discarded") {
+        throw new BillingError("CHANGE_REJECTED", "Stripe no ha aceptado el cambio. Tu plan actual se mantiene.", 503);
+      }
       return { status: account.change.status, paymentActionUrl: account.pendingPayment?.url };
     });
   }

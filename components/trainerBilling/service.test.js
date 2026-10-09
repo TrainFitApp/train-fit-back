@@ -302,6 +302,30 @@ test("una respuesta perdida de Stripe se recupera con la misma clave: nunca hay 
   assert.equal(stripe.invoices.size, 1);
 });
 
+test("si Stripe rechaza aplicar una subida, el cambio se descarta: el plan sigue y la cuenta no queda bloqueada", async () => {
+  const { BillingError } = require("../../.build/trainer-billing/types");
+  const { stripe, repository, service } = paidSetup(state("free", "monthly", 1));
+  const quote = await quoteFor(service, state("starter"));
+  stripe.failNext("applyUpgrade", new BillingError("CHANGE_REJECTED", "Stripe no ha aceptado el cambio.", 503));
+  await assert.rejects(service.changePlan(USER_ID, quote.quoteId), errorCode("CHANGE_REJECTED"));
+  assert.equal(stored(repository).change.status, "discarded");
+  assert.equal(stored(repository).quote, null);
+  assert.deepEqual([stored(repository).tier, stored(repository).extraSeats], ["free", 1], "se conserva lo pagado");
+  // Antes cada relectura reintentaba el cambio y fallaba: ahora sync funciona y se puede pedir otra propuesta.
+  await service.sync(USER_ID);
+  assert.equal(stripe.named("applyUpgrade").length, 1);
+  const again = await quoteFor(service, state("starter"));
+  assert.ok(again.quoteId);
+});
+
+test("un error de red al aplicar una subida no descarta el cambio: se reintenta con la misma clave", async () => {
+  const { stripe, repository, service } = paidSetup(state("starter"));
+  const quote = await quoteFor(service, state("professional"));
+  stripe.failNext("applyUpgrade");
+  await assert.rejects(service.changePlan(USER_ID, quote.quoteId));
+  assert.equal(stored(repository).change.status, "processing");
+});
+
 test("si Stripe responde pero falla el guardado local, el reintento no crea otra factura", async () => {
   const { stripe, repository, service } = paidSetup(state("starter"));
   const quote = await quoteFor(service, state("professional"));

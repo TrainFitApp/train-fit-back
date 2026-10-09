@@ -210,6 +210,23 @@ test("si Stripe rechaza abrir Checkout se dice en el log con código, parámetro
     (error) => error instanceof Stripe.errors.StripeConnectionError);
 });
 
+test("si Stripe rechaza aplicar un cambio (sin permiso o inválido) se traduce a CHANGE_REJECTED; idempotencia no", async (t) => {
+  const Stripe = require("stripe");
+  const { gateway } = fixture(t);
+  const logged = [];
+  t.mock.method(console, "error", (line) => logged.push(line));
+  const quote = { subscriptionId: "sub_trainers", updates: [], prorationDate: START };
+  t.mock.method(gateway.stripe.subscriptions, "update", async () => {
+    throw new Stripe.errors.StripePermissionError({ message: "key rk_test_x lacks access", requestId: "req_perm" });
+  });
+  await assert.rejects(gateway.applyUpgrade(quote, "trainers-change-key"), errorCode("CHANGE_REJECTED"));
+  assert.match(logged[0], /aplicar el cambio: StripePermissionError, petición req_perm/);
+  assert.ok(!logged[0].includes("rk_test_x"));
+  // Clave reutilizada con otros parámetros: el original pudo aplicarse, así que no se descarta nada.
+  t.mock.method(gateway.stripe.subscriptions, "update", async () => { throw new Stripe.errors.StripeIdempotencyError({ message: "x" }); });
+  await assert.rejects(gateway.applyUpgrade(quote, "trainers-change-key"), (error) => error instanceof Stripe.errors.StripeIdempotencyError);
+});
+
 test("el portal usa la configuración predeterminada solo si no permite cambios de plan ni cancelar al momento", async (t) => {
   const { gateway } = fixture(t);
   const portal = { id: "bpc_default", livemode: false, active: true, features: { subscription_update: { enabled: false },

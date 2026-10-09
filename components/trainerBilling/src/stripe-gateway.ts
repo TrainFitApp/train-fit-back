@@ -35,13 +35,14 @@ function assertMode(livemode: boolean, mode: Mode): void {
   if (livemode !== (mode === "live")) throw new BillingError("MODE_MISMATCH", "Se ha rechazado un recurso de otro entorno de pagos.", 409);
 }
 export function encodeTarget(state: PlanState): string { return `${state.tier}:${state.interval}:${state.extraSeats}`; }
-// Stripe rechazó abrir Checkout (petición inválida: no ha creado nada). Al log van el código, el parámetro
-// y el id de la petición para buscarla en el Dashboard; nunca el payload ni el mensaje.
-function checkoutRejection(error: unknown): unknown {
-  if (!(error instanceof Stripe.errors.StripeInvalidRequestError)) return error;
-  console.error(`[TrainerBilling] Stripe rechazó abrir Checkout: ${error.code || "invalid_request"}` +
+// Stripe rechazó la petición sin aplicar nada (inválida o sin permiso de la clave; un error de idempotencia
+// no cuenta: el original pudo aplicarse). Al log van el código, el parámetro y el id de la petición para
+// buscarla en el Dashboard; nunca el payload ni el mensaje.
+function rejection(error: unknown, operation: string, code: string, message: string): unknown {
+  if (!(error instanceof Stripe.errors.StripeInvalidRequestError || error instanceof Stripe.errors.StripePermissionError)) return error;
+  console.error(`[TrainerBilling] Stripe rechazó ${operation}: ${error.code || error.type}` +
     `${error.param ? ` (${error.param})` : ""}, petición ${error.requestId || "sin id"}.`);
-  return new BillingError("CHECKOUT_REJECTED", "No se ha podido abrir la página de pago.", 503);
+  return new BillingError(code, message, 503);
 }
 function sessionView(session: Stripe.Checkout.Session, mode: Mode): Session {
   assertMode(session.livemode, mode);
@@ -320,7 +321,9 @@ export class StripeGateway implements Gateway {
       cancel_url: `${this.config.returnUrl}/tabs/subscription?checkout=cancelled`,
       expires_at: Math.floor(account.checkout!.startedAt.getTime() / 1000) + 3600,
       integration_identifier: `trainfit_trainers_${suffix}`,
-    } as Stripe.Checkout.SessionCreateParams, { idempotencyKey: key }).catch((error: unknown) => { throw checkoutRejection(error); });
+    } as Stripe.Checkout.SessionCreateParams, { idempotencyKey: key }).catch((error: unknown) => {
+      throw rejection(error, "abrir Checkout", "CHECKOUT_REJECTED", "No se ha podido abrir la página de pago.");
+    });
     return sessionView(session, this.config.mode);
   }
   // Portal de la cuenta (configuración predeterminada): facturas, método de pago y cancelación a fin
@@ -455,7 +458,9 @@ export class StripeGateway implements Gateway {
       payment_behavior: "pending_if_incomplete", proration_behavior: "always_invoice", proration_date: quote.prorationDate,
       // Changing the recurring interval resets the anchor automatically.
       // Stripe rejects explicit anchor=now together with proration_date.
-    }, { idempotencyKey: key });
+    }, { idempotencyKey: key }).catch((error: unknown) => {
+      throw rejection(error, "aplicar el cambio", "CHANGE_REJECTED", "Stripe no ha aceptado el cambio. Tu plan actual se mantiene.");
+    });
     this.check(changed.livemode);
     const invoiceId = id(changed.latest_invoice);
     if (!invoiceId) throw new BillingError("BILLING_REVIEW_REQUIRED", "El cambio necesita revisión de soporte.");
