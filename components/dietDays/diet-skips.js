@@ -1,4 +1,5 @@
 const dietDaySchema = require("./diet-days-schema");
+const dietDaysDao = require("./diet-days-dao");
 const mealDao = require("../meals/meal-dao");
 const mealAlternatives = require("../meals/meal-alternatives");
 
@@ -27,7 +28,7 @@ async function clearPlannedDay(userId, date, dietDay) {
     const mealId = meal?._id || meal;
     if (mealId) await mealDao.removePlannedItems(mealId);
   }
-  await dietDaySchema.findByIdAndUpdate(dietDay._id, { $set: { menuName: null } });
+  await dietDaySchema.findByIdAndUpdate(dietDay._id, { $set: { menuName: null }, $inc: { __v: 1 } });
   await mealAlternatives.clearForDate(userId, date);
 }
 
@@ -35,13 +36,16 @@ async function clearPlannedDay(userId, date, dietDay) {
  * Marca el día como saltado Y lo vacía de verdad. Antes solo escribía la
  * marca, así que un día que el cliente ya había resuelto se quedaba con sus
  * comidas puestas pese a decir la UI que "queda vacío".
+ *
+ * El día se asegura en la misma llamada: el profesional salta también días
+ * que el cliente aún no ha abierto (los de la semana que viene), y antes eso
+ * daba 404. Nace ya saltado, así que el resolver no le pauta nada después.
  */
 async function markDaySkipped(clientId, date) {
-  const dietDay = await dietDaySchema.findOne({ userId: clientId, date });
-  if (!dietDay) return null;
+  const { dietDay } = await dietDaysDao.ensureDietDay(clientId, date);
 
   await clearPlannedDay(clientId, date, dietDay);
-  await dietDaySchema.updateOne({ _id: dietDay._id }, { $set: { skipped: true } });
+  await dietDaySchema.updateOne({ _id: dietDay._id }, { $set: { skipped: true }, $inc: { __v: 1 } });
   return { clientId, date };
 }
 

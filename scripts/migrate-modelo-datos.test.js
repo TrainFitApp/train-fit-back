@@ -8,7 +8,7 @@ const Workout = require("../components/workouts/workout-schema");
 const Exercise = require("../components/exercises/exercise-schema");
 const Product = require("../components/products/product-schema");
 const Anthropometry = require("../components/anthropometry/anthropometry-schema");
-const { STEPS, runMigrations, listSteps } = require("./migrate-modelo-datos");
+const { STEPS, runMigrations, migrateAndVerify, listSteps } = require("./migrate-modelo-datos");
 
 // La cadena entera sobre una base con la forma de PRODUCCIÓN (rama main):
 // wrapper `diets`, días sin dueño, comidas, alimentos, microciclos, sesiones,
@@ -121,4 +121,24 @@ test("--dry-run no escribe nada ni apunta pasos", async () => {
   assert.equal(await db.raw("schemamigrations").countDocuments(), 0);
   assert.equal((await db.raw("dietdays").findOne({ _id: ids.day })).userId, undefined);
   assert.ok((await collectionNames()).includes("diets"));
+});
+
+test("migración completa: al terminar comprueba cada documento contra su schema", async () => {
+  await db.reset();
+  await db.raw("schemamigrations").deleteMany({});
+  await seedMainState();
+  const conn = db.mongoose.connection.db;
+
+  const dry = await migrateAndVerify(conn, { dryRun: true });
+  assert.equal(dry.verification, null, "en --dry-run no se comprueba: no se ha escrito nada");
+
+  const { results, verification } = await migrateAndVerify(conn);
+  assert.deepEqual(results.map((result) => result.id), STEPS.map((step) => step.id));
+  assert.equal(verification.invalid, 0, "la base de main queda limpia");
+  assert.equal(verification.undeclared, 0);
+
+  // Lo que ningún paso arregla sale en el informe.
+  await db.raw("users").insertOne({ email: "sin-arroba", name: "Roto" });
+  assert.equal((await migrateAndVerify(conn)).verification.invalid, 1);
+  assert.equal((await migrateAndVerify(conn, { verify: false })).verification, null);
 });

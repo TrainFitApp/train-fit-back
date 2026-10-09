@@ -93,12 +93,14 @@ module.exports = {
     return res.send(await mealService.modifyMeal(meal._id, patch));
   },
 
-  // PUT /meals/:id/paste { mealClipboard, merge } — pega en esta comida.
+  // PUT /meals/:id/paste { mealClipboard, merge } — pega en esta comida. Lo
+  // pegado es siempre del cliente, aunque se copiara de algo pautado, y lo
+  // pautado de esta comida sigue aunque se reemplace (meal-dao.js#keptOnPaste).
+  // Solo una comida pautada entera no admite pegar.
   async pasteMeal(req, res) {
     const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
-    const merge = Boolean(req.body?.merge);
-    mealService.assertMealPasteAllowed(meal, merge);
-    return res.send(await mealService.pasteMeal(req.body?.mealClipboard, meal, merge));
+    mealService.assertMealEditable(meal);
+    return res.send(await mealService.pasteMeal(req.body?.mealClipboard, meal, Boolean(req.body?.merge)));
   },
 
   // PUT /meals/:id/alternative { chosenIndex } — elige (o cambia) una de las

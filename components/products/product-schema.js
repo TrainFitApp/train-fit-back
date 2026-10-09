@@ -31,8 +31,8 @@ const ProductSchema = Schema({
 });
 
 // ─── INDEXES ───────────────────────────────────────────────────────────
-// Los índices de products los gestiona scripts/rebuild-search-indexes.js.
-// Ejecutar:  npm run rebuild:search-indexes
+// Los índices de products los gestiona scripts/rebuild-indexes.js.
+// Ejecutar:  npm run rebuild:indexes
 // NO declarar índices aquí — el script es la fuente única de verdad.
 // ───────────────────────────────────────────────────────────────────────
 

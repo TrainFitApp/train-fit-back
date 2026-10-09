@@ -331,7 +331,7 @@ test("pegar un día: sustituye contenido y nota del destino, conserva su menú, 
   assert.deepEqual(mealAt(pasted, 2).customProducts.map((cp) => cp.product.name), ["Paella"]);
   assert.equal(mealAt(pasted, 4).customProducts.length, 0);
   assert.equal(await ctx.findDiaryItem(oldPizza), null);
-  for (const id of oldMealIds) assert.equal(await ctx.findMeal(id), null, "las comidas sustituidas se borran");
+  assert.deepEqual(pasted.meals.map((m) => m._id), oldMealIds, "las comidas del destino son las mismas: cambia su contenido");
 
   // Independencia: cambiar la copia no toca el origen.
   const copied = mealAt(pasted, 0).customProducts[0];
@@ -438,7 +438,7 @@ test("comida pautada: la meta del día (plannedTarget) suma lo pautado con la ca
   assert.deepEqual(plannedTarget, { kcal: 280, protein: 28, carbs: 28, fat: 5.6 });
 });
 
-test("comida mixta: el cliente borra lo suyo pero no el alimento pautado, y no puede reemplazarla entera", async () => {
+test("comida mixta: el cliente borra lo suyo pero no el alimento pautado, y reemplazarla solo sustituye lo suyo", async () => {
   const user = await ctx.makeClient();
   const trainer = await ctx.makeTrainer();
   const date = "2026-10-04";
@@ -446,11 +446,16 @@ test("comida mixta: el cliente borra lo suyo pero no el alimento pautado, y no p
   await addFood(user, date, 0, food("Del coach"));
   let meal = mealAt((await readDay(user, date)).dietDay, 0);
   const coachCp = meal.customProducts.find((cp) => cp.product.name === "Del coach");
-  const mine = meal.customProducts.find((cp) => cp.product.name === "Mío");
   await ctx.setDiaryItem(coachCp._id, { assignedByTrainerId: trainer._id });
 
   assert.equal((await ctx.call(user, "DELETE", `/meals/${meal._id}/customproducts/${coachCp._id}`)).status, 403);
-  assert.equal((await ctx.call(user, "PUT", `/meals/${meal._id}/paste`, { mealClipboard: { customProducts: [] }, merge: false })).status, 403);
+  assert.equal((await ctx.call(user, "PUT", `/meals/${meal._id}/paste`, { mealClipboard: { customProducts: [] }, merge: false })).status, 200);
+  meal = mealAt((await readDay(user, date)).dietDay, 0);
+  assert.deepEqual(meal.customProducts.map((cp) => cp.product.name), ["Del coach"], "reemplazar con nada vacía lo suyo y deja lo pautado");
+
+  await addFood(user, date, 0, food("Mío"));
+  meal = mealAt((await readDay(user, date)).dietDay, 0);
+  const mine = meal.customProducts.find((cp) => cp.product.name === "Mío");
   assert.equal((await ctx.call(user, "DELETE", `/meals/${meal._id}/customproducts/${mine._id}`)).status, 200);
 
   // "Vaciar" solo se lleva lo del cliente.
@@ -470,17 +475,18 @@ test("el cliente no puede desproteger una comida pautada por la vía genérica d
   assert.equal(stored.customProducts.length, 2);
 });
 
-test("pegar un día encima de otro con comida pautada: 403 MEAL_PROTECTED y lo pautado sigue", async () => {
+test("pegar un día encima de otro con una comida pautada entera: esa comida no se toca y el resto se pega", async () => {
   const user = await ctx.makeClient();
   await addFood(user, "2026-10-08", 0, food("Tostada"));
+  await addFood(user, "2026-10-08", 2, food("Macarrones"));
   const source = (await readDay(user, "2026-10-08")).dietDay;
   const { meal } = await seedPrescribedMeal(user, "2026-10-09");
-  const res = await ctx.call(user, "PUT", "/dietdays/date/2026-10-09/paste", { dietDayClipboard: source });
-  assert.equal(res.status, 403);
-  assert.equal(res.body.code, "MEAL_PROTECTED");
-  const after = mealAt((await readDay(user, "2026-10-09")).dietDay, 2);
-  assert.equal(String(after._id), String(meal._id));
-  assert.equal(after.customProducts.length, 2);
+  await ctx.put(user, "/dietdays/date/2026-10-09/paste", { dietDayClipboard: source });
+  const after = (await readDay(user, "2026-10-09")).dietDay;
+  assert.deepEqual(mealAt(after, 0).customProducts.map((cp) => cp.product.name), ["Tostada"]);
+  assert.equal(String(mealAt(after, 2)._id), String(meal._id));
+  assert.deepEqual(mealAt(after, 2).customProducts.map((cp) => cp.product.name).sort(), ["Arroz pautado", "Pollo pautado"]);
+  assert.ok(mealAt(after, 2).assignedByTrainerId, "sigue pautada");
 });
 
 test("copiar una comida pautada a otro hueco crea alimentos PROPIOS (no pautados) y no altera la meta del día", async () => {

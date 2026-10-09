@@ -191,3 +191,12 @@ idor("ver el día de dieta de otro: por fecha solo se ve el propio", async ({ vi
   assert.notEqual(String(res.dietDay.userId), victim.id, "el dueño sale del token");
   assert.equal(res.dietDay.meals[0].customProducts.length, 0);
 });
+
+idor("ver el resumen de un día de dieta de quien no es cliente mío", async ({ victim, attacker }) => {
+  const stranger = await ctx.makeTrainer();
+  for (const user of [stranger, attacker]) {
+    const res = await ctx.call(user, "GET", `/trainer/clients/${victim.id}/nutrition-day?date=2026-06-10`);
+    assert.equal(res.status, 403);
+    assert.ok(!JSON.stringify(res.body).includes("Desayuno privado"));
+  }
+});

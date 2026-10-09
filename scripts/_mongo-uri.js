@@ -111,7 +111,15 @@ function redactMongoUri(uri) {
   return uri.replace(/\/\/([^:@/]+):([^@/]+)@/, "//$1:***@");
 }
 
+// Conexión de los scripts que tocan una base real (migrate, presets,
+// rebuild:indexes): mongoose no crea al conectar ni colecciones ni índices de
+// sus modelos. Un dry-run contra PRO, con la app vieja aún sirviendo, no debe
+// dejarle índices únicos nuevos que rechacen sus escrituras; los índices los
+// crea el paso 99 de la migración (scripts/rebuild-indexes.js).
+const SCRIPT_CONNECT_OPTIONS = Object.freeze({ autoIndex: false, autoCreate: false });
+
 module.exports = {
+  SCRIPT_CONNECT_OPTIONS,
   buildMongoUri,
   redactMongoUri,
 };

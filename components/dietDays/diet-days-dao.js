@@ -2,7 +2,7 @@ const dietDaySchema = require("./diet-days-schema");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
 const customProductDao = require("../customProducts/custom-product-dao");
 const mealStore = require("../meals/meal-store");
-const { cloneClipboardContent } = require("../meals/meal-dao");
+const { cloneClipboardContent, keptOnPaste } = require("../meals/meal-dao");
 const { mutateDocument } = require("../util/embedded-store");
 const { default: mongoose } = require("mongoose");
 const dietDaysUtil = require("./diet-days-util");
@@ -239,26 +239,41 @@ module.exports = {
     });
   },
 
+  // Pega un día sobre el de esa fecha, hueco a hueco (la posición es el
+  // hueco, ver diet-day-resolver.js): en cada comida lo del cliente se
+  // sustituye por la copia de la misma comida del día copiado, y lo pautado
+  // del destino se queda donde está (meal-dao.js#keptOnPaste). Una comida
+  // pautada entera no se toca. Las comidas conservan su id, nombre y
+  // opciones; `menuName`/`skipped` del día destino también.
   async pasteDietDayByUser(userId, dietDayClipboard, date) {
     // Lo que se pega va siempre sobre el día que YA es de esa fecha.
     const { dietDay } = await this.ensureDietDay(userId, date);
-    // Lo que pega el cliente es suyo: nunca hereda del portapapeles la marca
-    // de pautado ni el "tomado" (ver meal-dao.js#pasteMeal).
     const toPlainObject = (value) => (value?.toObject ? value.toObject() : { ...value });
 
-    const meals = [];
+    // Lo que pega el cliente es suyo: nunca hereda del portapapeles la marca
+    // de pautado ni el "tomado" (ver meal-dao.js#cloneClipboardContent).
+    const sources = [];
     for (const mealRef of dietDayClipboard?.meals || []) {
       const mealObj = toPlainObject(mealRef);
-      const mealId = mealStore.newId();
-      const content = await cloneClipboardContent(mealObj, { mealId });
-      meals.push({ _id: mealId, name: mealObj.name, notes: mealObj.notes, ...content });
+      sources.push({ notes: (mealObj.notes || "").toString().trim(), ...(await cloneClipboardContent(mealObj)) });
     }
 
-    // Se le sustituyen las comidas al día destino, que es siempre el mismo
-    // documento: no hay duplicado posible, y `menuName`/`skipped` del destino
-    // se conservan (no pertenecen al día copiado).
     const pastedNotes = (dietDayClipboard?.notes || "").toString().trim();
-    await mutateDocument(dietDaySchema, { _id: dietDay._id }, () => (pastedNotes ? { meals, notes: pastedNotes } : { meals }));
+    await mutateDocument(dietDaySchema, { _id: dietDay._id }, (day) => {
+      const meals = (day.meals || []).map((meal, index) => {
+        if (meal.assignedByTrainerId) return meal;
+        const source = sources[index] || { notes: "", customProducts: [], customRecipes: [] };
+        const next = {
+          ...meal,
+          customProducts: [...keptOnPaste(meal.customProducts), ...source.customProducts],
+          customRecipes: [...keptOnPaste(meal.customRecipes), ...source.customRecipes],
+        };
+        if (source.notes) next.notes = source.notes;
+        else delete next.notes;
+        return next;
+      });
+      return pastedNotes ? { meals, notes: pastedNotes } : { meals };
+    });
     if (!pastedNotes) await dietDaySchema.updateOne({ _id: dietDay._id }, { $unset: { notes: "" }, $inc: { __v: 1 } });
 
     return dietDaySchema.findById(dietDay._id);

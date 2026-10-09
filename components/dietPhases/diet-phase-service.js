@@ -37,23 +37,33 @@ const sameId = (a, b) => String(a?._id ?? a) === String(b?._id ?? b);
 // --- Cadena de fases ---
 
 /**
- * ¿Esta fase existente impide colocar una nueva que empieza en `startDate`?
+ * ¿Esta fase existente (una que llega hasta `startDate` o más allá) impide
+ * colocar una nueva que empieza en `startDate`?
  *
  * Solapar NO basta para bloquear: cambiarle el plan al cliente A PARTIR DE YA
  * es el caso normal, y se resuelve cortando la que estaba corriendo. Lo que se
  * rechaza es PROGRAMAR una fase futura encima de una que sigue abierta (o
- * dentro del tramo de una ya cortada). `today` se inyecta para testearla sin
- * reloj; `rulingPhaseId` es la fase que rige en `startDate` si es hoy o antes.
+ * dentro del tramo de una ya cortada), y empezar antes de una que ya está
+ * programada más adelante (la nueva queda abierta y se la comería).
+ *
+ * Empezando hoy (o con fecha pasada), las que empezaron ese día o antes nunca
+ * bloquean: la que rige se corta, y una sustituida el mismo día en que empezó
+ * (inicio y fin ese día, tapada por la más reciente) se queda como estaba.
+ * `today` se inyecta para testearla sin reloj.
  */
-function blocksNewPhase(existing, startDate, today, rulingPhaseId = null) {
+function blocksNewPhase(existing, startDate, today) {
   if (startDate > today) return true;
-  if (rulingPhaseId && sameId(existing, rulingPhaseId)) return false;
-  // Empezar hoy (o con fecha pasada) sobre la fase que está corriendo siempre
-  // se permite: es la forma de cerrarla cuando el cliente evoluciona distinto
-  // de lo previsto.
-  const running = existing.endDate == null && existing.startDate <= startDate;
-  return !running;
+  return existing.startDate > startDate;
 }
+
+// ¿`other` es una fase que `phase` sustituyó el mismo día en que empezó? Se
+// queda con inicio y fin ese día (no puede acabar antes de empezar) pero
+// nunca rige: la tapa `phase`, más reciente. Al mover las fechas de `phase`
+// no cuenta como solape: o la sigue tapando, o ya no la toca.
+const replacedSameDay = (other, phase) =>
+  other.startDate === phase.startDate &&
+  other.endDate === other.startDate &&
+  new Date(other.createdAt) < new Date(phase.createdAt);
 
 /**
  * Deja sitio para una fase que empieza en `startDate` y devuelve la que
@@ -67,7 +77,7 @@ async function reserveSlot(clientId, startDate) {
   const today = await todayForUser(clientId);
   const ruling = startDate <= today ? await dietPhaseDao.findCoveringDate(clientId, startDate) : null;
   const overlapping = await dietPhaseDao.findOverlapping(clientId, startDate, null);
-  const clash = overlapping.find((phase) => blocksNewPhase(phase, startDate, today, ruling?._id));
+  const clash = overlapping.find((phase) => blocksNewPhase(phase, startDate, today));
   if (clash) {
     // Accionable, no solo "no puedes": el camino para cambiar de plan es
     // empezar hoy (corta la anterior), y eso no se adivina.
@@ -325,7 +335,8 @@ module.exports = {
 
     const datesChange = nextStart !== phase.startDate || nextEnd !== phase.endDate;
     if (datesChange) {
-      const clash = (await dietPhaseDao.findOverlapping(clientId, nextStart, nextEnd, { excludeId: phase._id }))[0];
+      const overlapping = await dietPhaseDao.findOverlapping(clientId, nextStart, nextEnd, { excludeId: phase._id });
+      const clash = overlapping.find((other) => !replacedSameDay(other, phase));
       if (clash) {
         throw conflict(
           `Esas fechas se solapan con «${clash.name}» (desde el ${clash.startDate}${clash.endDate ? `, hasta el ${clash.endDate}` : ""}).`,
@@ -405,9 +416,7 @@ module.exports = {
     if (!(await dietPhaseDao.findCoveringDate(clientId, date))) {
       throw badRequest("Este cliente no tiene una fase de dieta en esa fecha");
     }
-    const skipped = await markDaySkipped(clientId, date);
-    if (!skipped) throw notFound("No hay día registrado en esa fecha");
-    return skipped;
+    return markDaySkipped(clientId, date);
   },
 
   // --- Semanas (docs/plan-semanas.md) ---

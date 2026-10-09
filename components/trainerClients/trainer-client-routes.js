@@ -138,6 +138,13 @@ router.getAsync(
   requireActiveClient("nutrition"),
   dataController.getClientNutritionTracking
 );
+// Resumen de un día (Plan › Nutrición › Día).
+router.getAsync(
+  "/clients/:clientId/nutrition-day",
+  auth(["trainer"]),
+  requireActiveClient("nutrition"),
+  dataController.getClientNutritionDay
+);
 // Cumplimiento alimento a alimento del rango — panel de resumen de una semana.
 router.getAsync(
   "/clients/:clientId/nutrition-foods",

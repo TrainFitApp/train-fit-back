@@ -84,11 +84,14 @@ const RECIPE_OVERRIDE_FIELDS = Object.freeze(["quantity", ...PRODUCT_VALUE_FIELD
 // Techo genérico de seguridad, no específico por nutriente.
 const NUTRIENT_LIMITS = Object.freeze({ min: 0, max: 100000 });
 
+// Largo máximo de cada alérgeno o traza.
+const TEXT_LIST_ITEM_MAX = 200;
+
 const textListField = (label) => ({
   type: [String],
   validate: {
-    validator: (arr) => !arr || arr.every((s) => (s || "").trim().length <= 200),
-    message: `Cada ${label} debe tener 200 caracteres o menos`,
+    validator: (arr) => !arr || arr.every((s) => (s || "").trim().length <= TEXT_LIST_ITEM_MAX),
+    message: `Cada ${label} debe tener ${TEXT_LIST_ITEM_MAX} caracteres o menos`,
   },
 });
 
@@ -116,5 +119,6 @@ module.exports = {
   PRODUCT_VALUE_FIELDS,
   RECIPE_OVERRIDE_FIELDS,
   NUTRIENT_LIMITS,
+  TEXT_LIST_ITEM_MAX,
   productValueSchemaFields,
 };
