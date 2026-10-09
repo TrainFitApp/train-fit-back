@@ -396,6 +396,78 @@ test("registro de profesional: rol trainer, sin días de dieta y solo entra en T
   assert.equal((await login(email, PASSWORD, h.FAMILY.client)).status, 403);
 });
 
+// QA 2026-10-09 (A5): con el correo caído, el alta respondía 500 con la
+// cuenta ya creada y el reintento decía «Este correo ya está registrado».
+const mail = require("../components/util/mail");
+
+async function withMailDown(fn) {
+  const original = mail.sendTransactionalMail;
+  mail.sendTransactionalMail = async () => {
+    throw new Error("Resend caído");
+  };
+  try {
+    return await fn();
+  } finally {
+    mail.sendTransactionalMail = original;
+  }
+}
+
+test("alta con el correo caído: la cuenta queda creada y la respuesta lo dice, sin 500; «Reenviar código» funciona sin esperar", async () => {
+  const email = `caido.${Date.now()}@example.test`;
+  const created = await withMailDown(() =>
+    ctx.raw("POST", "/users", { user: { name: "Caído", lastname: "Correo", email, password: PASSWORD, sex: 1, height: 170, weight: 70 } }),
+  );
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.verificationMailSent, false);
+  const stored = await ctx.model("User").findOne({ email }).lean();
+  assert.match(stored.hash, /^\d{6}$/, "el código está guardado");
+  assert.equal(stored.lastHashSentAt ?? null, null, "sin la espera de un minuto");
+
+  // Reenviar en el acto: ahora el correo sí sale.
+  const before = ctx.sentMail.length;
+  const resent = await ctx.raw("POST", "/auth/resend-code", { email }, { "x-forwarded-for": freshIp() });
+  assert.equal(resent.status, 200, JSON.stringify(resent.body));
+  assert.equal(ctx.sentMail.length, before + 1);
+
+  // Si al reenviar sigue caído, se dice (503, que la app explica: los 5xx no
+  // llevan detalles) y se puede volver a intentar sin esperar.
+  await ctx.model("User").updateOne({ email }, { $unset: { lastHashSentAt: 1 } });
+  const down = await withMailDown(() => ctx.raw("POST", "/auth/resend-code", { email }, { "x-forwarded-for": freshIp() }));
+  assert.equal(down.status, 503);
+  assert.equal(down.body.code, undefined);
+  assert.equal((await ctx.model("User").findOne({ email }).lean()).lastHashSentAt ?? null, null);
+
+  // Con el correo en marcha, el alta normal dice que sí salió.
+  const ok = await ctx.raw("POST", "/users", { user: { name: "Bien", lastname: "Correo", email: `ok.${email}`, password: PASSWORD } });
+  assert.equal(ok.body.verificationMailSent, true);
+});
+
+test("alta de profesional con el correo caído: 201 con la cuenta creada y el aviso interno de registro sale igual", async () => {
+  const email = `pro.caido.${Date.now()}@example.test`;
+  const before = ctx.sentMail.filter((m) => m.fn === "notifyUserRegistered").length;
+  const created = await withMailDown(() => ctx.raw("POST", "/users/professional", { name: "Pro", lastname: "Caído", email, password: PASSWORD }));
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.verificationMailSent, false);
+  assert.ok(await ctx.model("User").exists({ email }));
+  assert.equal(ctx.sentMail.filter((m) => m.fn === "notifyUserRegistered").length, before + 1);
+});
+
+test("profesional sin verificar que entra: el código le llega con el asunto de Trainers", async () => {
+  const trainer = await ctx.makeTrainer({ password: PASSWORD, fields: { hash: "111111" } });
+  const res = await login(trainer.email, PASSWORD, h.FAMILY.trainer);
+  assert.equal(res.status, 403);
+  assert.equal(res.body.code, "ACCOUNT_NOT_VERIFIED");
+  assert.equal(res.body.verificationMailSent, true);
+  const sent = ctx.sentMail.at(-1);
+  assert.equal(sent.args[0], trainer.email);
+  assert.match(sent.args[1], /TrainFit Entrenadores/);
+
+  // Y si el correo no sale, el login lo dice en vez de responder 500.
+  const down = await withMailDown(() => login(trainer.email, PASSWORD, h.FAMILY.trainer));
+  assert.equal(down.status, 403);
+  assert.equal(down.body.verificationMailSent, false);
+});
+
 test("comprobar email (público): existe / no existe / registro social incompleto cuenta como libre", async () => {
   const user = await ctx.makeClient();
   assert.deepEqual((await ctx.raw("GET", `/users/check/${encodeURIComponent(user.email.toUpperCase())}`)).body, { emailExist: true });

@@ -86,7 +86,7 @@ module.exports = {
     const has = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
     const patch = {};
     if (has("name") && req.body.name !== meal.name) {
-      mealService.assertMealEditable(meal);
+      await mealService.assertMealEditable(req.auth.userId, meal);
       patch.name = req.body.name;
     }
     if (has("notes")) patch.notes = req.body.notes;
@@ -99,7 +99,7 @@ module.exports = {
   // Solo una comida pautada entera no admite pegar.
   async pasteMeal(req, res) {
     const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
-    mealService.assertMealEditable(meal);
+    await mealService.assertMealEditable(req.auth.userId, meal);
     return res.send(await mealService.pasteMeal(req.body?.mealClipboard, meal, Boolean(req.body?.merge)));
   },
 
@@ -127,40 +127,40 @@ module.exports = {
     const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
     const item = findItem(meal, "customProducts", req.params.itemId);
     if (!item) return itemNotFound(res, "customProducts");
-    mealService.assertMealEditable(item);
+    await mealService.assertMealEditable(req.auth.userId, item);
     const { _id, assignedByTrainerId, assignedQuantity, ...changes } = req.body || {};
     return res.send(await mealService.updateCustomProduct(item._id, changes));
   },
 
   async deleteCustomProduct(req, res) {
     const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
-    mealService.assertMealEditable(meal);
+    await mealService.assertMealEditable(req.auth.userId, meal);
     // Nivel de item, además del de comida: una comida "mixta" puede tener
     // ESTE producto concreto pautado.
     const item = findItem(meal, "customProducts", req.params.itemId);
     if (!item) return itemNotFound(res, "customProducts");
-    mealService.assertMealEditable(item);
+    await mealService.assertMealEditable(req.auth.userId, item);
     return res.send(await mealService.deleteMealProduct(meal._id, item._id));
   },
 
   async deleteCustomRecipe(req, res) {
     const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
-    mealService.assertMealEditable(meal);
+    await mealService.assertMealEditable(req.auth.userId, meal);
     const item = findItem(meal, "customRecipes", req.params.itemId);
     if (!item) return itemNotFound(res, "customRecipes");
-    mealService.assertMealEditable(item);
+    await mealService.assertMealEditable(req.auth.userId, item);
     return res.send(await mealService.deleteMealCustomRecipe(meal._id, item._id));
   },
 
   async deleteAllCustomProducts(req, res) {
     const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
-    mealService.assertMealEditable(meal);
+    await mealService.assertMealEditable(req.auth.userId, meal);
     return res.send(await mealService.deleteMealCustomProducts(meal._id));
   },
 
   async deleteAllCustomRecipes(req, res) {
     const meal = await resolveOwnedMealById(req.auth.userId, req.params.id);
-    mealService.assertMealEditable(meal);
+    await mealService.assertMealEditable(req.auth.userId, meal);
     return res.send(await mealService.deleteMealCustomRecipes(meal._id));
   },
 

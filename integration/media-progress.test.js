@@ -222,3 +222,61 @@ test("borrar la cuenta borra sus fotos del almacenamiento", async () => {
   assert.equal(await ctx.count("ProgressMediaDay", { userId: client._id }), 0);
   assert.equal(fs.existsSync(path.join(LOCAL_ROOT, asset.key)), false);
 });
+
+// --- Revisiones de técnica: un vídeo, una revisión ------------------------------
+
+// El vídeo ya subido (local, listo): la subida real de vídeo la cubren los
+// tests de fotos; aquí importa a qué revisión se cuelga.
+async function readyFormCheckVideo(client) {
+  return ctx.model("MediaAsset").create({
+    ownerId: client._id,
+    subjectId: client._id,
+    purpose: "form_check",
+    kind: "video",
+    provider: "local",
+    key: `test/form-check-${Date.now()}-${Math.random()}.mp4`,
+    status: "ready",
+    mime: "video/mp4",
+    bytes: 1024,
+    durationSec: 8,
+  });
+}
+
+test("revisión de técnica: el mismo vídeo no cuelga de dos revisiones (409), ni enviándolo dos veces a la vez", async () => {
+  const { trainer, client } = await clientWithTrainer();
+  const video = await readyFormCheckVideo(client);
+  const body = { assetId: String(video._id), exerciseName: "Sentadilla" };
+
+  const first = await ctx.call(client, "POST", "/form-checks/mine", body);
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  const again = await ctx.call(client, "POST", "/form-checks/mine", body);
+  assert.equal(again.status, 409);
+  assert.equal(again.body.code, "FORM_CHECK_ASSET_IN_USE");
+
+  // Doble toque en «Enviar»: dos peticiones a la vez con otro vídeo.
+  const other = await readyFormCheckVideo(client);
+  const both = await Promise.all([1, 2].map(() => ctx.call(client, "POST", "/form-checks/mine", { ...body, assetId: String(other._id) })));
+  assert.deepEqual(both.map((res) => res.status).sort(), [201, 409]);
+  assert.equal(await ctx.model("FormCheck").countDocuments({ assetId: other._id }), 1);
+
+  // Borrar una revisión no deja a otra sin vídeo: cada una tiene el suyo.
+  const kept = both.find((res) => res.status === 201).body.formCheck;
+  assert.equal((await ctx.call(client, "DELETE", `/form-checks/mine/${first.body.formCheck.id}`)).status, 200);
+  assert.equal(await ctx.model("MediaAsset").exists({ _id: video._id }), null, "el vídeo de la borrada se va con ella");
+  assert.ok(await ctx.model("MediaAsset").exists({ _id: other._id }), "el de la otra sigue");
+  const forTrainer = await ctx.call(trainer, "GET", `/trainer/form-checks/${kept.id}`);
+  assert.equal(forTrainer.status, 200);
+});
+
+test("revisión de técnica borrada por el cliente: el aviso del entrenador desaparece (antes abría un 404)", async () => {
+  const { trainer, client } = await clientWithTrainer();
+  const video = await readyFormCheckVideo(client);
+  const created = await ctx.call(client, "POST", "/form-checks/mine", { assetId: String(video._id), exerciseName: "Press banca" });
+  assert.equal(created.status, 201);
+  const id = created.body.formCheck.id;
+  const notices = () => ctx.model("Notification").countDocuments({ trainerId: trainer._id, type: "form_check_submitted", "payload.formCheckId": id });
+  assert.equal(await notices(), 1);
+
+  assert.equal((await ctx.call(client, "DELETE", `/form-checks/mine/${id}`)).status, 200);
+  assert.equal(await notices(), 0);
+});

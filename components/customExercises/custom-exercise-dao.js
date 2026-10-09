@@ -19,6 +19,7 @@ const { toId, plain, newId, isObjectId, cloneSet } = require("../workouts/workou
 const SET_UPDATE_FIELDS = [
   "reps",
   "weight",
+  "expectedWeight",
   "rir",
   "expectedRir",
   "expectedReps",

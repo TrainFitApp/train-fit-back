@@ -2,6 +2,7 @@ const mealDao = require("./meal-dao");
 const mealAlternatives = require("./meal-alternatives");
 const customProductDao = require("../customProducts/custom-product-dao");
 const customRecipeDao = require("../customRecipes/custom-recipe-dao");
+const trainerClientDao = require("../trainerClients/trainer-client-dao");
 
 // TAREA 1 (coach-tab) — única comprobación de "¿puede el cliente editar
 // libremente esta comida?" en todo el módulo. Una comida pautada por un
@@ -21,8 +22,13 @@ class MealProtectedError extends Error {
 // (meal-controller.js): mismo campo, mismo significado ("¿esto lo compuso un
 // profesional?"), no hace falta una función aparte solo porque el objeto no
 // sea un Meal.
-function assertMealEditable(meal) {
-  if (meal?.assignedByTrainerId) {
+//
+// 2026-10 — el candado dura lo que dura la relación de nutrición de su dueño
+// con quien lo pautó: terminada, la comida es del cliente a todos los efectos
+// (antes quedaba bloqueada para siempre, sin profesional a quien pedírselo).
+async function assertMealEditable(ownerId, meal) {
+  if (!meal?.assignedByTrainerId) return;
+  if (await trainerClientDao.isActivePair(meal.assignedByTrainerId, ownerId, "nutrition")) {
     throw new MealProtectedError();
   }
 }

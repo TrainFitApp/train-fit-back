@@ -97,11 +97,12 @@ function assertRightApp(user, clientContext) {
   if (message) throw forbidden(message, "WRONG_APP_FOR_ROLE");
 }
 
-// Cuenta sin verificar: código nuevo por correo y fuera.
+// Cuenta sin verificar: código nuevo por correo y fuera. Si el correo no
+// sale, la app lo sabe por `verificationMailSent` y ofrece reenviarlo.
 async function assertVerified(user) {
   if (!user.hash) return;
-  await userService.sendFreshVerificationCode(user);
-  throw forbidden("Cuenta no verificada. Se ha enviado un nuevo código.", "ACCOUNT_NOT_VERIFIED", { email: user.email });
+  const verificationMailSent = await userService.sendFreshVerificationCode(user);
+  throw forbidden("Cuenta no verificada. Se ha enviado un nuevo código.", "ACCOUNT_NOT_VERIFIED", { email: user.email, verificationMailSent });
 }
 
 async function googleIdentity(token) {

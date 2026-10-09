@@ -16,21 +16,23 @@ async function assertCanAccessSetId(req, res, idSet) {
   return table;
 }
 
-// Lo prescrito de una serie. En una rutina asignada, el cliente no lo
-// reescribe: se descarta del payload (no se bloquea la petición, porque el
-// front manda la serie completa también al registrar lo ejecutado).
+// Lo prescrito de una serie. En una rutina asignada (mientras dure la
+// relación con quien la pautó), el cliente no lo reescribe: se descarta del
+// payload (no se bloquea la petición, porque el front manda la serie
+// completa también al registrar lo ejecutado).
 const PRESCRIBED_SET_FIELDS = [
   "expectedReps",
+  "expectedWeight",
   "expectedRir",
   "expectedTime",
   "expectedDistance",
+  "drop",
+  "restPause",
+  "restSeconds",
 ];
 
-function stripPrescribedFieldsForAssignedOwner(req, table, body) {
-  const isAssignedOwner = Boolean(table?.assignedByTrainerId)
-    && !tableAccess.isAdmin(req)
-    && String(req.user?.id) === String(table.userId);
-  if (!isAssignedOwner) return body;
+async function stripPrescribedFieldsForAssignedOwner(req, table, body) {
+  if (!(await tableAccess.isLockedForOwner(req, table))) return body;
   const clean = { ...body };
   for (const key of PRESCRIBED_SET_FIELDS) delete clean[key];
   return clean;
@@ -61,7 +63,7 @@ module.exports = {
   async updateSet(req, res) {
     const table = await assertCanAccessSetId(req, res, req.body?._id);
     if (!table) return;
-    const set = await setService.updateSet(stripPrescribedFieldsForAssignedOwner(req, table, req.body));
+    const set = await setService.updateSet(await stripPrescribedFieldsForAssignedOwner(req, table, req.body));
     if (!set) return res.status(404).send({ message: "Serie no encontrada" });
     return res.send(set);
   },
@@ -74,7 +76,7 @@ module.exports = {
   async deleteById(req, res) {
     const table = await assertCanAccessSetId(req, res, req.params.id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await setService.deleteSet(req.params.id);
     res.sendStatus(204);
   },

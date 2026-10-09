@@ -392,7 +392,38 @@ test("una fase futura no empieza antes que otra programada ni el mismo día que 
   assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { startDate: h.day(20), menus: [] })).status, 400, "sin plantilla hace falta nombre");
   const otherTrainer = await ctx.makeTrainer();
   const foreign = await libraryTemplate(otherTrainer);
-  assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { templateId: foreign._id, startDate: h.day(20) })).status, 404, "solo plantillas propias");
+  assert.equal((await ctx.call(trainer, "POST", phasesPath(client), { templateId: foreign._id, startDate: h.day(20) })).status, 404, "nunca la de otro profesional");
+});
+
+test("empezar una fase avisa al cliente (antes solo se enteraba si entraba en Dietas)", async () => {
+  const { trainer, client } = await setupPair();
+  const phase = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(3));
+  const notices = await ctx.model("Notification").find({ clientId: client._id, type: "diet_phase_assigned" }).lean();
+  assert.equal(notices.length, 1);
+  assert.equal(String(notices[0].trainerId), trainer.id);
+  assert.deepEqual(notices[0].payload, { planName: phase.name, startDate: h.day(3) });
+  const mine = await ctx.get(client, "/notifications/mine");
+  assert.ok((Array.isArray(mine) ? mine : mine.notifications).some((n) => n.type === "diet_phase_assigned"), "y le sale en sus avisos");
+});
+
+test("empezar fase con una dieta de fábrica (sin dueño entre los profesionales) copia su contenido y no la toca", async () => {
+  const { trainer, client } = await setupPair();
+  const admin = await ctx.makeAdmin();
+  const factory = await ctx.post(admin, "/trainer/diet-templates", { name: "Vegana · 2.200 kcal", menus: menus(), verified: true });
+  assert.equal(factory.verified, true);
+
+  const res = await ctx.call(trainer, "POST", phasesPath(client), { templateId: factory._id, startDate: h.day(0) });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal(res.body.name, "Vegana · 2.200 kcal", "hereda el nombre de la dieta");
+  assert.equal(String(res.body.sourceTemplateId), String(factory._id));
+  const phase = await ctx.model("DietPhase").findById(res.body._id).lean();
+  assert.deepEqual(phase.contents[0].menus.map((m) => m.name), ["Menú A", "Menú B"]);
+  assert.equal(String(phase.trainerId), trainer.id, "la fase es del profesional que la aplica");
+
+  // La plantilla de fábrica sigue siendo del admin y el profesional no la edita ni la borra.
+  assert.equal((await ctx.call(trainer, "PUT", `/trainer/diet-templates/${factory._id}`, { name: "Mía" })).status, 404);
+  assert.equal((await ctx.call(trainer, "DELETE", `/trainer/diet-templates/${factory._id}`)).status, 404);
+  assert.equal((await ctx.model("DietTemplate").findById(factory._id).lean()).name, "Vegana · 2.200 kcal");
 });
 
 test("quitar la fase vigente reactiva la anterior: el cliente vuelve a ver sus menús", async () => {

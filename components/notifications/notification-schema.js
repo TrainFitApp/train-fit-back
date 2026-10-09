@@ -29,8 +29,13 @@ const NotificationSchema = new Schema(
         "payment_created",
         "nutrition_preferences_requested",
         "checkin_reviewed",
+        // Al programar la rutina (no al crearla) y al empezar una fase de
+        // dieta: payload { routineName | planName, startDate }.
         "routine_assigned",
+        "diet_phase_assigned",
+        // Hábito o suplemento nuevo: payload { taskLabel } | { supplementName }.
         "task_assigned",
+        "supplement_assigned",
         "intake_submitted",
         "client_confirmed",
         "meal_prescribed",

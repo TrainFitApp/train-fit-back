@@ -21,7 +21,7 @@ async function seedTable() {
       exercises: [
         {
           exercise: exercise._id,
-          sets: [{ reps: 5, doned: true, donedAt: new Date("2026-01-05"), cronometer: 40, drop: true, expectedRir: [-1] }],
+          sets: [{ reps: 5, weight: 82.5, rir: [0], doned: true, donedAt: new Date("2026-01-05"), cronometer: 40, drop: true, expectedRir: [-1], expectedReps: [5], expectedWeight: 80 }],
         },
       ],
       ...extra,
@@ -75,7 +75,9 @@ test("duplicateWorkoutRow copia la fila debajo en TODOS los microciclos, con la 
   assert.equal(set.cronometer, undefined);
   assert.equal(set.drop, true, "la pauta viaja igual: drop set");
   assert.deepEqual([...set.expectedRir], [-1], "y fallo");
-  assert.equal(set.reps, 5);
+  assert.deepEqual([...set.expectedReps], [5]);
+  assert.equal(set.expectedWeight, 80, "y la carga pautada");
+  for (const field of ["reps", "weight", "rir"]) assert.equal(set[field], undefined, `lo levantado no viaja: ${field}`);
 });
 
 test("reorderWorkoutRows aplica la misma permutación en todos los microciclos", async () => {

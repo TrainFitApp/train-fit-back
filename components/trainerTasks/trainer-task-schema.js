@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
+const { TASK_TYPES } = require("./task-label");
 
 // Tab Coach, Fase 4 — tarea/hábito diario que el profesional asigna a un
 // cliente concreto (p.ej. "caminar 10.000 pasos"). Registro de cumplimiento
@@ -13,7 +14,7 @@ const TrainerTaskSchema = new Schema(
     clientId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     type: {
       type: String,
-      enum: ["steps", "water", "sleep", "cardio", "custom"],
+      enum: TASK_TYPES,
       required: true,
     },
     // Obligatorio solo si type: "custom" (validado en el controller, igual

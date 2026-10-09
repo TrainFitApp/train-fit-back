@@ -31,7 +31,7 @@ module.exports = {
   async updateCustomExercise(req, res) {
     const table = await assertCanAccessCustomExerciseId(req, res, req.body.customExercise?._id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const customExercise = await customExerciseService.updateCustomExercise(
       req.body.customExercise,
       req.body.setsToCreate,
@@ -45,7 +45,7 @@ module.exports = {
   async addSetToCustomExercise(req, res) {
     const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const customExercise = await customExerciseService.addSetToCustomExercise(
       req.params.id,
       req.body
@@ -57,7 +57,7 @@ module.exports = {
   async copySetOnCustomExercise(req, res) {
     const table = await assertCanAccessCustomExerciseId(req, res, req.body?._id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const customExercise = await customExerciseService.copySetOnCustomExercise(
       req.params.order,
       req.body
@@ -70,7 +70,7 @@ module.exports = {
   async setCustomExerciseBlock(req, res) {
     const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     return res.send(await customExerciseService.setCustomExerciseBlock(req.params.id, req.body?.blockId ?? null));
   },
 
@@ -95,7 +95,7 @@ module.exports = {
   async deleteCustomExercise(req, res) {
     const table = await assertCanAccessCustomExerciseId(req, res, req.params.id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await withPinnedNotesSync(table._id, () =>
       customExerciseService.deleteCustomExercise(req.params.id),
     );
@@ -108,7 +108,7 @@ module.exports = {
     for (const idCustomExercise of ids) {
       const table = await assertCanAccessCustomExerciseId(req, res, idCustomExercise);
       if (!table) return;
-      if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+      if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
       tableIds.push(table._id);
     }
     await withPinnedNotesSync(tableIds, () => customExerciseService.deleteCustomExercises(req.body));

@@ -95,12 +95,6 @@ const ASSIGNED_OWNER_WORKOUT_FIELDS = new Set([
   "clientNotes",
 ]);
 
-function isAssignedTableOwner(req, table) {
-  return Boolean(table?.assignedByTrainerId)
-    && !tableAccess.isAdmin(req)
-    && String(req.user?.id) === String(table.userId);
-}
-
 function pickAssignedOwnerWorkoutFields(body) {
   return Object.fromEntries(
     Object.entries(body || {}).filter(([key]) => ASSIGNED_OWNER_WORKOUT_FIELDS.has(key)),
@@ -120,7 +114,7 @@ module.exports = {
   async duplicateWorkoutRow(req, res) {
     const table = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const splits = await withPinnedNotesSync(table._id, () =>
       workoutService.duplicateWorkoutRow(
         req.params.idTable,
@@ -134,7 +128,7 @@ module.exports = {
   async reorderWorkoutRows(req, res) {
     const table = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const splits = await withPinnedNotesSync(table._id, () =>
       workoutService.reorderWorkoutRows(req.params.idTable, req.body?.workoutIdsOrder),
     );
@@ -144,7 +138,7 @@ module.exports = {
   async addWorkoutsToSplits(req, res) {
     const tableForAccess = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!tableForAccess) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableForAccess)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableForAccess)) return;
     const table = await workoutService.addWorkoutsToSplits(req.params.idTable, req.body);
     return res.send(table);
   },
@@ -154,7 +148,7 @@ module.exports = {
     for (const idWorkout of workoutIds || []) {
       const table = await assertCanAccessWorkoutId(req, res, idWorkout);
       if (!table) return;
-      if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+      if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     }
     const result = await workoutService.addExerciseToWorkouts(workoutIds, exerciseId);
     return res.send(result);
@@ -185,7 +179,7 @@ module.exports = {
     // runValidators, de modo que los min/max del esquema no llegarían a
     // ejecutarse: mismo motivo por el que ya existe sanitizeWorkoutBlocks.
     let body = stripForeignNotes(req, table, req.body);
-    if (isAssignedTableOwner(req, table)) body = pickAssignedOwnerWorkoutFields(body);
+    if (await tableAccess.isLockedForOwner(req, table)) body = pickAssignedOwnerWorkoutFields(body);
     if (Object.prototype.hasOwnProperty.call(body, "sorenessPre")) {
       body.sorenessPre = sanitizeSoreness(body.sorenessPre);
     }
@@ -198,7 +192,7 @@ module.exports = {
   async updateWorkoutBlocks(req, res) {
     const table = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const blocks = sanitizeWorkoutBlocks(req.body?.blocks);
     const workout = await workoutService.updateWorkoutBlocks(req.params.idWorkout, blocks);
     return res.send(workout);
@@ -236,7 +230,7 @@ module.exports = {
   async updateWorkout(req, res) {
     const table = await assertCanAccessWorkoutId(req, res, req.body?.workout?._id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     // $set del workout entero: mismo reparto de notas que modifyWorkout.
     const workout = await workoutService.updateWorkout(
       stripForeignNotes(req, table, req.body.workout),
@@ -248,7 +242,7 @@ module.exports = {
   async addDataExerciseToWorkout(req, res) {
     const table = await assertCanAccessWorkoutId(req, res, req.params.idWorkout);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await workoutService.addDataExerciseToWorkout(
       req.params.idWorkout,
       req.body,
@@ -259,7 +253,7 @@ module.exports = {
   async updateWorkoutsOrder(req, res) {
     const table = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     const workout = await withPinnedNotesSync(table._id, () =>
       workoutService.updateWorkoutsOrder(req.params.idWorkout, req.params.idTable, req.body),
     );
@@ -269,7 +263,7 @@ module.exports = {
   async updateCustomExercises(req, res) {
     const tableForAccess = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!tableForAccess) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableForAccess)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, tableForAccess)) return;
     const table = await workoutService.updateCustomExercises(
       req.params.idTable,
       req.params.idWorkout,
@@ -282,7 +276,7 @@ module.exports = {
   async updateWorkoutsName(req, res) {
     const table = await assertCanAccessTableId(req, res, req.params.idTable);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await workoutService.updateWorkoutsName(
       req.params.idTable,
       req.params.idWorkout,
@@ -299,7 +293,7 @@ module.exports = {
     for (const workoutTemp of workouts) {
       const table = await assertCanAccessWorkoutId(req, res, workoutTemp?._id);
       if (!table) return;
-      if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+      if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
       tableIds.push(table._id);
     }
     await withPinnedNotesSync(tableIds, () => workoutService.deleteWorkoutRows(workouts));
@@ -309,7 +303,7 @@ module.exports = {
   async pasteExercises(req, res) {
     const table = await assertCanAccessTableId(req, res, req.body.tableId);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     // La sesión destino tiene que ser de ESA rutina: antes bastaba con tener
     // acceso a la tabla del cuerpo para pegar en la sesión de cualquiera.
     const targetTable = await tableAccess.findTableOwningWorkout(req.body.targetWorkoutId);
@@ -328,7 +322,7 @@ module.exports = {
   async deleteWorkoutCustomExercises(req, res) {
     const table = await assertCanAccessWorkoutId(req, res, req.params.id);
     if (!table) return;
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     await withPinnedNotesSync(table._id, () =>
       workoutService.deleteWorkoutCustomExercises(req.params.id),
     );

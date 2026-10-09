@@ -21,6 +21,7 @@ const RETENTION_DAYS = PURPOSES.form_check.retentionDays;
 const SNAPSHOT_NUMBERS = [
   "reps",
   "weight",
+  "expectedWeight",
   "restSeconds",
   "expectedDistance",
   "distance",
@@ -31,6 +32,8 @@ const SNAPSHOT_STRINGS = ["expectedTime", "time"];
 function fail(status, code, message) {
   return { error: { status, code, message } };
 }
+
+const assetInUse = () => fail(409, "FORM_CHECK_ASSET_IN_USE", "Ese vídeo ya está en otra revisión");
 
 function sanitizeSnapshot(input) {
   if (!input || typeof input !== "object") return null;
@@ -160,6 +163,9 @@ module.exports = {
     if (recent >= FORM_CHECKS_PER_WEEK) {
       return fail(429, "FORM_CHECK_WEEKLY_LIMIT", `Puedes enviar ${FORM_CHECKS_PER_WEEK} vídeos por semana`);
     }
+    // Un vídeo solo cuelga de una revisión (índice único en el schema; esta
+    // comprobación da el error claro antes de llegar a él).
+    if (await formCheckDao.existsForAsset(attachable.asset._id)) return assetInUse();
 
     // Hasta hoy en la zona del cliente; sin fecha válida, hoy.
     const today = todayIsoDate(timeZoneOf(user));
@@ -177,7 +183,12 @@ module.exports = {
       clientNote: String(body?.clientNote || "").trim().slice(0, 500),
       createdAt: now,
       expiresAt: new Date(now.getTime() + RETENTION_DAYS * DAY_MS),
+    }).catch((error) => {
+      // Dos envíos a la vez con el mismo vídeo: gana el primero.
+      if (error?.code === 11000) return null;
+      throw error;
     });
+    if (!check) return assetInUse();
 
     await notificationDao.createForTrainer(trainerId, user._id, "form_check_submitted", {
       formCheckId: String(check._id),
@@ -210,6 +221,7 @@ module.exports = {
     const check = await formCheckDao.findById(id);
     if (!check || String(check.clientId) !== String(user._id)) return fail(404, "FORM_CHECK_NOT_FOUND", "Revisión no encontrada");
     await formCheckDao.deleteById(check._id);
+    await notificationDao.deleteByPayload("form_check_submitted", "formCheckId", check._id);
     return { ok: true };
   },
 

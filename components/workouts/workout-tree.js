@@ -37,10 +37,11 @@ function exerciseRefOf(customExercise) {
 }
 
 // Una copia (duplicar microciclo, fila o rutina, aplicar una plantilla,
-// pegar) lleva la serie igual que está pautada: repeticiones, RIR (fallo
-// incluido), drop set, rest-pause, descanso, carga, tiempo y distancia. Lo
-// que no viaja es su ejecución: si se hizo, cuándo y su cronómetro.
-const SET_EXECUTION_FIELDS = ["__v", "doned", "donedAt", "cronometer"];
+// pegar, duplicar una serie) lleva la serie igual que está pautada:
+// repeticiones, carga, RIR (fallo incluido), drop set, rest-pause, descanso,
+// tiempo y distancia (`expected*`). Lo que no viaja es su ejecución: si se
+// hizo, cuándo, su cronómetro y lo que se levantó de verdad.
+const SET_EXECUTION_FIELDS = ["__v", "doned", "donedAt", "cronometer", "reps", "weight", "rir", "time", "distance", "velocity"];
 
 function cloneSet(set) {
   const clone = plain(set);

@@ -30,6 +30,8 @@ test("hábitos: validación de alta (tipo, objetivo, rango, unidad)", async () =
   const path = `/trainer/clients/${client.id}/tasks`;
   for (const body of [
     { type: "yoga", target: 1, unit: "x" },
+    // El cardio se pauta en el entrenamiento, no es un hábito.
+    { type: "cardio", target: 30, unit: "min" },
     { type: "custom", target: 1, unit: "x" },
     { type: "water", target: 0, unit: "l" },
     { type: "water", target: 2 },
@@ -38,6 +40,25 @@ test("hábitos: validación de alta (tipo, objetivo, rango, unidad)", async () =
     assert.equal((await ctx.call(trainer, "POST", path, body)).status, 400, JSON.stringify(body));
   }
   assert.equal(await ctx.count("TrainerTask", { clientId: client._id }), 0);
+});
+
+test("hábitos de un protocolo: mismos tipos que los sueltos, sin cardio", async () => {
+  const trainer = await ctx.makeTrainer({ name: "Coach" });
+  const cardio = await ctx.call(trainer, "POST", "/trainer/protocols", {
+    name: "Definición",
+    dailyTasks: [{ type: "cardio", target: 30, unit: "min" }],
+  });
+  assert.equal(cardio.status, 400);
+  assert.equal(await ctx.count("CoachProtocol", { trainerId: trainer._id }), 0);
+
+  const protocol = await ctx.post(trainer, "/trainer/protocols", {
+    name: "Definición",
+    dailyTasks: [
+      { type: "steps", target: 10000, unit: "pasos" },
+      { type: "custom", label: "Cardio", target: 30, unit: "min" },
+    ],
+  });
+  assert.deepEqual(protocol.dailyTasks.map((task) => task.type), ["steps", "custom"]);
 });
 
 test("hábitos: el cliente los ve con el nombre del profesional, marca hoy y días pasados, nunca el futuro", async () => {

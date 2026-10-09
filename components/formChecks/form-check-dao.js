@@ -18,6 +18,10 @@ module.exports = {
     return FormCheck.findById(id).lean();
   },
 
+  async existsForAsset(assetId) {
+    return Boolean(await FormCheck.exists({ assetId }));
+  },
+
   async countSince(clientId, since) {
     return FormCheck.countDocuments({ clientId, createdAt: { $gte: since } });
   },

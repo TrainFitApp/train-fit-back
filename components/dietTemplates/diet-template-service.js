@@ -49,9 +49,11 @@ module.exports = {
     return withMacroProfile(template);
   },
 
-  // La que se va a aplicar a un cliente: solo las propias.
-  async getOwned(trainerId, id) {
-    const template = await dietTemplateDao.findOwnedByTrainer(trainerId, id);
+  // La que se va a aplicar a un cliente: las propias y las de fábrica (las
+  // mismas que lista el cajón de sugerencias). Aplicar copia el contenido en
+  // la fase del cliente: la plantilla de fábrica no se toca.
+  async getApplicable(trainerId, id) {
+    const template = await dietTemplateDao.findReadableByTrainer(trainerId, id);
     if (!template) throw notFound(NOT_FOUND);
     return template;
   },

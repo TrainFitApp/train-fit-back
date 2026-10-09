@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
+const { TASK_TYPES } = require("../trainerTasks/task-label");
 
 // Fase 4 Coach Pro — la metodología del coach, empaquetada (§20).
 //
@@ -57,7 +58,7 @@ const CoachProtocolSchema = new Schema(
     // conocen al aplicar.
     dailyTasks: [
       {
-        type: { type: String, enum: ["steps", "water", "sleep", "cardio", "custom"], required: true },
+        type: { type: String, enum: TASK_TYPES, required: true },
         label: { type: String, trim: true, maxlength: 100, default: null },
         target: { type: Number, required: true, min: 0 },
         unit: { type: String, required: true, trim: true, maxlength: 20 },

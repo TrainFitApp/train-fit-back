@@ -137,7 +137,7 @@ module.exports = {
     if (!(await tableAccess.canAccessUserTable(req, table.userId))) {
       return res.status(403).send({ message: "No tienes permiso para esta rutina" });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const tableName = await tableService.updateTable(req.body._id, req.body.name, table.userId, true);
     return res.send(tableName);
@@ -154,7 +154,7 @@ module.exports = {
     if (!allowed) {
       return res.status(403).send({ message: "No tienes permiso para esta acci\u00f3n" });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const result = await tableService.deleteTable(table.userId, table._id, !table.userId);
     if (result.deletedCount === 0) {

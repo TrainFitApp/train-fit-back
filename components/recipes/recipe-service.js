@@ -79,13 +79,13 @@ async function updateRecipe(id, recipe) {
 // CustomRecipe de otro. Lanza MEAL_NOT_FOUND / MEAL_PROTECTED.
 async function assertComposeMealContext(userId, context, isEditMode) {
   const meal = await resolveOwnedMealById(userId, context.mealId);
-  mealService.assertMealEditable(meal);
+  await mealService.assertMealEditable(userId, meal);
   if (!isEditMode || !context.customRecipeId) return;
   const target = (meal.customRecipes || []).find(
     (cr) => String(cr?._id || cr) === String(context.customRecipeId),
   );
   if (!target) throw badRequest("La receta indicada no está en esa comida", "MEAL_NOT_FOUND");
-  mealService.assertMealEditable(target);
+  await mealService.assertMealEditable(userId, target);
 }
 
 async function composeRecipe(payload, userId, isAdmin = false) {

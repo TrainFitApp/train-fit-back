@@ -5,6 +5,7 @@ const { projectionAcrossAssignments, getProjectedPhaseEndDate } = require("./rou
 const { withStates } = require("../util/phase-chain");
 const { todayForUser } = require("../users/user-time-zone");
 const { badRequest, conflict, notFound } = require("../util/http-error");
+const notificationService = require("../notifications/notification-service");
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -67,6 +68,9 @@ module.exports = {
     await assertFitsInChain(clientId, startDate);
     const assignment = await routineAssignmentDao.create({ tableId, clientId, trainerId, startDate });
     await recordChange({ trainerId, clientId, before: previous, after: assignment, reason });
+    // El aviso sale al programarla, no al crearla: hasta ahora es cuando el
+    // cliente la encuentra en «Mis rutinas» (o la tendrá desde startDate).
+    await notificationService.create(clientId, trainerId, "routine_assigned", { routineName: table.name, startDate });
     return assignment;
   },
 

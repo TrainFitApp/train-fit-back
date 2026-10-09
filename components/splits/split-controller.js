@@ -13,7 +13,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
     // Misma exención que el microciclo en blanco: la rutina que un
     // profesional asigna a su cliente no cuenta contra el límite Free.
     const isExempt = await tableAccess.isMicrocycleExempt(table);
@@ -48,7 +48,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     // Solo los datos del microciclo: sus entrenos se gestionan por sus rutas
     // (un $set del cuerpo entero dejaba enganchar workouts de cualquiera).
@@ -71,7 +71,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     return res.send(await splitService.reorderSplits(req.params.idTable, req.body?.splitIdsOrder));
   },
@@ -86,7 +86,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const isExempt = await tableAccess.isMicrocycleExempt(table);
     if (!featureAccess.canAddMicrocycle(req.user, (table.splits || []).length, isExempt)) {
@@ -113,7 +113,7 @@ module.exports = {
         .status(403)
         .send({ message: "No tienes permiso para esta rutina" });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     await splitService.deleteSplit(req.params.idTable, req.params.idSplit);
     res.sendStatus(204);
@@ -152,7 +152,7 @@ module.exports = {
         message: "No tienes permiso para esta rutina",
       });
     }
-    if (tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
+    if (await tableAccess.rejectIfAssignedTableLockedForOwner(req, res, table)) return;
 
     const tableSplitIds = new Set(
       (table.splits || []).map((split) => (split?._id || split)?.toString()),

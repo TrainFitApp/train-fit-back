@@ -10,6 +10,9 @@ const SetSchema = new Schema(
   {
     reps: { type: Number, min: 0, max: 999 },
     weight: { type: Number, min: 0, max: 2000 },
+    // Carga pautada (kg). `weight` es solo la levantada: el cliente la apunta
+    // al hacer la serie y nunca pisa lo que pautó el profesional.
+    expectedWeight: { type: Number, min: 0, max: 2000 },
     // min: -1 porque -1 es el centinela de "FALLO" usado en toda la app
     // (ver set.component.ts), no un valor de RIR real.
     // `default: undefined`: una serie sin RIR no guarda `[]` (así eran los

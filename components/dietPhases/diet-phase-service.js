@@ -23,6 +23,7 @@ const { addDaysToIsoDate, daysElapsed } = require("../util/date-util");
 const { cutEndDate, sortChain, successorOf, withStates } = require("../util/phase-chain");
 const { todayForUser } = require("../users/user-time-zone");
 const { badRequest, conflict, notFound } = require("../util/http-error");
+const notificationService = require("../notifications/notification-service");
 
 // Fases de dieta de un cliente (diet-phase-schema.js). "Hoy" es siempre el
 // del cliente, en su zona horaria.
@@ -234,7 +235,7 @@ module.exports = {
 
   /**
    * Empieza una fase para el cliente: con la copia de una plantilla de su
-   * biblioteca (`templateId`) o con menús construidos para él (`menus`). Si
+   * biblioteca o de fábrica (`templateId`) o con menús construidos para él (`menus`). Si
    * ya tenía una, la corta (encadenado de fases) — "aplicar un plan nuevo" y
    * "programar la siguiente fase" son la MISMA operación.
    *
@@ -245,7 +246,7 @@ module.exports = {
     let sourceTemplateId = null;
     let firstMenus;
     if (templateId) {
-      const template = await dietTemplateService.getOwned(trainerId, templateId);
+      const template = await dietTemplateService.getApplicable(trainerId, templateId);
       sourceTemplateId = template._id;
       firstMenus = await copyMenus(template.menus);
       name = name || template.name;
@@ -279,6 +280,8 @@ module.exports = {
       reason,
     });
     await resyncPlannedDays(clientId, startDate, null);
+    // Antes el cliente solo se enteraba si entraba en Dietas.
+    await notificationService.create(clientId, trainerId, "diet_phase_assigned", { planName: created.name, startDate });
     return created;
   },
 

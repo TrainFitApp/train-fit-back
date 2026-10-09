@@ -29,6 +29,7 @@ function buildTable() {
                 sets: [
                   {
                     weight: 60,
+                    expectedWeight: 57.5,
                     reps: 9,
                     rir: [2],
                     expectedReps: [8, 12],
@@ -60,7 +61,7 @@ test("quita la ejecución y lo del cliente, deja la pauta", () => {
     assert.equal(workout[field], undefined, field);
   }
   assert.equal(exercise.clientNotes, undefined);
-  for (const field of ["reps", "rir", "donedAt", "time", "distance"]) {
+  for (const field of ["reps", "weight", "rir", "donedAt", "time", "distance"]) {
     assert.equal(set[field], undefined, field);
   }
 
@@ -72,7 +73,7 @@ test("quita la ejecución y lo del cliente, deja la pauta", () => {
   assert.deepEqual(workout.blocks, [{ name: "A", type: "superset" }]);
   assert.equal(exercise.notes, "codos pegados");
   assert.equal(exercise.blockId, "block1");
-  assert.equal(set.weight, 60);
+  assert.equal(set.expectedWeight, 57.5, "la carga pautada es pauta");
   assert.deepEqual(set.expectedReps, [8, 12]);
   assert.deepEqual(set.expectedRir, [1, 2]);
   assert.equal(set.restSeconds, 90);

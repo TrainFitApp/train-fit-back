@@ -6,8 +6,7 @@ const {
   validateNutritionTarget,
 } = require("./protocol-content");
 const { validDate } = require("../trainerCheckins/checkin-schedule-dates");
-
-const TASK_TYPES = ["steps", "water", "sleep", "cardio", "custom"];
+const { TASK_TYPES } = require("../trainerTasks/task-label");
 
 function validateDailyTasks(tasks) {
   for (const task of tasks || []) {

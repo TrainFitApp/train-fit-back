@@ -175,9 +175,12 @@ module.exports = {
     Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
     delete tableDoc._id;
+    // La copia que se hace el usuario es suya: no hereda el «asignada por
+    // tu entrenador» de la original (ni su candado).
     return await tableSchema.create({
       ...tableDoc,
       userId: idUser,
+      assignedByTrainerId: null,
     });
   },
 
@@ -210,9 +213,12 @@ module.exports = {
     Object.assign(tableDoc, await copyHierarchy(tableDoc));
 
     delete tableDoc._id;
+    // La copia que se hace el usuario es suya: no hereda el «asignada por
+    // tu entrenador» de la original (ni su candado).
     return await tableSchema.create({
       ...tableDoc,
       userId: idUser,
+      assignedByTrainerId: null,
     });
   },
 

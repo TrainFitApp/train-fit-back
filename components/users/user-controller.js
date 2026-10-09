@@ -105,9 +105,11 @@ module.exports = {
     // Alta sin sesión: la zona del dispositivo viene en la cabecera, sin
     // pasar por validateAuth.
     const timeZone = normalizeTimeZone(String(req.headers?.["x-timezone"] || "").trim());
-    const user = await userService.registerClient(normalizeEmail(req.body?.user?.email), req.body.user, timeZone);
+    const { user, verificationMailSent } = await userService.registerClient(normalizeEmail(req.body?.user?.email), req.body.user, timeZone);
     notifyUserRegistered(user, req, "users.createUser");
-    res.send(await userService.view(user, req.user));
+    // verificationMailSent: false = la cuenta está creada pero el correo con
+    // el código no salió; la app lo dice y ofrece «Reenviar código».
+    res.send({ ...(await userService.view(user, req.user)), verificationMailSent });
   },
 
   // Alta de profesional (TrainFit: Entrenadores). No reutiliza el alta de
@@ -115,9 +117,9 @@ module.exports = {
   // cliente de TrainFit.
   async createProfessionalUser(req, res) {
     const { name, lastname, email, password } = req.body || {};
-    const user = await userService.createProfessional({ name, lastname, email: normalizeEmail(email), password });
+    const { user, verificationMailSent } = await userService.createProfessional({ name, lastname, email: normalizeEmail(email), password });
     notifyUserRegistered(user, req, "users.createProfessionalUser");
-    res.status(201).send(await userService.view(user, req.user));
+    res.status(201).send({ ...(await userService.view(user, req.user)), verificationMailSent });
   },
 
   async updateUser(req, res) {

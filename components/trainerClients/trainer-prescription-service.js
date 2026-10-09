@@ -7,7 +7,10 @@ const { badRequest } = require("../util/http-error");
 
 // Lo que el profesional pauta directamente a sus clientes, a uno (F11/F12) o
 // a varios a la vez (F30): una rutina (en blanco o copia de una plantilla) y
-// el contenido de una comida. El cliente recibe un aviso de cada cosa.
+// el contenido de una comida. La comida avisa al cliente en el acto; la
+// rutina, al PROGRAMARLA (routine-assignment-service.js#applyRoutine): recién
+// creada es un borrador que el cliente no ve, y el aviso le mandaba a buscar
+// algo que no encontraba.
 
 // La misma operación sobre varios clientes, cada uno con su comprobación de
 // relación activa (nunca se salta "porque es en bloque") y su resultado: un
@@ -32,9 +35,7 @@ async function applyToTargets(trainerId, targetClientIds, scope, operation) {
 }
 
 async function copyTemplate(trainerId, clientId, sourceTableId) {
-  const table = await tableService.assignTemplateToClient(clientId, sourceTableId, trainerId);
-  await notificationService.create(clientId, trainerId, "routine_assigned", { routineName: table.name });
-  return table;
+  return tableService.assignTemplateToClient(clientId, sourceTableId, trainerId);
 }
 
 const clipboardOf = ({ customProducts, customRecipes }) => ({
@@ -66,9 +67,7 @@ module.exports = {
   async assignRoutine({ trainerId, clientId, mode, name, sourceTableId }) {
     if (mode === "new") {
       if (!name) throw badRequest("name es obligatorio");
-      const table = await tableService.assignNewRoutineToClient(clientId, name, trainerId);
-      await notificationService.create(clientId, trainerId, "routine_assigned", { routineName: table.name });
-      return table;
+      return tableService.assignNewRoutineToClient(clientId, name, trainerId);
     }
     if (mode === "duplicate") {
       if (!sourceTableId) throw badRequest("sourceTableId es obligatorio");

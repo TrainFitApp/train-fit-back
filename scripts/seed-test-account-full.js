@@ -859,7 +859,6 @@ function buildTracking(kcalP2) {
   const HABITS = [
     { key: "water", type: "water", label: null, target: 2.5, unit: "l", rate: 0.85 },
     { key: "sleep", type: "sleep", label: null, target: 7.5, unit: "h", rate: 0.7 },
-    { key: "cardio", type: "cardio", label: null, target: 30, unit: "min", rate: 0.55 },
     { key: "stretch", type: "custom", label: "Estiramientos de cadera", target: 10, unit: "min", rate: 0.6 },
   ];
   let marks = 0;

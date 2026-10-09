@@ -58,6 +58,8 @@ const { migrateRetiredFields } = require("./migrations/23-retired-fields");
 const { migrateNormalizeEmails } = require("./migrations/24-normalize-emails");
 const { migrateUndeclaredFields } = require("./migrations/25-undeclared-fields");
 const { migrateOutOfRangeValues } = require("./migrations/26-out-of-range-values");
+const { migrateExpectedWeight } = require("./migrations/27-expected-weight");
+const { migrateCardioHabits } = require("./migrations/28-cardio-habits");
 const { migrateIndexes } = require("./migrations/99-indexes");
 const { verifySchemas } = require("./verify-schemas");
 
@@ -91,6 +93,8 @@ const STEPS = [
   { id: "24-normalize-emails", run: migrateNormalizeEmails },
   { id: "25-undeclared-fields", run: migrateUndeclaredFields },
   { id: "26-out-of-range-values", run: migrateOutOfRangeValues },
+  { id: "27-expected-weight", run: migrateExpectedWeight },
+  { id: "28-cardio-habits", run: migrateCardioHabits },
   // Siempre el último (99): un paso nuevo va antes de este, con el número
   // siguiente al anterior.
   { id: "99-indexes", run: migrateIndexes },

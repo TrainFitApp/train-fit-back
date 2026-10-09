@@ -264,7 +264,13 @@ module.exports = {
 
   // --- Código de verificación del alta ---
   async findVerificationState(email) {
-    return userSchema.findOne({ email }).select("_id email name hash hashExpiresAt hashFailedAttempts lastHashSentAt").lean();
+    return userSchema.findOne({ email }).select("_id email name roles hash hashExpiresAt hashFailedAttempts lastHashSentAt").lean();
+  },
+
+  // El correo con el código no salió: se quita la espera de un minuto para
+  // que «Reenviar código» funcione en el acto.
+  async releaseVerificationCooldown(userId) {
+    return userSchema.updateOne({ _id: userId }, { $unset: { lastHashSentAt: "" } });
   },
 
   // Guarda un código nuevo solo si el último se mandó antes de

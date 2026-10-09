@@ -49,6 +49,29 @@ function sendVerificationMail(email, name, code, subject) {
   return mail.sendTransactionalMail(email, subject, html);
 }
 
+// El asunto según la app de la cuenta: un profesional entra por TrainFit
+// Entrenadores (antes, al entrar sin verificar, le llegaba el de cliente).
+const verificationSubject = (roles) =>
+  (roles || []).includes("trainer") ? "Verificación de cuenta - TrainFit Entrenadores" : "Verificación de cuenta - TrainFit";
+
+// 503: la app lo explica por el estado (los 5xx no llevan código ni mensaje).
+const mailSendFailed = () => httpError(503, "No hemos podido enviarte el correo");
+
+// El correo con el código puede fallar (proveedor caído, buzón que lo
+// rechaza). La cuenta y el código ya están guardados: el alta no responde 500
+// (al reintentar decía «Este correo ya está registrado»). Se libera la espera
+// del reenvío y se devuelve false para que la app lo diga y ofrezca reenviar.
+async function deliverVerificationMail(user, code) {
+  try {
+    await sendVerificationMail(user.email, user.name, code, verificationSubject(user.roles));
+    return true;
+  } catch (error) {
+    console.error("[MAIL] verification_mail_failed", { userId: String(user._id), reason: error?.message || String(error) });
+    await userDao.releaseVerificationCooldown(user._id);
+    return false;
+  }
+}
+
 // El objetivo inicial que manda la app al registrarse.
 const initialGoal = (body) => ({
   name: "Default",
@@ -133,6 +156,7 @@ module.exports = {
    * con su código de verificación (15 minutos). `timeZone` es la del
    * dispositivo (cabecera X-Timezone, null si no vino): sin ella, la edad
    * mínima y el día del primer peso saldrían de la zona por defecto.
+   * Devuelve { user, verificationMailSent }.
    */
   async registerClient(email, body, timeZone = null) {
     await assertEmailAvailable(email);
@@ -156,8 +180,8 @@ module.exports = {
       const goal = await nutritionalGoalService.createForUser(created._id, initialGoal(body));
       created.goalInUse = goal._id;
     }
-    await sendVerificationMail(created.email, created.name, code, "Verificación de cuenta - TrainFit");
-    return created;
+    const verificationMailSent = await deliverVerificationMail(created, code);
+    return { user: created, verificationMailSent };
   },
 
   // Editor de perfil: solo los campos del perfil (lista blanca) y el peso de
@@ -192,12 +216,9 @@ module.exports = {
     const updated = await userDao.setVerificationCodeIfIdle(state._id, code, expiresAt, new Date(Date.now() - CODE_COOLDOWN_MS));
     if (!updated) throw cooldownActive();
 
-    const html = mail.generateHashMail(
-      `Hola ${updated.name}, verifique su cuenta`,
-      "Introduce el siguiente código en la aplicación para finalizar el registro.",
-      code,
-    );
-    await mail.sendTransactionalMail(updated.email, "Verificación de cuenta - TrainFit", html);
+    // Aquí sí se avisa del fallo: quien pulsa «Reenviar» necesita saber que
+    // no le ha llegado nada (y puede volver a intentarlo sin esperar).
+    if (!(await deliverVerificationMail(updated, code))) throw mailSendFailed();
     return updated;
   },
 
@@ -205,14 +226,16 @@ module.exports = {
   // suma un intento; un acierto invalida el código en el acto.
   // Cuenta sin verificar que intenta entrar: código nuevo (15 minutos) y
   // correo con él.
-  async sendFreshVerificationCode(user, subject = "Verificación de cuenta - TrainFit") {
+  // Devuelve si el correo salió.
+  async sendFreshVerificationCode(user) {
     const code = generateVerificationCode();
     await userDao.updateVerificationHash(user._id, code, new Date(Date.now() + HASH_CODE_TTL_MS));
-    await sendVerificationMail(user.email, user.name, code, subject);
+    return deliverVerificationMail(user, code);
   },
 
   // Alta de un profesional (TrainFit: Entrenadores): sin objetivo ni nada de
-  // cliente consumidor; con su código de verificación por correo.
+  // cliente consumidor; con su código de verificación por correo. Devuelve
+  // { user, verificationMailSent }.
   async createProfessional({ name, lastname, email, password }) {
     if (!name || !lastname || !email || !password) {
       throw badRequest("Nombre, apellidos, email y contraseña son obligatorios");
@@ -231,8 +254,8 @@ module.exports = {
         lastHashSentAt: new Date(),
       })
       .catch(rethrowDuplicate);
-    await sendVerificationMail(user.email, name, code, "Verificación de cuenta - TrainFit Entrenadores");
-    return user;
+    const verificationMailSent = await deliverVerificationMail(user, code);
+    return { user, verificationMailSent };
   },
 
   // Registro social: la cuenta nace sin perfil (lo completa después

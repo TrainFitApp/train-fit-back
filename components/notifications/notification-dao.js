@@ -73,6 +73,12 @@ module.exports = {
     return Notification.deleteOne({ _id: notificationId });
   },
 
+  // Los avisos que apuntan a algo que ya no existe (una revisión de técnica
+  // que el cliente borró): abrirlos daba 404.
+  async deleteByPayload(type, field, value) {
+    return Notification.deleteMany({ type, [`payload.${field}`]: String(value) });
+  },
+
   // Un cobro liquidado/cancelado/anulado deja de ser deuda: sus avisos pasan a
   // históricos (resolution) y dejan de contar como no leídos. `beforeDueRevision`
   // limita la resolución a los avisos de un vencimiento ya cambiado.

@@ -1,7 +1,6 @@
 const trainerTaskService = require("./trainer-task-service");
 const { todayIsoDate } = require("../util/date-util");
-
-const TASK_TYPES = ["steps", "water", "sleep", "cardio", "custom"];
+const { TASK_TYPES } = require("./task-label");
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 module.exports = {

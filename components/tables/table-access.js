@@ -95,10 +95,20 @@ async function findTableOwningSet(setId) {
 // (cliente) de la tabla — nunca al entrenador que la asignó, que sigue
 // editándola desde su Planificador por estas mismas rutas genéricas (a
 // diferencia de Meals, aquí no hay una ruta trainer-only separada).
-function rejectIfAssignedTableLockedForOwner(req, res, table) {
+//
+// 2026-10 — el candado dura lo que dura la relación de entrenamiento con
+// quien la pautó: terminada (o si el cliente cambió de entrenador), la rutina
+// es del cliente a todos los efectos. Antes se quedaba bloqueada para siempre
+// («Pídele el cambio a tu entrenador», y ya no lo tenía).
+async function isLockedForOwner(req, table) {
   if (!table?.assignedByTrainerId) return false;
   if (isAdmin(req)) return false;
   if (String(req.user?.id) !== String(table.userId)) return false;
+  return trainerClientDao.isActivePair(table.assignedByTrainerId, table.userId, "training");
+}
+
+async function rejectIfAssignedTableLockedForOwner(req, res, table) {
+  if (!(await isLockedForOwner(req, table))) return false;
   res.status(403).send({
     message: "Esta rutina te la asignó tu entrenador. Pídele el cambio en vez de editarla tú mismo.",
     code: "TABLE_ASSIGNED_BY_TRAINER",
@@ -116,5 +126,6 @@ module.exports = {
   findTableOwningWorkout,
   findTableOwningCustomExercise,
   findTableOwningSet,
+  isLockedForOwner,
   rejectIfAssignedTableLockedForOwner,
 };

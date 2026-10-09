@@ -22,15 +22,17 @@ const WORKOUT_EXECUTION_FIELDS = [
 
 const CUSTOM_EXERCISE_CLIENT_FIELDS = ["clientNotes"];
 
-// Valores REALES de una serie hecha. weight se queda: es a la vez el peso
-// pautado y el levantado (no hay expectedWeight).
+// Valores REALES de una serie hecha. La carga pautada es `expectedWeight` y
+// se queda con el resto de la pauta.
 const SET_EXECUTION_FIELDS = [
   "reps",
+  "weight",
   "rir",
   "donedAt",
   "cronometer",
   "time",
   "distance",
+  "velocity",
 ];
 
 function omit(target, fields) {

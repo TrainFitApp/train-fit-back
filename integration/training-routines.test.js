@@ -277,6 +277,71 @@ test("rutina asignada: el cliente NO puede cambiar su estructura (TABLE_ASSIGNED
   assert.ok(await ctx.findSet(set));
 });
 
+test("rutina asignada: terminada la relación de entrenamiento, el cliente ya puede renombrarla, reestructurarla, duplicarla y borrarla", async () => {
+  const trainer = await ctx.makeTrainer();
+  // Premium: duplicar suma una rutina y el plan Free solo admite una
+  // (PREMIUM_LIMIT_ROUTINES, que es otra regla; abajo se comprueba aparte).
+  const client = await ctx.makeClient({ fields: { premium: { entitled: true, plan: "monthly", expiresAt: new Date(Date.now() + 86400000) } } });
+  await ctx.relate(trainer, client, { scope: "training" });
+  await ctx.relate(trainer, client, { scope: "nutrition" });
+  const { table, ids } = await seedRoutine(client, { assignedBy: trainer, shape: [[[2, 1], [1]], [[1]]] });
+
+  // Con la relación activa, bloqueada.
+  const locked = await ctx.call(client, "PUT", "/tables", { _id: table._id, name: "Mía" });
+  assert.equal(locked.status, 403);
+  assert.equal(locked.body.code, "TABLE_ASSIGNED_BY_TRAINER");
+
+  // Terminar solo nutrición no la libera: el candado es del entrenamiento.
+  await ctx.endRelation(trainer, client, "nutrition");
+  assert.equal((await ctx.call(client, "PUT", "/tables", { _id: table._id, name: "Mía" })).status, 403);
+
+  await ctx.endRelation(trainer, client, "training");
+  const renamed = await ctx.call(client, "PUT", "/tables", { _id: table._id, name: "Mía" });
+  assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+  assert.equal((await ctx.model("Table").findById(table._id).lean()).name, "Mía");
+
+  // Estructura: borrar un ejercicio y una serie, cambiar la pauta.
+  assert.equal((await ctx.call(client, "DELETE", `/sets/${ids.sets[1]}`)).status, 204);
+  assert.equal((await ctx.call(client, "DELETE", `/customexercises/${ids.customExercises[1]}`)).status, 204);
+  await ctx.put(client, "/sets", { _id: ids.sets[0], expectedReps: [5], expectedWeight: 60 });
+  const set = await ctx.findSet(ids.sets[0]);
+  assert.deepEqual(set.expectedReps, [5], "la pauta ya es suya");
+  assert.equal(set.expectedWeight, 60);
+
+  const copy = await ctx.call(client, "POST", `/tables/duplicate/${table._id}`, { idUser: client.id });
+  assert.equal(copy.status, 200, JSON.stringify(copy.body));
+  const copyDoc = await ctx.model("Table").findById(copy.body._id).lean();
+  assert.equal(copyDoc.assignedByTrainerId ?? null, null, "la copia que hace el cliente es suya, no del profesional");
+  assert.equal((await ctx.call(client, "PUT", "/tables", { _id: copy.body._id, name: "Copia mía" })).status, 200);
+
+  assert.equal((await ctx.call(client, "DELETE", `/tables/${table._id}`)).status, 204);
+  assert.equal(await ctx.model("Table").exists({ _id: table._id }), null);
+
+  // En Free, duplicar la que le dejó su entrenador choca con el límite de
+  // rutinas (no con el candado): es el aviso de pasarse a Premium.
+  const free = await ctx.makeClient();
+  await ctx.relate(trainer, free, { scope: "training" });
+  const { table: freeTable } = await seedRoutine(free, { assignedBy: trainer });
+  await ctx.endRelation(trainer, free, "training");
+  const limited = await ctx.call(free, "POST", `/tables/duplicate/${freeTable._id}`, { idUser: free.id });
+  assert.equal(limited.status, 403);
+  assert.equal(limited.body.code, "PREMIUM_LIMIT_ROUTINES");
+});
+
+test("rutina asignada: si el cliente cambia de entrenador, la del anterior deja de estar bloqueada", async () => {
+  const first = await ctx.makeTrainer();
+  const second = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  await ctx.relate(first, client, { scope: "training" });
+  const { table } = await seedRoutine(client, { assignedBy: first });
+  await ctx.endRelation(first, client, "training");
+  await ctx.relate(second, client, { scope: "training" });
+  assert.equal((await ctx.call(client, "PUT", "/tables", { _id: table._id, name: "Mía" })).status, 200);
+  // La del entrenador actual sí sigue bloqueada.
+  const { table: current } = await seedRoutine(client, { assignedBy: second });
+  assert.equal((await ctx.call(client, "PUT", "/tables", { _id: current._id, name: "Mía" })).status, 403);
+});
+
 test("rutina asignada: el cliente SÍ registra su entreno (series hechas, notas propias, sensaciones)", async () => {
   const trainer = await ctx.makeTrainer();
   const client = await ctx.makeClient();
@@ -305,10 +370,57 @@ test("rutina asignada: el cliente no puede reescribir lo PRESCRITO de una serie"
   const client = await ctx.makeClient();
   await ctx.relate(trainer, client, { scope: "training" });
   const { ids } = await seedRoutine(client, { assignedBy: trainer });
-  await ctx.call(client, "PUT", "/sets", { _id: ids.sets[0], expectedReps: [20], expectedRir: [5] });
+  await ctx.call(client, "PUT", "/sets", { _id: ids.sets[0], expectedReps: [20], expectedRir: [5], expectedWeight: 10, restSeconds: 5 });
   const stored = await ctx.findSet(ids.sets[0]);
   assert.deepEqual(stored.expectedReps, [8, 10]);
   assert.deepEqual(stored.expectedRir, [2]);
+  assert.equal(stored.expectedWeight, undefined);
+  assert.equal(stored.restSeconds, undefined);
+});
+
+test("rutina asignada: la carga pautada (expectedWeight) sobrevive a lo que levanta el cliente", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  await ctx.relate(trainer, client, { scope: "training" });
+  const { ids } = await seedRoutine(client, { assignedBy: trainer });
+  const exerciseId = ids.customExercises[0];
+  const [first, second] = (await ctx.findCustomExercise(exerciseId)).sets;
+
+  // El profesional pauta 40 kg en el Planner (la serie objetivo).
+  const planned = await ctx.put(trainer, "/customexercises", {
+    customExercise: {
+      _id: exerciseId,
+      sets: [
+        { _id: first._id, expectedReps: [8, 10], expectedRir: [2], expectedWeight: 40, order: 0 },
+        { _id: second._id, expectedReps: [8, 10], expectedRir: [2], expectedWeight: 40, order: 1 },
+      ],
+    },
+  });
+  assert.deepEqual(planned.sets.map((set) => set.expectedWeight), [40, 40]);
+  assert.deepEqual(planned.sets.map((set) => set.weight), [undefined, undefined], "la pauta no se escribe como dato levantado");
+
+  // El cliente apunta 42,5 kg en la primera y la marca hecha; la segunda no la hace.
+  await ctx.put(client, "/sets", { ...first, expectedWeight: 40, weight: 42.5, reps: 9, doned: true });
+  const done = await ctx.findSet(first._id);
+  assert.equal(done.weight, 42.5, "lo levantado");
+  assert.equal(done.expectedWeight, 40, "la pauta sigue intacta");
+  const pending = await ctx.findSet(second._id);
+  assert.equal(pending.weight, undefined, "una serie sin hacer no guarda la pauta como si fuera dato");
+  assert.equal(pending.expectedWeight, 40);
+
+  // Duplicar la fila (siguiente semana) lleva la pauta y nunca lo levantado.
+  const table = await ctx.model("Table").findOne({ "splits.workouts": ids.workouts[0] }).lean();
+  const duplicated = await ctx.call(trainer, "POST", `/workouts/duplicate-row/${table._id}/${ids.workouts[0]}`, {});
+  assert.ok(duplicated.status < 300, JSON.stringify(duplicated.body));
+  const rowIds = (await ctx.model("Table").findById(table._id).lean()).splits.flatMap((split) => split.workouts);
+  const copies = await ctx.model("Workout").find({ _id: { $in: rowIds, $nin: ids.workouts } }).lean();
+  assert.ok(copies.length > 0);
+  for (const copy of copies) {
+    const [set] = copy.exercises[0].sets;
+    assert.equal(set.expectedWeight, 40);
+    assert.equal(set.weight, undefined);
+    assert.equal(set.doned, undefined);
+  }
 });
 
 test("rutina asignada: el cliente no puede vaciar los ejercicios de un entreno vía 'modificar entreno'", async () => {

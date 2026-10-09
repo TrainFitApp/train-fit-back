@@ -43,6 +43,10 @@ const FormCheckSchema = new Schema(
   { collection: "formchecks" }
 );
 
+// Un vídeo, una revisión: borrar una revisión borra su vídeo, así que dos
+// revisiones con el mismo vídeo dejaban a la otra sin él (doble toque en
+// «Enviar»).
+FormCheckSchema.index({ assetId: 1 }, { unique: true });
 FormCheckSchema.index({ trainerId: 1, status: 1, createdAt: -1 });
 FormCheckSchema.index({ clientId: 1, exerciseId: 1, createdAt: -1 });
 FormCheckSchema.index({ expiresAt: 1 }, { sparse: true });

@@ -19,10 +19,10 @@ function rankableFilter(trainerId, clientId, sources) {
   return { $or: or };
 }
 
-// PURO. Filtro de LECTURA de UNA plantilla por id (vista previa): las mías y
-// las de fábrica de cualquiera, las mismas que ya entran en el ranking de
-// "Empezar fase". Solo para leer: editar, borrar y aplicar siguen exigiendo
-// ser el dueño.
+// PURO. Filtro de LECTURA de UNA plantilla por id (vista previa y aplicar a
+// un cliente): las mías y las de fábrica de cualquiera, las mismas que ya
+// entran en el ranking de "Empezar fase". Editar y borrar siguen exigiendo ser
+// el dueño.
 function readableFilter(trainerId, id) {
   return { _id: id, $or: [{ trainerId }, { verified: true }] };
 }

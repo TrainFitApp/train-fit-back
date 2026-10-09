@@ -31,26 +31,33 @@ const notificationTypes = async (client) => {
   return (Array.isArray(list) ? list : list.notifications || []).map((n) => n.type);
 };
 
-test("asignar rutina nueva: queda marcada como del entrenador, NO se activa sola y el cliente recibe aviso", async () => {
+test("asignar rutina nueva: queda marcada como del entrenador, NO se activa sola y el cliente NO recibe aviso hasta programarla", async () => {
   const { trainer, client } = await pair();
   const table = await assignNew(trainer, client);
   assert.equal(String(table.userId), client.id);
   assert.equal(String(table.assignedByTrainerId), trainer.id);
   assert.equal(await tableInUse(client), "", "asignar no activa");
-  assert.ok((await notificationTypes(client)).includes("routine_assigned"));
+  assert.ok(!(await notificationTypes(client)).includes("routine_assigned"), "un borrador que el cliente no ve no se anuncia");
   // Borrador del entrenador: el cliente aún no la ve en "mis rutinas".
   assert.deepEqual((await ctx.get(client, "/tables?own=true")).map((t) => t.name), []);
   // El entrenador sí la ve en la ficha.
   assert.deepEqual((await ctx.get(trainer, `/trainer/clients/${client.id}/tables`)).map((t) => t.name), ["Rutina del coach"]);
   assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables`, { mode: "otro" })).status, 400);
   assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables`, { mode: "new" })).status, 400);
+  const { table: publicTemplate } = await ctx.seedTable({ name: "Plantilla pública" });
+  const duplicated = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tables`, { mode: "duplicate", sourceTableId: String(publicTemplate._id) });
+  assert.ok(duplicated.status < 300, JSON.stringify(duplicated.body));
+  assert.ok(!(await notificationTypes(client)).includes("routine_assigned"), "duplicar tampoco");
 });
 
-test("programar la rutina como fase desde hoy: pasa a estar en uso y el cliente la ve", async () => {
+test("programar la rutina como fase desde hoy: pasa a estar en uso, el cliente la ve y recibe el aviso", async () => {
   const { trainer, client } = await pair();
   const table = await assignNew(trainer, client);
   const res = await apply(trainer, client, table);
   assert.equal(res.status, 201);
+  const [notice] = await ctx.model("Notification").find({ clientId: client._id, type: "routine_assigned" }).lean();
+  assert.ok(notice, "el aviso sale al programarla");
+  assert.deepEqual(notice.payload, { routineName: "Rutina del coach", startDate: h.day(0) });
   assert.equal(await tableInUse(client), String(table._id));
   assert.deepEqual((await ctx.get(client, "/tables?own=true")).map((t) => t.name), ["Rutina del coach"]);
   const [phase] = await history(trainer, client);
