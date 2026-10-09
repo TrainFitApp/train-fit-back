@@ -37,13 +37,33 @@ function collectProducts(doc) {
 // de alimentos del cliente), o solo en el Product del catálogo (plantillas
 // de biblioteca, que guardan {product, quantity}). El Product llega poblado
 // por autopopulate en cascada.
-function readFlag(p, flag) {
+function ownFlag(p, flag) {
   if (p?.[flag] === true || p?.[flag] === false) return p[flag];
   const prod = p?.product;
   if (prod && typeof prod === "object" && (prod[flag] === true || prod[flag] === false)) {
     return prod[flag];
   }
   return null;
+}
+
+// Lo que se deduce de otro flag (2026-10, QA: una dieta «Vegana» salía «No
+// cumple: Sin lactosa»). Vegano ⇒ vegetariano y sin lactosa; un flag que
+// falta se completa así, pero un `false` declarado manda.
+const IMPLIED_BY = { vegetarian: ["vegan"], lactoseFree: ["vegan"] };
+
+function readFlag(p, flag) {
+  const own = ownFlag(p, flag);
+  if (own !== null) return own;
+  return (IMPLIED_BY[flag] || []).some((source) => ownFlag(p, source) === true) ? true : null;
+}
+
+// Mismas deducciones sobre una lista de aptitudes (las forzadas a mano).
+function withImplied(flags) {
+  const set = new Set(flags);
+  for (const [flag, sources] of Object.entries(IMPLIED_BY)) {
+    if (sources.some((source) => set.has(source))) set.add(flag);
+  }
+  return [...set];
 }
 
 /**
@@ -74,7 +94,7 @@ function deriveSuitability(doc) {
 
 /** La aptitud que ve el filtro = lo derivado ∪ lo que el entrenador forzó. */
 function effectiveSuitability(suitableFor = [], suitableForOverride = []) {
-  return [...new Set([...suitableFor, ...suitableForOverride])].filter((f) => FLAGS.includes(f));
+  return withImplied([...suitableFor, ...suitableForOverride]).filter((f) => FLAGS.includes(f));
 }
 
 /**

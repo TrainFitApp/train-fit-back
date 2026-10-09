@@ -272,6 +272,27 @@ test("aceptación 1-2: cuota del día 5 pagada el 12 sigue venciendo el 5; la de
   );
 });
 
+// QA 2026-10-09 (M13): tras liquidar el vencimiento de hoy, Gestión › Cobros
+// seguía diciendo «Próximo vencimiento: hoy» y Resumen y la app del cliente,
+// el del mes siguiente.
+test("próximo vencimiento de la cuota: el de hoy ya es un cobro; se enseña el siguiente, igual en la vista de la cuota y en el resumen", () => {
+  const profile = monthlyPlan("2026-10-05", "2026-10-05");
+  let charges = materialize(profile, [], "2026-10-05");
+  assert.deepEqual(charges.map((c) => c.dueDay), ["2026-10-05"]);
+  charges = [pay(charges[0], 60, "2026-10-05", "op-today-paid", "2026-10-05").charge];
+
+  assert.equal(core.planView(profile.plan, "2026-10-05").nextDueDay, "2026-11-05");
+  const summary = core.clientPaymentsSummary(charges, profile.plan, "2026-10-05");
+  assert.equal(summary.plan.nextDueDay, "2026-11-05");
+  assert.equal(summary.next.dueDay, "2026-11-05");
+  assert.equal(summary.dueToday, null, "pagado: ya no vence hoy");
+
+  // Un día cualquiera entre vencimientos: el próximo de siempre.
+  assert.equal(core.planView(profile.plan, "2026-10-20").nextDueDay, "2026-11-05");
+  // La víspera: mañana.
+  assert.equal(core.planView(profile.plan, "2026-11-04").nextDueDay, "2026-11-05");
+});
+
 test("aceptación 10: precio nuevo desde el vencimiento elegido, con o sin previsión materializada", () => {
   const body = { amount: 70, unit: "month", interval: 1, effectiveFromDay: "2026-11-05", operationId: "op-price-0001" };
   // A) Todavía sin materializar noviembre.

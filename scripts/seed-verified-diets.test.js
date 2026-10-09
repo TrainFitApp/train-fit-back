@@ -16,6 +16,15 @@ const snapshotProducts = new Map(Object.entries(SNAPSHOT));
 
 // ─── Datos ─────────────────────────────────────────────────────────────
 
+test("el número del nombre («Definición · 1.600 kcal») es la media de sus menús (±5 %)", () => {
+  for (const diet of DIETS) {
+    const named = Number((diet.name.match(/([\d.]+)\s*kcal/) || [])[1]?.replace(".", ""));
+    assert.ok(named > 0, `"${diet.name}": el nombre dice sus kcal`);
+    const average = diet.menus.reduce((sum, menu) => sum + menuMacros(menu, snapshotProducts).kcal, 0) / diet.menus.length;
+    assert.ok(Math.abs(average / named - 1) <= 0.05, `"${diet.name}": la media de sus menús es ${Math.round(average)} kcal`);
+  }
+});
+
 test("las dietas tienen nombre único y caben en el schema", () => {
   const names = DIETS.map((diet) => diet.name.trim().toLowerCase());
   assert.equal(new Set(names).size, names.length, "nombre de dieta repetido");
@@ -185,11 +194,27 @@ test("siembra todas las dietas de fábrica firmadas por un admin", async () => {
   assert.deepEqual(vegan.menus.map((menu) => menu.name), source.menus.map((menu) => menu.name));
   const firstOption = vegan.menus[0].meals[0].alternatives[0];
   assert.equal(firstOption.label, source.menus[0].meals[0].alternatives[0].label);
+  // Cada alimento es el genérico en español de su clave, con los valores
+  // del producto de referencia (QA 2026-10-09, M8: salían productos de EE. UU.
+  // en inglés y con marca).
+  const sourceFoods = source.menus[0].meals[0].alternatives[0].foods;
+  const generics = await db.raw("products").find({ _id: { $in: firstOption.customProducts.map((item) => item.product) } }).toArray();
+  const genericById = new Map(generics.map((product) => [String(product._id), product]));
   assert.deepEqual(
-    firstOption.customProducts.map(({ product, quantity }) => [String(product), quantity]),
-    source.menus[0].meals[0].alternatives[0].foods.map(([key, grams]) => [PANTRY[key].product, grams]),
+    firstOption.customProducts.map(({ product, quantity }) => [genericById.get(String(product))?.name, quantity]),
+    sourceFoods.map(([key, grams]) => [PANTRY[key].label, grams]),
   );
+  for (const [key] of sourceFoods) {
+    const generic = generics.find((product) => product.name === PANTRY[key].label);
+    assert.equal(generic.verified, true);
+    assert.equal(generic.userId, null);
+    assert.equal(generic.code ?? null, null, "sin código de barras");
+    assert.equal(generic.energyKcal100g, (SNAPSHOT[key] || { energyKcal100g: 100 }).energyKcal100g, "valores del de referencia");
+    assert.equal(generic.vegan, true, "lo vegetal es vegano");
+    assert.equal(generic.lactoseFree, true);
+  }
   assert.ok(firstOption.customProducts.every((item) => item._id), "cada alimento lleva su _id");
+  assert.equal(vegan.suitableFor.includes("lactoseFree"), true, "la vegana cumple «Sin lactosa»");
 
   const otherTrainer = db.oid();
   const suggested = await dietTemplateDao.listRankableForClient(otherTrainer, db.oid(), ["verified"]);

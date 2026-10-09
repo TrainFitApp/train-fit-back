@@ -18,6 +18,12 @@ router.getAsync(
   requireActiveClient(),
   controller.listClientTasks
 );
+router.putAsync(
+  "/trainer/clients/:clientId/tasks/:taskId",
+  auth(["trainer"]),
+  requireActiveClient(),
+  controller.updateTask
+);
 router.deleteAsync(
   "/trainer/clients/:clientId/tasks/:taskId",
   auth(["trainer"]),

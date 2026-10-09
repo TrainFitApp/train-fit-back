@@ -3,6 +3,7 @@ const { notFound, onDuplicate } = require("../util/http-error");
 const coachAlertDao = require("../coachAlerts/coach-alert-dao");
 const { planAlertWrites } = require("../coachAlerts/alert-write-plan");
 const coachTaskDao = require("../coachTasks/coach-task-dao");
+const { invalidate: invalidateEvaluation } = require("../coachAlerts/evaluation-cache");
 const {
   MAX_CLIENTS_AFFECTED_PER_RUN,
   evaluateRule,
@@ -201,14 +202,22 @@ module.exports = {
   runRulesForTrainer,
   // Biblioteca de reglas del profesional (siempre filtradas por él).
   listForTrainer: (trainerId) => coachRuleDao.listForTrainer(trainerId),
-  create: (trainerId, data) => coachRuleDao.create(trainerId, data).catch(duplicateName),
+  // Crear, cambiar o quitar una regla invalida la evaluación de alertas del
+  // profesional: la siguiente lectura ya la aplica (antes, hasta mañana).
+  async create(trainerId, data) {
+    const rule = await coachRuleDao.create(trainerId, data).catch(duplicateName);
+    invalidateEvaluation(trainerId);
+    return rule;
+  },
   async update(trainerId, id, updates) {
     const rule = await coachRuleDao.update(trainerId, id, updates).catch(duplicateName);
     if (!rule) throw ruleNotFound();
+    invalidateEvaluation(trainerId);
     return rule;
   },
   async remove(trainerId, id) {
     if (!(await coachRuleDao.remove(trainerId, id))) throw ruleNotFound();
+    invalidateEvaluation(trainerId);
   },
   // Exportadas para test unitario (puras).
   planRuleEffects,

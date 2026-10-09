@@ -30,6 +30,7 @@ const DietTemplate = require("../components/dietTemplates/diet-template-schema")
 const dietTemplateService = require("../components/dietTemplates/diet-template-service");
 const { checkPantry } = require("./seed-verified-recipes");
 const { DIETS, PANTRY } = require("./data/verified-diets");
+const { ensureGenericProducts, pantryWithGenerics } = require("./lib/generic-products");
 
 
 const KCAL_TOLERANCE = 0.05;
@@ -155,10 +156,9 @@ async function seedVerifiedDiets({ diets = DIETS, pantry = PANTRY, ownerEmail = 
   log(`firma ${owner.email} (${owner._id})`);
 
   const productIds = Object.values(pantry).map((entry) => new mongoose.Types.ObjectId(entry.product));
-  const products = await Product.find({ _id: { $in: productIds } })
-    .select("code energyKcal100g protein100g carbohydrates100g fat100g")
-    .lean();
-  const { productsByKey, missing, mismatched } = checkPantry(pantry, products);
+  const products = await Product.find({ _id: { $in: productIds } }).lean();
+  const checked = checkPantry(pantry, products);
+  const { missing, mismatched } = checked;
   const used = new Set(diets.flatMap(dietFoodKeys));
   const lost = [...missing, ...mismatched].filter((key) => used.has(key));
   for (const key of missing.filter((item) => used.has(item))) {
@@ -167,6 +167,11 @@ async function seedVerifiedDiets({ diets = DIETS, pantry = PANTRY, ownerEmail = 
   for (const key of mismatched.filter((item) => used.has(item))) {
     log(`AVISO: el producto de "${key}" (${pantry[key].product}) ya no tiene el código ${pantry[key].code}: ${pantry[key].name}`);
   }
+
+  // Alimentos genéricos en español (lib/generic-products.js), con los
+  // valores del producto de referencia de la despensa.
+  const productsByKey = await ensureGenericProducts(pantry, checked.productsByKey, { dryRun, log });
+  pantry = pantryWithGenerics(pantry, productsByKey);
 
   const existingNames = new Set(
     await DietTemplate.find({ verified: true, name: { $in: diets.map((diet) => diet.name) } }).distinct("name"),

@@ -1,6 +1,7 @@
 const supplementDao = require("./supplement-dao");
 const userDao = require("../users/user-dao");
 const trainerClientService = require("../trainerClients/trainer-client-service");
+const notificationService = require("../notifications/notification-service");
 const { conflict, forbidden, notFound, onDuplicate } = require("../util/http-error");
 
 // Suplementación que pauta el profesional a su cliente (supplement-schema.js)
@@ -13,9 +14,19 @@ const OWN_DUPLICATE = (name) => onDuplicate(`Ya tienes "${name}". Edita el que t
 module.exports = {
   listForClient: (trainerId, clientId) => supplementDao.listForClient(trainerId, clientId),
 
+  // Pautar un suplemento avisa al cliente (antes solo los hábitos avisaban).
+  // Uno con el mismo nombre ya retirado (desactivado o con fin, p. ej. de
+  // una relación anterior) se vuelve a pautar con los datos nuevos en vez de
+  // chocar con el índice único.
   async create(trainerId, clientId, data) {
     try {
-      return await supplementDao.create(trainerId, clientId, data);
+      const retired = await supplementDao.findByName(trainerId, clientId, data.name);
+      const reusable = retired && (!retired.active || (retired.endDate && retired.endDate < data.startDate));
+      const created = reusable
+        ? await supplementDao.update(trainerId, clientId, retired._id, { ...data, active: true })
+        : await supplementDao.create(trainerId, clientId, data);
+      await notificationService.create(clientId, trainerId, "supplement_assigned", { supplementName: data.name });
+      return created;
     } catch (error) {
       // 11000 = choque con el índice único {trainerId, clientId, name}: se
       // dice qué hacer en vez de un 500.

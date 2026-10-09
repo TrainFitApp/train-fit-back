@@ -10,6 +10,7 @@ const {
   detectLowAdherence,
   detectInactivity,
   detectNoTrainingActivity,
+  detectHighPain,
   detectCheckinOverdue,
 } = require("./coach-signals-service");
 
@@ -490,5 +491,49 @@ test("SIGNAL_THRESHOLDS es coherente consigo mismo", async (t) => {
 
   await t.test("el umbral crítico de inactividad es mayor que el de aviso", () => {
     assert.ok(SIGNAL_THRESHOLDS.inactiveCriticalDays > SIGNAL_THRESHOLDS.inactiveDays);
+  });
+});
+
+// QA 2026-10-09 (M10): con un dolor 7/10 la ficha decía «Sin incidencias
+// detectadas» y «Hoy», «Ningún cliente necesita atención», si el profesional
+// no había creado una regla de dolor.
+test("detectHighPain", async (t) => {
+  const today = "2026-10-09";
+  const entry = (level, date = today, zone = "Rodilla derecha") => ({ zone, level, date });
+
+  await t.test("un 7/10 reciente sin umbral fijado salta como urgente", () => {
+    const signal = detectHighPain({ painEntries: [entry(3), entry(7)], painThresholds: [], today, clientName: "Ana" });
+    assert.equal(signal.type, "pain_high");
+    assert.equal(signal.priority, "high");
+    assert.match(signal.reason, /Ana ha apuntado dolor 7\/10 en rodilla derecha/);
+    assert.deepEqual(signal.context, { metric: "pain", zone: "Rodilla derecha", level: 7, date: today, stopLevel: 7 });
+  });
+
+  await t.test("por debajo del umbral, o fuera de los últimos días, no", () => {
+    assert.equal(detectHighPain({ painEntries: [entry(6)], painThresholds: [], today, clientName: "Ana" }), null);
+    assert.equal(detectHighPain({ painEntries: [entry(9, "2026-10-05")], painThresholds: [], today, clientName: "Ana" }), null);
+    assert.equal(detectHighPain({ painEntries: [], painThresholds: [], today, clientName: "Ana" }), null);
+  });
+
+  await t.test("manda el umbral de «parar» que fijó el profesional para esa zona", () => {
+    const thresholds = [{ zone: "Rodilla derecha", workLevel: 3, painLevel: 5 }];
+    assert.ok(detectHighPain({ painEntries: [entry(5)], painThresholds: thresholds, today, clientName: "Ana" }));
+    const lenient = [{ zone: "Rodilla derecha", workLevel: 6, painLevel: 9 }];
+    assert.equal(detectHighPain({ painEntries: [entry(8)], painThresholds: lenient, today, clientName: "Ana" }), null);
+  });
+
+  await t.test("con varias, cuenta la peor y la más reciente", () => {
+    const signal = detectHighPain({
+      painEntries: [entry(8, "2026-10-08", "Cuello"), entry(9, "2026-10-07", "Hombro izquierdo"), entry(9, today, "Cuello")],
+      painThresholds: [],
+      today,
+      clientName: "Ana",
+    });
+    assert.deepEqual([signal.context.zone, signal.context.level, signal.context.date], ["Cuello", 9, today]);
+  });
+
+  await t.test("buildSignalsForClient la incluye", () => {
+    const signals = buildSignalsForClient({ clientName: "Ana", now: new Date(`${today}T10:00:00Z`), entries: [], painEntries: [entry(8)], painThresholds: [], today });
+    assert.ok(signals.some((signal) => signal.type === "pain_high"));
   });
 });

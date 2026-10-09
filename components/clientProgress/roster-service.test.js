@@ -29,8 +29,16 @@ test("weightChangeFor", async (t) => {
     assert.equal(change.percentage, 3);
   });
 
-  await t.test("con una sola medición no hay variación que reportar", () => {
-    assert.equal(weightChangeFor([{ date: "2026-08-01", weight: 80 }]), null);
+  // QA 2026-10-09 (M18): con un 65,5 apuntado la Cartera decía «—» y «Sin
+  // peso registrado».
+  await t.test("con una sola medición no hay variación, pero sí el peso", () => {
+    assert.deepEqual(weightChangeFor([{ date: "2026-08-01", weight: 65.5 }, { date: "2026-08-02" }]), {
+      absolute: null,
+      percentage: null,
+      from: { date: "2026-08-01", weight: 65.5 },
+      to: { date: "2026-08-01", weight: 65.5 },
+      measurements: 1,
+    });
   });
 
   await t.test("sin mediciones devuelve null, no un 0 (que parecería 'no se ha movido')", () => {
@@ -50,14 +58,14 @@ test("weightChangeFor", async (t) => {
     assert.equal(change.measurements, 2);
   });
 
-  await t.test("con menos de dos pesos reales no reporta aunque haya varias mediciones", () => {
-    assert.equal(
-      weightChangeFor([
-        { date: "2026-08-01", weight: 80 },
-        { date: "2026-08-10", navel: 85 },
-      ]),
-      null
-    );
+  await t.test("con menos de dos pesos reales no hay variación aunque haya varias mediciones", () => {
+    const change = weightChangeFor([
+      { date: "2026-08-01", weight: 80 },
+      { date: "2026-08-10", navel: 85 },
+    ]);
+    assert.equal(change.absolute, null);
+    assert.equal(change.measurements, 1);
+    assert.equal(change.to.weight, 80);
   });
 
   await t.test("ningún valor sale como NaN, undefined o null en los campos numéricos", () => {

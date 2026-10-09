@@ -214,3 +214,82 @@ test("notas internas del entrenador sobre el cliente: privadas de cada entrenado
   await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}/notes/${noteId}`);
   assert.ok(!JSON.stringify(await ctx.get(trainer, `/trainer/clients/${client.id}/notes`)).includes("fines de semana"));
 });
+
+// QA 2026-10-09 (M9): la evaluación de alertas valía el día entero. Una
+// regla creada hoy, o un dolor apuntado después de la primera visita del
+// día, no saltaba hasta mañana salvo con «Revisar ahora».
+test("alertas: una regla nueva y un dato posterior del cliente saltan en la siguiente lectura, sin esperar a mañana", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  await ctx.relate(trainer, client, { scope: "training" });
+  const alertsOf = async () => {
+    const list = await ctx.get(trainer, "/trainer/alerts");
+    return (Array.isArray(list) ? list : list.alerts || []).filter((alert) => String(alert.clientId?._id || alert.clientId) === client.id);
+  };
+
+  // Primera visita del día: se evalúa y no hay nada.
+  assert.equal((await alertsOf()).length, 0);
+
+  // El cliente apunta un dolor fuerte DESPUÉS de esa visita…
+  await ctx.put(client, "/pain/mine", { zone: "Cuello", level: 7 });
+  // …y el profesional crea ahora la regla.
+  await ctx.post(trainer, "/trainer/rules", {
+    name: "Dolor fuerte",
+    conditions: [{ metric: "pain_max", operator: "gt", value: 6, periodDays: 7 }],
+    actions: [{ type: "create_alert", message: "Revisar el dolor" }],
+    appliesTo: "selected",
+    clientIds: [client.id],
+  });
+
+  const fromRule = (await alertsOf()).filter((alert) => alert.type === "rule_matched");
+  assert.equal(fromRule.length, 1, JSON.stringify(fromRule));
+  assert.match(JSON.stringify(fromRule[0]), /Dolor fuerte|Revisar el dolor/);
+});
+
+test("alertas: un dolor nuevo invalida la evaluación del día de su profesional", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  await ctx.relate(trainer, client, { scope: "training" });
+  await ctx.post(trainer, "/trainer/rules", {
+    name: "Dolor fuerte 2",
+    conditions: [{ metric: "pain_max", operator: "gt", value: 6, periodDays: 7 }],
+    actions: [{ type: "create_alert", message: "Revisar el dolor" }],
+    appliesTo: "selected",
+    clientIds: [client.id],
+  });
+  const count = async () => {
+    const list = await ctx.get(trainer, "/trainer/alerts");
+    return (Array.isArray(list) ? list : list.alerts || []).filter((alert) => alert.type === "rule_matched").length;
+  };
+  assert.equal(await count(), 0, "evaluado hoy, sin dolor");
+  await ctx.put(client, "/pain/mine", { zone: "Cuello", level: 8 });
+  assert.equal(await count(), 1, "el dolor de después salta en la siguiente lectura");
+});
+
+// QA 2026-10-09 (M10): sin una regla de dolor creada, un 7/10 no salía en
+// ningún sitio. Ahora es una señal integrada con el umbral de su zona.
+test("alertas: un dolor fuerte salta sin regla, con el umbral que fijó el profesional para esa zona", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  await ctx.relate(trainer, client, { scope: "training" });
+  const painAlerts = async () => {
+    const list = await ctx.get(trainer, "/trainer/alerts");
+    return (Array.isArray(list) ? list : list.alerts || []).filter((alert) => alert.type === "pain_high");
+  };
+
+  await ctx.put(client, "/pain/mine", { zone: "Cuello", level: 5 });
+  assert.equal((await painAlerts()).length, 0, "un 5 no pasa del umbral por defecto (7)");
+
+  // El profesional fija que en el cuello hay que parar a partir de 5.
+  const thresholds = await ctx.call(trainer, "PUT", `/trainer/clients/${client.id}/pain/thresholds`, { zone: "Cuello", workLevel: 3, painLevel: 5 });
+  assert.ok(thresholds.status < 300, JSON.stringify(thresholds.body));
+  const [alert] = await painAlerts();
+  assert.ok(alert, "con su umbral, el 5 ya avisa");
+  assert.equal(alert.priority, "high");
+  assert.equal(alert.context.zone, "Cuello");
+
+  // Otro profesional no lo ve.
+  const other = await ctx.makeTrainer();
+  const otherList = await ctx.get(other, "/trainer/alerts");
+  assert.equal((Array.isArray(otherList) ? otherList : otherList.alerts || []).length, 0);
+});

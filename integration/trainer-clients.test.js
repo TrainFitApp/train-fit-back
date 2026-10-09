@@ -115,18 +115,53 @@ test("solape: un cliente no puede tener dos profesionales activos del mismo scop
   await invite(b, client, ["training"]);
   await inviteAndAccept(a, client, ["training"]);
 
+  // QA 2026-10-09 (M11): aceptar a A cierra la de B para lo mismo (antes se
+  // quedaba pendiente para siempre: no se podía aceptar, le seguía saliendo
+  // al cliente y le reservaba una plaza a B).
+  const pairB = await ctx.model("TrainerClient").findOne({ trainerId: b._id }).lean();
+  assert.deepEqual(pairB.scopes.map((link) => [link.scope, link.status]), [["training", "declined"]]);
+  assert.deepEqual(await ctx.get(client, "/trainer/invites/mine"), [], "ya no le sale al cliente");
   const lateAccept = await respond(client, b, "accept");
-  assert.equal(lateAccept.status, 400);
-  assert.equal(lateAccept.body.code, "OVERLAP");
+  assert.equal(lateAccept.status, 200);
+  assert.deepEqual([lateAccept.body.scopes, lateAccept.body.pending], [[], []], "no hay nada que aceptar");
 
   const newInvite = await invite(b, client, ["training", "nutrition"]);
   assert.equal(newInvite.status, 201, "nutrición sí");
   const byScope = Object.fromEntries(newInvite.body.results.map((r) => [r.scope, r.success]));
   assert.deepEqual(byScope, { training: false, nutrition: true });
 
-  // Aceptar a B acepta lo que se puede; entrenamiento sigue sin responder.
-  const partial = await respond(client, b, "accept");
-  assert.deepEqual([partial.body.scopes, partial.body.pending], [["nutrition"], ["training"]]);
+  const accepted = await respond(client, b, "accept");
+  assert.deepEqual([accepted.body.scopes, accepted.body.pending], [["nutrition"], []]);
+});
+
+test("solape: aceptar a un profesional cierra solo los scopes que choca de las invitaciones de otros, y les libera la plaza", async () => {
+  const a = await ctx.makeTrainer({ name: "A" });
+  const b = await ctx.makeTrainer({ name: "B" });
+  const client = await ctx.makeClient();
+
+  await invite(b, client, ["training", "nutrition"]);
+  const seatsBefore = await ctx.get(b, "/trainer/seats");
+  await inviteAndAccept(a, client, ["training"]);
+
+  const pairB = await ctx.model("TrainerClient").findOne({ trainerId: b._id }).lean();
+  const status = Object.fromEntries(pairB.scopes.map((link) => [link.scope, link.status]));
+  assert.deepEqual(status, { training: "declined", nutrition: "pending" }, "nutrición no choca: sigue en pie");
+  const stillPending = await ctx.get(client, "/trainer/invites/mine");
+  assert.equal(stillPending.length, 1, "la de B sigue saliendo, solo con nutrición");
+
+  // Con nutrición pendiente B sigue reservando la plaza de esa persona.
+  assert.deepEqual(await ctx.get(b, "/trainer/seats"), seatsBefore);
+  const accepted = await respond(client, b, "accept");
+  assert.deepEqual([accepted.body.scopes, accepted.body.pending], [["nutrition"], []]);
+
+  // Si en cambio todo lo de B chocaba, la plaza se libera.
+  const c = await ctx.makeTrainer({ name: "C" });
+  const other = await ctx.makeClient();
+  await invite(c, other, ["training"]);
+  const reserved = await ctx.get(c, "/trainer/seats");
+  await inviteAndAccept(a, other, ["training"]);
+  const freed = await ctx.get(c, "/trainer/seats");
+  assert.notDeepEqual(freed, reserved, "la invitación cerrada deja de reservar plaza");
 });
 
 test("aceptar una invitación que no es para mí o de quien no me invitó: 404; aceptar dos veces es idempotente", async () => {
@@ -557,4 +592,42 @@ test("un entrenador solo de entrenamiento no ve la dieta, y uno solo de nutrici�
   // Un cliente ajeno: nada.
   const stranger = await ctx.makeClient();
   assert.equal((await ctx.call(coach, "GET", `/trainer/clients/${stranger.id}/anthropometry`)).status, 403);
+});
+
+// QA 2026-10-09 (M16): al volver a aceptar al mismo profesional reaparecían
+// activos sus hábitos y suplementos de la relación anterior.
+test("fin de la relación: sus hábitos y suplementos se retiran; al volver, el cliente no los ve hasta que los paute de nuevo", async () => {
+  const trainer = await ctx.makeTrainer();
+  const client = await ctx.makeClient();
+  await inviteAndAccept(trainer, client);
+  await ctx.post(trainer, `/trainer/clients/${client.id}/tasks`, { type: "steps", target: 8000, unit: "pasos" });
+  await ctx.post(trainer, `/trainer/clients/${client.id}/supplements`, { name: "Creatina", dose: "5 g", startDate: h.day(-5) });
+  await ctx.post(trainer, `/trainer/clients/${client.id}/supplements`, { name: "Hierro", dose: "1", startDate: h.day(5) });
+
+  // Dejar solo un scope no retira nada: la relación sigue.
+  await ctx.del(client, "/trainer/link/nutrition");
+  assert.equal((await ctx.get(client, "/trainer/tasks/mine")).length, 1);
+
+  // Fin de toda la relación.
+  await ctx.del(client, "/trainer/link/training");
+  assert.equal(await ctx.count("TrainerTask", { clientId: client._id, active: true }), 0);
+  const creatina = await ctx.model("Supplement").findOne({ clientId: client._id, name: "Creatina" }).lean();
+  assert.equal(creatina.endDate, h.day(0), "lo que tomaba acaba hoy");
+  assert.equal((await ctx.model("Supplement").findOne({ clientId: client._id, name: "Hierro" }).lean()).active, false, "lo que no había empezado se desactiva");
+
+  // Vuelve con el mismo profesional: nada de lo anterior reaparece.
+  await inviteAndAccept(trainer, client);
+  assert.deepEqual(await ctx.get(client, "/trainer/tasks/mine"), []);
+  const supplements = await ctx.get(client, `/supplements/mine?date=${h.day(1)}`);
+  assert.deepEqual((Array.isArray(supplements) ? supplements : []).filter((s) => !s.own), []);
+  // Y el profesional puede volver a pautarlos (no chocan con los retirados).
+  assert.equal((await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/tasks`, { type: "steps", target: 9000, unit: "pasos" })).status, 201);
+  const again = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/supplements`, { name: "Hierro", dose: "2", startDate: h.day(1) });
+  assert.equal(again.status, 201, JSON.stringify(again.body));
+  assert.deepEqual([again.body.active, again.body.dose, again.body.endDate ?? null], [true, "2", null]);
+  const creatinaAgain = await ctx.call(trainer, "POST", `/trainer/clients/${client.id}/supplements`, { name: "Creatina", dose: "3 g", startDate: h.day(1) });
+  assert.equal(creatinaAgain.status, 201, "la que acabó hoy se vuelve a pautar desde mañana");
+  assert.equal(await ctx.count("Supplement", { clientId: client._id }), 2, "sin duplicados");
+  const visible = await ctx.get(client, `/supplements/mine?date=${h.day(1)}`);
+  assert.deepEqual(visible.filter((s) => !s.own).map((s) => s.name).sort(), ["Creatina", "Hierro"]);
 });

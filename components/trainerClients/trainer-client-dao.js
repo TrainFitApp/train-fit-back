@@ -143,6 +143,24 @@ module.exports = {
     );
   },
 
+  // Invitaciones sin responder de OTROS profesionales a este cliente en esos
+  // scopes: [{ pairId, trainerId, linkIds }]. Al aceptar a uno, las de los
+  // demás para lo mismo ya no se pueden aceptar (OVERLAP) y se cierran.
+  async findPendingLinksOfOthers({ clientEmail, clientId, scopes, excludingTrainerId }) {
+    const pairs = await TrainerClient.find({
+      trainerId: { $ne: excludingTrainerId },
+      $or: [{ clientEmail: normalizeEmail(clientEmail) }, ...(clientId ? [{ clientId }] : [])],
+      scopes: { $elemMatch: { status: "pending", scope: { $in: scopes } } },
+    })
+      .select("trainerId scopes")
+      .lean();
+    return pairs.map((pair) => ({
+      pairId: pair._id,
+      trainerId: pair.trainerId,
+      linkIds: pair.scopes.filter((link) => link.status === "pending" && scopes.includes(link.scope)).map((link) => link._id),
+    }));
+  },
+
   // --- Por profesional --------------------------------------------------------
 
   // Todos sus pares (invitaciones e historial), con el cliente poblado.

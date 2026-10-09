@@ -72,9 +72,33 @@ test("deriveSuitability", async (t) => {
   });
 });
 
-test("effectiveSuitability = derivado ∪ override", () => {
-  assert.deepEqual(effectiveSuitability(["glutenFree"], ["vegan"]).sort(), ["glutenFree", "vegan"]);
-  assert.deepEqual(effectiveSuitability(["vegan"], ["vegan"]), ["vegan"]);
+test("effectiveSuitability = derivado ∪ override (con lo que se deduce de vegano)", () => {
+  assert.deepEqual(effectiveSuitability(["glutenFree"], ["vegetarian"]).sort(), ["glutenFree", "vegetarian"]);
+  assert.deepEqual(effectiveSuitability(["vegan"], ["vegan"]).sort(), ["lactoseFree", "vegan", "vegetarian"]);
+  assert.deepEqual(effectiveSuitability(["glutenFree"], ["vegan"]).sort(), ["glutenFree", "lactoseFree", "vegan", "vegetarian"]);
+});
+
+// QA 2026-10-09 (M7): para una clienta «Sin lactosa» todas las dietas de
+// fábrica salían «No cumple», incluida «Vegana · 2.200 kcal»: casi ningún
+// producto declara lactoseFree, y vegano no se traducía en sin lactosa.
+test("deducciones: vegano ⇒ vegetariano y sin lactosa; un false declarado manda", async (t) => {
+  await t.test("productos solo marcados como veganos certifican sin lactosa y vegetariano", () => {
+    const r = deriveSuitability(tmpl([{ vegan: true }, { product: { vegan: true } }]));
+    assert.deepEqual(r.suitableFor.sort(), ["lactoseFree", "vegan", "vegetarian"]);
+    assert.equal(r.missingFlagCounts.lactoseFree, 0);
+  });
+  await t.test("una dieta vegana cumple la restricción sin lactosa de la clienta", () => {
+    const r = deriveSuitability(tmpl([{ vegan: true, glutenFree: true }]));
+    assert.deepEqual(missingDietaryFlags({ suitableFor: r.suitableFor }, ["lactoseFree"]), []);
+  });
+  await t.test("vegano declarado y lactoseFree:false (dato contradictorio) → manda el false", () => {
+    const r = deriveSuitability(tmpl([{ vegan: true, lactoseFree: false }]));
+    assert.ok(!r.suitableFor.includes("lactoseFree"));
+  });
+  await t.test("vegetariano NO implica vegano ni sin lactosa", () => {
+    const r = deriveSuitability(tmpl([{ vegetarian: true }]));
+    assert.deepEqual(r.suitableFor, ["vegetarian"]);
+  });
 });
 
 test("missingDietaryFlags", async (t) => {
@@ -92,8 +116,8 @@ test("missingDietaryFlags", async (t) => {
   });
   await t.test("devuelve TODAS las que faltan, no solo la primera", () => {
     assert.deepEqual(
-      missingDietaryFlags({ suitableFor: ["vegan"] }, ["vegan", "glutenFree", "lactoseFree"]),
-      ["glutenFree", "lactoseFree"]
+      missingDietaryFlags({ suitableFor: ["vegetarian"] }, ["vegan", "glutenFree", "lactoseFree"]),
+      ["vegan", "glutenFree", "lactoseFree"]
     );
   });
 });

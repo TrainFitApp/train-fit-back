@@ -7,6 +7,7 @@ const userDao = require("../users/user-dao");
 const { weekForClientAt } = require("../dietPhases/week-service");
 const { scheduleContent, hasQuestions } = require("./checkin-schedule-content");
 const { badRequest, conflict, forbidden, notFound } = require("../util/http-error");
+const { invalidateForClient } = require("../coachAlerts/evaluation-cache");
 
 // Plantillas de check-in del profesional, su aplicación a clientes y las
 // respuestas (las de la ficha de un cliente: checkin-schedule-service.js).
@@ -124,6 +125,9 @@ module.exports = {
     const photos = await agenda.validatePhotoAnswers(clientId, result.values);
     if (photos.error) throw badRequest(photos.error, "CHECKIN_INVALID_ANSWER");
 
-    return agenda.saveResponse({ schedule, occurrence: current.occurrence, values: result.values, today });
+    const saved = await agenda.saveResponse({ schedule, occurrence: current.occurrence, values: result.values, today });
+    // Las reglas de alertas miran lo que responde (peso, dolor, ánimo…).
+    await invalidateForClient(clientId);
+    return saved;
   },
 };

@@ -410,6 +410,34 @@ module.exports = {
     });
   },
 
+  /**
+   * Termina la nutrición entre un profesional y su cliente (QA 2026-10-09,
+   * M12): la fase suya que rige hoy se cierra hoy y las suyas programadas
+   * para más adelante se quitan (nunca empezaron). Antes la fase seguía
+   * abierta y el cliente seguía viendo «Menús pautados por tu profesional»,
+   * sus semanas y su lista de la compra sin tener ya profesional. Los días a
+   * partir de mañana pierden lo pautado; hoy y lo pasado se quedan como
+   * historial. Devuelve { closed, removed }.
+   */
+  async endForRelation({ trainerId, clientId }) {
+    const today = await todayForUser(clientId);
+    const phases = (await dietPhaseDao.listByClient(clientId, { populate: false })).filter(
+      (phase) => String(phase.trainerId) === String(trainerId)
+    );
+    let closed = null;
+    let removed = 0;
+    for (const phase of phases) {
+      if (phase.startDate > today) {
+        await dietPhaseDao.deleteById(phase._id);
+        removed += 1;
+      } else if (!phase.endDate || phase.endDate > today) {
+        closed = await dietPhaseDao.setEndDate(phase._id, today);
+      }
+    }
+    if (closed || removed) await resyncPlannedDays(clientId, addDaysToIsoDate(today, 1), null);
+    return { closed, removed };
+  },
+
   // Ese día el cliente no sigue el plan: se vacía de lo pautado y deja de
   // contar. Lo que anotó por su cuenta se queda.
   async skipDay(clientId, date) {

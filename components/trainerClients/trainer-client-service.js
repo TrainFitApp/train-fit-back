@@ -103,6 +103,34 @@ async function sendInviteMail(trainerUser, clientEmail, scopes) {
 // Al terminar el ÚLTIMO scope activo con este profesional se finaliza la
 // cuota y se apagan los avisos de cobro (la deuda se queda). Si falla, el
 // job de cobros lo corrige en su siguiente pasada.
+// Terminar la nutrición cierra la fase de dieta que pautó ese profesional
+// (dietPhases/diet-phase-service.js#endForRelation). Un fallo aquí no
+// deshace la baja: se registra.
+async function endNutritionPlan(trainerId, clientId, scope) {
+  if (scope !== "nutrition") return;
+  try {
+    await require("../dietPhases/diet-phase-service").endForRelation({ trainerId, clientId });
+  } catch (error) {
+    console.error("[DietPhases] No se pudo cerrar la fase tras la baja:", error.message);
+  }
+}
+
+// Fin de toda la relación (no queda ningún scope activo): sus hábitos y
+// suplementos se retiran. Antes, al volver a aceptar al mismo profesional,
+// reaparecían activos los de la relación anterior sin que él hiciera nada
+// (QA 2026-10-09, M16). Las notas sí vuelven: son su historial del cliente,
+// y salen marcadas «De una relación anterior».
+async function retirePrescriptionsIfRelationEnded(trainerId, clientId) {
+  try {
+    if (await trainerClientDao.isActivePair(trainerId, clientId)) return;
+    const today = await todayForUser(clientId);
+    await require("../trainerTasks/trainer-task-dao").deactivateAllFor(trainerId, clientId);
+    await require("../supplements/supplement-dao").endAllFor(trainerId, clientId, today);
+  } catch (error) {
+    console.error("[TrainerClients] No se pudieron retirar hábitos y suplementos tras la baja:", error.message);
+  }
+}
+
 async function closePaymentsIfLastScope(trainerId, clientId) {
   try {
     await require("../trainerPayments/trainer-payment-service").onRelationChanged(trainerId, clientId);
@@ -384,6 +412,16 @@ module.exports = {
 
     const answered = response(acceptable, overlapping);
     await notificationDao.createForTrainer(pair.trainerId, clientUser._id, "invite_accepted", { scopes: answered.scopes });
+    // Las invitaciones de otros profesionales para lo mismo ya no se pueden
+    // aceptar: se cierran como rechazadas (antes se quedaban pendientes para
+    // siempre, saliéndole al cliente y reservando una plaza a ese profesional).
+    const superseded = await trainerClientDao.findPendingLinksOfOthers({
+      clientEmail: pair.clientEmail,
+      clientId: clientUser._id,
+      scopes: answered.scopes,
+      excludingTrainerId: pair.trainerId,
+    });
+    for (const other of superseded) await trainerClientDao.declineInvitations(other.pairId, other.linkIds);
     return answered;
   },
 
@@ -561,6 +599,7 @@ module.exports = {
         scopes: activeScopes(pair),
         intakePending: Boolean(pair.intakePending),
         intakeStatus: intakeStatusOf(pair),
+        painThresholds: pair.painThresholds || [],
       }));
   },
 
@@ -573,6 +612,8 @@ module.exports = {
     if (!SCOPES.includes(scope)) throw badRequest("scope es obligatorio", "INVALID_SCOPE");
     const revoked = await trainerClientDao.revokeScope({ trainerId, clientId, scope, by: "trainer" });
     if (!revoked) return null;
+    await endNutritionPlan(trainerId, clientId, scope);
+    await retirePrescriptionsIfRelationEnded(trainerId, clientId);
     await closePaymentsIfLastScope(trainerId, clientId);
     return revoked.invitation;
   },
@@ -581,6 +622,8 @@ module.exports = {
   async revokeByClient(clientId, scope) {
     const revoked = await trainerClientDao.revokeScope({ clientId, scope, by: "client" });
     if (!revoked) return null;
+    await endNutritionPlan(revoked.pair.trainerId, clientId, scope);
+    await retirePrescriptionsIfRelationEnded(revoked.pair.trainerId, clientId);
     await closePaymentsIfLastScope(revoked.pair.trainerId, clientId);
     return revoked.invitation;
   },

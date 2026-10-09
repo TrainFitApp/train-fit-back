@@ -14,11 +14,18 @@ function sanitizeUrl(value) {
   return /^https?:\/\//i.test(url) ? url.slice(0, 500) : "";
 }
 
+// Un valor fuera de catálogo se rechaza (QA 2026-10-09, M15): antes
+// `weekdays: [9]` se descartaba y quedaba `[]` («todos los días») y un
+// `timing` desconocido se guardaba como «con una comida», sin error.
+const invalid = (field, message) => badRequest(message, "SUPPLEMENT_INVALID", { field });
+
 function sanitizeWeekdays(value) {
-  if (!Array.isArray(value)) return [];
-  const days = value
-    .map((day) => Number(day))
-    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw invalid("weekdays", "Los días tienen que ser una lista");
+  const days = value.map((day) => Number(day));
+  if (days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    throw invalid("weekdays", "Los días van del 0 (domingo) al 6 (sábado)");
+  }
   // Los siete días es lo mismo que "todos los días", que se guarda vacío:
   // así la interfaz no tiene que distinguir dos formas de decir lo mismo.
   const unique = [...new Set(days)].sort();
@@ -31,16 +38,28 @@ function sanitizeDate(value, fallback = null) {
   return ISO_DATE.test(String(value || "")) ? String(value) : fallback;
 }
 
+// Una fecha que viene tiene que ser un día "YYYY-MM-DD".
+function optionalDate(body, field, fallback = null) {
+  const value = body?.[field];
+  if (value === undefined || value === null || value === "") return fallback;
+  if (!ISO_DATE.test(String(value))) throw invalid(field, "Fecha no válida");
+  return String(value);
+}
+
 // `today` = hoy en la zona del cliente.
 function sanitizeBody(body, today) {
   const name = String(body?.name || "").trim().slice(0, 120);
   const dose = String(body?.dose || "").trim().slice(0, 60);
   if (!name || !dose) return null;
 
-  const timing = TIMING_KEYS.has(body?.timing) ? body.timing : "with_meal";
+  const rawTiming = body?.timing;
+  if (rawTiming !== undefined && rawTiming !== null && rawTiming !== "" && !TIMING_KEYS.has(rawTiming)) {
+    throw invalid("timing", "Momento de la toma no válido");
+  }
+  const timing = rawTiming && TIMING_KEYS.has(rawTiming) ? rawTiming : "with_meal";
   // Sin fecha de inicio, desde hoy: una pauta que existe se está tomando ya.
-  const startDate = sanitizeDate(body?.startDate, today);
-  const endDate = sanitizeDate(body?.endDate);
+  const startDate = optionalDate(body, "startDate", today);
+  const endDate = optionalDate(body, "endDate");
   if (endDate && endDate < startDate) return null;
 
   return {

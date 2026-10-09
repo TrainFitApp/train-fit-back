@@ -182,10 +182,14 @@ test("siembra todas las recetas verificadas, buscables y con sus productos", asy
   assert.equal("userId" in saved, false);
   assert.equal(saved.description, sample.steps.join("\n"));
   assert.ok(saved.searchTokens.includes("teriyaki"), "los derivados de búsqueda los pone el schema");
+  // Ingredientes: el genérico en español de cada clave (QA 2026-10-09, M8).
+  const generics = await db.raw("products").find({ _id: { $in: saved.customProducts.map((item) => item.product) } }).toArray();
+  const nameOf = new Map(generics.map((product) => [String(product._id), product.name]));
   assert.deepEqual(
-    saved.customProducts.map(({ product, quantity }) => [String(product), quantity]),
-    sample.ingredients.map(([key, grams]) => [PANTRY[key].product, grams]),
+    saved.customProducts.map(({ product, quantity }) => [nameOf.get(String(product)), quantity]),
+    sample.ingredients.map(([key, grams]) => [PANTRY[key].label, grams]),
   );
+  assert.ok(generics.every((product) => product.verified === true && product.userId === null && !product.code));
   assert.ok(saved.tags.includes(TAG_HIGH_PROTEIN), "150 g de pollo a 25 g/100 g con lo demás a 1 g");
 
   const vegan = await db.raw("recipes").findOne({ name: "Chili vegano de alubias" });
@@ -197,6 +201,7 @@ test("es idempotente: una segunda pasada no crea ni toca nada", async () => {
   await seedPantryProducts();
   await seedVerifiedRecipes();
   const before = await db.raw("recipes").findOne({ name: "Sopa minestrone" });
+  const productsBefore = await db.raw("products").countDocuments({});
 
   const stats = await seedVerifiedRecipes();
   assert.equal(stats.created, 0);
@@ -204,6 +209,7 @@ test("es idempotente: una segunda pasada no crea ni toca nada", async () => {
   assert.equal(await recipeCount(), RECIPES.length);
   const after = await db.raw("recipes").findOne({ name: "Sopa minestrone" });
   assert.deepEqual(after.customProducts, before.customProducts, "no reescribe los ingredientes");
+  assert.equal(await db.raw("products").countDocuments({}), productsBefore, "ni duplica los genéricos");
 });
 
 test("una receta con el mismo nombre pero de un usuario no cuenta como existente", async () => {
@@ -220,10 +226,12 @@ test("--dry-run informa sin escribir", async () => {
   await db.reset();
   await seedPantryProducts();
 
+  const productsBefore = await db.raw("products").countDocuments({});
   const stats = await seedVerifiedRecipes({ dryRun: true });
   assert.equal(stats.toCreate, RECIPES.length);
   assert.equal(stats.created, 0);
   assert.equal(await recipeCount(), 0);
+  assert.equal(await db.raw("products").countDocuments({}), productsBefore, "tampoco crea genéricos");
 });
 
 test("sin un producto, solo se quedan fuera las recetas que lo usan", async () => {

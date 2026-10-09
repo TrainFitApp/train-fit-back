@@ -762,3 +762,55 @@ test("resumen del día: fecha inválida 400, y solo lo ve quien lleva la nutrici
   assert.equal((await ctx.call(coach, "GET", `/trainer/clients/${client.id}/nutrition-day?date=${h.day(0)}`)).status, 403);
   assert.equal((await ctx.call(client, "GET", `/trainer/clients/${client.id}/nutrition-day?date=${h.day(0)}`)).status, 403);
 });
+
+// --- Fin de la relación de nutrición (QA 2026-10-09, M12) -------------------------
+// La fase seguía abierta al terminar la nutrición: el cliente seguía viendo
+// «Menús pautados por tu profesional», sus semanas y la lista de la compra.
+
+test("el profesional termina la nutrición: su fase vigente se cierra hoy, la programada se quita y los días futuros pierden lo pautado", async () => {
+  const { trainer, client } = await setupPair();
+  const tpl = await libraryTemplate(trainer);
+  const current = await applyTemplate(trainer, client, tpl, h.day(-3));
+  const scheduled = await applyTemplate(trainer, client, tpl, h.day(10));
+  // El cliente eligió menú hoy y mañana (lo pautado se materializa en su día).
+  await ctx.put(client, `/dietdays/date/${h.day(0)}/menu`, { menuName: "Menú A" });
+  await ctx.put(client, `/dietdays/date/${h.day(1)}/menu`, { menuName: "Menú A" });
+  const plannedOn = async (date) => ctx.collectItems(await ctx.model("DietDay").findOne({ userId: client._id, date }).lean()).filter((item) => item.assignedByTrainerId).length;
+  assert.ok((await plannedOn(h.day(1))) > 0, "mañana tenía lo pautado");
+
+  const ended = await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}?scope=nutrition`);
+  assert.equal(ended.status, 200, JSON.stringify(ended.body));
+
+  assert.equal((await ctx.model("DietPhase").findById(current._id).lean()).endDate, h.day(0), "la vigente se cierra hoy");
+  assert.equal(await ctx.model("DietPhase").exists({ _id: scheduled._id }), null, "la que no había empezado se quita");
+  assert.equal(await plannedOn(h.day(1)), 0, "mañana ya no hay pauta");
+  assert.ok((await plannedOn(h.day(0))) > 0, "hoy se queda como historial");
+  const menu = await ctx.get(client, `/dietdays/date/${h.day(5)}/menu`);
+  assert.deepEqual(menu.options || [], [], "sin fase, no hay menús que elegir");
+});
+
+test("el cliente deja la nutrición: también cierra la fase; dejar solo el entrenamiento no la toca", async () => {
+  const { trainer, client } = await setupPair();
+  const phase = await applyTemplate(trainer, client, await libraryTemplate(trainer), h.day(-1));
+
+  await ctx.del(client, "/trainer/link/training");
+  assert.equal((await ctx.model("DietPhase").findById(phase._id).lean()).endDate, null, "entrenamiento no es nutrición");
+
+  await ctx.del(client, "/trainer/link/nutrition");
+  assert.equal((await ctx.model("DietPhase").findById(phase._id).lean()).endDate, h.day(0));
+});
+
+test("terminar la nutrición con un profesional no toca la fase que pautó otro", async () => {
+  const { trainer, client } = await setupPair();
+  const otherTrainer = await ctx.makeTrainer();
+  const foreign = await ctx.model("DietPhase").create({
+    clientId: client._id,
+    trainerId: otherTrainer._id,
+    name: "De otro",
+    startDate: h.day(-20),
+    endDate: h.day(-10),
+    contents: [{ startDate: h.day(-20), menus: [] }],
+  });
+  await ctx.call(trainer, "DELETE", `/trainer/clients/${client.id}?scope=nutrition`);
+  assert.equal((await ctx.model("DietPhase").findById(foreign._id).lean()).endDate, h.day(-10));
+});

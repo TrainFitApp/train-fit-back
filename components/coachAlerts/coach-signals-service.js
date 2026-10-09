@@ -3,6 +3,7 @@ const {
   isPlausibleAnthropometry,
   isPlausibleAnthropometryChange,
 } = require("../trainerCheckins/checkin-field-catalog");
+const { addDaysToIsoDate } = require("../util/date-util");
 
 // Fase 1 Coach Pro — el CÁLCULO de las señales, separado de dónde salen los
 // datos y de dónde se escriben las alertas (eso es coach-alert-service.js).
@@ -56,6 +57,15 @@ const SIGNAL_THRESHOLDS = {
   noTrainingCriticalDays: 21,
   // Dos solicitudes seguidas sin responder ya no es un olvido.
   checkinOverdueCriticalMissed: 2,
+
+  // Dolor (QA 2026-10-09, M10): un 7/10 «no puedo entrenar esa zona» no
+  // salía en ningún sitio sin una regla creada a mano. Se avisa con lo que
+  // el cliente apuntó en los últimos días a partir del umbral de «parar» que
+  // fijó el profesional para esa zona, o de este si no fijó ninguno.
+  pain: {
+    recentDays: 3,
+    defaultStopLevel: 7,
+  },
 };
 
 // Perímetros vigilados por la señal de "cambio brusco de medidas". Derivados
@@ -371,6 +381,30 @@ function detectNoTrainingActivity({ hasRoutine, workoutDates, lastActivityAt, no
   };
 }
 
+// El peor dolor reciente que pasa del umbral de su zona. `today` es el "hoy"
+// del cliente (los días de dolor son días de su calendario).
+function detectHighPain({ painEntries, painThresholds, today, clientName }) {
+  if (!today || !painEntries?.length) return null;
+  const { recentDays, defaultStopLevel } = SIGNAL_THRESHOLDS.pain;
+  const since = addDaysToIsoDate(today, -(recentDays - 1));
+  const stopLevelFor = (zone) => {
+    const threshold = (painThresholds || []).find((item) => item.zone === zone);
+    return Number.isFinite(threshold?.painLevel) ? threshold.painLevel : defaultStopLevel;
+  };
+  const over = painEntries
+    .filter((entry) => entry.date >= since && entry.date <= today && Number.isFinite(entry.level))
+    .filter((entry) => entry.level >= stopLevelFor(entry.zone))
+    .sort((a, b) => b.level - a.level || (a.date < b.date ? 1 : -1));
+  if (!over.length) return null;
+  const worst = over[0];
+  return {
+    type: "pain_high",
+    priority: "high",
+    reason: `${clientName} ha apuntado dolor ${formatNumber(worst.level, 0)}/10 en ${worst.zone.toLowerCase()}.`,
+    context: { metric: "pain", zone: worst.zone, level: worst.level, date: worst.date, stopLevel: stopLevelFor(worst.zone) },
+  };
+}
+
 // Punto de entrada: todas las señales de UN cliente. Devuelve [] si no hay
 // nada que reportar — el caso normal para un cliente que va bien.
 function buildSignalsForClient(input) {
@@ -385,6 +419,7 @@ function buildSignalsForClient(input) {
     detectSharpMeasurementChange(base),
     detectInactivity(base),
     detectNoTrainingActivity(base),
+    detectHighPain(base),
   ].filter(Boolean);
 }
 
@@ -395,6 +430,7 @@ module.exports = {
   // Exportadas para test unitario — cada una se prueba aislada, sin montar
   // el objeto de entrada completo.
   detectStagnation,
+  detectHighPain,
   detectSharpWeightChange,
   detectSharpMeasurementChange,
   detectLowAdherence,

@@ -59,14 +59,22 @@ function round(value, decimals) {
  *
  * `entries` llega en orden ASC (anthropometryDao.listForUsersSince).
  */
+//
+// Con una sola medida en la ventana no hay variación (`absolute` null), pero
+// sí peso: antes salía «—» y «Sin peso registrado» con un 65,5 apuntado (QA
+// 2026-10-09, M18).
 function weightChangeFor(entries) {
   const withWeight = (entries || []).filter(
     (entry) => typeof entry.weight === "number" && Number.isFinite(entry.weight)
   );
-  if (withWeight.length < 2) return null;
+  if (!withWeight.length) return null;
 
   const first = withWeight[0];
   const last = withWeight[withWeight.length - 1];
+  if (withWeight.length === 1) {
+    const only = { date: last.date, weight: last.weight };
+    return { absolute: null, percentage: null, from: only, to: only, measurements: 1 };
+  }
   const absolute = round(last.weight - first.weight, 2);
 
   return {

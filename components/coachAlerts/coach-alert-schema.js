@@ -52,6 +52,9 @@ const CoachAlertSchema = new Schema(
         // QUÉ regla la creó, y eso ya vive en `ruleId`. Añadir un tipo por
         // regla haría el enum ilimitado y dependiente de datos de usuario.
         "rule_matched",
+        // Dolor reciente por encima del umbral de «parar» de su zona (el que
+        // fijó el profesional, o 7/10): coach-signals-service.js#detectHighPain.
+        "pain_high",
       ],
     },
 

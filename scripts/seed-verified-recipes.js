@@ -1,7 +1,9 @@
 // Siembra el recetario verificado ("de fábrica"): recetas sin dueño y con
 // `verified: true`, que la búsqueda enseña a todos los usuarios. Las recetas
-// están en scripts/data/verified-recipes/ y sus ingredientes apuntan, por su
-// `_id`, a Products reales de producción (pantry.js).
+// están en scripts/data/verified-recipes/; sus ingredientes son alimentos
+// genéricos en español creados con los valores de los Products reales de
+// producción a los que apunta la despensa (pantry.js; ver
+// lib/generic-products.js).
 //
 // Se lanza con el resto del contenido de fábrica: `npm run presets`
 // (scripts/presets.js).
@@ -27,6 +29,7 @@ const Product = require("../components/products/product-schema");
 const Recipe = require("../components/recipes/recipe-schema");
 const recipeDao = require("../components/recipes/recipe-dao");
 const { PANTRY, RECIPES } = require("./data/verified-recipes");
+const { ensureGenericProducts, pantryWithGenerics } = require("./lib/generic-products");
 
 
 const TAG_VEGETARIAN = "vegetariana";
@@ -122,14 +125,18 @@ async function seedVerifiedRecipes({ recipes = RECIPES, pantry = PANTRY, dryRun 
   await assertNewDataModel();
 
   const productIds = Object.values(pantry).map((entry) => new mongoose.Types.ObjectId(entry.product));
-  const products = await Product.find({ _id: { $in: productIds } })
-    .select("code energyKcal100g protein100g")
-    .lean();
-  const { productsByKey, missing, mismatched } = checkPantry(pantry, products);
+  const products = await Product.find({ _id: { $in: productIds } }).lean();
+  const checked = checkPantry(pantry, products);
+  const { missing, mismatched } = checked;
   for (const key of missing) log(`AVISO: falta el producto de "${key}": ${pantry[key].name} (${pantry[key].product})`);
   for (const key of mismatched) {
     log(`AVISO: el producto de "${key}" (${pantry[key].product}) ya no tiene el código ${pantry[key].code}: ${pantry[key].name}`);
   }
+
+  // Los ingredientes apuntan al genérico en español de cada clave
+  // (scripts/lib/generic-products.js), no al producto de referencia.
+  const productsByKey = await ensureGenericProducts(pantry, checked.productsByKey, { dryRun, log });
+  pantry = pantryWithGenerics(pantry, productsByKey);
 
   const existingNames = new Set(
     await Recipe.find({ verified: true, userId: null, name: { $in: recipes.map((recipe) => recipe.name) } }).distinct("name"),

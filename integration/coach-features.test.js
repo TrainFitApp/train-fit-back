@@ -25,21 +25,65 @@ const notifications = async (user) => {
 
 // --- Hábitos ------------------------------------------------------------------------
 
-test("hábitos: validación de alta (tipo, objetivo, rango, unidad)", async () => {
+test("hábitos: validación de alta (tipo, objetivo, rango, unidad, topes) con código de error", async () => {
   const { trainer, client } = await pair();
   const path = `/trainer/clients/${client.id}/tasks`;
-  for (const body of [
-    { type: "yoga", target: 1, unit: "x" },
+  for (const [body, code] of [
+    [{ type: "yoga", target: 1, unit: "x" }, "TASK_INVALID_TYPE"],
     // El cardio se pauta en el entrenamiento, no es un hábito.
-    { type: "cardio", target: 30, unit: "min" },
-    { type: "custom", target: 1, unit: "x" },
-    { type: "water", target: 0, unit: "l" },
-    { type: "water", target: 2 },
-    { type: "steps", target: 8000, targetMax: 7000, unit: "pasos" },
+    [{ type: "cardio", target: 30, unit: "min" }, "TASK_INVALID_TYPE"],
+    [{ type: "custom", target: 1, unit: "x" }, "TASK_LABEL_REQUIRED"],
+    [{ type: "water", target: 0, unit: "l" }, "TASK_INVALID_TARGET"],
+    [{ type: "water", target: 2 }, "TASK_UNIT_REQUIRED"],
+    [{ type: "water", target: 2, unit: "litros-de-agua-al-dia-x" }, "TASK_UNIT_TOO_LONG"],
+    // QA 2026-10-09 (M14): rango invertido y objetivos absurdos.
+    [{ type: "steps", target: 8000, targetMax: 7000, unit: "pasos" }, "TASK_INVALID_RANGE"],
+    [{ type: "steps", target: 8000, targetMax: 5000, unit: "pasos" }, "TASK_INVALID_RANGE"],
+    [{ type: "water", target: 1e12, unit: "L" }, "TASK_TARGET_TOO_HIGH"],
+    [{ type: "sleep", target: 30, unit: "h" }, "TASK_TARGET_TOO_HIGH"],
+    [{ type: "steps", target: 10000, targetMax: 900000, unit: "pasos" }, "TASK_TARGET_TOO_HIGH"],
   ]) {
-    assert.equal((await ctx.call(trainer, "POST", path, body)).status, 400, JSON.stringify(body));
+    const res = await ctx.call(trainer, "POST", path, body);
+    assert.equal(res.status, 400, JSON.stringify(body));
+    assert.equal(res.body.code, code, JSON.stringify(body));
   }
   assert.equal(await ctx.count("TrainerTask", { clientId: client._id }), 0);
+  // El agua en mililitros admite su escala.
+  assert.equal((await ctx.call(trainer, "POST", path, { type: "water", target: 2500, unit: "ml" })).status, 201);
+});
+
+test("hábitos: uno activo por tipo (o por nombre si es propio); para cambiar el objetivo se edita", async () => {
+  const { trainer, client } = await pair();
+  const path = `/trainer/clients/${client.id}/tasks`;
+  const steps = await ctx.post(trainer, path, { type: "steps", target: 8000, unit: "pasos" });
+  const notices = async () => (await notifications(client)).filter((n) => n.type === "task_assigned").length;
+  assert.equal(await notices(), 1);
+
+  const duplicate = await ctx.call(trainer, "POST", path, { type: "steps", target: 10000, unit: "pasos" });
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.body.code, "TASK_DUPLICATE");
+  assert.equal(duplicate.body.taskId, String(steps._id));
+  assert.equal(await notices(), 1, "el duplicado no avisa");
+
+  await ctx.post(trainer, path, { type: "custom", label: "Estirar", target: 10, unit: "min" });
+  assert.equal((await ctx.call(trainer, "POST", path, { type: "custom", label: "  estirar ", target: 5, unit: "min" })).body.code, "TASK_DUPLICATE");
+  assert.equal((await ctx.call(trainer, "POST", path, { type: "custom", label: "Meditar", target: 5, unit: "min" })).status, 201);
+
+  // Editar: objetivo y rango; el tipo no cambia.
+  const edited = await ctx.put(trainer, `${path}/${steps._id}`, { target: 10000, targetMax: 12000, type: "water" });
+  assert.deepEqual([edited.type, edited.target, edited.targetMax, edited.unit], ["steps", 10000, 12000, "pasos"]);
+  const inverted = await ctx.call(trainer, "PUT", `${path}/${steps._id}`, { targetMax: 5000 });
+  assert.equal(inverted.body.code, "TASK_INVALID_RANGE");
+  const cleared = await ctx.put(trainer, `${path}/${steps._id}`, { targetMax: null });
+  assert.equal(cleared.targetMax, null, "quitar el tope");
+
+  // Quitado, se puede volver a pautar; y ni otro profesional ni el cliente lo editan.
+  const other = await ctx.makeTrainer();
+  assert.ok([403, 404].includes((await ctx.call(other, "PUT", `${path}/${steps._id}`, { target: 1 })).status));
+  assert.equal((await ctx.call(client, "PUT", `${path}/${steps._id}`, { target: 1 })).status, 403);
+  await ctx.call(trainer, "DELETE", `${path}/${steps._id}`);
+  assert.equal((await ctx.call(trainer, "PUT", `${path}/${steps._id}`, { target: 9000 })).body.code, "TASK_NOT_FOUND");
+  assert.equal((await ctx.call(trainer, "POST", path, { type: "steps", target: 9000, unit: "pasos" })).status, 201);
 });
 
 test("hábitos de un protocolo: mismos tipos que los sueltos, sin cardio", async () => {
@@ -119,10 +163,38 @@ test("suplementos: validación (nombre, dosis, fechas, enlace solo http/s)", asy
   assert.equal((await ctx.call(trainer, "POST", path, { dose: "5 g" })).body.code, "SUPPLEMENT_INVALID");
   assert.equal((await ctx.call(trainer, "POST", path, { name: "Creatina" })).body.code, "SUPPLEMENT_INVALID");
   assert.equal((await ctx.call(trainer, "POST", path, { name: "C", dose: "1", startDate: h.day(5), endDate: h.day(1) })).body.code, "SUPPLEMENT_INVALID");
-  const created = await ctx.post(trainer, path, { name: "Creatina", dose: "5 g", purchaseUrl: "javascript:alert(1)", timing: "inventado", weekdays: [0, 1, 2, 3, 4, 5, 6, 9] });
+  // QA 2026-10-09 (M15): lo que está fuera de catálogo se rechaza, no se
+  // cambia en silencio por otra cosa («todos los días», «con una comida»).
+  for (const [body, field] of [
+    [{ name: "Creatina", dose: "5 g", weekdays: [9] }, "weekdays"],
+    [{ name: "Creatina", dose: "5 g", weekdays: [1, "lunes"] }, "weekdays"],
+    [{ name: "Creatina", dose: "5 g", weekdays: "lunes" }, "weekdays"],
+    [{ name: "Creatina", dose: "5 g", timing: "bedtime" }, "timing"],
+    [{ name: "Creatina", dose: "5 g", startDate: "mañana" }, "startDate"],
+    [{ name: "Creatina", dose: "5 g", endDate: "2026-13-45x" }, "endDate"],
+  ]) {
+    const res = await ctx.call(trainer, "POST", path, body);
+    assert.equal(res.status, 400, JSON.stringify(body));
+    assert.deepEqual([res.body.code, res.body.field], ["SUPPLEMENT_INVALID", field], JSON.stringify(body));
+  }
+  assert.equal(await ctx.count("Supplement", { clientId: client._id }), 0);
+
+  const created = await ctx.post(trainer, path, { name: "Creatina", dose: "5 g", purchaseUrl: "javascript:alert(1)", timing: "before_bed", weekdays: [0, 1, 2, 3, 4, 5, 6] });
   assert.equal(created.purchaseUrl, "", "solo enlaces http/https");
-  assert.equal(created.timing, "with_meal", "momento fuera de catálogo cae al por defecto");
+  assert.equal(created.timing, "before_bed");
   assert.deepEqual(created.weekdays, [], "los 7 días = todos los días");
+  assert.equal((await ctx.post(trainer, path, { name: "Omega 3", dose: "1 g" })).timing, "with_meal", "sin momento, con una comida");
+});
+
+test("suplementos: pautar uno avisa al cliente; el duplicado no", async () => {
+  const { trainer, client } = await pair();
+  const path = `/trainer/clients/${client.id}/supplements`;
+  await ctx.post(trainer, path, { name: "Creatina", dose: "5 g" });
+  const supplementNotices = async () => (await notifications(client)).filter((n) => n.type === "supplement_assigned");
+  const [notice] = await supplementNotices();
+  assert.deepEqual(notice.payload, { supplementName: "Creatina" });
+  assert.equal((await ctx.call(trainer, "POST", path, { name: "Creatina", dose: "3 g" })).body.code, "SUPPLEMENT_DUPLICATE");
+  assert.equal((await supplementNotices()).length, 1);
 });
 
 test("suplementos: el cliente ve solo los vigentes en la fecha y de profesionales con relación activa", async () => {

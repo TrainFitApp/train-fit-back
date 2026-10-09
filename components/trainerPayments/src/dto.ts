@@ -195,7 +195,12 @@ export interface PlanView {
 
 export function planView(plan: FeePlan | null, today: CivilDay): PlanView | null {
   if (!plan) return null;
-  const nextDueDay = nextPlanDue(plan, today);
+  // El de hoy ya es un cobro (se materializa hasta hoy + el horizonte) y sale
+  // como «Vence hoy»; el próximo vencimiento de la cuota es el siguiente.
+  // Mismo criterio que clientPaymentsSummary: antes Gestión › Cobros decía
+  // «Próximo vencimiento: hoy» con el de hoy ya pagado, y Resumen y la app
+  // del cliente, el del mes siguiente (QA 2026-10-09, M13).
+  const nextDueDay = nextPlanDue(plan, addDays(today, 1));
   const reference = nextDueDay ?? plan.prices[plan.prices.length - 1]?.fromDay ?? plan.anchorDay;
   const future = plan.prices.find((entry) => entry.fromDay > reference);
   return {

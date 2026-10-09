@@ -31,6 +31,25 @@ module.exports = {
     return TrainerTask.findById(taskId);
   },
 
+  // Editar el objetivo, el rango, la unidad o el nombre (el tipo no cambia).
+  async update(trainerId, clientId, taskId, { label, target, targetMax, unit }) {
+    return TrainerTask.findOneAndUpdate(
+      { _id: taskId, trainerId, clientId, active: true },
+      { $set: { label: label || null, target, targetMax: targetMax ?? null, unit } },
+      { new: true, runValidators: true }
+    ).lean();
+  },
+
+  async findActiveOfTrainer(trainerId, clientId, taskId) {
+    return TrainerTask.findOne({ _id: taskId, trainerId, clientId, active: true }).lean();
+  },
+
+  // Fin de la relación: sus hábitos dejan de estar activos (el cumplimiento
+  // ya marcado se queda como historial).
+  async deactivateAllFor(trainerId, clientId) {
+    return TrainerTask.updateMany({ trainerId, clientId, active: true }, { $set: { active: false } });
+  },
+
   async deactivate(trainerId, clientId, taskId) {
     return TrainerTask.findOneAndUpdate(
       { _id: taskId, trainerId, clientId },

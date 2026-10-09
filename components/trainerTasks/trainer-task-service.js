@@ -3,14 +3,25 @@ const userDao = require("../users/user-dao");
 const notificationService = require("../notifications/notification-service");
 const trainerClientService = require("../trainerClients/trainer-client-service");
 const { taskLabel } = require("./task-label");
-const { badRequest, forbidden, notFound } = require("../util/http-error");
+const { badRequest, conflict, forbidden, notFound } = require("../util/http-error");
+const { parseTaskInput, sameHabit } = require("./task-input");
 
 // Hábitos que el profesional pauta a su cliente (trainer-task-schema.js) y
 // sus marcas de cumplimiento por día.
 
 module.exports = {
-  // Crea el hábito y avisa al cliente.
-  async create(trainerId, clientId, data) {
+  // Crea el hábito y avisa al cliente. Uno por tipo (o por nombre si es
+  // propio): dos «Pasos» activos a la vez (8.000 y 10.000) se contradecían;
+  // para cambiar el objetivo se edita.
+  async create(trainerId, clientId, body) {
+    const data = parseTaskInput(body);
+    const active = await trainerTaskDao.listForClient(trainerId, clientId);
+    const duplicate = active.find((task) => sameHabit(task, data));
+    if (duplicate) {
+      throw conflict(`${taskLabel(duplicate)} ya está pautado: edítalo para cambiar el objetivo`, "TASK_DUPLICATE", {
+        taskId: String(duplicate._id),
+      });
+    }
     const task = await trainerTaskDao.create(trainerId, clientId, data);
     await notificationService.create(clientId, trainerId, "task_assigned", {
       taskLabel: taskLabel(task),
@@ -18,6 +29,20 @@ module.exports = {
       unit: data.unit,
     });
     return task;
+  },
+
+  // Editar un hábito activo (antes solo se podía quitar y volver a crear).
+  async update(trainerId, clientId, taskId, body) {
+    const current = await trainerTaskDao.findActiveOfTrainer(trainerId, clientId, taskId);
+    if (!current) throw notFound("Hábito no encontrado", "TASK_NOT_FOUND");
+    const data = parseTaskInput(body, current);
+    if (current.type === "custom") {
+      const others = (await trainerTaskDao.listForClient(trainerId, clientId)).filter((task) => String(task._id) !== String(taskId));
+      if (others.some((task) => sameHabit(task, data))) {
+        throw conflict(`${taskLabel(data)} ya está pautado`, "TASK_DUPLICATE");
+      }
+    }
+    return trainerTaskDao.update(trainerId, clientId, taskId, data);
   },
 
   listForClient: (trainerId, clientId) => trainerTaskDao.listForClient(trainerId, clientId),

@@ -14,6 +14,7 @@ const tableDao = require("../tables/table-dao");
 const { routinesInUseOf } = require("../routineAssignments/routine-in-use");
 const painDao = require("../painLog/pain-dao");
 const { isoDate, addDaysToIsoDate, isoDateInZone, timeZoneOf } = require("../util/date-util");
+const evaluationCache = require("./evaluation-cache");
 
 // Días de silencio tras un cierre MANUAL de una alerta antes de que el
 // evaluador pueda volver a abrirla. Si el coach mira un estancamiento y
@@ -199,7 +200,7 @@ function lastActivityFor({ lastResponseAt, entries, adherence, now }) {
  * Un "snapshot" por cliente: todo lo que se sabe de él en esta pasada,
  * ensamblado UNA vez.
  *
- * Lo consumen dos cosas distintas —las 8 señales integradas y el motor de
+ * Lo consumen dos cosas distintas —las señales integradas y el motor de
  * reglas del coach (Fase 3)— y ambas necesitan exactamente los mismos
  * datos. Montarlo dos veces habría sido la vía directa a que una de las dos
  * mirase una versión distinta del mismo cliente.
@@ -258,6 +259,8 @@ function buildClientSnapshots(context, now) {
       // Movimiento 3 Coach Pro — solo fecha, zona y nivel: es lo que
       // necesita la métrica pain_max y lo único barato para toda la cartera.
       painEntries: context.painEntriesByClient?.get(clientKey) || [],
+      // Umbrales de dolor que fijó el profesional (los del par).
+      painThresholds: entry.painThresholds || [],
       lastActivityAt: lastActivityFor({ lastResponseAt, entries, adherence, now }),
     });
   }
@@ -266,7 +269,7 @@ function buildClientSnapshots(context, now) {
 }
 
 /**
- * Las 8 señales integradas, a partir de snapshots ya montados.
+ * Las señales integradas, a partir de snapshots ya montados.
  *
  * Separada de buildClientSnapshots porque evaluateTrainer necesita los
  * snapshots DOS veces: para esto y para el motor de reglas. Montarlos aquí
@@ -286,6 +289,9 @@ function buildSignalsFromSnapshots(snapshots) {
       lastActivityAt: snapshot.lastActivityAt,
       hasRoutine: snapshot.hasRoutine,
       workoutDates: snapshot.workoutDates,
+      painEntries: snapshot.painEntries,
+      painThresholds: snapshot.painThresholds,
+      today: snapshot.today,
     }),
   }));
 }
@@ -349,32 +355,35 @@ async function evaluateTrainer(trainerId, now = new Date(), context = null) {
 // --- Evaluación bajo demanda (sin cron) ---
 //
 // Antes un cron a las 05:00 evaluaba a TODOS los profesionales con clientes,
-// abrieran la app o no. Ahora la primera lectura de alertas del día de cada
-// profesional (panel, Cartera, resumen del cliente) lo evalúa, y el resto
-// del día se lee lo ya escrito. Misma frescura que el cron (una vez al día:
-// las señales por tiempo cuentan días), coste solo para quien mira, y ningún
-// proceso programado.
+// abrieran la app o no. Ahora la primera lectura de alertas de cada
+// profesional (panel, Cartera, resumen del cliente) lo evalúa, y las
+// siguientes reutilizan esa evaluación mientras sea reciente
+// (evaluation-cache.js#FRESH_MS, del mismo día) o hasta que algo la invalide
+// (una regla nueva o cambiada, un dato nuevo de un cliente). Coste solo para
+// quien mira, y ningún proceso programado.
 //
 // El estado vive en memoria a propósito: perderlo (reinicio, despliegue)
 // solo cuesta repetir una evaluación idempotente, y consultarlo no cuesta ni
-// una consulta por petición. Con varios procesos, cada uno evaluaría una vez
-// al día: trabajo repetido, nunca alertas duplicadas (índice único parcial
+// una consulta por petición. Con varios procesos, cada uno evaluaría por su
+// cuenta: trabajo repetido, nunca alertas duplicadas (índice único parcial
 // de dedupeKey, y applyWritePlan ignora ese E11000).
 //
 // Peticiones simultáneas del mismo profesional (el panel y la Cartera a la
 // vez) se unen a la evaluación en curso en vez de lanzar otra.
 //
-// "Una vez al día" = el día del PROFESIONAL (`timeZone`, la suya): es él
-// quien mira el panel. Cada cliente se evalúa igualmente con su propio "hoy"
+// "El día" es el del PROFESIONAL (`timeZone`, la suya): es él quien mira el
+// panel. Cada cliente se evalúa igualmente con su propio "hoy"
 // (buildClientSnapshots).
-const evaluations = new Map(); // String(trainerId) -> { day, pending, promise }
+const { evaluations, reusable } = evaluationCache;
 
 function startEvaluation(trainerId, now, context, timeZone) {
   const key = String(trainerId);
-  const entry = { day: isoDateInZone(now, timeZone), pending: true, promise: null };
+  const entry = { day: isoDateInZone(now, timeZone), startedAt: now.getTime(), pending: true, promise: null };
   entry.promise = evaluateTrainer(trainerId, now, context).then(
     (result) => {
       entry.pending = false;
+      // Invalidada mientras se evaluaba: la siguiente lectura repite.
+      if (entry.stale && evaluations.get(key) === entry) evaluations.delete(key);
       return result;
     },
     (error) => {
@@ -388,20 +397,17 @@ function startEvaluation(trainerId, now, context, timeZone) {
 }
 
 /**
- * Garantiza que las alertas del profesional están evaluadas HOY antes de
- * leerlas. Si ya lo están, no toca la BD. Nunca lanza: si la evaluación
- * falla se registra y se sirven las alertas que ya había — un fallo aquí no
- * debe dejar al entrenador sin panel.
+ * Garantiza que las alertas del profesional están evaluadas (hace poco)
+ * antes de leerlas. Si ya lo están, no toca la BD. Nunca lanza: si la
+ * evaluación falla se registra y se sirven las alertas que ya había — un
+ * fallo aquí no debe dejar al entrenador sin panel.
  *
  * `context`: si quien llama ya cargó loadTrainerContext (la Cartera), se
  * reutiliza y la evaluación no vuelve a leer nada de los clientes.
  */
 async function ensureEvaluatedToday(trainerId, { now = new Date(), context = null, timeZone } = {}) {
-  const current = evaluations.get(String(trainerId));
-  const promise =
-    current?.day === isoDateInZone(now, timeZone)
-      ? current.promise
-      : startEvaluation(trainerId, now, context, timeZone);
+  const current = reusable(trainerId, isoDateInZone(now, timeZone), now.getTime());
+  const promise = current ? current.promise : startEvaluation(trainerId, now, context, timeZone);
   try {
     await promise;
   } catch (error) {
