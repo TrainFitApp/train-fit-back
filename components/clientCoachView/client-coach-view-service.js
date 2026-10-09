@@ -10,7 +10,42 @@ const tableService = require("../tables/table-service");
 const routineAssignmentService = require("../routineAssignments/routine-assignment-service");
 const { routineInUseOfId } = require("../routineAssignments/routine-in-use");
 const { isoDateInZone, todayIsoDate } = require("../util/date-util");
+const userDao = require("../users/user-dao");
 const { pickTrainingPlan, pickNutritionPlan } = require("./current-plans");
+const { trainingTimeline, nutritionTimeline } = require("./plan-timeline");
+
+/**
+ * Qué rutina y qué fase de dieta rigen hoy (current-plans.js), con su tabla
+ * o su fase. Solo cuenta lo de un profesional con relación activa: lo de uno
+ * ya desvinculado no es "tu plan".
+ */
+async function pickCurrentPlans({ clientId, today, activeTrainerIds, routinePhases, dietPhases }) {
+  const activeTrainerIdSet = new Set(activeTrainerIds.map(String));
+  const [routine, assignedTables] = await Promise.all([
+    routineInUseOfId(clientId),
+    tableService.listIdsAssignedBy(clientId, activeTrainerIds),
+  ]);
+
+  let training = null;
+  const pickedTraining = pickTrainingPlan({
+    tableInUseId: routine.tableInUse,
+    phases: routinePhases,
+    assignedTables: assignedTables.map((t) => ({ tableId: t._id, assignedAt: t._id.getTimestamp() })),
+    today,
+  });
+  if (pickedTraining) {
+    const table = await tableService.findSummary(pickedTraining.tableId);
+    if (table?.assignedByTrainerId && activeTrainerIdSet.has(String(table.assignedByTrainerId))) {
+      training = { ...pickedTraining, table };
+    }
+  }
+
+  const pickedNutrition = pickNutritionPlan({ phases: dietPhases, today });
+  const nutrition =
+    pickedNutrition && activeTrainerIdSet.has(String(pickedNutrition.phase.trainerId)) ? pickedNutrition : null;
+
+  return { training, nutrition };
+}
 
 /**
  * El tab Coach del cliente: de TODOS sus profesionales con relación ACTIVA,
@@ -94,39 +129,26 @@ async function dashboard(clientId, timeZone) {
   }
 
   // --- Tu plan actual: rutina y fase de dieta (current-plans.js) ---
-  // Solo cuenta lo de un profesional con relación activa: lo de uno ya
-  // desvinculado no es "tu plan".
   const currentPlans = { training: null, nutrition: null };
 
-  const [routine, routinePhases, assignedTables] = await Promise.all([
-    routineInUseOfId(clientId),
+  const [routinePhases, dietPhases] = await Promise.all([
     routineAssignmentService.listForClient(clientId),
-    tableService.listIdsAssignedBy(clientId, activeTrainerIds),
+    dietPhaseService.listForClient(clientId),
   ]);
-  const training = pickTrainingPlan({
-    tableInUseId: routine.tableInUse,
-    phases: routinePhases,
-    assignedTables: assignedTables.map((t) => ({ tableId: t._id, assignedAt: t._id.getTimestamp() })),
-    today,
-  });
+  const { training, nutrition } = await pickCurrentPlans({ clientId, today, activeTrainerIds, routinePhases, dietPhases });
   if (training) {
-    const table = await tableService.findSummary(training.tableId);
-    if (table?.assignedByTrainerId && activeTrainerIdSet.has(String(table.assignedByTrainerId))) {
-      // Table no tiene createdAt: asignar siempre crea una copia nueva, así
-      // que sin fase de rutina la fecha es la del ObjectId.
-      const assignedAt = table._id.getTimestamp();
-      touchActivity(table.assignedByTrainerId, assignedAt);
-      currentPlans.training = {
-        status: training.status,
-        name: table.name,
-        assignedByTrainerName: trainerName(table.assignedByTrainerId),
-        startDate: training.startDate || isoDateInZone(assignedAt, timeZone),
-      };
-    }
+    const { table } = training;
+    const assignedAt = table._id.getTimestamp();
+    touchActivity(table.assignedByTrainerId, assignedAt);
+    currentPlans.training = {
+      status: training.status,
+      name: table.name,
+      assignedByTrainerName: trainerName(table.assignedByTrainerId),
+      startDate: training.startDate || isoDateInZone(assignedAt, timeZone),
+    };
   }
 
-  const nutrition = pickNutritionPlan({ phases: await dietPhaseService.listForClient(clientId), today });
-  if (nutrition && activeTrainerIdSet.has(String(nutrition.phase.trainerId))) {
+  if (nutrition) {
     const { phase } = nutrition;
     touchActivity(phase.trainerId, phase.createdAt);
     currentPlans.nutrition = {
@@ -157,4 +179,72 @@ async function dashboard(clientId, timeZone) {
   };
 }
 
-module.exports = { dashboard };
+/**
+ * "Tus planes" (Coach > Tu plan actual): la rutina y la fase de dieta de hoy
+ * (las mismas que el dashboard), las programadas y las anteriores
+ * (plan-timeline.js). Las anteriores incluyen las de profesionales con los
+ * que ya no trabaja: son el historial del cliente.
+ */
+async function plans(clientId, timeZone) {
+  const today = todayIsoDate(timeZone);
+  const professionals = await trainerClientService.listActiveProfessionalsForClient(clientId);
+  const activeTrainerIds = professionals.map((p) => p.user?._id).filter(Boolean);
+  const [routinePhases, dietPhases] = await Promise.all([
+    routineAssignmentService.listForClient(clientId),
+    dietPhaseService.listForClient(clientId),
+  ]);
+  const current = await pickCurrentPlans({ clientId, today, activeTrainerIds, routinePhases, dietPhases });
+  const training = trainingTimeline({ phases: routinePhases, current: current.training, today });
+  const nutrition = nutritionTimeline({ phases: dietPhases, current: current.nutrition, today });
+
+  const trainingEntries = [training.current, ...training.upcoming, ...training.past].filter(Boolean);
+  const tables = await tableService.listSummaries([...new Set(trainingEntries.map((entry) => entry.tableId))]);
+  const tableById = new Map(tables.map((table) => [String(table._id), table]));
+
+  // Rutina de hoy sin fase: la fecha es la de la tabla (asignar siempre crea
+  // una copia nueva, y Table no tiene createdAt).
+  for (const entry of trainingEntries) {
+    const table = tableById.get(entry.tableId);
+    if (!entry.trainerId && table?.assignedByTrainerId) entry.trainerId = String(table.assignedByTrainerId);
+    if (!entry.startDate && table) entry.startDate = isoDateInZone(table._id.getTimestamp(), timeZone);
+  }
+
+  const trainerIds = [...new Set([...trainingEntries, nutrition.current, ...nutrition.upcoming, ...nutrition.past]
+    .filter((entry) => entry?.trainerId)
+    .map((entry) => entry.trainerId))];
+  const users = await userDao.listFields(trainerIds, "name lastname");
+  const nameById = new Map(users.map((user) => [String(user._id), `${user.name || ""} ${user.lastname || ""}`.trim()]));
+  const trainerNameOf = (entry) => (entry.trainerId && nameById.get(entry.trainerId)) || null;
+
+  // Una fase cuya rutina ya no existe no se puede enseñar.
+  const withTable = (entry) => tableById.has(entry.tableId);
+  const trainingView = (entry) => ({ ...entry, name: tableById.get(entry.tableId).name, trainerName: trainerNameOf(entry) });
+  const nutritionView = (entry) => ({ ...entry, trainerName: trainerNameOf(entry) });
+
+  return {
+    today,
+    training: {
+      current: training.current && withTable(training.current) ? trainingView(training.current) : null,
+      upcoming: training.upcoming.filter(withTable).map(trainingView),
+      past: training.past.filter(withTable).map(trainingView),
+    },
+    nutrition: {
+      current: nutrition.current ? nutritionView(nutrition.current) : null,
+      upcoming: nutrition.upcoming.map(nutritionView),
+      past: nutrition.past.map(nutritionView),
+    },
+  };
+}
+
+/**
+ * Coach > Tus profesionales: lo que le cobra uno de sus profesionales en
+ * curso (client-ledger-view.js). null si no lo es: un antiguo profesional no
+ * se consulta desde aquí.
+ */
+async function professionalPayments(clientId, trainerId) {
+  if (!(await trainerClientService.hasActiveClient(trainerId, clientId))) return null;
+  await paymentReminders.ensureClientUpToDate(clientId);
+  return trainerPaymentService.getLedgerForClient(trainerId, clientId);
+}
+
+module.exports = { dashboard, plans, professionalPayments };

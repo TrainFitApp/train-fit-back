@@ -1,4 +1,5 @@
 const exerciseDao = require("./exercise-dao");
+const { toSearchPage } = require("./exercise-search-paging");
 
 module.exports = {
   async getSearchExercise(page, limit, searchExercisesFilterGroup) {
@@ -7,6 +8,15 @@ module.exports = {
       limit,
       searchExercisesFilterGroup,
     );
+  },
+
+  async searchExercisePage(page, limit, searchExercisesFilterGroup) {
+    const { items, total } = await exerciseDao.searchExercisePage(
+      page,
+      limit,
+      searchExercisesFilterGroup,
+    );
+    return toSearchPage(items, total, page, limit);
   },
 
   async getExercise(id) {

@@ -30,6 +30,7 @@ module.exports = {
   },
 
   findSummary: (id) => tableDao.findSummary(id),
+  listSummaries: (ids) => tableDao.listSummaries(ids),
   // Series hechas y adherencia por sesión del usuario en [start, end] (instantes).
   listCompletedSetsForUser: (userId, start, end) => tableDao.listCompletedSetsForUser(userId, start, end),
   listSessionAdherenceForUser: (userId, start, end) => tableDao.listSessionAdherenceForUser(userId, start, end),

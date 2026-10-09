@@ -28,6 +28,7 @@ const {
   pendingLinks,
   openLink,
   latestRevokedAt,
+  activeSince,
   intakePendingOnAccept,
   intakeStatusOf,
   invitationView,
@@ -321,10 +322,11 @@ module.exports = {
       .sort((a, b) => b.invitedAt - a.invitedAt);
   },
 
-  // Profesionales en curso del cliente, uno por par con sus scopes activos.
+  // Profesionales en curso del cliente, uno por par con sus scopes activos y
+  // desde cuándo trabajan juntos.
   async listActiveProfessionalsForClient(clientId) {
     const pairs = await trainerClientDao.findActivePairsOfClient(clientId, { withTrainer: true });
-    return pairs.map((pair) => ({ user: personOf(pair.trainerId), scopes: activeScopes(pair) }));
+    return pairs.map((pair) => ({ user: personOf(pair.trainerId), scopes: activeScopes(pair), since: activeSince(pair) }));
   },
 
   /**

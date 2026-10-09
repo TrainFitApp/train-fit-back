@@ -4,6 +4,7 @@ const dao = require("./trainer-payment-dao");
 const mapper = require("./trainer-payment-mapper");
 const notificationDao = require("../notifications/notification-dao");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
+const { clientLedgerView } = require("./client-ledger-view");
 
 // Orquestación del dominio de cobros: lee, pide al núcleo puro el estado
 // siguiente y lo escribe con compare-and-swap. Ninguna regla de negocio vive
@@ -435,6 +436,23 @@ async function listCoachPending(clientId, activeTrainerIds, trainerNameFor) {
   };
 }
 
+// Coach del cliente: lo que le cobra UN profesional con relación activa (la
+// comprueba quien llama). Solo lectura: las cuotas que ya tocan las pone al
+// día antes el que llama (trainer-payment-reminder-service.js#ensureClientUpToDate).
+async function getLedgerForClient(trainerId, clientId) {
+  const C = core();
+  const settings = await loadSettings(trainerId);
+  const ctx = makeContext(settings, null);
+  const profile = mapper.toProfile(await dao.findProfile(trainerId, clientId), trainerId, clientId);
+  const charges = (await dao.listClientCharges(trainerId, clientId)).map(normalize);
+  return clientLedgerView({
+    today: ctx.today,
+    plan: C.planView(profile.plan, ctx.today),
+    summary: C.clientPaymentsSummary(charges, profile.plan, ctx.today),
+    charges: sortViews(charges.map((charge) => C.chargeDetailView(charge, ctx.today))),
+  });
+}
+
 // Un aviso antiguo se pinta con el saldo de AHORA (o como histórico si el
 // cobro ya se cerró), nunca con el importe que tenía al emitirse.
 async function enrichNotifications(notifications, audience, trainerId = null) {
@@ -482,6 +500,7 @@ module.exports = {
   endPlan,
   setPreferences,
   listCoachPending,
+  getLedgerForClient,
   enrichNotifications,
   afterChargeWrite,
 };

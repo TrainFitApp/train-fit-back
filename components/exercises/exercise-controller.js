@@ -1,18 +1,24 @@
 const exerciseService = require("./exercise-service");
 const featureAccess = require("../billing/feature-access");
+const { parseSearchPaging } = require("./exercise-search-paging");
 
 function isAdmin(req) {
   return Boolean(req.userData?.roles?.includes("admin"));
 }
 
 module.exports = {
+  // ?withTotal=1 → { items, total, page, limit, hasMore }; sin él, el array
+  // de siempre (apps del cliente ya publicadas). Ver exercise-search-paging.
   async getSearchExercise(req, res) {
-    const page = parseInt((req.query.page || 0).toString(), 10);
-    const limit = parseInt((req.query.limit || 10).toString(), 10);
+    const { page, limit, withTotal } = parseSearchPaging(req.query);
+    const filters = req.body || {};
+    if (withTotal) {
+      return res.send(await exerciseService.searchExercisePage(page, limit, filters));
+    }
     const exercises = await exerciseService.getSearchExercise(
       page,
       limit,
-      req.body,
+      filters,
     );
     return res.send(exercises);
   },

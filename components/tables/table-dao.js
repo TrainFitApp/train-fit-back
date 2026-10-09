@@ -145,6 +145,11 @@ module.exports = {
     return tableSchema.findById(id).select("name assignedByTrainerId").lean();
   },
 
+  async listSummaries(ids) {
+    if (!ids?.length) return [];
+    return tableSchema.find({ _id: { $in: ids } }).select("name assignedByTrainerId").lean();
+  },
+
   // Ids de las rutinas del cliente que le asignaron estos profesionales.
   async listIdsAssignedBy(clientId, trainerIds) {
     if (!trainerIds?.length) return [];

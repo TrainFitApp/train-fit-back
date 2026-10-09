@@ -5,6 +5,7 @@ const summary = (entry) => ({
     ? { _id: entry.user._id, name: entry.user.name, lastname: entry.user.lastname, email: entry.user.email }
     : null,
   scopes: entry.scopes,
+  ...(entry.since ? { since: entry.since } : {}),
 });
 
 module.exports = {

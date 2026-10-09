@@ -155,7 +155,10 @@ Errores: `{code, message, details}`; p. ej. `AMOUNT_EXCEEDS_BALANCE` (422, `deta
 
 `GET /coach/dashboard` (cliente) devuelve en `pendingPayments` el saldo restante de cada cobro
 (`chargeId`, `balanceCents`, `currency`, `dueDay`, `concept`, `trainerName`); nunca notas ni
-pagos. `GET /trainer/payments/summary` (panel «Hoy») va en céntimos: `pendingCents`,
+pagos. `GET /coach/professionals/:trainerId/payments` (cliente, solo con relación activa; 404 si
+no) es su ficha en Coach > Tus profesionales: cuota, resumen y cada cobro con sus pagos válidos
+(importe y día). `client-ledger-view.js` (PURO, con test) quita notas, método, autor, ajustes,
+anomalías, pagos anulados y previsiones. `GET /trainer/payments/summary` (panel «Hoy») va en céntimos: `pendingCents`,
 `overdueCents`, `dueSeries` (por vencimiento) y `receivedSeries` (por recepción).
 
 ## Migración (`scripts/migrations/13-trainer-payments.js`)
