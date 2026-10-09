@@ -46,13 +46,13 @@ test("applyToTable crea la sesión en todos los microciclos con los mismos bloqu
   const created = await Promise.all(splits.map((split) => Workout.findById(split.workouts[0]._id).lean()));
   const [first, second] = created;
   assert.equal(first.name, "Empuje");
-  // La superserie y, para los ejercicios sueltos, un bloque normal
-  // (buildBlockFromWorkout: en una plantilla todo ejercicio va en un bloque).
-  assert.deepEqual(first.blocks.map((block) => block.type), ["superset", "straight"]);
+  // Solo la superserie: los ejercicios sueltos van sin bloque (blockId null),
+  // el "Sin agrupar" del Planificador, no dentro de un bloque "Recta".
+  assert.deepEqual(first.blocks.map((block) => block.type), ["superset"]);
   assert.deepEqual(second.blocks.map(str), first.blocks.map(str), "mismos _id de bloque en toda la fila");
   const blockIds = first.blocks.map(str);
   for (const workout of created) {
-    assert.deepEqual(workout.exercises.map((exercise) => str(exercise.blockId)), blockIds);
+    assert.deepEqual(workout.exercises.map((exercise) => exercise.blockId && str(exercise.blockId)), [blockIds[0], null]);
     assert.equal(workout.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0), 3, "con sus series");
   }
   assert.notEqual(str(first.exercises[0]), str(second.exercises[0]), "cada microciclo con sus propios ejercicios");
