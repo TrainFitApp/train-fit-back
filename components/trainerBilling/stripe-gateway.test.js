@@ -187,6 +187,29 @@ test("Checkout vende con Managed Payments la cuota y las plazas pedidas, con par
   assert.deepEqual(calls[0].params.line_items, [{ price: priceId("seat", "free", "monthly"), quantity: 2 }], "Free solo paga sus plazas");
 });
 
+test("si Stripe rechaza abrir Checkout se dice en el log con código, parámetro y petición, nunca con el mensaje", async (t) => {
+  const Stripe = require("stripe");
+  const { gateway } = fixture(t, { config: sandboxConfig({ STRIPE_TERMS_URL: "https://trainfit.net/condiciones" }) });
+  const secretish = "cus_trainerone trainer@example.test";
+  t.mock.method(gateway.stripe.checkout.sessions, "create", async () => {
+    throw new Stripe.errors.StripeInvalidRequestError({ message: `You cannot collect consent… ${secretish}`,
+      type: "invalid_request_error", param: "consent_collection[terms_of_service]", requestId: "req_rejected" });
+  });
+  const logged = [];
+  t.mock.method(console, "error", (line) => logged.push(line));
+  const row = { customerId: "cus_trainerone", checkout: { startedAt: new Date() } };
+  await assert.rejects(gateway.createCheckout({ id: "trainer-one", email: "trainer@example.test" }, row, state("professional"),
+    "trainers-checkout-key01234567"), errorCode("CHECKOUT_REJECTED"));
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /consent_collection\[terms_of_service\]/);
+  assert.match(logged[0], /req_rejected/);
+  assert.ok(!logged[0].includes(secretish), "el mensaje de Stripe no llega al log");
+  // Un error que no es un rechazo (red, 5xx) se deja tal cual: el intento puede haberse creado.
+  t.mock.method(gateway.stripe.checkout.sessions, "create", async () => { throw new Stripe.errors.StripeConnectionError({ message: "x" }); });
+  await assert.rejects(gateway.createCheckout({ id: "trainer-one" }, row, state("professional"), "trainers-checkout-key01234567"),
+    (error) => error instanceof Stripe.errors.StripeConnectionError);
+});
+
 test("el portal usa la configuración predeterminada solo si no permite cambios de plan ni cancelar al momento", async (t) => {
   const { gateway } = fixture(t);
   const portal = { id: "bpc_default", livemode: false, active: true, features: { subscription_update: { enabled: false },

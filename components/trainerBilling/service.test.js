@@ -84,6 +84,32 @@ test("contratar crea un único cliente de Stripe y un Checkout con lo elegido; n
   await assert.rejects(service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 0 }), errorCode("INVALID_PLAN"));
 });
 
+test("si Stripe rechaza abrir Checkout no queda un intento colgado: se puede contratar enseguida, también otro plan", async () => {
+  const { BillingError } = require("../../.build/trainer-billing/types");
+  const { stripe, repository, service } = freeSetup();
+  stripe.failNext("createCheckout", new BillingError("CHECKOUT_REJECTED", "No se ha podido abrir la página de pago.", 503));
+  await assert.rejects(service.checkout(USER_ID, { tier: "professional", interval: "monthly" }), errorCode("CHECKOUT_REJECTED"));
+  assert.equal(stored(repository).checkout, null);
+  assert.notEqual(stored(repository).status, "checkout_pending", "no se presenta como contratación pendiente");
+  const retry = await service.checkout(USER_ID, { tier: "starter", interval: "monthly" });
+  assert.equal(retry.reused, false);
+  assert.equal(stripe.named("createCheckout").length, 2);
+});
+
+test("un intento que Stripe nunca llegó a crear no bloquea la cuenta: pasados 25 min se abre otro", async () => {
+  const { stripe, repository, service } = freeSetup();
+  // Fallo incierto (p. ej. de red): el intento se conserva para reintentarlo con su misma clave.
+  stripe.failNext("createCheckout");
+  await assert.rejects(service.checkout(USER_ID, { tier: "professional", interval: "monthly" }));
+  const first = stored(repository).checkout.key;
+  assert.ok(first);
+  // Sin ninguna sesión de ese intento en Stripe y pasados 25 min se abre otro (antes: «contacta con soporte»).
+  repository.accounts.get(USER_ID).checkout.startedAt = new Date(Date.now() - 30 * 60000);
+  const fresh = await service.checkout(USER_ID, { tier: "starter", interval: "monthly" });
+  assert.equal(fresh.reused, false);
+  assert.notEqual(stripe.named("createCheckout").at(-1).args.key, first);
+});
+
 test("al volver de Checkout el pago confirmado da las plazas del plan comprado, también en Free con plazas", async () => {
   const { stripe, repository, service } = freeSetup();
   const { sessionId } = await service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 4 });
