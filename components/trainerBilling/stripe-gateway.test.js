@@ -210,6 +210,48 @@ test("si Stripe rechaza abrir Checkout se dice en el log con código, parámetro
     (error) => error instanceof Stripe.errors.StripeConnectionError);
 });
 
+test("si Stripe rechaza aplicar un cambio (sin permiso o inválido) se traduce a CHANGE_REJECTED; idempotencia no", async (t) => {
+  const Stripe = require("stripe");
+  const { gateway } = fixture(t);
+  const logged = [];
+  t.mock.method(console, "error", (line) => logged.push(line));
+  const quote = { subscriptionId: "sub_trainers", updates: [], prorationDate: START };
+  t.mock.method(gateway.stripe.subscriptions, "update", async () => {
+    throw new Stripe.errors.StripePermissionError({ message: "key rk_test_x lacks access", requestId: "req_perm" });
+  });
+  await assert.rejects(gateway.applyUpgrade(quote, "trainers-change-key"), errorCode("CHANGE_REJECTED"));
+  assert.match(logged[0], /aplicar el cambio: StripePermissionError, petición req_perm/);
+  assert.ok(!logged[0].includes("rk_test_x"));
+  // Clave reutilizada con otros parámetros: el original pudo aplicarse, así que no se descarta nada.
+  t.mock.method(gateway.stripe.subscriptions, "update", async () => { throw new Stripe.errors.StripeIdempotencyError({ message: "x" }); });
+  await assert.rejects(gateway.applyUpgrade(quote, "trainers-change-key"), (error) => error instanceof Stripe.errors.StripeIdempotencyError);
+});
+
+test("rechazos al crear el cliente, cancelar o programar una bajada se traducen; la bajada libera su calendario", async (t) => {
+  const Stripe = require("stripe");
+  const { gateway } = fixture(t);
+  t.mock.method(console, "error", () => {});
+  const invalid = () => new Stripe.errors.StripeInvalidRequestError({ message: "x", param: "items", requestId: "req_bad" });
+  t.mock.method(gateway.stripe.customers, "create", async () => { throw new Stripe.errors.StripePermissionError({ message: "x" }); });
+  await assert.rejects(gateway.createCustomer({ id: "trainer-one", email: "t@example.test" }, "key"), errorCode("CUSTOMER_REJECTED"));
+  t.mock.method(gateway.stripe.subscriptions, "update", async () => { throw invalid(); });
+  await assert.rejects(gateway.setCancellation("sub_trainers", true, "key"), errorCode("CONTROL_REJECTED"));
+
+  const phase = { start_date: START, end_date: END, currency: "eur", collection_method: "charge_automatically", billing_cycle_anchor: null,
+    default_payment_method: null, default_tax_rates: [], description: null, metadata: {}, add_invoice_items: [], discounts: [],
+    items: [{ price: priceId("base", "starter", "monthly"), quantity: 1, discounts: [], tax_rates: [] }] };
+  t.mock.method(gateway.stripe.subscriptionSchedules, "create", async () => ({ id: "sub_sched_x", livemode: false, phases: [structuredClone(phase)] }));
+  t.mock.method(gateway.stripe.subscriptionSchedules, "update", async () => { throw invalid(); });
+  t.mock.method(gateway.stripe.subscriptionSchedules, "retrieve", async (id) => ({ id, livemode: false, status: "active" }));
+  const released = [];
+  t.mock.method(gateway.stripe.subscriptionSchedules, "release", async (id, _params, options) => { released.push([id, options.idempotencyKey]); return {}; });
+  const quote = { quoteId: "q-x", subscriptionId: "sub_trainers", prorationDate: START + 100, periodEnd: END,
+    to: stateView(state("free", "monthly", 4)), fromItems: [{ price: priceId("base", "starter", "monthly"), quantity: 1 }],
+    targetItems: [{ price: priceId("seat", "free", "monthly"), quantity: 4 }] };
+  await assert.rejects(gateway.scheduleChange(quote, "down-x"), errorCode("CHANGE_REJECTED"));
+  assert.deepEqual(released, [["sub_sched_x", "down-x-abort"]], "no queda un calendario de una sola fase bloqueando otros cambios");
+});
+
 test("el portal usa la configuración predeterminada solo si no permite cambios de plan ni cancelar al momento", async (t) => {
   const { gateway } = fixture(t);
   const portal = { id: "bpc_default", livemode: false, active: true, features: { subscription_update: { enabled: false },

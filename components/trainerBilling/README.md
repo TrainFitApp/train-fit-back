@@ -128,6 +128,12 @@ Registrar los 31 eventos de `SUPPORTED_EVENT_TYPES` (`src/stripe-gateway.ts`; li
 - El cupo deduplica scopes y contempla los cuatro estados de onboarding. Las invitaciones de cuentas Stripe se serializan por entrenador para evitar excederlo con altas simultáneas. No archiva clientes existentes al cancelar; queda por definir el tratamiento de las relaciones que excedan Free antes de producción.
 - Una respuesta de creación de customer incierta durante más de 23 h se bloquea para revisión. Cuentas con más de 100 sesiones históricas también requieren revisión antes de más altas (límite conservador de esta versión).
 - Checkout (09/10/2026): si Stripe rechaza abrir la sesión (petición inválida, no crea nada), el intento se descarta y el log dice el código, el parámetro y el id de la petición (`[TrainerBilling] Stripe rechazó abrir Checkout…`), nunca el mensaje. Un intento incierto se reintenta con su misma clave; pasados 25 min sin ninguna sesión suya en Stripe (la lista del customer es completa), se abre otro. Antes ese caso bloqueaba la cuenta para siempre con `CHECKOUT_REVIEW_REQUIRED`. Nunca se crea un segundo cobro: si la sesión existe, se reutiliza o se espera a su pago.
+- Rechazos y operaciones inciertas (auditoría del 09/10/2026, [`docs/auditoria-stripe-2026-10-09.md`](../../docs/auditoria-stripe-2026-10-09.md)): ninguna respuesta de Stripe bloquea la relectura de una cuenta.
+  - Si Stripe rechaza una operación (petición inválida o clave sin permiso; nunca un error de idempotencia), se descarta y se avisa con `CUSTOMER_REJECTED`, `CHECKOUT_REJECTED`, `CHANGE_REJECTED` o `CONTROL_REJECTED`. Vale para crear el cliente, Checkout, subidas, bajadas (se libera el calendario a medio crear), cancelar, reactivar y descartar.
+  - Un error de red se reintenta con la misma clave.
+  - Pasadas 23 h sin confirmar, manda el estado real de Stripe (pago pendiente, aplicado o descartado). Antes quedaba en `processing`, cada relectura (sync, propuesta, webhook, reconciliación, Gestión) respondía 503 y a las 23 h pasaba a revisión de soporte.
+  - Una disputa se registra aunque no se puedan pausar los cobros.
+  - Los fallos se registran con la operación, la clase del error, su código y el `req_…` de Stripe, nunca con el mensaje; la reconciliación los resume por ronda.
 - Las pruebas unitarias del core/gateway usan dobles en memoria, sin Stripe ni correo. Las pruebas reales de sandbox y su alcance se registran en `docs/TRAINERS_STRIPE_SANDBOX.md` del workspace. No constituyen un despliegue de producción.
 
 ## Pruebas y entrega del artefacto

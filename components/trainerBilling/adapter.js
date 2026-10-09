@@ -55,53 +55,55 @@ async function getEntitlements(userId) {
     ...billingMetadata(current.config, account) };
 }
 
-function sendError(res, error) {
+function errorTrace(error) { return require("../../.build/trainer-billing/types").errorTrace(error); }
+
+function sendError(res, error, operation) {
   const { BillingError } = require("../../.build/trainer-billing/types");
   if (error instanceof BillingError) return res.status(error.status).json({ code: error.code, message: error.message });
   // Stripe/Mongo errors may carry request payloads. Never expose/log them.
-  console.error("[TrainerBilling] Operation failed; retry or inspect provider dashboard.");
+  console.error(`[TrainerBilling] Operation failed (${operation}: ${errorTrace(error)}); retry or inspect provider dashboard.`);
   return res.status(503).json({ code: "BILLING_UNAVAILABLE", message: "No se ha podido completar la operación de facturación. Inténtalo de nuevo." });
 }
 
-function handler(action) {
+function handler(action, operation) {
   return async (req, res) => {
     res.set("Cache-Control", "no-store");
     try { return res.json(await action(req)); }
-    catch (error) { return sendError(res, error); }
+    catch (error) { return sendError(res, error, operation); }
   };
 }
-const controller = {
-  plans: handler(() => getRuntime().service.plans()),
-  entitlements: handler((req) => getEntitlements(String(req.user._id))),
-  checkout: handler((req) => getRuntime().service.checkout(String(req.user._id), req.body)),
-  portal: handler((req) => getRuntime().service.portal(String(req.user._id))),
-  billingDetails: handler((req) => getRuntime().service.billingDetails(String(req.user._id))),
-  changePreview: handler((req) => getRuntime().service.previewChange(String(req.user._id), req.body)),
-  changePlan: handler(async (req) => {
+const actions = {
+  plans: () => getRuntime().service.plans(),
+  entitlements: (req) => getEntitlements(String(req.user._id)),
+  checkout: (req) => getRuntime().service.checkout(String(req.user._id), req.body),
+  portal: (req) => getRuntime().service.portal(String(req.user._id)),
+  billingDetails: (req) => getRuntime().service.billingDetails(String(req.user._id)),
+  changePreview: (req) => getRuntime().service.previewChange(String(req.user._id), req.body),
+  changePlan: async (req) => {
     const result = await getRuntime().service.changePlan(String(req.user._id), req.body?.quoteId, req.body?.termsUrl);
     return { ...result, entitlements: await getEntitlements(String(req.user._id)) };
-  }),
-  cancel: handler(async (req) => {
+  },
+  cancel: async (req) => {
     await getRuntime().service.cancel(String(req.user._id));
     return getEntitlements(String(req.user._id));
-  }),
-  resume: handler(async (req) => {
+  },
+  resume: async (req) => {
     await getRuntime().service.resume(String(req.user._id));
     return getEntitlements(String(req.user._id));
-  }),
-  discardChange: handler(async (req) => {
+  },
+  discardChange: async (req) => {
     await getRuntime().service.discardChange(String(req.user._id));
     return getEntitlements(String(req.user._id));
-  }),
-  sync: handler(async (req) => {
+  },
+  sync: async (req) => {
     await getRuntime().service.sync(String(req.user._id), req.body?.sessionId);
     return getEntitlements(String(req.user._id));
-  }),
-  webhook: handler((req) => getRuntime().webhook(req.body, req.headers["stripe-signature"])),
+  },
+  webhook: (req) => getRuntime().webhook(req.body, req.headers["stripe-signature"]),
   // Gestión (auth admin): casos de dinero, ficha del entrenador e intervenciones registradas con su autor.
-  adminCases: handler((req) => getRuntime().service.adminCases(req.query?.status)),
+  adminCases: (req) => getRuntime().service.adminCases(req.query?.status),
   // Buscar la ficha de un entrenador por su email (para actuar aunque no tenga casos abiertos).
-  adminLookup: handler(async (req) => {
+  adminLookup: async (req) => {
     const { BillingError } = require("../../.build/trainer-billing/types");
     const { normalizeEmail, isValidEmailFormat } = require("../util/normalize-email");
     const email = normalizeEmail(req.query?.email);
@@ -109,14 +111,16 @@ const controller = {
     const user = await require("../users/user-schema").findOne({ email }).select("_id email roles").lean();
     if (!user || !(user.roles || []).includes("trainer")) throw new BillingError("TRAINER_NOT_FOUND", "No hay ningún entrenador con ese email.", 404);
     return { userId: String(user._id), email: user.email };
-  }),
-  adminTrainer: handler((req) => getRuntime().service.adminTrainer(adminUserId(req.params.userId))),
-  adminIntervene: handler((req) => getRuntime().service.intervene(adminUserId(req.params.userId), req.body || {},
-    { id: String(req.user._id), email: req.user.email || null })),
+  },
+  adminTrainer: (req) => getRuntime().service.adminTrainer(adminUserId(req.params.userId)),
+  adminIntervene: (req) => getRuntime().service.intervene(adminUserId(req.params.userId), req.body || {},
+    { id: String(req.user._id), email: req.user.email || null }),
 };
+// Cada ruta lleva su nombre al log de errores (errorTrace).
+const controller = Object.fromEntries(Object.entries(actions).map(([name, action]) => [name, handler(action, name)]));
 
 module.exports = {
-  controller, getRuntime, getEntitlements,
+  controller, getRuntime, getEntitlements, errorTrace,
   // Altas y aceptaciones bajo el mismo bloqueo por entrenador que los cambios de suscripción: dos
   // invitaciones a la vez nunca ocupan la misma última plaza. No necesita Stripe (vale con Free).
   // action(admission, capacity): plazas para altas nuevas (con una bajada programada, las del
