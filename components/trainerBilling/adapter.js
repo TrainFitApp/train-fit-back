@@ -130,8 +130,18 @@ module.exports = {
       return action(admissionSeats(seats, account), seats);
     });
   },
-  // Sin STRIPE_KEY la facturación está apagada y no hace falta cargar nada.
-  start: () => { if (process.env.STRIPE_KEY) getRuntime().startReconciliation(); },
+  start: () => {
+    // Sin STRIPE_KEY la facturación está apagada y no hace falta cargar nada (ni siquiera .build).
+    if (!process.env.STRIPE_KEY) {
+      console.warn("[TrainerBilling] Facturación apagada: falta STRIPE_KEY. Los entrenadores quedan en Free y no se ofrece contratar.");
+      return;
+    }
+    const current = getRuntime();
+    // Una configuración incompleta también la apaga: se dice al arrancar, con códigos y sin valores.
+    const notice = require("../../.build/trainer-billing/config").readinessNotice(current.config);
+    if (notice) console.warn(notice);
+    current.startReconciliation();
+  },
   async prepareDeletion(id) {
     try { await getRuntime().service.prepareDeletion(String(id)); }
     catch (error) {

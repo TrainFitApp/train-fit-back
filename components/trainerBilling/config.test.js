@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { loadConfig, parseTarget, publicPlans, requireReady, stateView } = require("../../.build/trainer-billing/config");
+const { loadConfig, parseTarget, publicPlans, readinessNotice, requireReady, stateView } = require("../../.build/trainer-billing/config");
 const { errorCode, fake, sandboxEnv, state } = require("./test-support");
 
 const liveEnv = (overrides = {}) => sandboxEnv({ STRIPE_KEY: fake("rk", "live", "unit"), STRIPE_RETURN_URL: "https://trainers.trainfit.net",
@@ -14,6 +14,16 @@ test("sin STRIPE_KEY la facturación está apagada, sin errores de configuració
   const plans = publicPlans(config);
   assert.equal(plans.enabled, false);
   assert.deepEqual(plans.capabilities, { checkout: false, portal: false, planChanges: false });
+});
+
+test("al arrancar se dice por qué la facturación está apagada, con códigos y nunca con valores", () => {
+  assert.equal(readinessNotice(loadConfig({})), null, "sin clave avisa el adaptador, sin cargar el módulo compilado");
+  assert.equal(readinessNotice(loadConfig(sandboxEnv())), null, "lista: sin aviso");
+  const env = sandboxEnv({ STRIPE_WEBHOOK_SECRET: "", STRIPE_RETURN_URL: "nope" });
+  const notice = readinessNotice(loadConfig(env));
+  assert.match(notice, /WEBHOOK_SECRET_REQUIRED/);
+  assert.match(notice, /INVALID_RETURN_URL/);
+  assert.ok(!notice.includes(env.STRIPE_KEY), "nunca imprime la clave");
 });
 
 test("el sandbox basta con la clave de prueba y el secreto del webhook", () => {
