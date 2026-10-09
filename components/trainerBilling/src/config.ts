@@ -53,6 +53,15 @@ export function publicSupport(config: Config): { email: string | null; termsUrl:
   return { email: config.supportEmail || null, termsUrl: config.termsUrl || null };
 }
 
+// Aviso de arranque cuando hay STRIPE_KEY pero la configuración no está completa: solo códigos,
+// nunca valores. Sin él, una variable que falta apaga la contratación sin rastro en el log y la
+// web de Trainers deja de ofrecer contratar. Sin STRIPE_KEY avisa el adaptador.
+export function readinessNotice(config: Config): string | null {
+  if (!config.enabled || !config.errors.length) return null;
+  return `[TrainerBilling] Facturación no disponible (${config.mode}): ${config.errors.join(", ")}. ` +
+    "Revisa las variables STRIPE_* (npm run billing:preflight).";
+}
+
 export function requireReady(config: Config): void {
   if (!config.enabled) throw new BillingError("BILLING_DISABLED", "Los pagos todavía no están habilitados.", 503);
   if (config.errors.length) throw new BillingError("BILLING_NOT_READY", "Falta completar la configuración de pagos.", 503);
