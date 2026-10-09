@@ -35,6 +35,14 @@ function assertMode(livemode: boolean, mode: Mode): void {
   if (livemode !== (mode === "live")) throw new BillingError("MODE_MISMATCH", "Se ha rechazado un recurso de otro entorno de pagos.", 409);
 }
 export function encodeTarget(state: PlanState): string { return `${state.tier}:${state.interval}:${state.extraSeats}`; }
+// Stripe rechazó abrir Checkout (petición inválida: no ha creado nada). Al log van el código, el parámetro
+// y el id de la petición para buscarla en el Dashboard; nunca el payload ni el mensaje.
+function checkoutRejection(error: unknown): unknown {
+  if (!(error instanceof Stripe.errors.StripeInvalidRequestError)) return error;
+  console.error(`[TrainerBilling] Stripe rechazó abrir Checkout: ${error.code || "invalid_request"}` +
+    `${error.param ? ` (${error.param})` : ""}, petición ${error.requestId || "sin id"}.`);
+  return new BillingError("CHECKOUT_REJECTED", "No se ha podido abrir la página de pago.", 503);
+}
 function sessionView(session: Stripe.Checkout.Session, mode: Mode): Session {
   assertMode(session.livemode, mode);
   return { id: session.id, customerId: id(session.customer), subscriptionId: id(session.subscription),
@@ -312,7 +320,7 @@ export class StripeGateway implements Gateway {
       cancel_url: `${this.config.returnUrl}/tabs/subscription?checkout=cancelled`,
       expires_at: Math.floor(account.checkout!.startedAt.getTime() / 1000) + 3600,
       integration_identifier: `trainfit_trainers_${suffix}`,
-    } as Stripe.Checkout.SessionCreateParams, { idempotencyKey: key });
+    } as Stripe.Checkout.SessionCreateParams, { idempotencyKey: key }).catch((error: unknown) => { throw checkoutRejection(error); });
     return sessionView(session, this.config.mode);
   }
   // Portal de la cuenta (configuración predeterminada): facturas, método de pago y cancelación a fin

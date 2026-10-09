@@ -436,18 +436,28 @@ export class TrainerBillingService {
         await this.refresh(account, save);
         throw new BillingError("PAYMENT_PENDING", "Estamos comprobando el pago anterior. Actualiza el estado antes de volver a contratar.");
       }
-      if (account.checkout && !attempt && Date.now() - account.checkout.startedAt.getTime() > 25 * 60000) {
-        throw new BillingError("CHECKOUT_REVIEW_REQUIRED", "Contacta con soporte para revisar el pago anterior.");
-      }
-      if (!account.checkout || attempt?.status === "expired" || terminalAttempt) {
+      // Un intento sin sesión en Stripe pasados 25 min nunca llegó a crearse: la sesión siempre lleva su
+      // customer y la lista es completa (has_more se rechaza). Ya no admite reintento con su clave
+      // (expires_at quedaría a menos de 30 min), así que se empieza otro en vez de bloquear la cuenta.
+      const abandoned = Boolean(account.checkout && !attempt && Date.now() - account.checkout.startedAt.getTime() > 25 * 60000);
+      if (!account.checkout || attempt?.status === "expired" || terminalAttempt || abandoned) {
         account.checkout = { key: checkoutKey(), target, startedAt: new Date() };
       } else if (!sameState(account.checkout.target, target)) {
         throw new BillingError("EXISTING_CHECKOUT", "Estamos comprobando un pago anterior para otro plan.");
       }
       await this.gateway.validateState(target);
+      const previousStatus = account.status;
       account.status = "checkout_pending";
       await this.persist(account, save);
-      const session = await this.gateway.createCheckout(user, account, target, account.checkout.key);
+      const session = await this.gateway.createCheckout(user, account, target, account.checkout.key).catch(async (error: unknown) => {
+        // Stripe no creó nada: el intento se descarta para que el siguiente empiece limpio.
+        if (error instanceof BillingError && error.code === "CHECKOUT_REJECTED") {
+          account.checkout = null;
+          account.status = previousStatus;
+          await this.persist(account, save);
+        }
+        throw error;
+      });
       this.ownSession(session, account);
       if (!session.url) throw new BillingError("CHECKOUT_UNAVAILABLE", "No se ha podido abrir la página de pago.", 503);
       account.checkout.sessionId = session.id;
