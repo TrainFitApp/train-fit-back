@@ -8,6 +8,17 @@ export class BillingError extends Error {
     this.name = "BillingError";
   }
 }
+// Qué falló, sin datos: clase del error y, si los trae, código (Stripe/Mongo/BillingError), parámetro e
+// id de la petición de Stripe para buscarla en el Dashboard. Nunca el mensaje ni el payload.
+export function errorTrace(error: unknown): string {
+  if (!error || typeof error !== "object") return typeof error;
+  const fields = error as Record<string, unknown>;
+  const type = typeof fields.type === "string" && /^Stripe/.test(fields.type) ? fields.type : null;
+  const kind = type || (typeof fields.name === "string" ? fields.name : "Error");
+  const parts = [fields.code, fields.codeName, fields.param, fields.requestId]
+    .filter((value): value is string => typeof value === "string" && /^[\w.[\]-]{1,80}$/.test(value));
+  return [kind, ...parts].join(" ");
+}
 
 export interface Config {
   // Con STRIPE_KEY la facturación está activa; su prefijo decide el modo.
@@ -70,6 +81,8 @@ export interface ChangeOperation {
 export interface ControlOperation {
   id: string; kind: "cancel" | "resume" | "discard"; startedAt: Date; done?: boolean;
   invoiceId?: string; scheduleId?: string;
+  // Stripe rechazó la operación sin aplicarla (petición inválida o clave sin permiso).
+  rejected?: boolean;
 }
 export interface PaymentState { url?: string; expiresAt?: Date }
 // Next recurring charge as Stripe itself computes it (coupons, credit balance
@@ -81,7 +94,7 @@ export interface Account {
   userId: string;
   mode: Mode;
   customerId?: string;
-  customerStartedAt?: Date;
+  customerStartedAt?: Date | null;
   checkout?: Checkout | null;
   subscriptionId?: string | null;
   status: string;

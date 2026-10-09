@@ -70,6 +70,35 @@ async function main() {
   }
   (missing.length ? fail : ok)("Permisos de lectura", missing.length ? `la clave no puede leer: ${missing.join(", ")}` : "cargos, reembolsos, disputas, avisos de fraude, pagos de factura y eventos");
 
+  // Escrituras que necesitan contratar, cambiar de plan y cancelar. Se prueban sobre un identificador que
+  // no existe: «no existe» (resource_missing) prueba el permiso sin modificar nada; 403, que falta.
+  // Sin escritura en suscripciones, contratar funciona pero cambiar de plan o cancelar falla (09/10/2026).
+  const probe = "trainfit_preflight_probe";
+  const writes = {
+    "clientes": () => stripe.customers.update(`cus_${probe}`, {}),
+    "sesiones de Checkout": () => stripe.checkout.sessions.expire(`cs_${config.mode}_${probe}`),
+    "suscripciones": () => stripe.subscriptions.update(`sub_${probe}`, {}),
+    "calendarios de suscripción": () => stripe.subscriptionSchedules.release(`sub_sched_${probe}`),
+    "facturas": () => stripe.invoices.voidInvoice(`in_${probe}`),
+  };
+  const cannotWrite = [];
+  const unconfirmed = [];
+  for (const [name, write] of Object.entries(writes)) {
+    try { await write(); unconfirmed.push(name); } catch (error) {
+      if (permission(error)) cannotWrite.push(name);
+      else if (error?.code !== "resource_missing") unconfirmed.push(name);
+    }
+  }
+  if (cannotWrite.length) fail("Permisos de escritura", `la clave no puede escribir: ${cannotWrite.join(", ")} (Desarrolladores → Claves de API → la clave restringida)`);
+  else if (unconfirmed.length) warn("Permisos de escritura", `no se pudo confirmar: ${unconfirmed.join(", ")}; revísalo en el Dashboard`);
+  else ok("Permisos de escritura", "clientes, Checkout, suscripciones, calendarios y facturas (comprobado sin modificar nada)");
+
+  // Con condiciones, Checkout exige aceptarlas y Stripe rechaza abrir el pago si la URL no está también en los
+  // datos públicos de la cuenta (09/10/2026, en PRE). La API no permite leerla: se confirma a mano.
+  if (config.termsUrl) {
+    warn("Condiciones en los datos públicos", `Configuración → Datos públicos → «Condiciones del servicio» debe ser ${config.termsUrl}; sin ella Checkout no se abre`);
+  }
+
   // Catálogo: cada pieza a la venta debe existir con su lookup key y el importe del catálogo.
   for (const entry of catalogPrices()) {
     const label = `${entry.kind === "base" ? "Cuota" : "Plaza adicional"} ${NAMES[entry.tier]} ${entry.interval === "annual" ? "anual" : "mensual"}`;

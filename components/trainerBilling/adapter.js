@@ -55,14 +55,7 @@ async function getEntitlements(userId) {
     ...billingMetadata(current.config, account) };
 }
 
-// Qué falló, sin datos: clase del error y, si los trae, código (Stripe/Mongo) e id de la petición de
-// Stripe para buscarla en el Dashboard. Nunca el mensaje ni el payload.
-function errorTrace(error) {
-  if (!error || typeof error !== "object") return typeof error;
-  const kind = typeof error.type === "string" && /^Stripe/.test(error.type) ? error.type : error.name || "Error";
-  const parts = [error.code, error.codeName, error.param, error.requestId].filter((value) => typeof value === "string" && /^[\w.[\]-]{1,80}$/.test(value));
-  return [kind, ...parts].join(" ");
-}
+function errorTrace(error) { return require("../../.build/trainer-billing/types").errorTrace(error); }
 
 function sendError(res, error, operation) {
   const { BillingError } = require("../../.build/trainer-billing/types");
