@@ -275,6 +275,48 @@ test("el portal usa la configuración predeterminada solo si no permite cambios 
   await assert.rejects(gateway.createPortal("cus_trainerone"), errorCode("PORTAL_NOT_READY"));
 });
 
+test("cerrar un Checkout: false si Stripe dice que ya no está abierto; la red y una sesión inexistente fallan", async (t) => {
+  const Stripe = require("stripe");
+  const { gateway } = fixture(t);
+  t.mock.method(gateway.stripe.checkout.sessions, "expire", async () => ({ id: "cs_test_x", status: "expired" }));
+  assert.equal(await gateway.expireSession("cs_test_x"), true);
+  t.mock.method(gateway.stripe.checkout.sessions, "expire", async () => {
+    throw new Stripe.errors.StripeInvalidRequestError({ message: "Only open sessions can be expired.", code: "checkout_session_not_open" });
+  });
+  assert.equal(await gateway.expireSession("cs_test_x"), false);
+  t.mock.method(gateway.stripe.checkout.sessions, "expire", async () => {
+    throw new Stripe.errors.StripeInvalidRequestError({ message: "No such session", code: "resource_missing" });
+  });
+  await assert.rejects(gateway.expireSession("cs_test_x"), (error) => error instanceof Stripe.errors.StripeInvalidRequestError);
+  t.mock.method(gateway.stripe.checkout.sessions, "expire", async () => { throw new Stripe.errors.StripeConnectionError({ message: "x" }); });
+  await assert.rejects(gateway.expireSession("cs_test_x"), (error) => error instanceof Stripe.errors.StripeConnectionError);
+});
+
+// Revisión de pagos 10/10/2026: con la clave sin permiso para el portal, abrirlo daba un 503 genérico
+// («No se ha podido completar la operación») aunque la cuenta anunciaba el portal.
+test("si Stripe rechaza abrir el portal (sin permiso o inválido) se traduce a PORTAL_NOT_READY; la red no", async (t) => {
+  const Stripe = require("stripe");
+  const { gateway } = fixture(t);
+  const logged = [];
+  t.mock.method(console, "error", (line) => logged.push(line));
+  t.mock.method(gateway.stripe.billingPortal.configurations, "list", async () => {
+    throw new Stripe.errors.StripePermissionError({ message: "key rk_test_x lacks access", code: "more_permissions_required", requestId: "req_portal" });
+  });
+  await assert.rejects(gateway.createPortal("cus_trainerone"), errorCode("PORTAL_NOT_READY"));
+  assert.match(logged[0], /abrir el portal: more_permissions_required, petición req_portal/);
+  assert.ok(!logged[0].includes("rk_test_x"), "el mensaje de Stripe no llega al log");
+
+  const portal = { id: "bpc_default", livemode: false, active: true, features: { subscription_update: { enabled: false },
+    invoice_history: { enabled: true }, payment_method_update: { enabled: true }, subscription_cancel: { enabled: true, mode: "at_period_end" } } };
+  t.mock.method(gateway.stripe.billingPortal.configurations, "list", async () => ({ data: [structuredClone(portal)] }));
+  t.mock.method(gateway.stripe.billingPortal.sessions, "create", async () => {
+    throw new Stripe.errors.StripeInvalidRequestError({ message: "No such customer", param: "customer", requestId: "req_cus" });
+  });
+  await assert.rejects(gateway.createPortal("cus_trainerone"), errorCode("PORTAL_NOT_READY"));
+  t.mock.method(gateway.stripe.billingPortal.sessions, "create", async () => { throw new Stripe.errors.StripeConnectionError({ message: "x" }); });
+  await assert.rejects(gateway.createPortal("cus_trainerone"), (error) => error instanceof Stripe.errors.StripeConnectionError);
+});
+
 const previewLine = (kind, tier, interval, amount, { proration = true, quantity = 1, start = START + 15 * 86400, end = END } = {}) => ({
   amount, quantity, period: { start, end }, pricing: { price_details: { price: priceId(kind, tier, interval) } },
   parent: { type: "subscription_item_details", subscription_item_details: { proration, subscription_item: "si_x" } } });

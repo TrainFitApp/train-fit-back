@@ -77,11 +77,43 @@ test("contratar crea un único cliente de Stripe y un Checkout con lo elegido; n
   assert.deepEqual(stripe.named("validateState")[0].args.value, state("free", "monthly", 4));
   assert.equal(stored(repository).status, "checkout_pending");
   assert.equal(repository.lastProjection.entitled, false);
-  // Repetir lo mismo reutiliza la sesión abierta; otro plan con una sesión abierta se rechaza.
+  // Repetir lo mismo reutiliza la sesión abierta.
   assert.equal((await service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 4 })).reused, true);
-  await assert.rejects(service.checkout(USER_ID, { tier: "starter", interval: "monthly" }), errorCode("EXISTING_CHECKOUT"));
   assert.equal(stripe.named("createCheckout").length, 1);
   await assert.rejects(service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 0 }), errorCode("INVALID_PLAN"));
+});
+
+// Revisión de pagos 10/10/2026: con un Checkout abierto, elegir otro plan daba EXISTING_CHECKOUT hasta
+// que la sesión caducaba (una hora) y el entrenador no tenía forma de salir.
+test("otro plan con un pago abierto cierra ese pago y abre el nuevo; nunca dos sesiones abiertas", async () => {
+  const { stripe, repository, service } = freeSetup();
+  const first = await service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 4 });
+  const second = await service.checkout(USER_ID, { tier: "starter", interval: "monthly" });
+  assert.equal(second.reused, false);
+  assert.notEqual(second.sessionId, first.sessionId);
+  assert.deepEqual(stripe.named("expireSession").map((entry) => entry.args.id), [first.sessionId]);
+  assert.deepEqual(stripe.sessions.filter((entry) => entry.status === "open").map((entry) => entry.id), [second.sessionId]);
+  assert.notEqual(stripe.named("createCheckout").at(-1).args.key, stripe.named("createCheckout")[0].args.key, "intento nuevo, clave nueva");
+  assert.equal(stored(repository).checkout.target.tier, "starter");
+  assert.equal(repository.lastProjection.entitled, false, "cambiar de plan antes de pagar no da acceso");
+  // Volver al primero tampoco reutiliza la sesión cerrada.
+  const third = await service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 4 });
+  assert.notEqual(third.sessionId, first.sessionId);
+});
+
+test("si el pago abierto se acaba de completar, elegir otro plan no lo cierra: manda ese pago", async () => {
+  const { stripe, service } = freeSetup();
+  const first = await service.checkout(USER_ID, { tier: "free", interval: "monthly", extraSeats: 4 });
+  // Stripe lo lista abierto, pero al cerrarlo ya está pagado (carrera con la otra pestaña).
+  const listSessions = stripe.listSessions.bind(stripe);
+  stripe.listSessions = async (...args) => {
+    const listed = await listSessions(...args);
+    stripe.completeCheckout(first.sessionId);
+    stripe.listSessions = listSessions;
+    return listed;
+  };
+  await assert.rejects(service.checkout(USER_ID, { tier: "starter", interval: "monthly" }), errorCode("PAYMENT_PENDING"));
+  assert.equal(stripe.named("createCheckout").length, 1, "no se abre un segundo pago");
 });
 
 test("si Stripe rechaza abrir Checkout no queda un intento colgado: se puede contratar enseguida, también otro plan", async () => {

@@ -80,6 +80,8 @@ async function main() {
     "suscripciones": () => stripe.subscriptions.update(`sub_${probe}`, {}),
     "calendarios de suscripción": () => stripe.subscriptionSchedules.release(`sub_sched_${probe}`),
     "facturas": () => stripe.invoices.voidInvoice(`in_${probe}`),
+    // Sin este permiso el portal no abre (10/10/2026, en local) aunque la configuración se lea bien.
+    "sesiones del portal": () => stripe.billingPortal.sessions.create({ customer: `cus_${probe}` }),
   };
   const cannotWrite = [];
   const unconfirmed = [];
@@ -91,7 +93,7 @@ async function main() {
   }
   if (cannotWrite.length) fail("Permisos de escritura", `la clave no puede escribir: ${cannotWrite.join(", ")} (Desarrolladores → Claves de API → la clave restringida)`);
   else if (unconfirmed.length) warn("Permisos de escritura", `no se pudo confirmar: ${unconfirmed.join(", ")}; revísalo en el Dashboard`);
-  else ok("Permisos de escritura", "clientes, Checkout, suscripciones, calendarios y facturas (comprobado sin modificar nada)");
+  else ok("Permisos de escritura", "clientes, Checkout, suscripciones, calendarios, facturas y portal (comprobado sin modificar nada)");
 
   // Con condiciones, Checkout exige aceptarlas y Stripe rechaza abrir el pago si la URL no está también en los
   // datos públicos de la cuenta (09/10/2026, en PRE). La API no permite leerla: se confirma a mano.

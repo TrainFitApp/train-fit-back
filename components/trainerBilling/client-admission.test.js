@@ -34,6 +34,8 @@ function fixture({ capacity = 50, admission = 20, clients = [], occupied = [] } 
       async setIntakeForm(_trainerId, clientEmail, form) { calls.forms.push({ clientEmail, form }); },
       async acceptInvitations(pairId, linkIds) { return answer(pairId, linkIds, 'active'); },
       async declineInvitations(pairId, linkIds) { return answer(pairId, linkIds, 'declined'); },
+      // Invitaciones de otros profesionales que aceptar deja sin efecto (ninguna aquí).
+      async findPendingLinksOfOthers() { return []; },
     },
     './trainer-seat-service': {
       async assertSeatForAcceptance(trainerId, clientId, seats) {

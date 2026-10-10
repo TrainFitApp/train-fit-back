@@ -286,7 +286,7 @@ export interface Gateway {
   createCheckout(user: User, account: Account, target: PlanState, key: string): Promise<Session>;
   createPortal(customerId: string): Promise<string>;
   cancelSubscription(id: string): Promise<void>;
-  expireSession(id: string): Promise<void>;
+  expireSession(id: string): Promise<boolean>;
   previewChange(sub: Subscription, target: PlanState, kind: ChangeKind, prorationDate: number): Promise<ChangePreview>;
   // Cambios de elementos para llegar al estado pedido, y los elementos (cantidad > 0) de origen y destino.
   changeItems(sub: Subscription, target: PlanState): Promise<{ updates: ItemUpdate[]; fromItems: PhaseItem[]; targetItems: PhaseItem[] }>;

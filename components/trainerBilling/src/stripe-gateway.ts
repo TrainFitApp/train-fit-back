@@ -40,6 +40,7 @@ export function encodeTarget(state: PlanState): string { return `${state.tier}:$
 // buscarla en el Dashboard; nunca el payload ni el mensaje.
 const CHANGE_REJECTED_MESSAGE = "Stripe no ha aceptado el cambio. Tu plan actual se mantiene.";
 const CONTROL_REJECTED_MESSAGE = "Stripe no ha aceptado la operación. Tu suscripción no ha cambiado.";
+const PORTAL_NOT_READY_MESSAGE = "El portal de facturación todavía no está disponible.";
 function rejection(error: unknown, operation: string, code: string, message: string): unknown {
   if (!(error instanceof Stripe.errors.StripeInvalidRequestError || error instanceof Stripe.errors.StripePermissionError)) return error;
   console.error(`[TrainerBilling] Stripe rechazó ${operation}: ${error.code || error.type}` +
@@ -332,9 +333,18 @@ export class StripeGateway implements Gateway {
   }
   // Portal de la cuenta (configuración predeterminada): facturas, método de pago y cancelación a fin
   // de periodo; nunca cambios de plan, que pasan por la propuesta de Trainers.
+  // Un rechazo de Stripe (la clave sin permiso para el portal, 10/10/2026 en local) es configuración,
+  // no una caída: PORTAL_NOT_READY con su traza en el log, como el resto de rechazos.
   async createPortal(customerId: string): Promise<string> {
+    try {
+      return await this.openPortal(customerId);
+    } catch (error) {
+      throw rejection(error, "abrir el portal", "PORTAL_NOT_READY", PORTAL_NOT_READY_MESSAGE);
+    }
+  }
+  private async openPortal(customerId: string): Promise<string> {
     const configuration = (await this.stripe.billingPortal.configurations.list({ is_default: true, active: true, limit: 1 })).data[0];
-    if (!configuration) throw new BillingError("PORTAL_NOT_READY", "El portal de facturación todavía no está disponible.", 503);
+    if (!configuration) throw new BillingError("PORTAL_NOT_READY", PORTAL_NOT_READY_MESSAGE, 503);
     this.check(configuration.livemode);
     const features = configuration.features;
     if (features.subscription_update?.enabled || !features.invoice_history?.enabled ||
@@ -349,8 +359,15 @@ export class StripeGateway implements Gateway {
   async cancelSubscription(subscriptionId: string): Promise<void> {
     await this.stripe.subscriptions.cancel(subscriptionId, { prorate: false, invoice_now: false });
   }
-  async expireSession(sessionId: string): Promise<void> {
-    await this.stripe.checkout.sessions.expire(sessionId);
+  // false si Stripe ya no la deja cerrar porque no está abierta (se acaba de pagar o ya caducó).
+  async expireSession(sessionId: string): Promise<boolean> {
+    try {
+      await this.stripe.checkout.sessions.expire(sessionId);
+      return true;
+    } catch (error) {
+      if (error instanceof Stripe.errors.StripeInvalidRequestError && error.code !== "resource_missing") return false;
+      throw error;
+    }
   }
 
   // ---- Propuestas y cambios ----

@@ -134,6 +134,9 @@ Registrar los 31 eventos de `SUPPORTED_EVENT_TYPES` (`src/stripe-gateway.ts`; li
   - Pasadas 23 h sin confirmar, manda el estado real de Stripe (pago pendiente, aplicado o descartado). Antes quedaba en `processing`, cada relectura (sync, propuesta, webhook, reconciliación, Gestión) respondía 503 y a las 23 h pasaba a revisión de soporte.
   - Una disputa se registra aunque no se puedan pausar los cobros.
   - Los fallos se registran con la operación, la clase del error, su código y el `req_…` de Stripe, nunca con el mensaje; la reconciliación los resume por ronda.
+- Revisión del 10/10/2026:
+  - Con un Checkout abierto y sin pagar, elegir **otro plan** cierra ese pago (`checkout.sessions.expire`) y abre el del plan nuevo, con un intento y una clave nuevos. Antes daba `EXISTING_CHECKOUT` hasta que la sesión caducaba (una hora) sin salida para el entrenador. Si Stripe ya no deja cerrarla (se acaba de pagar en otra pestaña), no se abre otra: `PAYMENT_PENDING`. Nunca hay dos sesiones abiertas.
+  - Abrir el portal con la clave sin permiso (o una configuración que Stripe rechaza) responde `PORTAL_NOT_READY` con su traza en el log, no un 503 genérico. El preflight prueba también la escritura de sesiones del portal.
 - Las pruebas unitarias del core/gateway usan dobles en memoria, sin Stripe ni correo. Las pruebas reales de sandbox y su alcance se registran en `docs/TRAINERS_STRIPE_SANDBOX.md` del workspace. No constituyen un despliegue de producción.
 
 ## Pruebas y entrega del artefacto

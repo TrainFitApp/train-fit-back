@@ -197,7 +197,14 @@ class FakeStripe {
   }
   async createPortal() { this.call("createPortal", {}); return "https://billing.stripe.com/p/session/test"; }
   async cancelSubscription(id) { this.call("cancelSubscription", { id }); const sub = this.sub(id); if (sub) sub.status = "canceled"; }
-  async expireSession(id) { this.call("expireSession", { id }); const found = this.sessions.find((entry) => entry.id === id); if (found) found.status = "expired"; }
+  // Como Stripe: solo se cierra una sesión abierta (false si ya se pagó o caducó).
+  async expireSession(id) {
+    this.call("expireSession", { id });
+    const found = this.sessions.find((entry) => entry.id === id);
+    if (found && found.status !== "open") return false;
+    if (found) found.status = "expired";
+    return true;
+  }
   // Importes deterministas: la mitad del periodo queda por usar.
   async previewChange(sub, target, kind, prorationDate) {
     this.call("previewChange", { subId: sub.id, target, kind, prorationDate });

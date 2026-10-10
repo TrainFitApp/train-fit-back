@@ -469,12 +469,20 @@ export class TrainerBillingService {
       }
       const sessions = await this.gateway.listSessions(account.customerId);
       const pending = sessions.find((s) => s.status === "open");
+      // Otro plan con un pago abierto y sin pagar: se cierra ese pago y se abre el del plan nuevo. Antes
+      // había que esperar a que caducara (hasta una hora) sin poder elegir otro plan (revisión 10/10/2026).
+      // Si Stripe ya no lo deja cerrar es que se acaba de pagar: manda ese pago.
+      let replaced = false;
       if (pending) {
         this.ownSession(pending, account);
-        if (pending.target !== wanted) throw new BillingError("EXISTING_CHECKOUT", "Ya hay un pago abierto para otro plan. Finalízalo o espera a que caduque.");
-        return { url: pending.url, sessionId: pending.id, reused: true };
+        if (pending.target === wanted) return { url: pending.url, sessionId: pending.id, reused: true };
+        if (!(await this.gateway.expireSession(pending.id))) {
+          await this.refresh(account, save);
+          throw new BillingError("PAYMENT_PENDING", "Estamos comprobando el pago anterior. Actualiza el estado antes de volver a contratar.");
+        }
+        replaced = true;
       }
-      const attempt = account.checkout && sessions.find((s) => s.attempt === account.checkout!.key);
+      const attempt = replaced || !account.checkout ? undefined : sessions.find((s) => s.attempt === account.checkout!.key);
       const terminalAttempt = attempt?.status === "complete" && attempt.subscriptionId === account.subscriptionId && TERMINAL.has(account.status);
       if (attempt?.status === "complete" && !terminalAttempt) {
         await this.refresh(account, save);
@@ -484,7 +492,7 @@ export class TrainerBillingService {
       // customer y la lista es completa (has_more se rechaza). Ya no admite reintento con su clave
       // (expires_at quedaría a menos de 30 min), así que se empieza otro en vez de bloquear la cuenta.
       const abandoned = Boolean(account.checkout && !attempt && Date.now() - account.checkout.startedAt.getTime() > 25 * 60000);
-      if (!account.checkout || attempt?.status === "expired" || terminalAttempt || abandoned) {
+      if (replaced || !account.checkout || attempt?.status === "expired" || terminalAttempt || abandoned) {
         account.checkout = { key: checkoutKey(), target, startedAt: new Date() };
       } else if (!sameState(account.checkout.target, target)) {
         throw new BillingError("EXISTING_CHECKOUT", "Estamos comprobando un pago anterior para otro plan.");
