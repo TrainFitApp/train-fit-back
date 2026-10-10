@@ -90,13 +90,24 @@ function evaluateRule(rule, snapshot) {
  * Frase que explica POR QUÉ se disparó, con los números dentro — el mismo
  * contrato que las señales integradas: la alerta se lee sin abrir la regla.
  */
+// Hasta un decimal y con coma, sin «,0» de relleno (QA 2026-10-09: «7,0
+// /10»): un dolor de 7 es «7/10».
+const EVIDENCE_NUMBER = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 1, useGrouping: "always" });
+
+function formatEvidenceNumber(value) {
+  return EVIDENCE_NUMBER.format(Number(value));
+}
+
+// «/10» y «%» van pegados al número; el resto de unidades, con espacio.
+const withUnit = (text, unit) => (!unit ? text : /^[/%]/.test(unit) ? `${text}${unit}` : `${text} ${unit}`);
+
 function buildEvidence(evaluation) {
   return evaluation.conditions
     .filter((c) => c.met && c.resolved)
     .map((c) => {
       const value = c.resolved.changePct !== null && c.resolved.changePct !== undefined
-        ? `${c.resolved.changePct > 0 ? "+" : ""}${c.resolved.changePct.toFixed(1).replace(".", ",")}%`
-        : `${Number(c.resolved.current).toFixed(1).replace(".", ",")}${c.unit ? ` ${c.unit}` : ""}`;
+        ? `${c.resolved.changePct > 0 ? "+" : ""}${formatEvidenceNumber(c.resolved.changePct)}%`
+        : withUnit(formatEvidenceNumber(c.resolved.current), c.unit);
       return `${c.label}: ${value}`;
     })
     .join(" · ");

@@ -338,9 +338,10 @@ test("registro de cliente: alta sin verificar, correo con código, activación y
   assert.notEqual(stored.password, PASSWORD, "contraseña cifrada");
   assert.ok(ctx.sentMail.some((m) => m.fn === "sendTransactionalMail" && m.args[0] === email));
 
-  // Duplicado: 409 aunque cambien mayúsculas.
+  // Duplicado: 409 aunque cambien mayúsculas, con código para la app.
   const dup = await ctx.raw("POST", "/users", { user: { name: "Otra", email: email.toUpperCase(), password: "x" } });
   assert.equal(dup.status, 409);
+  assert.equal(dup.body.code, "EMAIL_ALREADY_REGISTERED");
 
   // Sin activar no entra.
   assert.equal((await login(email, PASSWORD)).status, 403);
@@ -390,6 +391,7 @@ test("registro de profesional: rol trainer, sin días de dieta y solo entra en T
 
   const missing = await ctx.raw("POST", "/users/professional", { name: "Pro", email: `x${email}` });
   assert.equal(missing.status, 400);
+  assert.equal(missing.body.code, "SIGNUP_FIELDS_REQUIRED");
 
   await ctx.model("User").updateOne({ _id: stored._id }, { $unset: { hash: 1 } });
   assert.equal((await login(email, PASSWORD, h.FAMILY.trainer)).status, 200);
@@ -506,4 +508,25 @@ test("suplantar: solo admin", async () => {
   const user = await ctx.makeClient();
   const other = await ctx.makeClient();
   assert.equal((await ctx.call(user, "POST", "/auth/impersonate", { userId: other.id })).status, 403);
+});
+
+
+// QA 2026-10-09: errores del alta y de rol sin código (la app en inglés los
+// enseñaba en español tal cual) y el 403 de rol en inglés.
+test("errores con código: correo que no existe al darse de alta y 403 de rol", async () => {
+  const original = mail.validateEmailExists;
+  mail.validateEmailExists = async () => false;
+  try {
+    const res = await ctx.raw("POST", "/users", { user: { name: "X", lastname: "Y", email: "nadie@dominio-inexistente.test", password: PASSWORD } });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.code, "EMAIL_NOT_DELIVERABLE");
+  } finally {
+    mail.validateEmailExists = original;
+  }
+
+  const client = await ctx.makeClient();
+  const forbidden = await ctx.call(client, "GET", "/trainer/alerts", undefined, { family: h.FAMILY.client });
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.body.code, "ROLE_FORBIDDEN");
+  assert.doesNotMatch(forbidden.body.message, /You don't/);
 });

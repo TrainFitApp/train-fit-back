@@ -129,6 +129,12 @@ test("solape: un cliente no puede tener dos profesionales activos del mismo scop
   assert.equal(newInvite.status, 201, "nutrición sí");
   const byScope = Object.fromEntries(newInvite.body.results.map((r) => [r.scope, r.success]));
   assert.deepEqual(byScope, { training: false, nutrition: true });
+  const refused = newInvite.body.results.find((r) => r.scope === "training");
+  assert.equal(refused.code, "OVERLAP");
+  assert.match(refused.error, /lleva su entrenamiento/, "el ámbito con su nombre, no «training»");
+  const again = await invite(b, client, ["nutrition"]);
+  assert.deepEqual([again.body.results[0].success, again.body.results[0].code], [false, "INVITE_ALREADY_PENDING"]);
+  assert.match(again.body.results[0].error, /nutrición/);
 
   const accepted = await respond(client, b, "accept");
   assert.deepEqual([accepted.body.scopes, accepted.body.pending], [["nutrition"], []]);

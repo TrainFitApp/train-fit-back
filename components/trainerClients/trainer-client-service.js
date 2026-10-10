@@ -283,7 +283,12 @@ module.exports = {
           excludingTrainerId: trainerId,
         });
         if (overlapping) {
-          outcome.push({ scope, success: false, error: `Este cliente ya tiene un profesional de tipo "${scope}"` });
+          outcome.push({
+            scope,
+            success: false,
+            code: "OVERLAP",
+            error: `Este cliente ya tiene otro profesional que lleva su ${SCOPE_NAMES[scope]}`,
+          });
           continue;
         }
         try {
@@ -291,7 +296,12 @@ module.exports = {
           outcome.push({ scope, success: true, invitation });
         } catch (error) {
           if (error.code !== 11000) throw error;
-          outcome.push({ scope, success: false, error: `Ya existe una invitación pendiente para este email en el ámbito "${scope}"` });
+          outcome.push({
+            scope,
+            success: false,
+            code: "INVITE_ALREADY_PENDING",
+            error: `Ya le has invitado a llevar su ${SCOPE_NAMES[scope]}: la invitación sigue pendiente`,
+          });
         }
       }
       // El formulario que rellenará: el de esta invitación, salvo que ya

@@ -29,15 +29,15 @@ const alreadyVerified = () => badRequest("Esta cuenta ya ha sido verificada", "A
 const invalidRestoreCode = () => badRequest("Codigo invalido o expirado", "INVALID_RESTORE_CODE");
 
 // Una carrera entre dos altas con el mismo correo la para el índice único.
-const rethrowDuplicate = onDuplicate("Este usuario ya está registrado");
+const rethrowDuplicate = onDuplicate("Este correo ya está registrado", "EMAIL_ALREADY_REGISTERED");
 
 // Alta por email: el correo tiene que existir (DNS/MX) y no tener ya una
 // cuenta con perfil (un registro social a medias sí se completa).
 async function assertEmailAvailable(email) {
   if (!email) throw badRequest("Email requerido");
-  if (!(await mail.validateEmailExists(email))) throw badRequest("El correo no existe");
+  if (!(await mail.validateEmailExists(email))) throw badRequest("Ese correo no existe: revisa que esté bien escrito", "EMAIL_NOT_DELIVERABLE");
   const existing = await userDao.findByEmail(email);
-  if (existing?.name) throw conflict("Este usuario ya está registrado");
+  if (existing?.name) throw conflict("Este correo ya está registrado", "EMAIL_ALREADY_REGISTERED");
 }
 
 function sendVerificationMail(email, name, code, subject) {
@@ -238,7 +238,7 @@ module.exports = {
   // { user, verificationMailSent }.
   async createProfessional({ name, lastname, email, password }) {
     if (!name || !lastname || !email || !password) {
-      throw badRequest("Nombre, apellidos, email y contraseña son obligatorios");
+      throw badRequest("Nombre, apellidos, email y contraseña son obligatorios", "SIGNUP_FIELDS_REQUIRED");
     }
     await assertEmailAvailable(email);
     const code = generateVerificationCode();

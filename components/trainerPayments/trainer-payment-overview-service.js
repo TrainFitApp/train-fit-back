@@ -5,7 +5,7 @@ const service = require("./trainer-payment-service");
 const trainerClientDao = require("../trainerClients/trainer-client-dao");
 const { relationState } = require("../trainerClients/pair-state");
 const userDao = require("../users/user-dao");
-const { createAccentInsensitiveRegex } = require("../util/accent-insensitive-regex");
+const { createAccentInsensitiveRegex, escapeRegex } = require("../util/accent-insensitive-regex");
 
 // Configuración > Cobros: vista global de la cartera y preferencias comunes.
 // Los totales se agregan en Mongo sobre TODO el conjunto (nunca sobre la
@@ -15,10 +15,6 @@ const { createAccentInsensitiveRegex } = require("../util/accent-insensitive-reg
 const STATES = ["pending", "overdue", "due_today", "upcoming", "settled", "cancelled", "all"];
 const RELATIONS = ["active", "former", "all"];
 const MAX_LIMIT = 50;
-
-function escapeRegex(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 // Relación de cada cliente con este entrenador: activa si queda algún scope
 // activo; antigua si solo quedan relaciones revocadas.

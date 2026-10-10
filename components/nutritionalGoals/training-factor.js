@@ -12,17 +12,17 @@
 // front son paquetes distintos (mismo caso que nutrition-target.js).
 
 // Orden = id del enum STEPS_TYPES del front. `upTo` es el tope de la media
-// diaria real que cae en ese rango: los huecos de la tabla (1000–2000,
-// 6000–7000, 9000–10000, 15000–16000, 18000–19000) se reparten por el punto
-// medio.
+// diaria real que cae en ese rango (los rangos de la tabla original dejaban
+// huecos, 1000–2000, 6000–7000…, que se reparten por el punto medio); las
+// etiquetas de las apps dicen esos mismos cortes.
 const STEPS_RANGES = [
   { id: 0, key: "notCounted", value: 1, label: "No cuenta pasos", upTo: null },
-  { id: 1, key: "lessThan1000", value: 1.2, label: "Menos de 1000 pasos", upTo: 1499 },
-  { id: 2, key: "between2000And6000", value: 1.37, label: "2000–6000 pasos", upTo: 6499 },
-  { id: 3, key: "between7000And9000", value: 1.46, label: "7000–9000 pasos", upTo: 9499 },
-  { id: 4, key: "betweenThan10000And15000", value: 1.55, label: "10000–15000 pasos", upTo: 15499 },
-  { id: 5, key: "betweenThan16000And18000", value: 1.71, label: "16000–18000 pasos", upTo: 18499 },
-  { id: 6, key: "moreThan19000", value: 1.86, label: "Más de 19000 pasos", upTo: Infinity },
+  { id: 1, key: "lessThan1000", value: 1.2, label: "Menos de 1.500 pasos", upTo: 1499 },
+  { id: 2, key: "between2000And6000", value: 1.37, label: "1.500–6.500 pasos", upTo: 6499 },
+  { id: 3, key: "between7000And9000", value: 1.46, label: "6.500–9.500 pasos", upTo: 9499 },
+  { id: 4, key: "betweenThan10000And15000", value: 1.55, label: "9.500–15.500 pasos", upTo: 15499 },
+  { id: 5, key: "betweenThan16000And18000", value: 1.71, label: "15.500–18.500 pasos", upTo: 18499 },
+  { id: 6, key: "moreThan19000", value: 1.86, label: "Más de 18.500 pasos", upTo: Infinity },
 ];
 
 // Orden = id del enum TRAINING_TYPES del front (1..4).
@@ -30,7 +30,7 @@ const TRAINING_DAYS = [
   { id: 1, key: "none", label: "No entrena" },
   { id: 2, key: "oneOrTwo", label: "1–2 días/semana" },
   { id: 3, key: "threeOrFour", label: "3–4 días/semana" },
-  { id: 4, key: "fiveOrSix", label: "5–6 días/semana" },
+  { id: 4, key: "fiveOrSix", label: "5 o más días/semana" },
 ];
 
 // Fila por `.value` del rango de pasos; columnas en el orden de TRAINING_DAYS.

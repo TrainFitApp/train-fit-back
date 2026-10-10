@@ -65,3 +65,46 @@ test("página o límite basura no rompen: primera página, límite acotado", asy
   assert.equal(result.items.length, 23);
   assert.equal(result.hasMore, false);
 });
+
+// QA 2026-10-09: «press banca» ponía «Press banca en multipower» por delante
+// de «Press Banca» solo por haberse dado de alta antes.
+test("con texto, primero el nombre exacto, luego lo que empieza por él y luego el resto", async () => {
+  await ctx.model("Exercise").create([
+    { name: "Press banca en multipower" },
+    { name: "Press inclinado con barra", keywords: ["press banca"] },
+    { name: "Remo con press banca" },
+    { name: "Press Banca" },
+    { name: "Press de banca agarre cerrado" },
+  ]);
+  const trainer = await ctx.makeTrainer();
+  const result = await searchPage(trainer, 0, { search: "press bánca" });
+  assert.deepEqual(
+    result.items.map((exercise) => exercise.name),
+    [
+      "Press Banca",
+      "Press banca en multipower",
+      "Remo con press banca",
+      "Press inclinado con barra",
+      "Press de banca agarre cerrado",
+    ],
+    "exacto, empieza por, contiene, y el resto (palabras clave o sueltas) por largo del nombre"
+  );
+  assert.equal(result.items[0]._searchRank, undefined, "los campos de orden no salen en la respuesta");
+});
+
+test("el orden por relevancia pagina sin repetir ni saltarse ejercicios", async () => {
+  const trainer = await ctx.makeTrainer();
+  const seen = [];
+  for (let page = 0; page < 3; page += 1) {
+    seen.push(...(await searchPage(trainer, page, { search: "remo" })).items.map((exercise) => String(exercise._id)));
+  }
+  assert.equal(seen.length, new Set(seen).size);
+});
+
+test("los caracteres especiales se buscan como texto, no rompen la consulta", async () => {
+  const trainer = await ctx.makeTrainer();
+  for (const search of ["(", "press+", "[banca", "\\", "*"]) {
+    const result = await searchPage(trainer, 0, { search });
+    assert.ok(Array.isArray(result.items), `«${search}» devuelve una página`);
+  }
+});

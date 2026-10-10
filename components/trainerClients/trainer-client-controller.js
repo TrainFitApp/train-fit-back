@@ -29,6 +29,9 @@ module.exports = {
       results: results.map((r) => ({
         scope: r.scope,
         success: r.success,
+        // `code` para que la app lo diga en su idioma (OVERLAP,
+        // INVITE_ALREADY_PENDING); `error`, el texto en español.
+        code: r.code || null,
         error: r.error || null,
         invitation: r.invitation || null,
       })),

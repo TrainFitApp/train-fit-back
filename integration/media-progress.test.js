@@ -280,3 +280,29 @@ test("revisión de técnica borrada por el cliente: el aviso del entrenador desa
   assert.equal((await ctx.call(client, "DELETE", `/form-checks/mine/${id}`)).status, 200);
   assert.equal(await notices(), 0);
 });
+
+// QA 2026-10-09: un comentario en el segundo 999 de un vídeo de 8 s se
+// guardaba (solo se miraba que no fuera negativo).
+test("comentario de técnica: el segundo tiene que caber en el vídeo", async () => {
+  const { trainer, client } = await clientWithTrainer();
+  const video = await readyFormCheckVideo(client);
+  const created = await ctx.call(client, "POST", "/form-checks/mine", { assetId: String(video._id), exerciseName: "Peso muerto" });
+  assert.equal(created.status, 201);
+  const id = created.body.formCheck.id;
+  const comment = (body) => ctx.call(trainer, "POST", `/trainer/form-checks/${id}/comments`, body);
+
+  const late = await comment({ atSec: 999, text: "Rodillas" });
+  assert.equal(late.status, 400);
+  assert.equal(late.body.code, "FORM_CHECK_INVALID_TIME");
+  assert.equal((await comment({ atSec: -1, text: "Rodillas" })).body.code, "FORM_CHECK_INVALID_TIME");
+
+  const atEnd = await comment({ atSec: 8, text: "Bloquea arriba" });
+  assert.equal(atEnd.status, 200, JSON.stringify(atEnd.body));
+  const general = await comment({ text: "Buen ritmo" });
+  assert.equal(general.status, 200);
+  assert.deepEqual(general.body.formCheck.comments.map((c) => c.atSec), [8, null]);
+
+  // Otro entrenador no comenta en revisiones ajenas.
+  const stranger = await ctx.makeTrainer();
+  assert.equal((await ctx.call(stranger, "POST", `/trainer/form-checks/${id}/comments`, { atSec: 1, text: "x" })).status, 404);
+});

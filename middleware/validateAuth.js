@@ -142,7 +142,7 @@ const auth = (permissions) => {
       if (!hasPermission) {
         return res
           .status(403)
-          .send({ message: "You don't have access to this data" });
+          .send({ message: "Tu cuenta no tiene acceso a esto", code: "ROLE_FORBIDDEN" });
       }
 
       req.auth = {

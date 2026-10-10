@@ -351,6 +351,13 @@ module.exports = {
     return new Map(views.filter(Boolean).map((view) => [view.id, view]));
   },
 
+  /** Duración en segundos de un vídeo, o null si no se conoce. */
+  async durationOf(assetId) {
+    const asset = assetId ? await mediaDao.findById(assetId) : null;
+    const seconds = Number(asset?.durationSec);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+  },
+
   async deleteAssets(ids) {
     await mediaDao.deleteByIds(ids);
   },

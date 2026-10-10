@@ -271,6 +271,14 @@ module.exports = {
     if (atSec != null && (!Number.isFinite(atSec) || atSec < 0 || atSec > 3600)) {
       return fail(400, "FORM_CHECK_INVALID_TIME", "Segundo no válido");
     }
+    // QA 2026-10-09: un comentario en el segundo 999 de un vídeo de 8 s se
+    // guardaba y su marca quedaba fuera de la línea de tiempo.
+    if (atSec != null) {
+      const duration = await mediaService.durationOf(check.assetId);
+      if (duration != null && atSec > Math.ceil(duration)) {
+        return fail(400, "FORM_CHECK_INVALID_TIME", "Ese segundo pasa del final del vídeo");
+      }
+    }
     let techniqueVideoId = null;
     if (body?.techniqueVideoId) {
       const video = await require("../techniqueVideos/technique-video-dao").findById(body.techniqueVideoId);

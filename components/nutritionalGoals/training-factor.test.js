@@ -135,3 +135,17 @@ test("resolveSteps — perfil vs rango del hábito de pasos", async (t) => {
     assert.equal(r.stepsFallbackReason, "profile_unresolved");
   });
 });
+
+// QA 2026-10-09: las apps ofrecían «Menos de 1000», «Entre 2000 y 6000»…
+// con huecos. Ahora dicen los cortes reales (shared-core i18n STEPS.*).
+test("las etiquetas de los rangos dicen los mismos cortes que upTo", () => {
+  const { STEPS_RANGES } = require("./training-factor");
+  const counted = STEPS_RANGES.filter((range) => range.upTo !== null);
+  const numbersOf = (label) => (label.match(/\d[\d.]*/g) || []).map((n) => Number(n.replace(/\./g, "")));
+  for (const [index, range] of counted.entries()) {
+    const numbers = numbersOf(range.label);
+    if (range.upTo === Infinity) assert.deepEqual(numbers, [counted[index - 1].upTo + 1], range.label);
+    else assert.equal(numbers.at(-1), range.upTo + 1, range.label);
+    if (index > 0 && range.upTo !== Infinity) assert.equal(numbers[0], counted[index - 1].upTo + 1, range.label);
+  }
+});

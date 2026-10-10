@@ -14,6 +14,13 @@ function createAccentInsensitiveRegex(term) {
     .replace(/[cç]/gi, '[cç]');
 }
 
+// Lo que el usuario escribe es texto, no una expresión: «(» o «+» no pueden
+// romper la consulta.
+function escapeRegex(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 module.exports = {
-  createAccentInsensitiveRegex
+  createAccentInsensitiveRegex,
+  escapeRegex,
 };

@@ -4,7 +4,7 @@ const WorkoutBase = require("../workouts/workout-base-schema");
 const { Types } = require("mongoose");
 const { cleanObject } = require("../util/clean-data");
 const { normalizeMuscles, expandMuscleFilter } = require("./muscle-catalog");
-const { createAccentInsensitiveRegex } = require("../util/accent-insensitive-regex");
+const { createAccentInsensitiveRegex, escapeRegex } = require("../util/accent-insensitive-regex");
 
 // updateOne no pasa por el hook pre("validate") del schema: `muscles` se
 // deja en forma canónica aquí, con la misma función.
@@ -29,6 +29,31 @@ async function countExerciseUsage(id) {
     },
   ]);
   return { templates: row?.templates || 0, sessions: row?.sessions || 0 };
+}
+
+// Relevancia de una búsqueda con texto (QA 2026-10-09: «press banca» ponía
+// «Press banca en multipower» por delante de «Press Banca», solo por
+// haberse dado de alta antes). 0 = el nombre es justo lo buscado, 1 = empieza
+// por ello, 2 = lo contiene seguido, 3 = el resto (palabras sueltas o solo
+// por palabras clave). A igualdad, el nombre más corto.
+function searchRankStage(regexTerms) {
+  const phrase = regexTerms.join("\\s+");
+  const nameMatches = (regex) => ({ $regexMatch: { input: { $ifNull: ["$name", ""] }, regex, options: "i" } });
+  return {
+    $addFields: {
+      _searchRank: {
+        $switch: {
+          branches: [
+            { case: nameMatches(`^\\s*${phrase}\\s*$`), then: 0 },
+            { case: nameMatches(`^\\s*${phrase}`), then: 1 },
+            { case: nameMatches(phrase), then: 2 },
+          ],
+          default: 3,
+        },
+      },
+      _nameLength: { $strLenCP: { $ifNull: ["$name", ""] } },
+    },
+  };
 }
 
 // Etapas de la búsqueda de ejercicios, filtros incluidos. null cuando no
@@ -148,6 +173,7 @@ async function buildSearchPipeline(searchExercisesFilterGroup) {
   }
 
   // Añade una etapa $match para la búsqueda de texto si existe en 'searchExercisesFilterGroup'.
+  let searchRank = null;
   if (searchExercisesFilterGroup.search) {
     const searchText = searchExercisesFilterGroup.search.trim();
 
@@ -156,8 +182,9 @@ async function buildSearchPipeline(searchExercisesFilterGroup) {
         .split(" ")
         .filter((term) => term.trim().length > 0);
 
-      const regexTerms = searchTerms.map(createAccentInsensitiveRegex);
+      const regexTerms = searchTerms.map((term) => createAccentInsensitiveRegex(escapeRegex(term)));
 
+      searchRank = searchRankStage(regexTerms);
       agg.push({
         $match: {
           $and: regexTerms.map((term) => ({
@@ -173,8 +200,13 @@ async function buildSearchPipeline(searchExercisesFilterGroup) {
 
   // Orden fijo para paginar con skip: sin él, Mongo no garantiza el mismo
   // orden entre dos consultas y una página podía repetir o saltarse
-  // ejercicios de la anterior. _id mantiene el orden de alta de siempre.
-  agg.push({ $sort: { _id: 1 } });
+  // ejercicios de la anterior. Con texto, primero lo más parecido (ver
+  // searchRankStage); a igualdad, _id mantiene el orden de alta de siempre.
+  if (searchRank) {
+    agg.push(searchRank, { $sort: { _searchRank: 1, _nameLength: 1, _id: 1 } }, { $project: { _searchRank: 0, _nameLength: 0 } });
+  } else {
+    agg.push({ $sort: { _id: 1 } });
+  }
 
   return agg;
 }

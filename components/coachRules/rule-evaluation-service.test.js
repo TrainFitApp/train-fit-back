@@ -236,6 +236,18 @@ test("buildEvidence", async (t) => {
     assert.doesNotMatch(evidence, /NaN|undefined/);
   });
 
+  // QA 2026-10-09: «Dolor máximo reportado: 7,0 /10».
+  await t.test("números sin ,0 de relleno y «/10» o «%» pegados al número", () => {
+    const evidence = buildEvidence({
+      conditions: [
+        { met: true, label: "Dolor máximo reportado", unit: "/10", resolved: { current: 7, changePct: null } },
+        { met: true, label: "Pasos", unit: "pasos", resolved: { current: 8123.45, changePct: null } },
+        { met: true, label: "Peso", unit: "kg", resolved: { current: 80, changePct: -2.345 } },
+      ],
+    });
+    assert.equal(evidence, "Dolor máximo reportado: 7/10 · Pasos: 8.123,5 pasos · Peso: -2,3%");
+  });
+
   await t.test("sin condiciones cumplidas devuelve cadena vacía", () => {
     assert.equal(buildEvidence({ conditions: [{ met: false, resolved: null }] }), "");
   });
