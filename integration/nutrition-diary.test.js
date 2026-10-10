@@ -380,8 +380,11 @@ test("borrar un día arrastra sus comidas y alimentos (cascada) y no toca los de
 
 // --- Comida pautada por el profesional --------------------------------------------
 
+// Lo pautado solo está bloqueado mientras dura la relación de nutrición con
+// ese profesional (QA 2026-10-09, A3).
 async function seedPrescribedMeal(user, date) {
   const trainer = await ctx.makeTrainer();
+  await ctx.relate(trainer, user, { scope: "nutrition" });
   await addFood(user, date, 2, food("Pollo pautado", { quantity: 200 }));
   await addFood(user, date, 2, food("Arroz pautado", { quantity: 80 }));
   const day = (await readDay(user, date)).dietDay;
@@ -441,6 +444,7 @@ test("comida pautada: la meta del día (plannedTarget) suma lo pautado con la ca
 test("comida mixta: el cliente borra lo suyo pero no el alimento pautado, y reemplazarla solo sustituye lo suyo", async () => {
   const user = await ctx.makeClient();
   const trainer = await ctx.makeTrainer();
+  await ctx.relate(trainer, user, { scope: "nutrition" });
   const date = "2026-10-04";
   await addFood(user, date, 0, food("Mío"));
   await addFood(user, date, 0, food("Del coach"));
