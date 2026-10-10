@@ -143,9 +143,6 @@ La automatización no las pudo cerrar el 2026-10-10.
 
 ## Decisiones abiertas
 
-- Gestión › Facturación de trainers: los textos están en español a propósito
-  (operativa interna, ver `trainer-billing-view.util.ts`). Decidir si pasan
-  a i18n como el resto.
 - Plantillas de Stripe duplicadas (`.stripe.env.example` y
   `components/trainerBilling/stripe.env.example`): ver `pendientes.md` §0.
 - Tope de almacenamiento o retención de la media de los clientes.
